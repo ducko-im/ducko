@@ -17,6 +17,8 @@ enum TranscriptRecord: Codable {
         var timestamp: Date
         var isOutgoing: Bool
         var isEncrypted: Bool
+        /// Optional so records written before the flag existed decode. Those carry no key at all.
+        var isUndecryptable: Bool?
         var messageType: String
         var replyToID: String?
         var attachments: [Attachment]
@@ -81,6 +83,7 @@ enum TranscriptRecord: Codable {
             timestamp: message.timestamp,
             isOutgoing: message.isOutgoing,
             isEncrypted: message.isEncrypted,
+            isUndecryptable: message.isUndecryptable,
             messageType: message.type,
             replyToID: message.replyToID,
             attachments: message.attachments
@@ -100,15 +103,20 @@ enum TranscriptRecord: Codable {
         ))
     }
 
+    /// What a failed decrypt was recorded as before the flag existed: an encrypted message with this sentence as its
+    /// body.
+    private static let undecryptableBodyBeforeFlag = "Could not decrypt this message"
+
     func toChatMessage(conversationID: UUID) -> ChatMessage? {
         guard case let .message(entry) = self else { return nil }
+        let isUndecryptable = entry.isUndecryptable ?? (entry.isEncrypted && entry.body == Self.undecryptableBodyBeforeFlag)
         return ChatMessage(
             id: entry.id,
             conversationID: conversationID,
             stanzaID: entry.stanzaID,
             serverID: entry.serverID,
             fromJID: entry.fromJID,
-            body: entry.body,
+            body: isUndecryptable ? "" : entry.body,
             htmlBody: entry.htmlBody,
             timestamp: entry.timestamp,
             isOutgoing: entry.isOutgoing,
@@ -117,6 +125,7 @@ enum TranscriptRecord: Codable {
             type: entry.messageType,
             replyToID: entry.replyToID,
             isEncrypted: entry.isEncrypted,
+            isUndecryptable: isUndecryptable,
             attachments: entry.attachments
         )
     }

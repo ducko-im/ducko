@@ -13,8 +13,9 @@ struct MessageContextMenu: View {
     /// by title via `AppAccessor.contextMenuItem(title:)`, which matches
     /// `kAXTitleAttribute` directly.
     var body: some View {
-        if !message.isRetracted {
-            Button("Copy") {
+        if !message.isRetracted, !message.isUndecryptable {
+            // A shared file's body is its link, and nothing of it shows as text.
+            Button(message.bodyIsAttachmentLink ? "Copy Link" : "Copy") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(message.body, forType: .string)
             }
@@ -32,8 +33,10 @@ struct MessageContextMenu: View {
         }
 
         if message.isOutgoing, !message.isRetracted, message.stanzaID != nil {
-            Button("Edit") {
-                windowState.startEdit(of: message)
+            if !message.bodyIsAttachmentLink {
+                Button("Edit") {
+                    windowState.startEdit(of: message)
+                }
             }
 
             Button("Retract") {

@@ -28,6 +28,27 @@ struct JSONFormatterTests {
         #expect(json["direction"] == "incoming")
     }
 
+    @Test func `undecryptable message is flagged and carries no body`() throws {
+        let message = ChatMessage(
+            id: UUID(),
+            conversationID: UUID(),
+            fromJID: "alice@example.com",
+            body: "",
+            timestamp: Date(),
+            isOutgoing: false,
+            isDelivered: false,
+            isEdited: false,
+            type: "chat",
+            isEncrypted: true,
+            isUndecryptable: true
+        )
+        let output = formatter.formatMessage(message)
+        let data = try #require(output.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+        #expect(json["undecryptable"] == "true")
+        #expect(json["body"]?.isEmpty == true)
+    }
+
     @Test func `account output is valid JSON`() throws {
         let jid = try #require(BareJID.parse("alice@example.com"))
         let accountID = UUID()

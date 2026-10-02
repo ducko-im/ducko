@@ -45,6 +45,24 @@ struct PlainFormatterTests {
         #expect(output.contains("Hi there"))
     }
 
+    @Test func `format message undecryptable`() {
+        let message = ChatMessage(
+            id: UUID(),
+            conversationID: UUID(),
+            fromJID: "alice@example.com",
+            body: "",
+            timestamp: Date(),
+            isOutgoing: false,
+            isDelivered: false,
+            isEdited: false,
+            type: "chat",
+            isEncrypted: true,
+            isUndecryptable: true
+        )
+        let output = formatter.formatMessage(message)
+        #expect(output.contains("alice@example.com: error: This message could not be decrypted"))
+    }
+
     // MARK: - formatAccount
 
     @Test func `format account`() throws {

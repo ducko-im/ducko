@@ -79,6 +79,9 @@ public final class AppEnvironment {
         presenceService.setAccountService(accountService)
         rosterService.setAccountService(accountService)
         rosterService.setPresenceService(presenceService)
+        presenceService.onContactWentOffline = { [weak rosterService] jid, accountID in
+            await rosterService?.updateLastSeen(jid: jid, date: Date(), accountID: accountID)
+        }
         bookmarksService.setAccountService(accountService)
         bookmarksService.setChatService(chatService)
         avatarService.setAccountService(accountService)

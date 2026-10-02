@@ -31,6 +31,9 @@ struct JSONFormatter: CLIFormatter {
         if message.isEncrypted {
             dict["encrypted"] = "true"
         }
+        if message.isUndecryptable {
+            dict["undecryptable"] = "true"
+        }
         if message.isEdited {
             dict["edited"] = "true"
         }

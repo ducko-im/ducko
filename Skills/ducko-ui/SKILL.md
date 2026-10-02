@@ -97,7 +97,7 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `attachment-preview-button` | File attachment card that opens the system Quick Look panel. Disabled for remote files. | Chat |
 | `attachment-reveal-button` | Reveal-in-Finder button on a saved file attachment, shown on hover | Chat |
 | `attachment-open-button` | Open button on a remote (HTTP) file attachment | Chat |
-| `attachment-load-image` | Placeholder for a remote image. Tapping it loads the image inline. | Chat |
+| `attachment-load-image` | Click-to-load placeholder for a remote image, showing the file name. Absent where the image loads on sight: your own messages, and a roster contact's messages in a 1:1 chat. Tapping it loads the image inline. | Chat |
 | `image-preview` | Full-size image preview sheet | Chat |
 | `link-preview` | Link preview card in message bubble | Chat |
 | `room-settings-menu-item` | "Room Settings…" context menu item | Contacts |
@@ -148,6 +148,7 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `message-list` | Scrollable message list container | Chat |
 | `message-bubble-{id}` | Individual message bubble (id is ChatMessage.id) | Chat |
 | `retracted-message` | Retracted message tombstone | Chat |
+| `undecryptable-message` | Stand-in bubble for an encrypted message that could not be decrypted | Chat |
 | `setup-mode-picker` | Import/Login/Register segmented control | Account Setup |
 | `import-button` | Import & Connect / Import Logs button (Import mode) | Account Setup |
 | `import-done-button` | Done button after import completes | Account Setup |
@@ -164,6 +165,7 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `new-password-field` | New password field | Change Password |
 | `confirm-password-field` | Confirm password field | Change Password |
 | `encrypted-indicator` | Lock icon on encrypted messages | Chat |
+| `undecryptable-indicator` | Warning lock on an encrypted message that could not be decrypted, shown instead of `encrypted-indicator` | Chat |
 | `encryption-menu` | Encryption menu button in chat header | Chat |
 | `device-fingerprints-sheet` | Device fingerprints sheet | Chat |
 | `device-row-{deviceID}` | Individual device row | Device Fingerprints |
@@ -309,7 +311,7 @@ Right-click a participant in the chat window sidebar:
 
 For first-time setup when no account exists:
 
-**Complete the Welcome screen first.** On a fresh profile the first-run Welcome onboarding window holds key/first-responder status. Contact-list actions like Add Contact are gated behind a focus check (Contacts must be the key window), and synthetic automation can't force that focus while Welcome is up — so contact/chat steps silently fail until Welcome is gone. Welcome can't simply be dismissed; you must *complete* it by logging in through it. The Welcome screen defaults to **Import** mode, and `ducko-login.sh` assumes **Login** mode is already selected, so select the Login segment of the `setup-mode-picker` segmented control *before* running it.
+**Complete the Welcome screen first.** On a fresh profile the first-run Welcome onboarding window holds key/first-responder status. Contact-list actions like Add Contact are gated behind a focus check (Contacts must be the key window), and synthetic automation can't force that focus while Welcome is up — so contact/chat steps silently fail until Welcome is gone. Welcome can't simply be dismissed; you must *complete* it by logging in through it, or keep it from appearing by seeding the profile's account from the CLI (see Notes). The Welcome screen defaults to **Import** mode, and `ducko-login.sh` assumes **Login** mode is already selected, so select the Login segment of the `setup-mode-picker` segmented control *before* running it.
 
 The Welcome scripts (`ducko-login.sh`, `ducko-register.sh`, `ducko-import.sh`) walk the Welcome window via the recursive `findByAttr` handler (like `ducko-select-mode.sh`) and gate their success message on the osascript result, so a missing field reports an error instead of false success. The login screen's identifiers are covered by `UILoginTests` (which drives them through the test harness's Swift AX helpers, not this script); the register/import segments have no integration test, so for all three the script's traversal and success-gating are verified by construction.
 
@@ -694,9 +696,11 @@ $SCRIPTS/ducko-screenshot.sh "encryption-enabled.png"
 $SCRIPTS/ducko-encrypt.sh fingerprints
 $SCRIPTS/ducko-screenshot.sh "device-fingerprints.png"
 
-# 4. Trust a device (replace DEVICE_ID with actual ID from screenshot)
-# $SCRIPTS/ducko-device-trust.sh 12345 trust
-# $SCRIPTS/ducko-screenshot.sh "device-trusted.png"
+# 4. Verify a device (replace DEVICE_ID with actual ID from screenshot). With Trust On First Use on, the
+#    default, a new device already shows as Trusted with Verify and Untrust. Trust appears only after Untrust,
+#    or with `tofuToggle` off.
+# $SCRIPTS/ducko-device-trust.sh 12345 verify
+# $SCRIPTS/ducko-screenshot.sh "device-verified.png"
 
 # 5. Cleanup
 $SCRIPTS/ducko-stop.sh
@@ -889,6 +893,10 @@ To allow these scripts in `settings.local.json` without prompts:
 - When the user drives the GUI on a profile, pause these scripts: `ducko-launch.sh`, `ducko-stop.sh` and `ducko-connect.sh` kill every DuckoApp this checkout built, regardless of profile. Run CLI or integration tests meanwhile on other `DUCKO_PROFILE`s and accounts, so their offers and messages stay out of the user's window. Hand the GUI over by running `swift build` and launching `DUCKO_PROFILE=<name> .build/debug/DuckoApp` (a packaged bundle can be stale).
 - The installed production app's executable is also named `DuckoApp`, and `swift run` launches the build product by a path relative to the checkout (`.build/out/Products/Debug/DuckoApp`). Anchor any process match for the dev app to this checkout's paths and accept the relative form, as `ducko-stop.sh` does.
 - While the production app runs, System Events `process "DuckoApp"` can resolve to it, so the helper scripts, which target the app by that name, can act on production. Drive the dev instance through PID-targeted AX (`AXUIElementCreateApplication(pid)`, as `ducko-dismiss.swift` does). AX actions need no focus: `AXShowMenu` on a `contact-row-*` followed by pressing its "Start Chat" menu item opens a chat, and `AXPress` works on `status-picker` and on picker radios. Open a menu with whichever action the element advertises — `AXShowMenu` returns success without opening the menu on a control that does not advertise it, such as `account-actions-menu`, a `Menu` inside a grouped `Form`, which advertises only `AXPress`. `AppAccessor.pressMenuItem` and `ducko_as_click_context_menu_item` both branch on the advertised action list. Prefer these to synthesized mouse clicks, which land on whatever window is frontmost.
+- A throwaway `DUCKO_PROFILE` gets a persisted account from the CLI (`DuckoCLI account add --no-connect`), after which the GUI opens on Contacts with no Welcome screen. That account has Connect on Launch off, so it starts Offline: `AXPress` `status-picker`, then press its Available item.
+- To get an outgoing bubble without typing into the GUI, send from a second session of the same account while the GUI is connected, such as the CLI under another profile. It arrives as a carbon.
+- To type into the dev instance alone, activate it by PID (`NSRunningApplication(processIdentifier:)`, not `set frontmost of process`) and post Unicode key events to that PID, as `AppAccessor.postKey` does. This fills `new-chat-jid-field` after File ▸ New Chat; pressing `start-chat-button` then opens a chat with a JID that has no contact row.
+- Neither the `-AppleInterfaceStyle Dark` launch argument nor `defaults write DuckoApp AppleInterfaceStyle Dark` switches the debug binary to dark appearance, so a dark-appearance check needs the system setting. Ask the user to switch it.
 - AX titles render the status rows' checkmark and dash marks as the object replacement character `￼` (U+FFFC), so a title read shows which rows are marked but not how. Each account shows exactly one status, so among the five global status rows (Available through Offline), read a single marked row as a checkmark and two or more as dashes. A per-account submenu only ever checks one row. Saved-status rows can't be read this way, so screenshot the open menu for those, or whenever the distinction must be confirmed.
 - Another agent session working in this repo can have its own DuckoApp up, including one built from a git worktree, and `process "DuckoApp"` resolves to whichever instance the system picks. Its clicks then land in that app and its failures read as script flakes. List the peer sessions, ask before driving the GUI, and say when you are done. Only the close paths take a `DUCKO_PID` (`ducko-connection-info.sh close`, `ducko-dismiss-roster-notice.sh`); every open path matches by name, so to scope one, copy `scripts/` to a scratch directory and replace `process "DuckoApp"` with `(first application process whose unix id is <pid>)`. The integration harness is unaffected, since `AppAccessor` targets by PID.
 - A sheet that fetches on appear needs an identifier on its settled (non-loading) content, not only on the sheet container: the container mounts while the request is in flight, so a wait on it passes before the fetch resolves and cannot fail when the fetch breaks. `server-info-content` and `registration-form-content` follow this; give new loading sheets the same pair.

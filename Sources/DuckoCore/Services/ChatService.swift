@@ -213,7 +213,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             }
     }
 
-    public func sendMessage(to jid: BareJID, body: String, accountID: UUID, additionalElements: [DuckoXMPP.XMLElement] = []) async throws {
+    public func sendMessage(to jid: BareJID, body: String, accountID: UUID, attachments: [Attachment] = []) async throws {
         guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
         guard let chatModule = await client.module(ofType: ChatModule.self) else { return }
 
@@ -232,7 +232,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             id: UUID(), conversationID: conversation.id, stanzaID: stanzaID,
             fromJID: jid.description, body: filtered.body, htmlBody: filtered.htmlBody,
             timestamp: Date(), isOutgoing: true, isDelivered: false, isEdited: false,
-            type: "chat", isEncrypted: trustedDeviceIDs != nil
+            type: "chat", isEncrypted: trustedDeviceIDs != nil, attachments: attachments
         )
         try await persistMessage(message, in: conversation, accountID: accountID)
 
@@ -240,7 +240,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             try await dispatchSend(SendDispatchContext(
                 jid: jid, filteredBody: filtered.body, stanzaID: stanzaID,
                 trustedDeviceIDs: trustedDeviceIDs, accountID: accountID,
-                chatModule: chatModule, additionalElements: additionalElements
+                chatModule: chatModule, additionalElements: attachments.map(Self.oobElement)
             ))
         } catch {
             await appendFailedSendRetract(message, stanzaID: stanzaID, conversationID: conversation.id)
@@ -320,6 +320,13 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             requestReceipt: true, markable: true, includeChatState: chatStatesEnabled,
             additionalElements: [elements.encrypted, elements.encryption, storeHint]
         )
+    }
+
+    /// XEP-0066: the element that lets other clients render the message as a file attachment.
+    private static func oobElement(for attachment: Attachment) -> DuckoXMPP.XMLElement {
+        var oobX = DuckoXMPP.XMLElement(name: "x", namespace: XMPPNamespaces.oob)
+        oobX.setChildText(named: "url", to: attachment.url)
+        return oobX
     }
 
     public func selectConversation(_ id: UUID?, accountID: UUID? = nil) async {
@@ -826,7 +833,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         try await roomService.leaveRoom(jid: jid, accountID: accountID)
     }
 
-    public func sendGroupMessage(to room: BareJID, body: String, accountID: UUID, additionalElements: [DuckoXMPP.XMLElement] = []) async throws {
+    public func sendGroupMessage(to room: BareJID, body: String, accountID: UUID, attachments: [Attachment] = []) async throws {
         guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
         guard let mucModule = await client.module(ofType: MUCModule.self) else { return }
 
@@ -837,7 +844,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         // Resolve encryption before persisting so a "no trusted devices" throw leaves nothing persisted
         // (mirrors 1:1). Only the transport send sits inside the do/catch rollback below.
         let prepared = try await prepareGroupMessage(
-            room: room, body: filtered.body, conversation: conversation, additionalElements: additionalElements
+            room: room, body: filtered.body, conversation: conversation, additionalElements: attachments.map(Self.oobElement)
         )
 
         let message = ChatMessage(
@@ -852,7 +859,8 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             isDelivered: false,
             isEdited: false,
             type: "groupchat",
-            isEncrypted: prepared.isEncrypted
+            isEncrypted: prepared.isEncrypted,
+            attachments: attachments
         )
         try await persistMessage(message, in: conversation, accountID: accountID)
 
@@ -1350,7 +1358,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             return
         }
 
-        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: roomJID, isUnstyled: xmppMessage.isUnstyled)
+        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: roomJID, isUnstyled: xmppMessage.isUnstyled, attachments: metadata.attachments)
 
         // Parse XEP-0359 stanza-id assigned by the MUC server
         let serverID = metadata.serverIdentifiers.first { $0.by == roomJID.description }?.id
@@ -1398,7 +1406,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             return
         }
 
-        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: roomJID, isUnstyled: xmppMessage.isUnstyled)
+        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: roomJID, isUnstyled: xmppMessage.isUnstyled, attachments: metadata.attachments)
 
         let message = ChatMessage(
             id: UUID(),
@@ -1653,9 +1661,15 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         direction: FilterDirection,
         accountID: UUID,
         fallback: BareJID,
-        isUnstyled: Bool = false
+        isUnstyled: Bool = false,
+        attachments: [Attachment] = []
     ) async -> MessageContent {
-        await filterBody(body, direction: direction, accountJID: accountJID(for: accountID, fallback: fallback), isUnstyled: isUnstyled)
+        // A body that only repeats an attachment's link is shown as the attachment, which decides for itself when
+        // the link is fetched, so no preview is fetched for it.
+        await filterBody(
+            body, direction: direction, accountJID: accountJID(for: accountID, fallback: fallback), isUnstyled: isUnstyled,
+            allowLinkPreviewFetches: !attachments.areLinked(by: body)
+        )
     }
 
     private func filterBody(
@@ -1758,7 +1772,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             return
         }
 
-        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: fromJID, isUnstyled: xmppMessage.isUnstyled)
+        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: fromJID, isUnstyled: xmppMessage.isUnstyled, attachments: metadata.attachments)
 
         let message = ChatMessage(
             id: UUID(),
@@ -1849,7 +1863,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         }
 
         let filterDirection: FilterDirection = isOutgoing ? .outgoing : .incoming
-        let filtered = await filterBody(body, direction: filterDirection, accountID: accountID, fallback: jid, isUnstyled: forwarded.message.isUnstyled)
+        let filtered = await filterBody(body, direction: filterDirection, accountID: accountID, fallback: jid, isUnstyled: forwarded.message.isUnstyled, attachments: metadata.attachments)
 
         let message = ChatMessage(
             id: UUID(),

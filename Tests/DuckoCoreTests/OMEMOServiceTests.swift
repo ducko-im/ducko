@@ -1,3 +1,4 @@
+import DuckoTestSupport
 import Foundation
 import Testing
 @testable import DuckoCore
@@ -155,6 +156,31 @@ enum OMEMOServiceTests {
             #expect(await store.saveSignedPreKeyCalls == 0)
             // Polling exhausts at ~100 ms; allow generous slack for CI variance.
             #expect(elapsed < .milliseconds(500))
+        }
+    }
+
+    struct FailedDecrypt {
+        @Test
+        @MainActor
+        func `A message that could not be decrypted is kept as such, with no text of its own`() async throws {
+            let store = MockPersistenceStore()
+            let transcripts = MockTranscriptStore()
+            let chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+            let service = makeOMEMOService(store: MockOMEMOStore())
+            service.setChatService(chatService)
+            let accountID = UUID()
+            let peer = try #require(BareJID(localPart: "peer", domainPart: "example.com"))
+
+            await service.handleEvent(
+                .omemoEncryptedMessageReceived(from: .bare(peer), decryptedBody: nil, senderDeviceID: 0, stanzaID: "omemo-bad"),
+                accountID: accountID
+            )
+
+            // Stored as text, the failure would be searched, quoted and copied as if the sender had written it.
+            let message = try #require(await transcripts.messages.last)
+            #expect(message.isUndecryptable)
+            #expect(message.body.isEmpty)
+            #expect(message.previewText == ChatMessage.undecryptableText)
         }
     }
 

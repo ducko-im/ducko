@@ -59,6 +59,15 @@ enum HTMLRenderingTests {
         }
 
         @Test
+        func `Strips AppKit background color from per-run attributes`() throws {
+            let html = #"<span style="background-color: #ffffff;">boxed text</span>"#
+            let attributed = try #require(HTMLAttributedStringParser.parse(html))
+            for run in attributed.runs {
+                #expect(run.appKit.backgroundColor == nil)
+            }
+        }
+
+        @Test
         func `Preserves bold as InlinePresentationIntent`() throws {
             let attributed = try #require(HTMLAttributedStringParser.parse("<b>bold</b>"))
             let run = try #require(attributed.runs.first)

@@ -27,6 +27,12 @@ struct MessageBubbleView: View {
         theme.current.showLinkPreviews ? windowState.linkPreview(for: message) : nil
     }
 
+    /// In a one-to-one chat with someone in your contact list, their photos load on sight. Anyone else's wait for a
+    /// click, so a stranger's link is not fetched merely by being shown.
+    private var loadsIncomingImagesOnSight: Bool {
+        !windowState.isGroupchat && windowState.contact != nil
+    }
+
     private var showAvatar: Bool {
         theme.current.showAvatars && !message.isOutgoing && theme.current.avatarPosition == .leading
     }
@@ -59,6 +65,7 @@ struct MessageBubbleView: View {
                 isGroupchatIncoming: isGroupchatIncoming,
                 isMetadataVisible: position.isLastInGroup || isHovered,
                 actionSenderName: actionSenderName,
+                loadsIncomingImagesOnSight: loadsIncomingImagesOnSight,
                 header: {
                     if let replied = repliedMessage {
                         ReplyQuoteView(

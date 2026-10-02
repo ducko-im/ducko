@@ -114,13 +114,14 @@ public enum OMEMOTrustLevel: String, Sendable, Codable {
         self == .trusted || self == .verified
     }
 
+    /// The level a device is treated as: an undecided one counts as trusted while Trust On First Use is on.
+    public func effective(trustOnFirstUse: Bool) -> OMEMOTrustLevel {
+        self == .undecided && trustOnFirstUse ? .trusted : self
+    }
+
     /// Whether this trust level allows encrypting, respecting the TOFU preference.
     public func isTrustedForEncryption(trustOnFirstUse: Bool) -> Bool {
-        switch self {
-        case .trusted, .verified: true
-        case .undecided: trustOnFirstUse
-        case .untrusted: false
-        }
+        effective(trustOnFirstUse: trustOnFirstUse).isTrustedForEncryption
     }
 }
 

@@ -98,3 +98,10 @@ public struct Attachment: Sendable, Identifiable, Codable {
         return ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)
     }
 }
+
+extension [Attachment] {
+    /// Whether `body` only repeats one of these attachments' links, as the body of a shared file's message does.
+    func areLinked(by body: String) -> Bool {
+        contains { $0.url == body }
+    }
+}

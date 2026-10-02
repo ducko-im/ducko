@@ -715,10 +715,16 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
                 return
             }
 
+            // A message that carries only key material has nothing to show, but it still moved the ratchet.
+            guard let body = result.body else {
+                context?.emitEvent(.omemoSessionAdvanced(jid: from.bareJID, deviceID: result.senderDeviceID))
+                return
+            }
+
             // Regular encrypted message
             context?.emitEvent(.omemoEncryptedMessageReceived(
                 from: from,
-                decryptedBody: result.body,
+                decryptedBody: body,
                 senderDeviceID: result.senderDeviceID,
                 stanzaID: stanzaID
             ))

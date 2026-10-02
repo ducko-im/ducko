@@ -85,13 +85,17 @@ struct DeviceFingerprintsSheet: View {
         }
     }
 
+    private func effectiveTrustLevel(of device: OMEMODeviceInfo) -> OMEMOTrustLevel {
+        device.trustLevel.effective(trustOnFirstUse: OMEMOPreferences.shared.trustOnFirstUse)
+    }
+
     private func deviceRow(_ device: OMEMODeviceInfo) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text("Device \(device.deviceID)")
                         .font(.caption.bold())
-                    trustBadge(device.trustLevel)
+                    trustBadge(effectiveTrustLevel(of: device))
                 }
                 if !device.fingerprint.isEmpty {
                     Text(formatFingerprint(device.fingerprint))
@@ -129,7 +133,7 @@ struct DeviceFingerprintsSheet: View {
 
     private func trustActions(_ device: OMEMODeviceInfo) -> some View {
         HStack(spacing: 4) {
-            switch device.trustLevel {
+            switch effectiveTrustLevel(of: device) {
             case .undecided, .untrusted:
                 Button("Trust") {
                     Task { await trust(device) }

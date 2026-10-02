@@ -7,11 +7,23 @@ import Testing
 private let testAccountID = UUID()
 private let contactJID = BareJID(localPart: "contact", domainPart: "example.com")!
 
-private func makePresence(show: XMPPPresence.Show? = nil, type: XMPPPresence.PresenceType? = nil, status: String? = nil) -> XMPPPresence {
+private func makePresence(
+    show: XMPPPresence.Show? = nil, type: XMPPPresence.PresenceType? = nil, status: String? = nil, priority: Int? = nil
+) -> XMPPPresence {
     var presence = XMPPPresence(type: type)
     presence.show = show
     presence.status = status
+    if let priority { presence.priority = priority }
     return presence
+}
+
+/// Delivers one presence stanza from the contact's client named `resource`.
+@MainActor
+private func deliver(
+    _ presence: XMPPPresence, from resource: String, of jid: BareJID = contactJID, to service: PresenceService
+) async throws {
+    let from = try JID.full(#require(FullJID(bareJID: jid, resourcePart: resource)))
+    await service.handleEvent(.presenceUpdated(from: from, presence: presence), accountID: testAccountID)
 }
 
 // MARK: - Tests
@@ -204,6 +216,128 @@ enum PresenceServiceTests {
 
             await service.handleEvent(.disconnected(.requested), accountID: testAccountID)
             #expect(service.contactStatusMessages.isEmpty)
+        }
+    }
+
+    @MainActor
+    struct ContactSessions {
+        @Test
+        func `A contact stays online until its last session goes`() async throws {
+            let service = makePresenceService()
+            try await deliver(makePresence(), from: "laptop", to: service)
+            try await deliver(makePresence(show: .away), from: "phone", to: service)
+
+            try await deliver(makePresence(type: .unavailable), from: "laptop", to: service)
+            #expect(service.presence(for: contactJID, accountID: testAccountID) == .away)
+
+            try await deliver(makePresence(type: .unavailable), from: "phone", to: service)
+            #expect(service.presence(for: contactJID, accountID: testAccountID) == nil)
+        }
+
+        @Test
+        func `Only the last session going offline is reported`() async throws {
+            let service = makePresenceService()
+            var wentOffline: [BareJID] = []
+            service.onContactWentOffline = { jid, _ in wentOffline.append(jid) }
+            try await deliver(makePresence(), from: "laptop", to: service)
+            try await deliver(makePresence(), from: "phone", to: service)
+
+            try await deliver(makePresence(type: .unavailable), from: "laptop", to: service)
+            #expect(wentOffline.isEmpty)
+
+            try await deliver(makePresence(type: .unavailable), from: "phone", to: service)
+            #expect(wentOffline == [contactJID])
+        }
+
+        /// On sign-in the server answers for contacts that are offline, which is no session ending.
+        @Test
+        func `An offline notice for a contact with no session is not reported`() async {
+            let service = makePresenceService()
+            var wentOffline: [BareJID] = []
+            service.onContactWentOffline = { jid, _ in wentOffline.append(jid) }
+
+            await service.handleEvent(.presenceUpdated(from: .bare(contactJID), presence: makePresence(type: .unavailable)), accountID: testAccountID)
+
+            #expect(wentOffline.isEmpty)
+        }
+
+        @Test
+        func `The highest-priority session decides what a contact shows`() async throws {
+            let service = makePresenceService()
+            try await deliver(makePresence(show: .dnd, status: "In a call", priority: 5), from: "laptop", to: service)
+            try await deliver(makePresence(priority: 0), from: "phone", to: service)
+
+            #expect(service.presence(for: contactJID, accountID: testAccountID) == .dnd)
+            #expect(service.statusMessage(for: contactJID, accountID: testAccountID) == "In a call")
+        }
+
+        @Test
+        func `Sessions of equal priority show the most available one`() async throws {
+            let service = makePresenceService()
+            try await deliver(makePresence(show: .xa), from: "laptop", to: service)
+            try await deliver(makePresence(show: .away), from: "phone", to: service)
+
+            #expect(service.presence(for: contactJID, accountID: testAccountID) == .away)
+        }
+
+        @Test
+        func `Unavailable from the bare JID takes every session offline`() async throws {
+            let service = makePresenceService()
+            try await deliver(makePresence(), from: "laptop", to: service)
+            try await deliver(makePresence(), from: "phone", to: service)
+
+            await service.handleEvent(.presenceUpdated(from: .bare(contactJID), presence: makePresence(type: .unavailable)), accountID: testAccountID)
+
+            #expect(service.presence(for: contactJID, accountID: testAccountID) == nil)
+        }
+    }
+
+    @MainActor
+    struct StreamResumption {
+        private let ownJID = FullJID(bareJID: BareJID(localPart: "me", domainPart: "example.com")!, resourcePart: "ducko")!
+        private let otherJID = BareJID(localPart: "other", domainPart: "example.com")!
+
+        /// Two contacts online, then the connection drops without being asked to.
+        private func makeServiceAfterDrop() async throws -> PresenceService {
+            let service = makePresenceService()
+            try await deliver(makePresence(show: .away), from: "res", to: service)
+            try await deliver(makePresence(), from: "res", of: otherJID, to: service)
+            await service.handleEvent(.disconnected(.connectionLost("reset")), accountID: testAccountID)
+            return service
+        }
+
+        @Test
+        func `A resumed stream shows contacts as they were, updated by what was replayed`() async throws {
+            let service = try await makeServiceAfterDrop()
+            #expect(service.contactPresences.isEmpty)
+
+            // The server replays what was missed, which can arrive before the resume is announced.
+            try await deliver(makePresence(type: .unavailable), from: "res", of: otherJID, to: service)
+            #expect(service.contactPresences.isEmpty)
+            await service.handleEvent(.streamResumed(ownJID), accountID: testAccountID)
+
+            #expect(service.contactPresences == [contactJID: .away])
+        }
+
+        @Test
+        func `A fresh connect drops the sessions kept from the dropped connection`() async throws {
+            let service = try await makeServiceAfterDrop()
+
+            await service.handleEvent(.connected(ownJID), accountID: testAccountID)
+            try await deliver(makePresence(), from: "res", of: otherJID, to: service)
+
+            #expect(service.contactPresences == [otherJID: .available])
+        }
+
+        @Test
+        func `A requested disconnect keeps nothing to resume`() async throws {
+            let service = makePresenceService()
+            try await deliver(makePresence(), from: "res", to: service)
+
+            await service.handleEvent(.disconnected(.requested), accountID: testAccountID)
+            await service.handleEvent(.streamResumed(ownJID), accountID: testAccountID)
+
+            #expect(service.contactPresences.isEmpty)
         }
     }
 

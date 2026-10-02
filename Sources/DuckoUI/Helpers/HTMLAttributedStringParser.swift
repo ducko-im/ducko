@@ -37,6 +37,7 @@ enum HTMLAttributedStringParser {
             }
             attributed[range].appKit.font = nil
             attributed[range].appKit.foregroundColor = nil
+            attributed[range].appKit.backgroundColor = nil
         }
 
         cache.setObject(NSAttributedString(attributed), forKey: key)

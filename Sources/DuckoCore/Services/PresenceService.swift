@@ -10,6 +10,25 @@ public final class PresenceService {
     private var contactStatusMessagesByAccount: [UUID: [BareJID: String]] = [:]
     private var pendingRequestsByAccount: [UUID: [BareJID]] = [:]
 
+    /// One of a contact's sessions, as its latest presence described it.
+    private struct ContactSession {
+        var status: PresenceStatus
+        var message: String?
+        var priority: Int
+    }
+
+    /// Every online session of each contact, keyed by resource. A contact running several clients sends presence for
+    /// each, so the contact is offline only once the last of them has gone. Presence from a bare JID is kept under the
+    /// empty resource.
+    private var contactSessionsByAccount: [UUID: [BareJID: [String: ContactSession]]] = [:]
+    /// Accounts whose stream dropped and may yet resume. Their contacts' sessions are kept but not shown: a resumed
+    /// stream carries on where it left off, so the server replays what was missed rather than sending every presence
+    /// again.
+    private var suspendedAccounts: Set<UUID> = []
+
+    /// Called when the last of a contact's sessions goes offline.
+    var onContactWentOffline: (@MainActor (BareJID, UUID) async -> Void)?
+
     /// Sparse per-account pins layered over the global `myPresence`/`myStatusMessage`. An account with
     /// an entry broadcasts its own status; any global change wipes the whole map (Adium's "reset everyone").
     private var presenceOverridesByAccount: [UUID: OwnPresenceOverride] = [:]
@@ -47,6 +66,11 @@ public final class PresenceService {
     /// Account-scoped status-message lookup. Mirror of `presence(for:accountID:)`.
     public func statusMessage(for jid: BareJID, accountID: UUID) -> String? {
         contactStatusMessagesByAccount[accountID]?[jid]
+    }
+
+    /// Read from the kept sessions rather than from what is shown, so it holds while the account's stream is suspended.
+    private func hasOnlineSession(_ jid: BareJID, accountID: UUID) -> Bool {
+        contactSessionsByAccount[accountID]?[jid] != nil
     }
 
     public var pendingSubscriptionRequests: [BareJID] {
@@ -248,21 +272,30 @@ public final class PresenceService {
     func handleEvent(_ event: XMPPEvent, accountID: UUID) async {
         switch event {
         case .connected:
+            // A fresh stream is sent every contact's presence anew, so nothing kept from the last one applies.
+            dropContactSessions(for: accountID)
             await reapplyHeldPresenceAfterReconnect(accountID: accountID)
+        case .streamResumed:
+            resumeContactSessions(for: accountID)
         case let .presenceUpdated(from, presence):
-            handlePresenceUpdated(from: from, presence: presence, accountID: accountID)
+            if handlePresenceUpdated(from: from, presence: presence, accountID: accountID) {
+                await onContactWentOffline?(from.bareJID, accountID)
+            }
         case let .presenceSubscriptionRequest(from):
             handleSubscriptionRequest(from: from, accountID: accountID)
         case let .disconnected(reason):
-            clearContactState(for: accountID)
-            // Drop a per-account override only on intentional teardown; preserve it across a stream
-            // blip + auto-reconnect so a pinned status isn't silently lost.
+            // An intentional teardown drops the kept sessions and the per-account override. A stream blip keeps
+            // both, so a resumed stream shows its contacts again and a pinned status isn't silently lost.
             if case .requested = reason {
+                dropContactSessions(for: accountID)
                 presenceOverridesByAccount.removeValue(forKey: accountID)
+            } else {
+                suspendedAccounts.insert(accountID)
             }
+            clearContactState(for: accountID)
         case .presenceSubscriptionApproved, .presenceSubscriptionRevoked:
             break
-        case .streamResumed, .authenticationFailed,
+        case .authenticationFailed,
              .messageReceived, .presenceReceived, .iqReceived,
              .rosterUpdated,
              .messageCarbonReceived, .messageCarbonSent,
@@ -289,8 +322,8 @@ public final class PresenceService {
     /// sends a blank available presence on every fresh connect, which would otherwise silently revert a chosen
     /// away/dnd/available-with-message back to plain available for peers mid-session. Skips plain
     /// default-available (already covered by `handleConnect`) and `.offline` (short-circuits in `sendPresence`).
-    /// `.streamResumed` is intentionally not handled — a resumed session skips `handleConnect()`, so presence is
-    /// never reset.
+    /// `.streamResumed` does not reapply the held presence — a resumed session skips `handleConnect()`, so presence
+    /// is never reset.
     private func reapplyHeldPresenceAfterReconnect(accountID: UUID) async {
         guard shouldReapplyHeldPresence(accountID: accountID) else { return }
         guard let client = accountService?.connectedClient(for: accountID) else { return }
@@ -382,30 +415,83 @@ public final class PresenceService {
         }
     }
 
-    private func handlePresenceUpdated(from: JID, presence: XMPPPresence, accountID: UUID) {
+    /// Applies one presence stanza to the contact's sessions. Returns whether it took the contact's last session offline.
+    private func handlePresenceUpdated(from: JID, presence: XMPPPresence, accountID: UUID) -> Bool {
         let bareJID = from.bareJID
+        let wasOnline = hasOnlineSession(bareJID, accountID: accountID)
         let status = mapPresence(presence)
-        if status == .offline {
-            contactPresencesByAccount[accountID, default: [:]].removeValue(forKey: bareJID)
-        } else {
-            contactPresencesByAccount[accountID, default: [:]][bareJID] = status
+        let resource: String? = switch from {
+        case let .full(fullJID): fullJID.resourcePart
+        case .bare: nil
         }
-
-        // Stores the status from the most recently applied presence; multi-resource
-        // priority handling is out of scope for v1. Clearing when the trimmed text is
-        // empty (or the peer went offline) keeps a stale custom status from sticking
-        // after the peer returns to plain available.
-        let trimmedStatus = presence.status?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if status == .offline || (trimmedStatus?.isEmpty ?? true) {
-            contactStatusMessagesByAccount[accountID, default: [:]].removeValue(forKey: bareJID)
+        if status != .offline {
+            // Whitespace-only text counts as no status.
+            let trimmedStatus = presence.status?.trimmingCharacters(in: .whitespacesAndNewlines)
+            contactSessionsByAccount[accountID, default: [:]][bareJID, default: [:]][resource ?? ""] = ContactSession(
+                status: status,
+                message: trimmedStatus?.isEmpty == false ? trimmedStatus : nil,
+                priority: presence.priority
+            )
+        } else if let resource {
+            contactSessionsByAccount[accountID]?[bareJID]?.removeValue(forKey: resource)
+            if contactSessionsByAccount[accountID]?[bareJID]?.isEmpty == true {
+                contactSessionsByAccount[accountID]?.removeValue(forKey: bareJID)
+            }
         } else {
-            contactStatusMessagesByAccount[accountID, default: [:]][bareJID] = trimmedStatus
+            // Unavailable from the bare JID speaks for every session the contact had.
+            contactSessionsByAccount[accountID]?.removeValue(forKey: bareJID)
         }
 
         // Synchronous handler (no store await to bracket), so the caches are recomputed inline — no
         // load-generation guard is needed here, unlike the suspending roster-load handlers.
-        rebuildContactPresences()
-        rebuildContactStatusMessages()
+        if !suspendedAccounts.contains(accountID), publishPresence(of: bareJID, accountID: accountID) {
+            rebuildMergedContactCaches()
+        }
+        return wasOnline && !hasOnlineSession(bareJID, accountID: accountID)
+    }
+
+    /// Sets what one contact shows from its sessions and reports whether that changed, so a stanza from a session that
+    /// is not the one shown costs no republish.
+    private func publishPresence(of jid: BareJID, accountID: UUID) -> Bool {
+        let shown = contactSessionsByAccount[accountID]?[jid]?.min(by: Self.isShownBefore)?.value
+        guard contactPresencesByAccount[accountID]?[jid] != shown?.status
+            || contactStatusMessagesByAccount[accountID]?[jid] != shown?.message else { return false }
+        contactPresencesByAccount[accountID, default: [:]][jid] = shown?.status
+        contactStatusMessagesByAccount[accountID, default: [:]][jid] = shown?.message
+        return true
+    }
+
+    /// The session a contact shows is its highest-priority one, ties going to the most available. The resource name
+    /// settles what is still equal, so the choice does not depend on dictionary order.
+    private static func isShownBefore(
+        _ lhs: (key: String, value: ContactSession), _ rhs: (key: String, value: ContactSession)
+    ) -> Bool {
+        (-lhs.value.priority, availabilityRank(of: lhs.value.status), lhs.key)
+            < (-rhs.value.priority, availabilityRank(of: rhs.value.status), rhs.key)
+    }
+
+    private static func availabilityRank(of status: PresenceStatus) -> Int {
+        switch status {
+        case .available: 0
+        case .away: 1
+        case .xa: 2
+        case .dnd: 3
+        case .offline: 4
+        }
+    }
+
+    /// Shows a resumed account's contacts again, as their kept sessions and any presence replayed since describe them.
+    private func resumeContactSessions(for accountID: UUID) {
+        guard suspendedAccounts.remove(accountID) != nil else { return }
+        for jid in (contactSessionsByAccount[accountID] ?? [:]).keys {
+            _ = publishPresence(of: jid, accountID: accountID)
+        }
+        rebuildMergedContactCaches()
+    }
+
+    private func dropContactSessions(for accountID: UUID) {
+        contactSessionsByAccount.removeValue(forKey: accountID)
+        suspendedAccounts.remove(accountID)
     }
 
     // MARK: - Lifecycle
@@ -415,18 +501,23 @@ public final class PresenceService {
     /// delete). A stream-blip reconnect goes through `handleDisconnect` and never calls this, so a pinned
     /// override survives a blip.
     func purgeAccount(_ accountID: UUID) {
+        dropContactSessions(for: accountID)
         clearContactState(for: accountID)
         presenceOverridesByAccount.removeValue(forKey: accountID)
     }
 
     // MARK: - Presence Cache
 
-    /// Drops one account's peer presence/status/subscription state and republishes the merged caches.
-    /// Shared by the `.disconnected` handler and `purgeAccount` so the two stay in lockstep.
+    /// Drops what one account shows of its peers (presence, status, subscription requests) and republishes the merged
+    /// caches. Shared by the `.disconnected` handler and `purgeAccount` so the two stay in lockstep.
     private func clearContactState(for accountID: UUID) {
         contactPresencesByAccount.removeValue(forKey: accountID)
         contactStatusMessagesByAccount.removeValue(forKey: accountID)
         pendingRequestsByAccount.removeValue(forKey: accountID)
+        rebuildMergedContactCaches()
+    }
+
+    private func rebuildMergedContactCaches() {
         rebuildContactPresences()
         rebuildContactStatusMessages()
     }

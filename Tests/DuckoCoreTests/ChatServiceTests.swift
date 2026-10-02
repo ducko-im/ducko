@@ -87,6 +87,51 @@ enum ChatServiceTests {
         }
     }
 
+    /// A file shared by link arrives with that link as its body. Fetching a preview for it would request the file the
+    /// moment the message arrives, which is the attachment's decision to make.
+    struct SharedFileLinkPreview {
+        @MainActor
+        private func receive(body: String) async throws -> (message: ChatMessage, fetcher: CountingLinkPreviewFetcher) {
+            let fetcher = CountingLinkPreviewFetcher()
+            let pipeline = MessageFilterPipeline()
+            await pipeline.register(LinkDetectionFilter())
+            await pipeline.register(LinkPreviewFilter(previewService: LinkPreviewService(fetcher: fetcher, store: MockPersistenceStore())))
+            let store = makeStore()
+            let transcripts = makeTranscripts()
+            let service = ChatService(store: store, transcripts: transcripts, filterPipeline: pipeline)
+
+            let message = makeIncomingOOBMessage(from: contactJID, url: "https://example.com/photo.png", body: body)
+            await service.handleEvent(.messageReceived(message), accountID: testAccountID)
+
+            let conversation = try #require(try await store.fetchConversations(for: testAccountID).first)
+            let persisted = try #require(try await transcripts.fetchMessages(for: conversation.id, before: nil, limit: 50).first)
+            return (persisted, fetcher)
+        }
+
+        @Test
+        @MainActor
+        func `A body that only repeats its attachment's link fetches no preview`() async throws {
+            let (message, fetcher) = try await receive(body: "https://example.com/photo.png")
+
+            #expect(message.bodyIsAttachmentLink)
+            // The fetch is never started, so there is nothing to await. The yields give one that was started the
+            // chance to be counted.
+            for _ in 0 ..< 5 {
+                await Task.yield()
+            }
+            #expect(await fetcher.invocationCount == 0)
+        }
+
+        @Test
+        @MainActor
+        func `A body with text of its own still previews its link`() async throws {
+            let (message, fetcher) = try await receive(body: "look at https://example.com/photo.png")
+
+            #expect(!message.bodyIsAttachmentLink)
+            #expect(await pollUntil({ await fetcher.invocationCount == 1 }, timeout: .seconds(5)))
+        }
+    }
+
     struct ReceivedFilePreview {
         @Test
         @MainActor

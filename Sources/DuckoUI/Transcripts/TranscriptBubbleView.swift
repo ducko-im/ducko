@@ -17,12 +17,15 @@ struct TranscriptBubbleView: View {
                 message: message,
                 isGroupchatIncoming: isGroupchat && !message.isOutgoing,
                 isMetadataVisible: position.isLastInGroup,
-                actionSenderName: message.fromJID
+                actionSenderName: message.fromJID,
+                loadsIncomingImagesOnSight: false
             )
             .contextMenu {
-                Button("Copy Text") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(message.body, forType: .string)
+                if !message.isRetracted, !message.isUndecryptable {
+                    Button(message.bodyIsAttachmentLink ? "Copy Link" : "Copy Text") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(message.body, forType: .string)
+                    }
                 }
             }
 

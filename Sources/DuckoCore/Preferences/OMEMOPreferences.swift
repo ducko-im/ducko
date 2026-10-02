@@ -21,7 +21,7 @@ public final class OMEMOPreferences {
 
     private init() {
         let storedTOFU = Self.defaults.object(forKey: Keys.trustOnFirstUse) as? Bool
-        self.trustOnFirstUse = storedTOFU ?? false
+        self.trustOnFirstUse = storedTOFU ?? true
         let storedDefault = Self.defaults.object(forKey: Keys.encryptByDefault) as? Bool
         self.encryptByDefault = storedDefault ?? false
     }

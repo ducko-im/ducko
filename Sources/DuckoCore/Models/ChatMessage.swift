@@ -19,6 +19,8 @@ public struct ChatMessage: Sendable, Identifiable {
     public var isRetracted: Bool
     public var retractedAt: Date?
     public var isEncrypted: Bool
+    /// An encrypted message this device could not decrypt. It has no body: what it shows is `undecryptableText`.
+    public var isUndecryptable: Bool
     public var attachments: [Attachment]
 
     public init(
@@ -40,6 +42,7 @@ public struct ChatMessage: Sendable, Identifiable {
         isRetracted: Bool = false,
         retractedAt: Date? = nil,
         isEncrypted: Bool = false,
+        isUndecryptable: Bool = false,
         attachments: [Attachment] = []
     ) {
         self.id = id
@@ -60,13 +63,23 @@ public struct ChatMessage: Sendable, Identifiable {
         self.isRetracted = isRetracted
         self.retractedAt = retractedAt
         self.isEncrypted = isEncrypted
+        self.isUndecryptable = isUndecryptable
         self.attachments = attachments
     }
+
+    public static let undecryptableText = "This message could not be decrypted"
 
     /// What the message reads as wherever one line stands for it — a conversation's last-message preview, a
     /// notification. A received file arrives with no text, so the file's name is what it says.
     public var previewText: String {
-        body.isEmpty ? attachments.first?.displayFileName ?? "" : body
+        if isUndecryptable { return Self.undecryptableText }
+        return body.isEmpty ? attachments.first?.displayFileName ?? "" : body
+    }
+
+    /// Whether the body only repeats an attachment's link, as a shared file's message does, so the attachment stands
+    /// for the text.
+    public var bodyIsAttachmentLink: Bool {
+        attachments.areLinked(by: body)
     }
 
     /// Creates a display-only message for CLI output formatting.

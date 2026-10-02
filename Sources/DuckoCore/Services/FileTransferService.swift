@@ -749,7 +749,7 @@ public final class FileTransferService {
             let downloadURL = try await performUpload(fileURL: file.url, slot: slot, mimeType: file.mimeType, transferID: transferID, onProgress: onProgress)
             // Yield to drain any pending progress callbacks before setting terminal state
             await Task.yield()
-            try await sendDownloadURL(downloadURL, in: conversation, accountID: accountID)
+            try await sendDownloadURL(downloadURL, of: file, in: conversation, accountID: accountID)
             updateTransferState(id: transferID, state: .completed(downloadURL: downloadURL))
             return downloadURL
         } catch {
@@ -875,21 +875,17 @@ public final class FileTransferService {
         return phrase.prefix(1).uppercased() + phrase.dropFirst()
     }
 
-    private func sendDownloadURL(_ downloadURL: String, in conversation: Conversation, accountID: UUID) async throws {
+    private func sendDownloadURL(_ downloadURL: String, of file: FileInfo, in conversation: Conversation, accountID: UUID) async throws {
         guard let chatService else {
             throw FileTransferError.uploadFailed("The chat service is not available")
         }
-        // XEP-0066: Attach OOB element so other clients render file attachments
-        var oobX = DuckoXMPP.XMLElement(name: "x", namespace: XMPPNamespaces.oob)
-        var urlElement = DuckoXMPP.XMLElement(name: "url")
-        urlElement.addText(downloadURL)
-        oobX.addChild(urlElement)
+        let attachment = Attachment(id: UUID(), url: downloadURL, mimeType: file.mimeType, fileName: file.name, fileSize: file.size)
         let jid = conversation.jid
         switch conversation.type {
         case .chat:
-            try await chatService.sendMessage(to: jid, body: downloadURL, accountID: accountID, additionalElements: [oobX])
+            try await chatService.sendMessage(to: jid, body: downloadURL, accountID: accountID, attachments: [attachment])
         case .groupchat:
-            try await chatService.sendGroupMessage(to: jid, body: downloadURL, accountID: accountID, additionalElements: [oobX])
+            try await chatService.sendGroupMessage(to: jid, body: downloadURL, accountID: accountID, attachments: [attachment])
         }
     }
 

@@ -383,8 +383,14 @@ public final class ChatWindowState {
     // MARK: - Link Previews
 
     func linkPreview(for message: ChatMessage) -> LinkPreview? {
-        guard let url = Self.extractFirstURL(from: message.body) else { return nil }
+        guard let url = Self.previewURL(of: message) else { return nil }
         return environment.linkPreviewService.cachedPreview(for: url)
+    }
+
+    /// A body that only repeats an attachment's link has no preview: fetching one would request the file on sight,
+    /// which is the attachment's decision to make.
+    private static func previewURL(of message: ChatMessage) -> String? {
+        message.bodyIsAttachmentLink ? nil : extractFirstURL(from: message.body)
     }
 
     private static let linkDetector: NSDataDetector = {
@@ -404,7 +410,7 @@ public final class ChatWindowState {
     private func prefetchLinkPreviews() {
         let service = environment.linkPreviewService
         for message in messages {
-            guard let urlString = Self.extractFirstURL(from: message.body),
+            guard let urlString = Self.previewURL(of: message),
                   service.cachedPreview(for: urlString) == nil,
                   let url = URL(string: urlString) else { continue }
             Task {

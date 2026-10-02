@@ -23,6 +23,24 @@ struct ANSIFormatterTests {
         #expect(output.contains("\u{001B}["))
     }
 
+    @Test func `undecryptable message reads as an error in red`() {
+        let message = ChatMessage(
+            id: UUID(),
+            conversationID: UUID(),
+            fromJID: "alice@example.com",
+            body: "",
+            timestamp: Date(),
+            isOutgoing: false,
+            isDelivered: false,
+            isEdited: false,
+            type: "chat",
+            isEncrypted: true,
+            isUndecryptable: true
+        )
+        let output = formatter.formatMessage(message)
+        #expect(output.contains("alice@example.com: \u{001B}[31merror: This message could not be decrypted"))
+    }
+
     @Test func `account uses bold and dim`() throws {
         let jid = try #require(BareJID.parse("alice@example.com"))
         let account = Account(

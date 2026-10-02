@@ -10,6 +10,8 @@ struct MessageContentView<Header: View, Footer: View>: View {
     let isGroupchatIncoming: Bool
     let isMetadataVisible: Bool
     let actionSenderName: String
+    /// Whether a received remote image is fetched without the viewer asking for it.
+    let loadsIncomingImagesOnSight: Bool
     @ViewBuilder let header: Header
     @ViewBuilder let footer: Footer
 
@@ -26,8 +28,12 @@ struct MessageContentView<Header: View, Footer: View>: View {
         return HTMLAttributedStringParser.parse(html)
     }
 
+    private var showsBody: Bool {
+        !message.body.isEmpty && !message.bodyIsAttachmentLink
+    }
+
     private var isImageOnlyMessage: Bool {
-        message.body.isEmpty && message.attachments.count == 1 && message.attachments[0].isImage
+        !showsBody && message.attachments.count == 1 && message.attachments[0].isImage
     }
 
     var body: some View {
@@ -41,28 +47,23 @@ struct MessageContentView<Header: View, Footer: View>: View {
             }
 
             if message.isRetracted {
-                Text("This message was retracted")
-                    .italic()
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, theme.current.bubblePadding)
-                    .padding(.vertical, theme.current.bubblePadding * 0.67)
-                    .background(
-                        theme.bubbleColor(isOutgoing: message.isOutgoing, colorScheme: colorScheme),
-                        in: .rect(cornerRadius: theme.current.bubbleCornerRadius)
-                    )
+                noticeBubble("This message was retracted")
                     .accessibilityIdentifier("retracted-message")
+            } else if message.isUndecryptable {
+                noticeBubble(ChatMessage.undecryptableText)
+                    .accessibilityIdentifier("undecryptable-message")
             } else {
                 header
 
                 if isImageOnlyMessage {
-                    AttachmentView(attachment: message.attachments[0], isOutgoing: message.isOutgoing)
+                    AttachmentView(attachment: message.attachments[0], isOutgoing: message.isOutgoing, loadsIncomingImageOnSight: loadsIncomingImagesOnSight)
                 } else {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(message.attachments) { attachment in
-                            AttachmentView(attachment: attachment, isOutgoing: message.isOutgoing)
+                            AttachmentView(attachment: attachment, isOutgoing: message.isOutgoing, loadsIncomingImageOnSight: loadsIncomingImagesOnSight)
                         }
 
-                        if !message.body.isEmpty {
+                        if showsBody {
                             if isActionMessage {
                                 Text("* \(actionSenderName) \(actionText)")
                                     .italic()
@@ -91,6 +92,19 @@ struct MessageContentView<Header: View, Footer: View>: View {
             )
         }
     }
+
+    /// A bubble that stands in for a message with no text of its own to show.
+    private func noticeBubble(_ text: String) -> some View {
+        Text(text)
+            .italic()
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, theme.current.bubblePadding)
+            .padding(.vertical, theme.current.bubblePadding * 0.67)
+            .background(
+                theme.bubbleColor(isOutgoing: message.isOutgoing, colorScheme: colorScheme),
+                in: .rect(cornerRadius: theme.current.bubbleCornerRadius)
+            )
+    }
 }
 
 extension MessageContentView where Header == EmptyView, Footer == EmptyView {
@@ -98,13 +112,15 @@ extension MessageContentView where Header == EmptyView, Footer == EmptyView {
         message: ChatMessage,
         isGroupchatIncoming: Bool,
         isMetadataVisible: Bool,
-        actionSenderName: String
+        actionSenderName: String,
+        loadsIncomingImagesOnSight: Bool
     ) {
         self.init(
             message: message,
             isGroupchatIncoming: isGroupchatIncoming,
             isMetadataVisible: isMetadataVisible,
             actionSenderName: actionSenderName,
+            loadsIncomingImagesOnSight: loadsIncomingImagesOnSight,
             header: { EmptyView() },
             footer: { EmptyView() }
         )

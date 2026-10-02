@@ -7,10 +7,12 @@ struct PlainFormatter: CLIFormatter {
         let timestamp = iso8601(message.timestamp)
         let direction = message.isOutgoing ? "->" : "<-"
         let displayJID = message.isOutgoing ? (accountJID?.description ?? message.fromJID) : message.fromJID
-        // A received file has no text of its own, so the sender line names the file rather than reading as empty.
-        let body = if message.body.hasPrefix("/me ") {
+        let body = if message.isUndecryptable {
+            "\(message.fromJID): error: \(ChatMessage.undecryptableText)"
+        } else if message.body.hasPrefix("/me ") {
             "* \(displayJID) \(message.body.dropFirst(4))"
         } else {
+            // A received file has no text of its own, so the sender line names the file rather than reading as empty.
             "\(message.fromJID): \(message.previewText)"
         }
         var line = "[\(timestamp)] \(direction) \(body)"

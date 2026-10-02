@@ -69,3 +69,4 @@ struct ProfileView: View {
 - Avoid sprinkling raw `Color` values in views; it breaks consistency.
 - Do not tie theme to a single view’s local state.
 - Avoid using `@Environment(\\.colorScheme)` as the only theme control; it should complement your theme.
+- Hierarchical styles (`.primary`, `.secondary`, `.tertiary`) resolve against the enclosing `foregroundStyle`. A card that paints its own background inside a container that sets its own `foregroundStyle` renders its text in that style. Set a concrete style on the card’s own container, such as `.foregroundStyle(Color.primary)` (not `.primary`, which is itself hierarchical); the hierarchical levels inside it then derive from that.

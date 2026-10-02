@@ -395,19 +395,19 @@ public final class OMEMOService {
             return
         }
 
-        let body = decryptedBody ?? "Could not decrypt this message"
         let message = ChatMessage(
             id: UUID(),
             conversationID: conversation.id,
             serverID: stanzaID,
             fromJID: peerJID.description,
-            body: body,
+            body: decryptedBody ?? "",
             timestamp: Date(),
             isOutgoing: isOutgoing,
             isDelivered: false,
             isEdited: false,
             type: "chat",
-            isEncrypted: true
+            isEncrypted: true,
+            isUndecryptable: decryptedBody == nil
         )
 
         // RFC 6121 §5.1 resource lock — learn the peer's resource from the live encrypted inbound, mirroring

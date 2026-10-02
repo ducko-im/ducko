@@ -22,10 +22,12 @@ struct ANSIFormatter: CLIFormatter {
         let direction = message.isOutgoing ? "->" : "<-"
         let color = message.isOutgoing ? Color.cyan : Color.green
         let displayJID = message.isOutgoing ? (accountJID?.description ?? message.fromJID) : message.fromJID
-        // A received file has no text of its own, so the sender line names the file rather than reading as empty.
-        let body = if message.body.hasPrefix("/me ") {
+        let body = if message.isUndecryptable {
+            "\(message.fromJID): \(Color.red)error: \(ChatMessage.undecryptableText)"
+        } else if message.body.hasPrefix("/me ") {
             "* \(displayJID) \(message.body.dropFirst(4))"
         } else {
+            // A received file has no text of its own, so the sender line names the file rather than reading as empty.
             "\(message.fromJID): \(styledBody(message.previewText))"
         }
         var line = "\(Color.dim)[\(timestamp)]\(Color.reset) \(color)\(direction) \(body)\(Color.reset)"

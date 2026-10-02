@@ -8,12 +8,19 @@ struct AttachmentView: View {
     @Environment(\.colorScheme) private var colorScheme
     let attachment: Attachment
     let isOutgoing: Bool
+    /// Whether a received remote image is fetched without the viewer asking for it.
+    let loadsIncomingImageOnSight: Bool
     @State private var showQuickLook = false
     @State private var showSheet = false
     @State private var isHovering = false
     /// Whether the viewer has asked for a remote image to be fetched. Per view, and deliberately not persisted: the
     /// consent covers this one image in this one session, not every link the sender ever posts.
     @State private var isRemoteImageRequested = false
+
+    /// Your own image is a link you chose, so fetching it tells nobody anything new.
+    private var showsRemoteImage: Bool {
+        isOutgoing || loadsIncomingImageOnSight || isRemoteImageRequested
+    }
 
     private static let maxImageSize: CGFloat = 240
 
@@ -38,12 +45,12 @@ struct AttachmentView: View {
         .accessibilityIdentifier("attachment-view")
     }
 
-    /// A saved file opens the system Quick Look panel. A remote image is fetched only once the viewer asks for it, so
-    /// the first tap loads it inline and a later one opens the in-app sheet.
+    /// A saved file opens the system Quick Look panel. A remote image that is not shown yet is fetched by the first
+    /// tap, and one that is shown opens the in-app sheet.
     private func openPreview() {
         if localFileURL != nil {
             showQuickLook = true
-        } else if attachment.isImage, attachment.remoteURL != nil, !isRemoteImageRequested {
+        } else if attachment.isImage, attachment.remoteURL != nil, !showsRemoteImage {
             isRemoteImageRequested = true
         } else if attachment.isImage {
             showSheet = true
@@ -56,8 +63,8 @@ struct AttachmentView: View {
                 localImage(localFileURL)
             } else if let imageURL = attachment.remoteURL {
                 // Rendering a peer's URL on sight would fetch it, telling the sender the recipient's address and the
-                // moment they read the message, so the viewer asks first.
-                if isRemoteImageRequested {
+                // moment they read the message, so unless told otherwise the viewer asks first.
+                if showsRemoteImage {
                     AsyncImage(url: imageURL) { phase in
                         switch phase {
                         case let .success(image):
@@ -111,11 +118,22 @@ struct AttachmentView: View {
         }
     }
 
+    /// Drawn as a bubble of its own: an image-only message has none around it, and a bare icon would float on the chat
+    /// background. The file's name is all that says what the image is while it is not shown.
     private func imagePlaceholder(systemName: String) -> some View {
-        Image(systemName: systemName)
-            .font(.largeTitle)
-            .foregroundStyle(.secondary)
-            .frame(width: 120, height: 80)
+        VStack(spacing: 6) {
+            Image(systemName: systemName)
+                .font(.largeTitle)
+
+            Text(attachment.displayFileName)
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .foregroundStyle(theme.textColor(isOutgoing: isOutgoing, colorScheme: colorScheme).opacity(0.6))
+        .padding(12)
+        .frame(minWidth: 120, minHeight: 80)
+        .background(theme.bubbleColor(isOutgoing: isOutgoing, colorScheme: colorScheme), in: .rect(cornerRadius: 8))
     }
 
     private var fileAttachment: some View {

@@ -224,15 +224,11 @@ public final class RosterService {
             await handleBlockStateChanged(jid, isBlocked: true, accountID: accountID)
         case let .contactUnblocked(jid):
             await handleBlockStateChanged(jid, isBlocked: false, accountID: accountID)
-        case let .presenceUpdated(from, presence):
-            if presence.presenceType == .unavailable {
-                await updateLastSeen(jid: from.bareJID, date: Date(), accountID: accountID)
-            }
         case .disconnected:
             break
         case .connected, .streamResumed, .authenticationFailed,
              .messageReceived, .presenceReceived, .iqReceived,
-             .presenceSubscriptionRequest,
+             .presenceUpdated, .presenceSubscriptionRequest,
              .presenceSubscriptionApproved, .presenceSubscriptionRevoked,
              .messageCarbonReceived, .messageCarbonSent,
              .archivedMessagesLoaded,

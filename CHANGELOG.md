@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Show a photo sent as a file as the photo itself instead of its link, in your own messages as well as received ones
+- Load photos from people in your contact list right away in one-to-one chats, and show anyone else's as a placeholder with the file name that loads when clicked
+- Trust a contact's new devices on first use by default, so a first encrypted message sends without verifying a fingerprint beforehand, and show those devices as Trusted in Device Fingerprints
+- Show an encrypted message that could not be decrypted as a muted notice with a warning lock instead of as text from the sender, and mark it as an error in `ducko` output, with an `undecryptable` field in JSON
+- Offer Copy Link for a shared file in the message context menu, and no longer offer Edit for it
+
+### Fixed
+
+- Fix link previews being unreadable inside your own message bubbles
+- Fix contacts showing as offline while online after one of their devices disconnects or after your connection briefly drops
+- Fix "Last seen" jumping to the moment you connect for contacts who were already offline
+- Fix unreadable text in history for imported messages that carry their own background color
+- Fix encrypted messages that carry no text showing up as undecryptable
+
 ## [0.4.0] - 2026-09-24
 
 ### Added

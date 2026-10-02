@@ -771,6 +771,64 @@ enum TranscriptRecordTests {
         }
 
         @Test
+        func `An undecryptable message round trips with its flag and no body`() throws {
+            var msg = makeMessage(body: "")
+            msg.isEncrypted = true
+            msg.isUndecryptable = true
+
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(TranscriptRecord.from(msg))
+
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let restored = try #require(decoder.decode(TranscriptRecord.self, from: data).toChatMessage(conversationID: testConversationID))
+            #expect(restored.isUndecryptable)
+            #expect(restored.body.isEmpty)
+        }
+
+        @Test
+        func `An encrypted message that only says the old stand-in sentence stays a message`() throws {
+            var msg = makeMessage(body: "Could not decrypt this message")
+            msg.isEncrypted = true
+
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(TranscriptRecord.from(msg))
+
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let restored = try #require(decoder.decode(TranscriptRecord.self, from: data).toChatMessage(conversationID: testConversationID))
+            #expect(!restored.isUndecryptable)
+            #expect(restored.body == "Could not decrypt this message")
+        }
+
+        /// Records written before the flag existed carry no `isUndecryptable` key, and a failed decrypt among them is an
+        /// encrypted message whose body is the sentence that used to stand in for it.
+        @Test(arguments: [
+            ("Could not decrypt this message", true, true),
+            ("Could not decrypt this message", false, false),
+            ("hello", true, false)
+        ])
+        func `A record without the flag reads as undecryptable only when it is the old stand-in`(
+            body: String, isEncrypted: Bool, expected: Bool
+        ) throws {
+            let json = """
+            {"type":"msg","id":"\(UUID().uuidString)","fromJID":"alice@example.com","body":"\(body)",\
+            "timestamp":"2026-01-01T00:00:00Z","isOutgoing":false,"isEncrypted":\(isEncrypted),\
+            "messageType":"chat","attachments":[]}
+            """
+
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let record = try decoder.decode(TranscriptRecord.self, from: Data(json.utf8))
+            let restored = try #require(record.toChatMessage(conversationID: testConversationID))
+
+            #expect(restored.isUndecryptable == expected)
+            #expect(restored.body == (expected ? "" : body))
+        }
+
+        @Test
         func `Amendment record round trips through JSON`() throws {
             let amendment = TranscriptAmendment(action: .edit, targetStanzaID: "s1", timestamp: Date(), body: "edited")
             let record = TranscriptRecord.from(amendment)

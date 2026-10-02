@@ -54,7 +54,6 @@ struct LinkPreviewCard: View {
                         .font(.callout)
                         .bold()
                         .lineLimit(1)
-                        .foregroundStyle(.primary)
                 }
 
                 if let description = preview.descriptionText {
@@ -73,6 +72,8 @@ struct LinkPreviewCard: View {
 
             Spacer()
         }
+        // The card paints its own background, so its text must not inherit the bubble's color.
+        .foregroundStyle(Color.primary)
         .padding(8)
         .background(theme.current.backgroundColor.resolved(for: colorScheme), in: .rect(cornerRadius: 8))
         .overlay(

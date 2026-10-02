@@ -646,10 +646,8 @@ enum RosterServiceTests {
             let release = AsyncSemaphore()
             await store.installFetchContactsGate(entered: entered, release: release)
 
-            // An unavailable presence drives `updateLastSeen` through `handleEvent`.
-            let from = try JID.full(#require(FullJID(bareJID: contactJID1, resourcePart: "res")))
             let task = Task { @MainActor in
-                await service.handleEvent(.presenceUpdated(from: from, presence: XMPPPresence(type: .unavailable)), accountID: testAccountID)
+                await service.updateLastSeen(jid: contactJID1, date: Date(), accountID: testAccountID)
             }
 
             await entered.wait()

@@ -12,7 +12,12 @@ struct MessageMetadataView: View {
                 .font(theme.current.timestampFont.resolved)
                 .foregroundStyle(.secondary)
 
-            if message.isEncrypted {
+            if message.isUndecryptable {
+                Image(systemName: "lock.trianglebadge.exclamationmark.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("undecryptable-indicator")
+            } else if message.isEncrypted {
                 Image(systemName: "lock.fill")
                     .font(.caption2)
                     .foregroundStyle(.green)

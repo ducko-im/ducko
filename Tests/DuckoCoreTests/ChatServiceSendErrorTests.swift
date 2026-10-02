@@ -77,6 +77,42 @@ enum ChatServiceSendErrorTests {
         }
     }
 
+    struct SendWithAttachment {
+        @Test
+        @MainActor
+        func `A sent file's message keeps its attachment and tells other clients about it`() async throws {
+            let store = makeStore()
+            let transcripts = makeTranscripts()
+            let transport = MockTransport()
+            let factory = MockXMPPClientFactory(transport: transport, modules: [ChatModule()])
+            let accountService = makeAccountService(store: store, credentials: MockCredentialStore(), clientFactory: factory)
+            let chatService = makeChatService(store: store, transcripts: transcripts)
+            chatService.setAccountService(accountService)
+
+            let connectTask = Task { @MainActor in
+                try await accountService.createAndConnect(
+                    jidString: testJIDString, password: "secret",
+                    host: "example.com", port: 5222
+                )
+            }
+            await simulateNoTLSConnect(transport)
+            let accountID = try await connectTask.value
+
+            let link = "https://upload.example.com/photo.png"
+            let attachment = Attachment(id: UUID(), url: link, mimeType: "image/png", fileName: "photo.png", fileSize: 12)
+            try await chatService.sendMessage(to: contactJID, body: link, accountID: accountID, attachments: [attachment])
+
+            // Without the attachment the sender's own row is a bare link, while the recipient is told it is a file.
+            let persisted = try #require(await transcripts.messages.last)
+            #expect(persisted.attachments.map(\.url) == [link])
+            #expect(persisted.bodyIsAttachmentLink)
+            let sent = await String(decoding: transport.sentBytes.last ?? [], as: UTF8.self)
+            #expect(sent.contains("<x xmlns=\"jabber:x:oob\"><url>\(link)</url></x>"))
+
+            await accountService.disconnect(accountID: accountID)
+        }
+    }
+
     struct GroupSendRollback {
         /// Pre-creates the room conversation with encryption disabled so `sendGroupMessage` takes the
         /// plaintext path (no OMEMO members to resolve).
