@@ -165,8 +165,6 @@ struct ChatTabBarView: View {
 
     /// The font the chip label renders in, for measuring content width.
     private static let labelFont = NSFont.preferredFont(forTextStyle: .body)
-    /// Fixed chip chrome around the label: icon slot + spacing + horizontal padding.
-    private static let chipChrome: CGFloat = 16 + 6 + 16
 
     private func intrinsicWidth(for key: ConversationKey) -> CGFloat {
         let state = container.state(for: key)
@@ -178,7 +176,7 @@ struct ChatTabBarView: View {
             textWidth += (accountLabel as NSString).size(withAttributes: [.font: Self.labelFont]).width + 4
         }
         let badge: CGFloat = (state?.unreadCount ?? 0) > 0 ? 24 : 0
-        return min(maxTabWidth, max(minTabWidth, textWidth.rounded(.up) + Self.chipChrome + badge))
+        return min(maxTabWidth, max(minTabWidth, textWidth.rounded(.up) + ChatTabChip.chrome + badge))
     }
 
     /// Account-disambiguation label for a tab, via the shared `AccountIndicator.tabLabel` gate so the
@@ -200,6 +198,15 @@ struct ChatTabBarView: View {
 }
 
 private struct ChatTabChip: View {
+    private static let leadingSlotWidth: CGFloat = 16
+    private static let slotSpacing: CGFloat = 6
+    /// The presence dot sits centered in a wider leading slot. Less leading padding puts it as far from the chip's
+    /// leading edge as the label is from the trailing edge.
+    private static let leadingPadding: CGFloat = 4
+    private static let trailingPadding: CGFloat = 8
+    /// Fixed width around the label.
+    static let chrome = leadingSlotWidth + slotSpacing + leadingPadding + trailingPadding
+
     @Environment(AppEnvironment.self) private var environment
     let key: ConversationKey
     let state: ChatWindowState?
@@ -263,9 +270,9 @@ private struct ChatTabChip: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Self.slotSpacing) {
             leadingSlot
-                .frame(width: 16)
+                .frame(width: Self.leadingSlotWidth)
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(displayName)
@@ -287,7 +294,8 @@ private struct ChatTabChip: View {
                     .foregroundStyle(.white)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, Self.leadingPadding)
+        .padding(.trailing, Self.trailingPadding)
         .padding(.vertical, 5)
         .frame(width: width)
         .background(

@@ -84,6 +84,14 @@ enum HTMLRenderingTests {
         }
 
         @Test
+        func `Preserves monospaced as InlinePresentationIntent`() throws {
+            let attributed = try #require(HTMLAttributedStringParser.parse("<code>code</code>"))
+            let run = try #require(attributed.runs.first)
+            let intents = try #require(run.inlinePresentationIntent)
+            #expect(intents.contains(.code))
+        }
+
+        @Test
         func `Strips Adium-style inline CSS font while preserving text`() throws {
             let html = #"<span style="font-family: Helvetica; font-size: 12pt; color: #000000;">message</span>"#
             let attributed = try #require(HTMLAttributedStringParser.parse(html))

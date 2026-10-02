@@ -297,3 +297,37 @@ Setting `@FocusState` in `.onAppear` may fail if the view tree hasn't settled. P
 ### Missing `.focusable()` for non-text views
 
 `TextField` and `SecureField` are implicitly focusable. Custom views (stacks, shapes, images) are not. Forgetting `.focusable()` means `.focused()` bindings have no effect and key event handlers never fire.
+
+### A Return-to-send field ignores keypad Enter and Shift+Return (macOS)
+
+For a `TextField(axis: .vertical)` that sends on Return (observed on macOS 27):
+
+- Match the keypad's Enter key as well. `.onKeyPress(.return)` does not fire for it; `KeyEquivalent("\u{3}")` does.
+- Insert the line break in the handler. Returning `.ignored` for Shift+Return leaves the text unchanged.
+- Insert it through a `TextSelection` binding. Count the cursor offset in UTF-16, because a newline after a carriage return joins it into one `Character`.
+
+```swift
+@State private var selection: TextSelection?
+
+TextField("Message", text: $text, selection: $selection, axis: .vertical)
+    .onKeyPress(keys: [.return, KeyEquivalent("\u{3}")], phases: .down) { keyPress in
+        if keyPress.modifiers.isDisjoint(with: [.shift, .option]) {
+            send()
+        } else {
+            insertLineBreak()
+        }
+        return .handled
+    }
+
+private func insertLineBreak() {
+    var selected = text.endIndex ..< text.endIndex
+    if case let .selection(range) = selection?.indices {
+        selected = range.clamped(to: text.startIndex ..< text.endIndex)
+    }
+    let cursorOffset = text.utf16.distance(from: text.startIndex, to: selected.lowerBound) + 1
+    text.replaceSubrange(selected, with: "\n")
+    selection = TextSelection(insertionPoint: String.Index(utf16Offset: cursorOffset, in: text))
+}
+```
+
+The responder-chain route, `NSApp.sendAction` with `insertNewlineIgnoringFieldEditor(_:)` and a nil target, is unconfirmed. It returned `false` and inserted nothing while key events were posted to the process by PID: the app had been activated, yet `NSApp.keyWindow` was nil. It was not tried with a key window. Check it only with the app's window as the key window.

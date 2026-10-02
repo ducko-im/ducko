@@ -1,4 +1,3 @@
-import AppKit
 import DuckoCore
 import SwiftUI
 
@@ -16,8 +15,7 @@ struct MessageContextMenu: View {
         if !message.isRetracted, !message.isUndecryptable {
             // A shared file's body is its link, and nothing of it shows as text.
             Button(message.bodyIsAttachmentLink ? "Copy Link" : "Copy") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(message.body, forType: .string)
+                copyToPasteboard(message.body)
             }
 
             Button("Reply") {

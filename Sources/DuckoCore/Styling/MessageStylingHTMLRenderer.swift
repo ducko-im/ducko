@@ -18,7 +18,7 @@ enum MessageStylingHTMLRenderer {
     private static func renderSpan(_ span: StyledSpan) -> String {
         switch span {
         case let .plain(text):
-            return escapeHTML(text)
+            return renderProse(text)
         case let .bold(inner):
             return "<strong>\(inner.map { renderSpan($0) }.joined())</strong>"
         case let .italic(inner):
@@ -30,7 +30,12 @@ enum MessageStylingHTMLRenderer {
         }
     }
 
-    static func escapeHTML(_ text: String) -> String {
+    /// Escapes text shown as prose. HTML collapses a bare newline into a space, so each one becomes a `<br>`.
+    static func renderProse(_ text: String) -> String {
+        escapeHTML(text).replacingOccurrences(of: "\n", with: "<br>")
+    }
+
+    private static func escapeHTML(_ text: String) -> String {
         text.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")

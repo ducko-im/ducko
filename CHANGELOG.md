@@ -13,9 +13,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Trust a contact's new devices on first use by default, so a first encrypted message sends without verifying a fingerprint beforehand, and show those devices as Trusted in Device Fingerprints
 - Show an encrypted message that could not be decrypted as a muted notice with a warning lock instead of as text from the sender, and mark it as an error in `ducko` output, with an `undecryptable` field in JSON
 - Offer Copy Link for a shared file in the message context menu, and no longer offer Edit for it
+- Show a code block in its own box with a copy button on hover, and show inline code in a monospaced font
+- Insert a line break in the message field with Shift or Option plus Return or Enter, and send with the keypad's Enter key as well as Return
 
 ### Fixed
 
+- Fix your profile picture disappearing for your contacts after you sign in or your connection briefly drops
+- Fix line breaks being lost in messages that use styling or mention you
+- Fix the status dot in a chat tab sitting further from the tab's edge than the name does
 - Fix link previews being unreadable inside your own message bubbles
 - Fix contacts showing as offline while online after one of their devices disconnects or after your connection briefly drops
 - Fix "Last seen" jumping to the moment you connect for contacts who were already offline

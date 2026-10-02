@@ -35,6 +35,14 @@ enum MentionFilterTests {
         }
 
         @Test
+        func `Keeps the raw body's line breaks when no upstream htmlBody exists`() async {
+            let filter = MentionFilter()
+            let content = MessageContent(body: "first line\n@user second line")
+            let result = await filter.filter(content, direction: .incoming, context: filterContext)
+            #expect(result.htmlBody == "first line<br><b>@user</b> second line")
+        }
+
+        @Test
         func `Preserves an upstream htmlBody instead of re-escaping the raw body`() async {
             let filter = MentionFilter()
             // Styling already produced escaped htmlBody; the mention highlight augments it in place.

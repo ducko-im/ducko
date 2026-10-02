@@ -33,6 +33,10 @@ struct MessageBubbleView: View {
         !windowState.isGroupchat && windowState.contact != nil
     }
 
+    private var hasCodeBlock: Bool {
+        message.styledBodySegments?.contains(where: \.isCodeBlock) == true
+    }
+
     private var showAvatar: Bool {
         theme.current.showAvatars && !message.isOutgoing && theme.current.avatarPosition == .leading
     }
@@ -83,8 +87,8 @@ struct MessageBubbleView: View {
 
             if !message.isOutgoing { Spacer(minLength: 60) }
         }
-        // Attachments and link previews carry their own buttons, which a combined element would hide from assistive tech.
-        .accessibilityElement(children: message.attachments.isEmpty && linkPreview == nil ? .combine : .contain)
+        // Attachments, link previews and code blocks carry their own controls, which a combined element would hide from assistive tech.
+        .accessibilityElement(children: message.attachments.isEmpty && linkPreview == nil && !hasCodeBlock ? .combine : .contain)
         .accessibilityIdentifier("message-bubble-\(message.id)")
         .contextMenu {
             MessageContextMenu(message: message, windowState: windowState)

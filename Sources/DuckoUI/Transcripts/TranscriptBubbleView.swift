@@ -23,8 +23,7 @@ struct TranscriptBubbleView: View {
             .contextMenu {
                 if !message.isRetracted, !message.isUndecryptable {
                     Button(message.bodyIsAttachmentLink ? "Copy Link" : "Copy Text") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(message.body, forType: .string)
+                        copyToPasteboard(message.body)
                     }
                 }
             }

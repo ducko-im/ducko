@@ -92,7 +92,8 @@ public final class AvatarService {
 
     func handleEvent(_ event: XMPPEvent, accountID: UUID) async {
         switch event {
-        case .connected:
+        // A resumed stream runs on a new client, whose presence module does not know the own avatar yet.
+        case .connected, .streamResumed:
             await handleConnected(accountID: accountID)
         case let .pepItemsPublished(from, node, items)
             where node == XMPPNamespaces.avatarMetadata:
@@ -101,7 +102,7 @@ public final class AvatarService {
             await handleVCardAvatarHash(from: from, hash: hash, accountID: accountID)
         case .disconnected:
             clearAvatarState(for: accountID)
-        case .streamResumed, .authenticationFailed,
+        case .authenticationFailed,
              .messageReceived, .presenceReceived, .iqReceived,
              .rosterUpdated,
              .presenceUpdated, .presenceSubscriptionRequest,

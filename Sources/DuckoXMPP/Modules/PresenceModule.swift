@@ -9,8 +9,14 @@ public final class PresenceModule: XMPPModule, Sendable {
         var context: ModuleContext?
         /// Presence map keyed by bare JID → resource → presence.
         var presences: [BareJID: [String: XMPPPresence]] = [:]
-        /// Own avatar hash for vCard-based avatar presence broadcasts (XEP-0153).
-        var ownAvatarHash: String?
+        /// Own avatar for vCard-based avatar presence broadcasts (XEP-0153).
+        var ownAvatar = OwnAvatar.notReady
+    }
+
+    private enum OwnAvatar {
+        /// The own avatar is not known yet, so presence must not claim there is none.
+        case notReady
+        case known(hash: String?)
     }
 
     private let state: OSAllocatedUnfairLock<State>
@@ -82,9 +88,10 @@ public final class PresenceModule: XMPPModule, Sendable {
 
     // MARK: - Public API
 
-    /// Sets the own avatar hash for inclusion in outgoing presence broadcasts (XEP-0153).
+    /// Sets the own avatar hash for inclusion in outgoing presence broadcasts (XEP-0153). `nil` advertises
+    /// that there is no avatar; until the first call, presence advertises neither.
     public func setOwnAvatarHash(_ hash: String?) {
-        state.withLock { $0.ownAvatarHash = hash }
+        state.withLock { $0.ownAvatar = .known(hash: hash) }
     }
 
     /// Returns all known presences for a bare JID (one per resource).
@@ -142,13 +149,17 @@ public final class PresenceModule: XMPPModule, Sendable {
     }
 
     private func appendAvatarHash(to presence: inout XMPPPresence) {
-        let hash = state.withLock { $0.ownAvatarHash }
         var x = XMLElement(name: "x", namespace: XMPPNamespaces.vcardAvatarUpdate)
-        var photo = XMLElement(name: "photo")
-        if let hash {
-            photo.addText(hash)
+        switch state.withLock({ $0.ownAvatar }) {
+        case .notReady:
+            break
+        case let .known(hash):
+            var photo = XMLElement(name: "photo")
+            if let hash {
+                photo.addText(hash)
+            }
+            x.addChild(photo)
         }
-        x.addChild(photo)
         presence.element.addChild(x)
     }
 }

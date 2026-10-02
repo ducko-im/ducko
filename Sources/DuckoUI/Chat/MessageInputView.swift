@@ -3,8 +3,12 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct MessageInputView: View {
+    /// The numeric keypad's Enter key, which is a different key from Return.
+    private static let keypadEnter = KeyEquivalent("\u{3}")
+
     @Bindable var windowState: ChatWindowState
     @State private var isSending = false
+    @State private var selection: TextSelection?
     @FocusState private var isInputFocused: Bool
 
     private var trimmedText: String {
@@ -33,14 +37,15 @@ struct MessageInputView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("attachment-button")
 
-                TextField("Message", text: $windowState.draftText, axis: .vertical)
+                TextField("Message", text: $windowState.draftText, selection: $selection, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1 ... 5)
-                    .onKeyPress(.return, phases: .down) { keyPress in
-                        if keyPress.modifiers.contains(.shift) {
-                            return .ignored
+                    .onKeyPress(keys: [.return, Self.keypadEnter], phases: .down) { keyPress in
+                        if keyPress.modifiers.isDisjoint(with: [.shift, .option]) {
+                            sendMessage()
+                        } else {
+                            insertLineBreak()
                         }
-                        sendMessage()
                         return .handled
                     }
                     .onChange(of: windowState.draftText) {
@@ -79,6 +84,21 @@ struct MessageInputView: View {
         ) { result in
             handleFileImporterResult(result)
         }
+    }
+
+    /// The field inserts no line break for these keys itself. Replaces the selection with one and leaves the cursor
+    /// after it. Without a single selected range, the line break goes at the end.
+    private func insertLineBreak() {
+        var text = windowState.draftText
+        var selected = text.endIndex ..< text.endIndex
+        if case let .selection(range) = selection?.indices {
+            selected = range.clamped(to: text.startIndex ..< text.endIndex)
+        }
+        // Counted in UTF-16, because a line break after a carriage return joins it into one character.
+        let cursorOffset = text.utf16.distance(from: text.startIndex, to: selected.lowerBound) + 1
+        text.replaceSubrange(selected, with: "\n")
+        windowState.draftText = text
+        selection = TextSelection(insertionPoint: String.Index(utf16Offset: cursorOffset, in: text))
     }
 
     private func sendMessage() {

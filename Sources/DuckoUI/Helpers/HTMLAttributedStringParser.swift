@@ -1,14 +1,7 @@
 import AppKit
 
 enum HTMLAttributedStringParser {
-    private nonisolated(unsafe) static let cache = NSCache<NSString, NSAttributedString>()
-
     static func parse(_ html: String) -> AttributedString? {
-        let key = html as NSString
-        if let cached = cache.object(forKey: key) {
-            return AttributedString(cached)
-        }
-
         guard let data = html.data(using: .utf8) else { return nil }
         guard let nsAttr = try? NSAttributedString(
             data: data,
@@ -16,10 +9,13 @@ enum HTMLAttributedStringParser {
             documentAttributes: nil
         ) else { return nil }
         var attributed = AttributedString(nsAttr)
+        // An imported message can simply be set in a monospaced font, so the trait only means code where the
+        // markup marks code.
+        let marksCode = html.contains("<code")
         // Strip font and color from every run, not just the top level.
         // NSAttributedString(html:) applies per-run fonts (e.g. Helvetica 12pt from
-        // Adium logs). Preserve bold/italic traits as InlinePresentationIntent so
-        // structural formatting survives while the view's inherited font takes over.
+        // Adium logs). Preserve bold/italic/monospaced traits as InlinePresentationIntent
+        // so structural formatting survives while the view's inherited font takes over.
         for run in attributed.runs {
             let range = run.range
             if let nsFont = run.appKit.font {
@@ -31,6 +27,9 @@ enum HTMLAttributedStringParser {
                 if traits.contains(.italic) {
                     intents.insert(.emphasized)
                 }
+                if marksCode, traits.contains(.monoSpace) {
+                    intents.insert(.code)
+                }
                 if !intents.isEmpty {
                     attributed[range].inlinePresentationIntent = intents
                 }
@@ -40,7 +39,6 @@ enum HTMLAttributedStringParser {
             attributed[range].appKit.backgroundColor = nil
         }
 
-        cache.setObject(NSAttributedString(attributed), forKey: key)
         return attributed
     }
 }

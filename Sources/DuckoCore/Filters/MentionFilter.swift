@@ -15,7 +15,7 @@ struct MentionFilter: MessageFilter {
         // When no upstream filter produced htmlBody, the raw body becomes the HTML base — escape it first so an
         // incoming/archived body like `@user <img src=…>` can't inject unescaped markup into the persisted
         // htmlBody (later rendered via NSAttributedString(html:)). An existing htmlBody is already escaped.
-        let htmlBody = content.htmlBody ?? MessageStylingHTMLRenderer.escapeHTML(content.body)
+        let htmlBody = content.htmlBody ?? MessageStylingHTMLRenderer.renderProse(content.body)
         let highlightedHTML = htmlBody.replacingOccurrences(of: mention, with: "<b>\(mention)</b>")
 
         return MessageContent(body: content.body, htmlBody: highlightedHTML, detectedURLs: content.detectedURLs)

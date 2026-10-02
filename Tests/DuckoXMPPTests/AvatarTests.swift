@@ -186,6 +186,20 @@ enum AvatarTests {
         }
 
         @Test
+        func `Initial presence makes no avatar claim before the own hash is set`() async throws {
+            let mock = MockTransport()
+            let (client, _) = try await makePresenceClient(mock: mock)
+
+            let sentData = await mock.sentBytes
+            let sentString = sentData.map { String(decoding: $0, as: UTF8.self) }.joined()
+
+            #expect(sentString.contains("vcard-temp:x:update"))
+            #expect(!sentString.contains("<photo"))
+
+            await disconnectFast(client)
+        }
+
+        @Test
         func `Initial presence on connect includes vCard avatar hash element`() async throws {
             let mock = MockTransport()
             let presenceModule = PresenceModule()

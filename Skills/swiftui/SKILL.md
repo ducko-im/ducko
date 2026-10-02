@@ -328,7 +328,7 @@ End of example.
 - [references/view-structure.md](references/view-structure.md) — view composition, extraction, and container patterns.
 - [references/layout-best-practices.md](references/layout-best-practices.md) — layout patterns, context-agnostic views, testability.
 - [references/mv-patterns.md](references/mv-patterns.md) — Model-View rationale and patterns for view-file refactors.
-- [references/focus-patterns.md](references/focus-patterns.md) — the full focus system: `@FocusState`, `@FocusedValue`/`@Entry` command wiring, `.focusable(interactions:)`, focus scope/sections, `.searchFocused`, pitfalls.
+- [references/focus-patterns.md](references/focus-patterns.md) — the full focus system: `@FocusState`, `@FocusedValue`/`@Entry` command wiring, `.focusable(interactions:)`, focus scope/sections, `.searchFocused`, pitfalls including Return-key handling in a send-on-Return field.
 
 ### Modern APIs
 

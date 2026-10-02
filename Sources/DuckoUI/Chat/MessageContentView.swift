@@ -23,17 +23,17 @@ struct MessageContentView<Header: View, Footer: View>: View {
         String(message.body.dropFirst(4))
     }
 
-    private var parsedHTMLBody: AttributedString? {
-        guard let html = message.htmlBody else { return nil }
-        return HTMLAttributedStringParser.parse(html)
-    }
-
     private var showsBody: Bool {
         !message.body.isEmpty && !message.bodyIsAttachmentLink
     }
 
     private var isImageOnlyMessage: Bool {
         !showsBody && message.attachments.count == 1 && message.attachments[0].isImage
+    }
+
+    /// Derived from the text color so code stands apart on either bubble color.
+    private var codeTint: Color {
+        theme.textColor(isOutgoing: message.isOutgoing, colorScheme: colorScheme).opacity(0.12)
     }
 
     var body: some View {
@@ -67,8 +67,8 @@ struct MessageContentView<Header: View, Footer: View>: View {
                             if isActionMessage {
                                 Text("* \(actionSenderName) \(actionText)")
                                     .italic()
-                            } else if let attributedString = parsedHTMLBody {
-                                Text(attributedString)
+                            } else if let segments = message.styledBodySegments {
+                                styledBody(segments)
                             } else {
                                 Text(message.body)
                             }
@@ -93,6 +93,17 @@ struct MessageContentView<Header: View, Footer: View>: View {
         }
     }
 
+    private func styledBody(_ segments: [MessageBodySegment]) -> some View {
+        ForEach(segments.enumerated(), id: \.offset) { _, segment in
+            switch segment {
+            case let .text(text):
+                Text(tintingCode(in: text))
+            case let .codeBlock(code):
+                CodeBlockView(code: code, tint: codeTint)
+            }
+        }
+    }
+
     /// A bubble that stands in for a message with no text of its own to show.
     private func noticeBubble(_ text: String) -> some View {
         Text(text)
@@ -104,6 +115,14 @@ struct MessageContentView<Header: View, Footer: View>: View {
                 theme.bubbleColor(isOutgoing: message.isOutgoing, colorScheme: colorScheme),
                 in: .rect(cornerRadius: theme.current.bubbleCornerRadius)
             )
+    }
+
+    private func tintingCode(in text: AttributedString) -> AttributedString {
+        var text = text
+        for range in MessageBodySegment.codeRanges(in: text) {
+            text[range].backgroundColor = codeTint
+        }
+        return text
     }
 }
 

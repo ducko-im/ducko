@@ -33,9 +33,9 @@ enum MessageStylingHTMLRendererTests {
 
         @Test
         func `code block renders as pre code`() {
-            let blocks: [StyledBlock] = [.codeBlock("hello")]
+            let blocks: [StyledBlock] = [.codeBlock("one\n  two")]
             let html = MessageStylingHTMLRenderer.render(blocks)
-            #expect(html == "<pre><code>hello</code></pre>")
+            #expect(html == "<pre><code>one\n  two</code></pre>")
         }
 
         @Test
@@ -50,6 +50,13 @@ enum MessageStylingHTMLRendererTests {
             let blocks: [StyledBlock] = [.plain([.plain("<script>alert(1)</script>")])]
             let html = MessageStylingHTMLRenderer.render(blocks)
             #expect(html == "&lt;script&gt;alert(1)&lt;/script&gt;")
+        }
+
+        @Test
+        func `line breaks in prose render as br`() {
+            let blocks: [StyledBlock] = [.plain([.plain("one\ntwo "), .bold([.plain("three")])])]
+            let html = MessageStylingHTMLRenderer.render(blocks)
+            #expect(html == "one<br>two <strong>three</strong>")
         }
 
         @Test
