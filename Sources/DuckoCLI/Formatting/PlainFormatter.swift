@@ -374,7 +374,7 @@ struct PlainFormatter: CLIFormatter {
     }
 
     func formatJingleTransferFailed(sid: String, reason: JingleTransferFailureReason) -> String {
-        "Transfer failed: \(sid) — \(reason.displayText)"
+        "error: \(reason.displayText) (sid: \(sid))"
     }
 
     private func transportLabel(for transport: JingleTransportKind) -> String {
@@ -385,7 +385,7 @@ struct PlainFormatter: CLIFormatter {
     }
 
     func formatTypingIndicator(from jid: BareJID, state: ChatState) -> String? {
-        state == .composing ? "[\(jid) is typing...]" : nil
+        state == .composing ? "[\(jid) is typing…]" : nil
     }
 
     func formatTLSInfo(_ info: TLSInfo) -> String {

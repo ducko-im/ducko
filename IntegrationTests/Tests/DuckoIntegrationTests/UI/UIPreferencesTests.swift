@@ -71,12 +71,12 @@ extension DuckoIntegrationTests.UILayer {
                 // Unregister is only read, never pressed: accepting its confirmation would unregister the fixture account from the server.
                 let actionTitles = try await app.menuItemTitles(identifier: "account-actions-menu")
                 #expect(actionTitles == [
-                    "Connection Info...", "Server Info...", "",
-                    "Change Password...", "Check Registration...", "",
-                    "Unregister Account..."
+                    "Connection Info…", "Server Info…", "",
+                    "Change Password…", "Check Registration…", "",
+                    "Unregister Account…"
                 ])
 
-                try await app.pressMenuItem(title: "Change Password...", identifier: "account-actions-menu")
+                try await app.pressMenuItem(title: "Change Password…", identifier: "account-actions-menu")
                 try await app.waitForElement(identifier: "new-password-field", timeout: TestTimeout.uiElement)
                 try await app.pressKey(CGKeyCode(kVK_Escape), modifiers: [])
                 try await app.waitForSheetDismissed()
@@ -85,17 +85,17 @@ extension DuckoIntegrationTests.UILayer {
                 // sheet containers mount while the request is still in flight. Wait
                 // on an element only the settled states render. What the server
                 // answers is not asserted — every settled state is a pass.
-                try await app.pressMenuItem(title: "Server Info...", identifier: "account-actions-menu")
+                try await app.pressMenuItem(title: "Server Info…", identifier: "account-actions-menu")
                 try await app.waitForElement(identifier: "server-info-content", timeout: TestTimeout.uiElement)
                 try await app.pressKey(CGKeyCode(kVK_Escape), modifiers: [])
                 try await app.waitForSheetDismissed()
 
-                try await app.pressMenuItem(title: "Check Registration...", identifier: "account-actions-menu")
+                try await app.pressMenuItem(title: "Check Registration…", identifier: "account-actions-menu")
                 try await app.waitForElement(identifier: "registration-form-content", timeout: TestTimeout.uiElement)
                 try await app.pressKey(CGKeyCode(kVK_Escape), modifiers: [])
                 try await app.waitForSheetDismissed()
 
-                try await app.pressMenuItem(title: "Connection Info...", identifier: "account-actions-menu")
+                try await app.pressMenuItem(title: "Connection Info…", identifier: "account-actions-menu")
                 try await app.waitForElement(identifier: "cipherSuite", timeout: TestTimeout.uiElement)
                 let cipherUnavailable = try await app.containsDescendant(
                     role: kAXStaticTextRole as String,
@@ -108,12 +108,12 @@ extension DuckoIntegrationTests.UILayer {
                 try await app.clickSheetButton(label: "Done")
                 try await app.waitForSheetDismissed()
 
-                try await app.pressMenuItem(title: "Connection Info...", identifier: "account-actions-menu")
+                try await app.pressMenuItem(title: "Connection Info…", identifier: "account-actions-menu")
                 try await app.waitForElement(identifier: "cipherSuite", timeout: TestTimeout.uiElement)
                 try await app.pressKey(CGKeyCode(kVK_Escape), modifiers: [])
                 try await app.waitForSheetDismissed()
 
-                try await app.pressMenuItem(title: "Connection Info...", identifier: "account-actions-menu")
+                try await app.pressMenuItem(title: "Connection Info…", identifier: "account-actions-menu")
                 try await app.waitForElement(identifier: "cipherSuite", timeout: TestTimeout.uiElement)
                 try await app.activateWindow(named: "Contacts")
                 try await app.pickPopUpItem(title: "Offline", identifier: "status-picker")

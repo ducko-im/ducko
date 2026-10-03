@@ -158,8 +158,17 @@ public final class FileTransferService {
         let size: Int64
         let mimeType: String
 
-        init(readingAttributesAt url: URL) throws {
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        init(readingAttributesAt url: URL) throws(FileTransferError) {
+            let attributes: [FileAttributeKey: Any]
+            do {
+                // Read through a symbolic link, whose own attributes say nothing of what it points at.
+                attributes = try FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path)
+            } catch {
+                throw .fileReadFailed(error.localizedDescription)
+            }
+            guard attributes[.type] as? FileAttributeType != .typeDirectory else {
+                throw .fileReadFailed("\(url.lastPathComponent) is a folder")
+            }
             self.url = url
             self.name = url.lastPathComponent
             self.size = (attributes[.size] as? Int64) ?? 0
@@ -301,7 +310,7 @@ public final class FileTransferService {
         peerJID: String? = nil,
         onProgress: (@MainActor @Sendable (Double) -> Void)? = nil
     ) async throws -> String {
-        let file = try Self.fileInfo(at: url)
+        let file = try FileInfo(readingAttributesAt: url)
         switch method {
         case .httpUpload:
             return try await sendFileViaHTTP(file, in: conversation, accountID: accountID, onProgress: onProgress)
@@ -316,19 +325,11 @@ public final class FileTransferService {
     /// is thrown, since no row exists yet to show it. The transfer itself runs on until the contact has accepted and
     /// received the file, and the row reports how it ends.
     public func startDirectTransfer(url: URL, in conversation: Conversation, accountID: UUID) async throws {
-        let transfer = try await recordDirectTransfer(of: Self.fileInfo(at: url), in: conversation, accountID: accountID)
+        let transfer = try await recordDirectTransfer(of: FileInfo(readingAttributesAt: url), in: conversation, accountID: accountID)
         let taskID = UUID()
         pendingTasks[taskID] = Task { [weak self] in
             defer { self?.pendingTasks[taskID] = nil }
             try? await self?.runDirectTransfer(transfer, peer: nil)
-        }
-    }
-
-    private static func fileInfo(at url: URL) throws -> FileInfo {
-        do {
-            return try FileInfo(readingAttributesAt: url)
-        } catch {
-            throw FileTransferError.fileReadFailed(error.localizedDescription)
         }
     }
 

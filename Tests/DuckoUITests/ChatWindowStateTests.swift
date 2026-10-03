@@ -1,6 +1,8 @@
 import DuckoTestSupport
 import DuckoXMPP
 import Foundation
+import Observation
+import Synchronization
 import Testing
 @testable import DuckoCore
 @testable import DuckoUI
@@ -12,6 +14,7 @@ struct ChatWindowStateTests {
     private struct Fixture {
         let windowState: ChatWindowState
         let environment: AppEnvironment
+        let store: MockPersistenceStore
         let transcripts: MockTranscriptStore
         let accountID: UUID
     }
@@ -49,7 +52,7 @@ struct ChatWindowStateTests {
         try await environment.accountService.loadAccounts()
         let windowState = ChatWindowState(jidString: jidString, accountID: account.id, environment: environment)
         await windowState.load()
-        return Fixture(windowState: windowState, environment: environment, transcripts: transcripts, accountID: account.id)
+        return Fixture(windowState: windowState, environment: environment, store: store, transcripts: transcripts, accountID: account.id)
     }
 
     @Test func `windowState carries the opened accountID`() async throws {
@@ -474,5 +477,31 @@ struct ChatWindowStateTests {
 
         // A note older than everything loaded belongs with the older messages, which are not on screen yet.
         #expect(opened.notes == [later])
+    }
+
+    // MARK: - Link Previews
+
+    @Test func `a link preview that arrives after the messages loaded redraws its bubble`() async throws {
+        let fixture = try await Self.makeFixture()
+        let conversationID = try #require(fixture.windowState.conversation?.id)
+        let link = "https://example.com/page"
+        let message = ChatMessage(
+            id: UUID(), conversationID: conversationID, stanzaID: "m1", fromJID: Self.jidString, body: link,
+            timestamp: Date(), isOutgoing: false, isDelivered: false, isEdited: false, type: "chat"
+        )
+        await fixture.transcripts.addMessage(message)
+        // As after a relaunch: the preview is stored, and nothing has read it into memory yet.
+        try await fixture.store.upsertLinkPreview(LinkPreview(url: link, title: "Example", fetchedAt: Date()))
+
+        let redrawn = Mutex(false)
+        withObservationTracking {
+            _ = fixture.windowState.linkPreview(for: message)
+        } onChange: {
+            redrawn.withLock { $0 = true }
+        }
+        await fixture.windowState.refreshMessages()
+        try await waitUntil { redrawn.withLock { $0 } }
+
+        #expect(fixture.windowState.linkPreview(for: message)?.title == "Example")
     }
 }

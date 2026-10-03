@@ -75,17 +75,11 @@ struct PlainFileTransferFormatterTests {
 
     @Test func `format jingle transfer failed`() {
         let output = formatter.formatJingleTransferFailed(sid: "sid-789", reason: .disconnected)
-        #expect(output.contains("sid-789"))
-        #expect(output.contains("The connection to the server was lost"))
+        #expect(output == "error: The connection to the server was lost (sid: sid-789)")
     }
 
-    @Test func `format jingle transfer failed renders a readable reason`() {
-        let output = formatter.formatJingleTransferFailed(sid: "sid-789", reason: .transportReject)
-        #expect(output.contains("The peer rejected the connection method"))
-    }
-
-    @Test func `format transfer state shows the failure reason alone`() {
-        #expect(formatTransferState(.failed("You declined the transfer")) == "You declined the transfer")
+    @Test func `format transfer state marks a failure reason as an error`() {
+        #expect(formatTransferState(.failed("You declined the transfer")) == "error: You declined the transfer")
     }
 
     @Test func `format transfer state says where a received file was saved`() {

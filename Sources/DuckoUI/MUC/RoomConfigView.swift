@@ -16,7 +16,7 @@ struct RoomConfigView: View {
     var body: some View {
         VStack(spacing: 0) {
             if isLoading {
-                ProgressView("Loading room configuration...")
+                ProgressView("Loading room configuration…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let errorMessage {
                 ContentUnavailableView(

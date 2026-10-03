@@ -65,7 +65,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/config` — show room configuration fields
 - `/rooms [service]` — discover available rooms on MUC service
 - `/sendfile [jid] <path>` — send a file (uses current room if jid omitted)
-- `/senddirect <jid> <path>` — send a file straight to one of the contact's online devices (XEP-0234) instead of uploading it. The contact's devices are asked first. The command prints an error when the file is missing or when no device takes direct transfers. Otherwise it prints `Sending <file> to <jid> directly. Use /transfers to check progress.` and the prompt returns. A decline, or a transfer that fails once under way, is printed when it happens. A failure before that point, such as the device refusing the offer or the file's contents not being readable, prints nothing and shows only in `/transfers` and the history.
+- `/senddirect <jid> <path>` — send a file straight to one of the contact's online devices (XEP-0234) instead of uploading it. The contact's devices are asked first. The command prints an error when the file is missing or is a folder, or when no device takes direct transfers. Otherwise it prints `Sending <file> to <jid> directly. Use /transfers to check progress.` and the prompt returns. A decline, or a transfer that fails once under way, is printed when it happens. A failure before that point, such as the device refusing the offer or the file's contents not being readable, prints nothing and shows only in `/transfers` and the history.
 - `/accept [id]` — accept an incoming file offer (Jingle or link) and save it to `~/Downloads`. The id is the one printed in the `[File offer]` line. Without an id, it takes this account's newest offer.
 - `/decline [id]` — decline an incoming file offer. Without an id, it takes this account's newest offer.
 - `/transfers` — list active file transfers with progress
@@ -448,6 +448,8 @@ Output sent to a pipe or file is block-buffered and arrives only when the sessio
 
 `/approve <jid>` adds a `subscription=none` roster stub for that JID on the server even when no request was pending. Remove it afterwards with `roster remove <jid>`, or use a syntactically invalid JID when only the error path matters.
 
+To stage a pending subscription request, read the requester's `roster list --output json`, then run `roster add <target>` from that account, which must not be subscribed to the target. For an entry the snapshot already shows, pass its `--name` and `--group`, since `roster add` without them clears both. The target's REPL prints `Subscription request from <jid>`, and its GUI shows `<jid> wants to subscribe` in a banner in the Contacts window. Undo the request with `/deny <requester>` in the target's REPL. When the requester had no entry for the target before, `/deny` leaves the new one at `subscription=none`, so also run `roster remove <target>` from the requester. When the entry existed before, leave it in place: `roster remove` would also cancel a `from` subscription it had.
+
 ## Stream-Level Smoke Testing
 
 To exercise STARTTLS negotiation, stream features, or injected server data without a live server, follow [references/stub-server-smoke-testing.md](references/stub-server-smoke-testing.md).
@@ -464,6 +466,8 @@ DUCKO_PROFILE=smoke-connect ducko logs show                          # handshake
 DUCKO_PROFILE=smoke-connect ducko account delete USER_JID
 /bin/rm -rf "$HOME/Library/Application Support/Ducko-Dev-smoke-connect"
 ```
+
+To stage a connection that drops and resumes, add the account with `--host 127.0.0.1 --port <port>` pointing at a local TCP relay that forwards to the server's port 5222. STARTTLS passes through the relay, and the certificate is still checked against the JID's domain. Close the relayed sockets while the relay keeps listening: the client reports the connection lost, reconnects through the relay and resumes its stream, which the file log records as `Stream resumed as <jid>`. A GUI instance started under the same profile uses that account once its status is set to Available, so the relay drops its connection the same way. Afterwards stop the relay, and clean up a profile the GUI ran under as Throwaway Profiles describes.
 
 ## Examples
 

@@ -272,8 +272,9 @@ public final class PresenceService {
     func handleEvent(_ event: XMPPEvent, accountID: UUID) async {
         switch event {
         case .connected:
-            // A fresh stream is sent every contact's presence anew, so nothing kept from the last one applies.
-            dropContactSessions(for: accountID)
+            // A fresh stream is sent every contact's presence and every unanswered subscription request anew, so
+            // neither is kept from the last one.
+            dropKeptContactState(for: accountID)
             await reapplyHeldPresenceAfterReconnect(accountID: accountID)
         case .streamResumed:
             resumeContactSessions(for: accountID)
@@ -284,15 +285,15 @@ public final class PresenceService {
         case let .presenceSubscriptionRequest(from):
             handleSubscriptionRequest(from: from, accountID: accountID)
         case let .disconnected(reason):
-            // An intentional teardown drops the kept sessions and the per-account override. A stream blip keeps
-            // both, so a resumed stream shows its contacts again and a pinned status isn't silently lost.
+            // An intentional teardown drops the kept sessions, the subscription requests and the per-account override.
+            // A stream blip keeps all three: a resumed stream shows its contacts again and is not sent its
+            // subscription requests a second time, and a pinned status isn't silently lost.
             if case .requested = reason {
-                dropContactSessions(for: accountID)
-                presenceOverridesByAccount.removeValue(forKey: accountID)
+                purgeAccount(accountID)
             } else {
                 suspendedAccounts.insert(accountID)
+                clearShownContactState(for: accountID)
             }
-            clearContactState(for: accountID)
         case .presenceSubscriptionApproved, .presenceSubscriptionRevoked:
             break
         case .authenticationFailed,
@@ -499,31 +500,32 @@ public final class PresenceService {
         rebuildMergedContactCaches()
     }
 
-    private func dropContactSessions(for accountID: UUID) {
+    /// Drops what is kept of an account's contacts while its stream may still resume: their sessions and the
+    /// subscription requests they sent.
+    private func dropKeptContactState(for accountID: UUID) {
         contactSessionsByAccount.removeValue(forKey: accountID)
+        pendingRequestsByAccount.removeValue(forKey: accountID)
         suspendedAccounts.remove(accountID)
     }
 
     // MARK: - Lifecycle
 
-    /// Drops one account's presence state — including any per-account override — on a lifecycle teardown
-    /// that bypasses the `.disconnected` event handler (user-initiated `AccountService.disconnect`, account
-    /// delete). A stream-blip reconnect goes through `handleDisconnect` and never calls this, so a pinned
-    /// override survives a blip.
+    /// Drops one account's presence state, including any per-account override. Runs on a requested disconnect and
+    /// on a lifecycle teardown that bypasses the `.disconnected` event handler (user-initiated
+    /// `AccountService.disconnect`, account delete). A stream blip never gets here, so a pinned override survives
+    /// it.
     func purgeAccount(_ accountID: UUID) {
-        dropContactSessions(for: accountID)
-        clearContactState(for: accountID)
+        dropKeptContactState(for: accountID)
+        clearShownContactState(for: accountID)
         presenceOverridesByAccount.removeValue(forKey: accountID)
     }
 
     // MARK: - Presence Cache
 
-    /// Drops what one account shows of its peers (presence, status, subscription requests) and republishes the merged
-    /// caches. Shared by the `.disconnected` handler and `purgeAccount` so the two stay in lockstep.
-    private func clearContactState(for accountID: UUID) {
+    /// Drops what one account shows of its contacts (presence, status) and republishes the merged caches.
+    private func clearShownContactState(for accountID: UUID) {
         contactPresencesByAccount.removeValue(forKey: accountID)
         contactStatusMessagesByAccount.removeValue(forKey: accountID)
-        pendingRequestsByAccount.removeValue(forKey: accountID)
         rebuildMergedContactCaches()
     }
 

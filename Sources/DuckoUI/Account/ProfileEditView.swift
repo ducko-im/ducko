@@ -24,7 +24,7 @@ struct ProfileEditView: View {
     var body: some View {
         Group {
             if isLoading {
-                ProgressView("Loading profile...")
+                ProgressView("Loading profile…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 profileForm

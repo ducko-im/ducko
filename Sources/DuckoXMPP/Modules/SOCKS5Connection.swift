@@ -269,7 +269,7 @@ actor SOCKS5Connection {
 
     private static func handshakeError(_ error: SocketWaitError) -> SOCKS5Error {
         switch error {
-        case .timedOut, .woken: .handshakeFailed("The peer did not complete the handshake in time")
+        case .timedOut, .woken: .handshakeFailed("The other side did not complete the handshake in time")
         case let .failed(code): .receiveFailed(posixErrorText(code))
         case .closed: .receiveFailed("The connection was closed")
         }
@@ -311,7 +311,7 @@ actor SOCKS5Connection {
                 if sent < 0 {
                     if errno == EAGAIN || errno == EWOULDBLOCK, let stallTimeout {
                         try awaitProgress(fd: fd, events: Int16(POLLOUT), stallTimeout: stallTimeout) {
-                            .sendFailed($0 ?? "The peer stopped receiving the file")
+                            .sendFailed($0 ?? "The other side stopped receiving the file")
                         }
                         continue
                     }
@@ -337,7 +337,7 @@ actor SOCKS5Connection {
             while totalRead < count {
                 if let stallTimeout {
                     try awaitProgress(fd: fd, events: Int16(POLLIN), stallTimeout: stallTimeout) {
-                        .receiveFailed($0 ?? "The peer stopped sending the file")
+                        .receiveFailed($0 ?? "The other side stopped sending the file")
                     }
                 }
                 let result = recv(

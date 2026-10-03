@@ -97,7 +97,7 @@ func formatTransferState(_ state: FileTransferService.TransferState) -> String {
     case .requestingSlot: "requesting slot"
     case let .uploading(progress): "uploading \(Int(progress * 100))%"
     case let .completed(url): "completed (\(url))"
-    case let .failed(reason): reason
+    case let .failed(reason): "error: \(reason)"
     case .negotiating: "negotiating"
     case .connectingTransport: "connecting"
     case let .transferring(progress): "transferring \(Int(progress * 100))%"

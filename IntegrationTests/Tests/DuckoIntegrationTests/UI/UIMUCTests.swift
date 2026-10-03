@@ -206,7 +206,7 @@ extension DuckoIntegrationTests.UILayer {
                 // SwiftUI propagates `room-settings-view` onto the leaf buttons,
                 // so the destroy button is resolved by id+role+label, not its
                 // (overridden) `room-settings-destroy` identifier.
-                try await app.clickElement(identifier: "room-settings-view", role: kAXButtonRole as String, label: "Destroy Room...")
+                try await app.clickElement(identifier: "room-settings-view", role: kAXButtonRole as String, label: "Destroy Room…")
                 // Confirm in the `.confirmationDialog`, scoped to its message so
                 // an unrelated "Destroy" can't match. The sheet dismisses after
                 // `destroyRoom` returns; the room row then disappears once the

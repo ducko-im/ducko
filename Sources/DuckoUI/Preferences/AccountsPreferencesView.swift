@@ -202,7 +202,7 @@ private struct AccountDetailView: View {
 
             Section {
                 HStack {
-                    Button("Edit...") {
+                    Button("Edit…") {
                         onEdit()
                     }
 
@@ -259,28 +259,28 @@ private struct AccountDetailView: View {
     private var actionsMenu: some View {
         Menu("Actions") {
             if environment.accountService.tlsInfo(for: account.id) != nil {
-                Button("Connection Info...") {
+                Button("Connection Info…") {
                     isShowingConnectionInfo = true
                 }
             }
 
-            Button("Server Info...") {
+            Button("Server Info…") {
                 isShowingServerInfo = true
             }
 
             Divider()
 
-            Button("Change Password...") {
+            Button("Change Password…") {
                 isShowingChangePassword = true
             }
 
-            Button("Check Registration...") {
+            Button("Check Registration…") {
                 isShowingRegistrationForm = true
             }
 
             Divider()
 
-            Button("Unregister Account...", role: .destructive) {
+            Button("Unregister Account…", role: .destructive) {
                 isCancelAccountConfirmPresented = true
             }
         }
@@ -291,7 +291,7 @@ private struct AccountDetailView: View {
     private var connectionLabel: String {
         switch connectionState {
         case .connected: "Connected"
-        case .connecting: "Connecting..."
+        case .connecting: "Connecting…"
         case let .error(message): message
         case .disconnected, .none: "Disconnected"
         }

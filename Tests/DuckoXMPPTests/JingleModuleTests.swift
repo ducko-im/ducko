@@ -598,7 +598,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
 
             try harness.receive(action: "session-terminate", sid: sid, payload: [JingleInitiatorHarness.reason("decline")])
 
-            await #expect(throws: JingleModule.JingleError.transportFailed("The peer declined the transfer")) {
+            await #expect(throws: JingleModule.JingleError.transportFailed("The contact declined the transfer")) {
                 try await wait.value
             }
         }
@@ -855,7 +855,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
         @Test
         func `An unanswered IBB exchange surfaces as a readable transport failure`() async {
             let context = Self.makeContext(failingWith: XMPPClientError.timeout)
-            await #expect(throws: JingleModule.JingleError.transportFailed("The peer did not respond in time")) {
+            await #expect(throws: JingleModule.JingleError.transportFailed("The contact did not respond in time")) {
                 try await JingleModule().sendJingleIQ(XMPPIQ(type: .set), context: context, failure: JingleModule.JingleError.transportFailed)
             }
         }

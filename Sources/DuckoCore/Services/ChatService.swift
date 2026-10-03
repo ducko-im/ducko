@@ -1171,9 +1171,9 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             case .notOutgoingMessage: "Cannot correct a message that was not sent by you"
             case let .timeout(jid): "Timed out waiting for room \(jid) join echo"
             case .omemoNoLocalDevices:
-                "Cannot send: no OMEMO devices known for this peer. The peer may not have OMEMO set up, or you have not received their device list yet."
+                "Cannot send: no OMEMO devices known for this contact. The contact may not have OMEMO set up, or you have not received their device list yet."
             case .omemoNoTrustedDevices:
-                "Cannot send: no trusted devices for this peer. Verify a device fingerprint first."
+                "Cannot send: no trusted devices for this contact. Verify a device fingerprint first."
             case .omemoServiceUnavailable:
                 "Cannot send: encryption service unavailable. Try reconnecting."
             case .omemoNoTrustedDevicesInRoom:

@@ -55,16 +55,16 @@ public enum JingleTransferFailureReason: String, Sendable {
 
     public var displayText: String {
         switch self {
-        case .decline: "The peer declined the transfer"
+        case .decline: "The contact declined the transfer"
         case .cancel: "The transfer was canceled"
-        case .busy: "The peer is busy"
+        case .busy: "The contact is busy"
         case .timeout: "The transfer timed out"
-        case .connectivityError: "The peer could not be reached"
+        case .connectivityError: "The contact could not be reached"
         case .failedTransport: "No connection method worked for the transfer"
         case .unknown: "The transfer ended for an unknown reason"
         case .disconnected: "The connection to the server was lost"
         case .proxyActivationFailed: "The file transfer proxy could not be activated"
-        case .transportReject: "The peer rejected the connection method"
+        case .transportReject: "The contact rejected the connection method"
         case .transportReplaceFailed: "Switching the connection method failed"
         case .incomplete: "The transfer ended before the whole file arrived"
         case .checksumMismatch: "The received file is corrupted"

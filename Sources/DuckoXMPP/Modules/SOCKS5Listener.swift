@@ -190,7 +190,7 @@ actor SOCKS5Listener {
             do throws(SocketWaitError) {
                 return try receiveExactly(count, from: fd, wakeFD: wakeFD, until: deadline)
             } catch {
-                throw listenerError(error, timeoutText: "The peer did not complete the handshake in time")
+                throw listenerError(error, timeoutText: "The other side did not complete the handshake in time")
             }
         }
 

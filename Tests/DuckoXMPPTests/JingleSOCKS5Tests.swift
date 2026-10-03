@@ -569,7 +569,7 @@ enum JingleSOCKS5Tests {
                 Issue.record("Expected the stalled send to fail, got \(String(describing: outcome))")
                 return
             }
-            #expect(error as? JingleModule.JingleError == .transportFailed("The peer stopped receiving the file"))
+            #expect(error as? JingleModule.JingleError == .transportFailed("The other side stopped receiving the file"))
             #expect(try await harness.event { if case .jingleFileTransferFailed(sid, .incomplete) = $0 { true } else { false } } != nil)
             let terminate = try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue)
             #expect(terminate?.child(named: "jingle")?.child(named: "reason")?.child(named: "failed-transport") != nil)

@@ -69,7 +69,7 @@ struct DeviceFingerprintsSheet: View {
 
     private var peerDevicesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Peer Devices")
+            Text("Contact's Devices")
                 .font(.subheadline.bold())
 
             if devices.isEmpty {

@@ -75,7 +75,7 @@ private struct TransferProgressRow: View {
     }
 
     private var stateLabel: String {
-        uploadProgress.map { "Uploading \(Int($0 * 100))%" } ?? "Requesting upload slot..."
+        uploadProgress.map { "Uploading \(Int($0 * 100))%" } ?? "Requesting upload slot…"
     }
 
     /// `nil` while the upload's slot is still being requested.

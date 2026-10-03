@@ -90,6 +90,19 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 }
             }
         }
+
+        @Test
+        func `A folder is refused before it gets a row`() async {
+            let service = FileTransferService()
+            let folder = FileManager.default.temporaryDirectory
+
+            let error = await #expect(throws: FileTransferService.FileTransferError.self) {
+                try await service.sendFile(url: folder, in: makeConversation(), accountID: testAccountID)
+            }
+
+            #expect(error?.errorDescription == "Could not read the file: \(folder.lastPathComponent) is a folder")
+            #expect(service.activeTransfers.isEmpty)
+        }
     }
 
     @MainActor
@@ -176,7 +189,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             }
         }
 
-        @Test(arguments: [nil, "The peer declined the transfer"])
+        @Test(arguments: [nil, "The contact declined the transfer"])
         func `A directly sent file's row keeps how the transfer ended`(failure: String?) async throws {
             let transcripts = MockTranscriptStore()
             let chatService = ChatService(store: MockPersistenceStore(), transcripts: transcripts, filterPipeline: MessageFilterPipeline())
@@ -715,7 +728,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             let live = seedJingleRow(service, sid: "sticky-sid")
             service.handleJingleEvent(.jingleFileTransferFailed(sid: "sticky-sid", reason: .decline), accountID: testAccountID)
             #expect(failureReason(service, sid: "sticky-sid") == "The received file is corrupted")
-            #expect(failureReason(service, rowID: live) == "The peer declined the transfer")
+            #expect(failureReason(service, rowID: live) == "The contact declined the transfer")
         }
     }
 
@@ -771,7 +784,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 return
             }
             let own = service.activeTransfers.first { $0.accountID == testAccountID }
-            guard case .failed("The peer declined the transfer")? = own?.state else {
+            guard case .failed("The contact declined the transfer")? = own?.state else {
                 Issue.record("Expected the own row to fail, got \(String(describing: own?.state))")
                 return
             }
@@ -869,7 +882,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 Issue.record("Expected the earlier session's row to stay completed")
                 return
             }
-            guard case .failed("The peer declined the transfer")? = service.activeTransfers.first(where: { $0.id == live })?.state else {
+            guard case .failed("The contact declined the transfer")? = service.activeTransfers.first(where: { $0.id == live })?.state else {
                 Issue.record("Expected the live row to fail")
                 return
             }
@@ -1080,7 +1093,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             service.handleJingleEvent(.jingleFileTransferFailed(sid: "race-sid", reason: .decline), accountID: testAccountID)
             service.recordJingleTransferFailure(JingleModule.JingleError.sessionNotFound, id: rowID)
 
-            #expect(failureReason(service, rowID: rowID) == "The peer declined the transfer")
+            #expect(failureReason(service, rowID: rowID) == "The contact declined the transfer")
         }
 
         @Test
@@ -1090,7 +1103,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             service.recordJingleTransferFailure(JingleModule.JingleError.sessionNotFound, id: rowID)
             service.handleJingleEvent(.jingleFileTransferFailed(sid: "race-sid", reason: .decline), accountID: testAccountID)
 
-            #expect(failureReason(service, rowID: rowID) == "The peer declined the transfer")
+            #expect(failureReason(service, rowID: rowID) == "The contact declined the transfer")
         }
 
         @Test
@@ -1304,7 +1317,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             await Self.deliverDecline(harness, sid: "accept-sid")
             try await Self.drain(tasks)
 
-            #expect(failureReason(harness.service, sid: "accept-sid") == "The peer declined the transfer")
+            #expect(failureReason(harness.service, sid: "accept-sid") == "The contact declined the transfer")
             await Self.tearDown(harness)
         }
 
@@ -1320,7 +1333,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             await harness.transport.simulateReceive(Self.transportReplaceXML(sid: "recover-sid"))
             try await Self.drain(tasks)
 
-            #expect(failureReason(harness.service, sid: "recover-sid") == "The peer could not be reached")
+            #expect(failureReason(harness.service, sid: "recover-sid") == "The contact could not be reached")
             await Self.tearDown(harness)
         }
 
@@ -1598,12 +1611,12 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 let outcome = try await boundedOutcome { _ = try? await sendTask.value }
                 #expect(outcome != nil)
 
-                #expect(failureReason(harness.service, sid: sid) == "The peer declined the transfer")
+                #expect(failureReason(harness.service, sid: sid) == "The contact declined the transfer")
                 // The file's row in the chat keeps the reason once the transfer row is gone.
                 let conversationID = try #require(harness.chatService.openConversations.first?.id)
                 let row = try #require(await harness.chatService.loadMessages(for: conversationID).first)
                 #expect(row.attachments.first?.localFileURL == fileURL)
-                #expect(row.errorText == "The peer declined the transfer")
+                #expect(row.errorText == "The contact declined the transfer")
                 await Self.tearDown(harness)
             }
         }
@@ -1626,11 +1639,11 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 try #require(outcome != nil)
                 service.handleJingleEvent(.jingleFileTransferFailed(sid: sid, reason: .decline), accountID: accountID)
 
-                #expect(failureReason(service, sid: sid) == "The peer declined the transfer")
+                #expect(failureReason(service, sid: sid) == "The contact declined the transfer")
                 // The task's own error named the same reason under a label. Both rows keep the reason alone.
                 let conversationID = try #require(harness.chatService.openConversations.first?.id)
                 let row = try #require(await harness.chatService.loadMessages(for: conversationID).first)
-                #expect(row.errorText == "The peer declined the transfer")
+                #expect(row.errorText == "The contact declined the transfer")
                 await Self.tearDown(harness)
             }
         }

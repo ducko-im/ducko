@@ -57,7 +57,7 @@ struct RoomJoinDialog: View {
             }
 
             HStack {
-                TextField("Search channels...", text: $searchText)
+                TextField("Search channels…", text: $searchText)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 150)
                     .onSubmit { searchChannels() }

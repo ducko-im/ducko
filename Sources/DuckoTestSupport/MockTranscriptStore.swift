@@ -8,6 +8,13 @@ public actor MockTranscriptStore: TranscriptStore {
     public private(set) var deletedTranscriptConversationIDs: [UUID] = []
     private var fetchMessagesGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
 
+    /// The file store keeps one file per GMT day.
+    private static let dayCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .gmt
+        return calendar
+    }()
+
     public init() {}
 
     /// Holds the next `fetchMessages(for:before:limit:)` until `release` is signaled, signaling `entered` once it is
@@ -60,10 +67,8 @@ public actor MockTranscriptStore: TranscriptStore {
     }
 
     public func fetchMessages(for conversationID: UUID, on date: Date) async throws -> [ChatMessage] {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .gmt
         var filtered = messages.filter {
-            $0.conversationID == conversationID && calendar.isDate($0.timestamp, inSameDayAs: date)
+            $0.conversationID == conversationID && Self.dayCalendar.isDate($0.timestamp, inSameDayAs: date)
         }
         filtered = applyAmendments(to: filtered)
         return filtered.sorted { $0.timestamp < $1.timestamp }
@@ -96,7 +101,13 @@ public actor MockTranscriptStore: TranscriptStore {
 
     public func findMessages(stanzaID: String, conversationID: UUID) async throws -> [ChatMessage] {
         let matched = messages.filter { $0.stanzaID == stanzaID && $0.conversationID == conversationID }
-        return applyAmendments(to: matched)
+        // As in the file store: the newest day's matches first, and within a day in the order they were appended.
+        let newestDayFirst = matched.enumerated().sorted { lhs, rhs in
+            let lhsDay = Self.dayCalendar.startOfDay(for: lhs.element.timestamp)
+            let rhsDay = Self.dayCalendar.startOfDay(for: rhs.element.timestamp)
+            return lhsDay == rhsDay ? lhs.offset < rhs.offset : lhsDay > rhsDay
+        }
+        return applyAmendments(to: newestDayFirst.map(\.element))
     }
 
     public func messageExists(stanzaID: String, conversationID: UUID) async throws -> Bool {
@@ -138,11 +149,9 @@ public actor MockTranscriptStore: TranscriptStore {
     // MARK: - Stats
 
     public func messageDateCounts(for conversationID: UUID) async throws -> [(date: Date, count: Int)] {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .gmt
         var counts: [Date: Int] = [:]
         for message in messages where message.conversationID == conversationID {
-            let day = calendar.startOfDay(for: message.timestamp)
+            let day = Self.dayCalendar.startOfDay(for: message.timestamp)
             counts[day, default: 0] += 1
         }
         return counts.map { ($0.key, $0.value) }.sorted { $0.date > $1.date }

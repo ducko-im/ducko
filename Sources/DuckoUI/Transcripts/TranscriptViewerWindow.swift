@@ -17,7 +17,7 @@ public struct TranscriptViewerWindow: View {
                     TranscriptDetailView(state: state)
                 }
             } else {
-                ProgressView("Loading...")
+                ProgressView("Loading…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }

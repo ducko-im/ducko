@@ -9,7 +9,10 @@ private let log = Logger(label: "im.ducko.ui.chatwindow")
 public final class ChatWindowState {
     var conversation: Conversation?
     var contact: Contact?
-    var messages: [ChatMessage] = []
+    var messages: [ChatMessage] = [] {
+        didSet { prefetchLinkPreviews() }
+    }
+
     /// The timeline notes from the oldest loaded message on.
     var notes: [TimelineNote] = []
     var isLoading = false
@@ -205,7 +208,6 @@ public final class ChatWindowState {
             conversation = conv
             messages = await environment.chatService.loadMessages(for: conv.id)
             await loadNotes()
-            prefetchLinkPreviews()
             guard shouldActivate() else { return }
             await environment.chatService.selectConversation(conv.id, accountID: accountID)
         } catch {
@@ -217,7 +219,6 @@ public final class ChatWindowState {
         guard let conversationID = conversation?.id else { return }
         messages = await environment.chatService.loadMessages(for: conversationID)
         await loadNotes()
-        prefetchLinkPreviews()
     }
 
     private func loadNotes() async {
@@ -439,9 +440,13 @@ public final class ChatWindowState {
 
     // MARK: - Link Previews
 
+    /// Prefetched previews by URL string. The service's cache is not observable, so reading this is what redraws a
+    /// bubble once its preview arrives.
+    private var prefetchedLinkPreviews: [String: LinkPreview] = [:]
+
     func linkPreview(for message: ChatMessage) -> LinkPreview? {
         guard let url = Self.previewURL(of: message) else { return nil }
-        return environment.linkPreviewService.cachedPreview(for: url)
+        return prefetchedLinkPreviews[url] ?? environment.linkPreviewService.cachedPreview(for: url)
     }
 
     /// A body that only repeats an attachment's link has no preview: fetching one would request the file on sight,
@@ -463,15 +468,17 @@ public final class ChatWindowState {
         return linkDetector.firstMatch(in: body, range: range)?.url?.absoluteString
     }
 
-    /// Fetches link previews for message URLs not yet in the in-memory cache.
+    /// Fetches link previews for message URLs not yet in the service's cache.
     private func prefetchLinkPreviews() {
         let service = environment.linkPreviewService
         for message in messages {
             guard let urlString = Self.previewURL(of: message),
                   service.cachedPreview(for: urlString) == nil,
                   let url = URL(string: urlString) else { continue }
-            Task {
-                _ = try? await service.fetchPreview(for: url)
+            Task { [weak self] in
+                guard let preview = try? await service.fetchPreview(for: url),
+                      let self, prefetchedLinkPreviews[urlString] == nil else { return }
+                prefetchedLinkPreviews[urlString] = preview
             }
         }
     }

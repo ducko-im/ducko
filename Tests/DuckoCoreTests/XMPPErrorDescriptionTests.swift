@@ -69,8 +69,8 @@ struct XMPPErrorDescriptionTests {
         (JingleModule.JingleError.noConnectedJID, "Not connected to the server"),
         (JingleModule.JingleError.alreadyAccepted, "The file transfer was already accepted"),
         (
-            JingleModule.JingleError.transportNegotiationFailed("The peer rejected the connection method"),
-            "File transfer negotiation failed: The peer rejected the connection method"
+            JingleModule.JingleError.transportNegotiationFailed("The contact rejected the connection method"),
+            "File transfer negotiation failed: The contact rejected the connection method"
         ),
         (JingleModule.JingleError.transportFailed("Broken pipe"), "File transfer failed: Broken pipe")
     ])

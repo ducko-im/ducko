@@ -193,7 +193,7 @@ enum ChatServiceReceiptsTests {
         func `A receipt beyond the newest messages lands on the newest sent message with that id`() async throws {
             try await withTemporaryDirectory { directory in
                 let store = makeStore()
-                // The file store keeps a day per file and lists the newest day first, which the mock does not model.
+                // Run against the file store, which keeps a day per file and lists the newest day first.
                 let transcripts = FileTranscriptStore(baseDirectory: directory)
                 let service = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
                 let conversationID = UUID()

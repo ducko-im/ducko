@@ -1941,7 +1941,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         } catch let XMPPClientError.sendFailed(reason) {
             throw failure(reason)
         } catch XMPPClientError.timeout {
-            throw failure("The peer did not respond in time")
+            throw failure("The contact did not respond in time")
         }
     }
 

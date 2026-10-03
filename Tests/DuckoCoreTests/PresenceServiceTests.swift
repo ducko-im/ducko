@@ -313,11 +313,15 @@ enum PresenceServiceTests {
         private let ownJID = FullJID(bareJID: BareJID(localPart: "me", domainPart: "example.com")!, resourcePart: "ducko")!
         private let otherJID = BareJID(localPart: "other", domainPart: "example.com")!
 
-        /// Two contacts online, then the connection drops without being asked to.
-        private func makeServiceAfterDrop() async throws -> PresenceService {
+        /// Two contacts are online and, when `requester` is given, its subscription request is waiting. Then the
+        /// connection drops without being asked to.
+        private func makeServiceAfterDrop(requestFrom requester: BareJID? = nil) async throws -> PresenceService {
             let service = makePresenceService()
             try await deliver(makePresence(show: .away), from: "res", to: service)
             try await deliver(makePresence(), from: "res", of: otherJID, to: service)
+            if let requester {
+                await service.handleEvent(.presenceSubscriptionRequest(from: requester), accountID: testAccountID)
+            }
             await service.handleEvent(.disconnected(.connectionLost("reset")), accountID: testAccountID)
             return service
         }
@@ -354,6 +358,25 @@ enum PresenceServiceTests {
             await service.handleEvent(.streamResumed(ownJID), accountID: testAccountID)
 
             #expect(service.contactPresences.isEmpty)
+        }
+
+        @Test
+        func `A subscription request outlasts a dropped connection and its resumed stream`() async throws {
+            let service = try await makeServiceAfterDrop(requestFrom: otherJID)
+            #expect(service.pendingSubscriptionRequests == [otherJID])
+
+            await service.handleEvent(.streamResumed(ownJID), accountID: testAccountID)
+
+            #expect(service.pendingSubscriptionRequests == [otherJID])
+        }
+
+        @Test
+        func `A fresh connect drops the subscription requests kept from the dropped connection`() async throws {
+            let service = try await makeServiceAfterDrop(requestFrom: otherJID)
+
+            await service.handleEvent(.connected(ownJID), accountID: testAccountID)
+
+            #expect(service.pendingSubscriptionRequests.isEmpty)
         }
     }
 
@@ -411,7 +434,7 @@ enum PresenceServiceTests {
     struct Disconnect {
         @Test
         @MainActor
-        func `Disconnect event clears contactPresences and pendingSubscriptionRequests`() async throws {
+        func `A requested disconnect clears contactPresences and pendingSubscriptionRequests`() async throws {
             let service = makePresenceService()
 
             // Set some presence and a pending subscription request
@@ -422,7 +445,7 @@ enum PresenceServiceTests {
             #expect(!service.contactPresences.isEmpty)
             #expect(!service.pendingSubscriptionRequests.isEmpty)
 
-            // Disconnect should clear both
+            // A requested disconnect clears both
             await service.handleEvent(.disconnected(.requested), accountID: testAccountID)
             #expect(service.contactPresences.isEmpty)
             #expect(service.pendingSubscriptionRequests.isEmpty)

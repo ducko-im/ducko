@@ -404,7 +404,7 @@ struct ANSIFormatter: CLIFormatter {
     }
 
     func formatJingleTransferFailed(sid: String, reason: JingleTransferFailureReason) -> String {
-        "\(Color.red)Transfer failed: \(sid) \u{2014} \(reason.displayText)\(Color.reset)"
+        "\(Color.red)error: \(reason.displayText) (sid: \(sid))\(Color.reset)"
     }
 
     private func transportLabel(for transport: JingleTransportKind) -> String {
@@ -423,7 +423,7 @@ struct ANSIFormatter: CLIFormatter {
     }
 
     func formatTypingIndicator(from jid: BareJID, state: ChatState) -> String? {
-        state == .composing ? "\(Color.dim)[\(jid) is typing...]\(Color.reset)" : nil
+        state == .composing ? "\(Color.dim)[\(jid) is typing…]\(Color.reset)" : nil
     }
 
     func formatTLSInfo(_ info: TLSInfo) -> String {

@@ -29,7 +29,7 @@ struct DirectTransferStatusTests {
         (FileTransferService.TransferState.negotiating, DirectTransferStatus.waiting),
         (.connectingTransport, .sending(progress: 0)),
         (.transferring(progress: 0.4), .sending(progress: 0.4)),
-        (.failed("The peer declined the transfer"), .failed("The peer declined the transfer")),
+        (.failed("The contact declined the transfer"), .failed("The contact declined the transfer")),
         (.completedTransfer, .sent)
     ])
     func `a running transfer speaks for its row`(state: FileTransferService.TransferState, expected: DirectTransferStatus) {

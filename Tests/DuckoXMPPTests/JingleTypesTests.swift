@@ -31,16 +31,16 @@ enum JingleTypesTests {
 
     struct TransferFailureReasonDisplayText {
         @Test(arguments: [
-            (JingleTransferFailureReason.decline, "The peer declined the transfer"),
+            (JingleTransferFailureReason.decline, "The contact declined the transfer"),
             (JingleTransferFailureReason.cancel, "The transfer was canceled"),
-            (JingleTransferFailureReason.busy, "The peer is busy"),
+            (JingleTransferFailureReason.busy, "The contact is busy"),
             (JingleTransferFailureReason.timeout, "The transfer timed out"),
-            (JingleTransferFailureReason.connectivityError, "The peer could not be reached"),
+            (JingleTransferFailureReason.connectivityError, "The contact could not be reached"),
             (JingleTransferFailureReason.failedTransport, "No connection method worked for the transfer"),
             (JingleTransferFailureReason.unknown, "The transfer ended for an unknown reason"),
             (JingleTransferFailureReason.disconnected, "The connection to the server was lost"),
             (JingleTransferFailureReason.proxyActivationFailed, "The file transfer proxy could not be activated"),
-            (JingleTransferFailureReason.transportReject, "The peer rejected the connection method"),
+            (JingleTransferFailureReason.transportReject, "The contact rejected the connection method"),
             (JingleTransferFailureReason.transportReplaceFailed, "Switching the connection method failed"),
             (JingleTransferFailureReason.incomplete, "The transfer ended before the whole file arrived"),
             (JingleTransferFailureReason.checksumMismatch, "The received file is corrupted")

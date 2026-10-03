@@ -39,7 +39,7 @@ struct RoomSettingsView: View {
             Divider()
 
             HStack {
-                Button("Destroy Room...", role: .destructive) {
+                Button("Destroy Room…", role: .destructive) {
                     isDestroyConfirmPresented = true
                 }
                 .accessibilityIdentifier("room-settings-destroy")
@@ -157,7 +157,7 @@ private struct AffiliationListView: View {
                 .listStyle(.inset)
 
                 HStack {
-                    TextField("JID to add...", text: $newJID)
+                    TextField("JID to add…", text: $newJID)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier("affiliation-jid-field")
 

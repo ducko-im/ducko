@@ -47,7 +47,7 @@ public struct AdiumImportView: View {
                 ))
                 .textFieldStyle(.roundedBorder)
 
-                Button("Browse...") {
+                Button("Browse…") {
                     let panel = NSOpenPanel()
                     panel.canChooseDirectories = true
                     panel.canChooseFiles = false

@@ -69,7 +69,7 @@ on run
         set actionsMenu to my findByAttr(prefsWin, "AXIdentifier", "account-actions-menu", 0, 30)
         if actionsMenu is missing value then return "ERROR: Actions menu not found (is an account row selected and connected?)"
         tell process "DuckoApp"
-$(ducko_as_click_context_menu_item "Connection Info..." 'actionsMenu' 'prefsWin' "Connection Info... menu item not found (does the account have TLS info?)" continue)
+$(ducko_as_click_context_menu_item "Connection Info…" 'actionsMenu' 'prefsWin' "Connection Info… menu item not found (does the account have TLS info?)" continue)
         end tell
         delay 0.5
         return "ok"

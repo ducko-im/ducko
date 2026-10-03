@@ -58,7 +58,7 @@ struct AdiumOnboardingImportView: View {
         VStack(spacing: 12) {
             ProgressView()
                 .controlSize(.small)
-            Text("Looking for Adium data...")
+            Text("Looking for Adium data…")
                 .foregroundStyle(.secondary)
                 .font(.callout)
         }
@@ -97,7 +97,7 @@ struct AdiumOnboardingImportView: View {
             Text("No Adium installation found.")
                 .foregroundStyle(.secondary)
 
-            Button("Choose Adium Folder...") {
+            Button("Choose Adium Folder…") {
                 browseForAdiumFolder()
             }
             .accessibilityIdentifier("choose-adium-folder-button")

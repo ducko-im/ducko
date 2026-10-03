@@ -261,7 +261,7 @@ enum SOCKS5ListenerTests {
                 Issue.record("Expected the accept to time out, got \(String(describing: outcome))")
                 return
             }
-            #expect(reason == "The peer did not complete the handshake in time")
+            #expect(reason == "The other side did not complete the handshake in time")
             await listener.close()
             withExtendedLifetime(probe) {}
         }

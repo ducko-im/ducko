@@ -561,18 +561,12 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
     /// that wakes up double-tap recognizers like `ContactRow`. Retries on
     /// transient `elementNotFound` for the same reason as `click` and
     /// `rightClick` — the row's AX hierarchy can re-mount when presence
-    /// updates land between `waitForElement` and the action.
+    /// updates land between `waitForElement` and the action — and while
+    /// another window still covers the click point.
     func doubleClick(identifier: String) async throws {
         try await retryOnStaleElement(identifier: identifier) {
             let element = try self.axDriver.resolveElement(identifier: identifier)
-            guard let pid = self.process?.processIdentifier else {
-                throw TestHarnessError.elementNotFound(identifier: identifier)
-            }
-            await Self.activateApp(pid: pid)
-
-            guard let center = self.axDriver.elementCenter(of: element) else {
-                throw TestHarnessError.elementNotFound(identifier: identifier)
-            }
+            let center = try await self.unoccludedCenter(of: element, identifier: identifier)
             for clickState in [Int64(1), Int64(2)] {
                 self.axDriver.postClickPair(at: center, clickState: clickState)
             }
@@ -586,11 +580,7 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
     func selectRow(identifier: String) async throws {
         try await retryOnStaleElement(identifier: identifier) {
             let element = try self.axDriver.resolveElement(identifier: identifier)
-            self.axDriver.raiseWindow(of: element)
-            await self.ensureFrontmost()
-            guard let point = self.axDriver.elementCenter(of: element), self.axDriver.pointHitsSameWindow(as: element, at: point) else {
-                throw TestHarnessError.elementNotFound(identifier: "\(identifier)/occluded")
-            }
+            let point = try await self.unoccludedCenter(of: element, identifier: identifier)
             self.axDriver.postClickPair(at: point, clickState: 1)
         }
         try await pollUntil(timeout: TestTimeout.uiElement) {
@@ -1306,11 +1296,7 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
         let qualifier = "\(identifier)[\(role)]"
         try await retryOnStaleElement(identifier: identifier) {
             let element = try self.axDriver.resolveElement(identifier: identifier, role: role)
-            self.axDriver.raiseWindow(of: element)
-            await self.ensureFrontmost()
-            guard let point = self.axDriver.elementCenter(of: element), self.axDriver.pointHitsSameWindow(as: element, at: point) else {
-                throw TestHarnessError.elementNotFound(identifier: "\(qualifier)/occluded")
-            }
+            let point = try await self.unoccludedCenter(of: element, identifier: qualifier)
             self.axDriver.postClickPair(at: point, clickState: 1)
             try? await Task.sleep(for: .milliseconds(100))
             try self.typeFocusedText(text, clearFirst: false)
@@ -1770,6 +1756,17 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
             if app.isActive { return }
             try? await Task.sleep(for: .milliseconds(20))
         }
+    }
+
+    /// The element's center, once its window is raised, the app is frontmost
+    /// and a click at that point would land in the element's own window.
+    private func unoccludedCenter(of element: AXUIElement, identifier: String) async throws -> CGPoint {
+        axDriver.raiseWindow(of: element)
+        await ensureFrontmost()
+        guard let center = axDriver.elementCenter(of: element), axDriver.pointHitsSameWindow(as: element, at: center) else {
+            throw TestHarnessError.elementNotFound(identifier: "\(identifier)/occluded")
+        }
+        return center
     }
 
     /// Sets `kAXFocusedAttribute = true` on the element and logs at debug

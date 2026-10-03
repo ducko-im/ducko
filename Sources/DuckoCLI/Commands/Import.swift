@@ -31,7 +31,7 @@ extension DuckoCLI {
                     AdiumLogDiscovery.defaultLogsURL
                 }
 
-                print("Scanning \(logsURL.path)...")
+                print("Scanning \(logsURL.path)…")
                 let sources = try AdiumLogDiscovery.discoverSources(at: logsURL)
 
                 if sources.isEmpty {
@@ -51,7 +51,7 @@ extension DuckoCLI {
                     return
                 }
 
-                print("Importing...")
+                print("Importing…")
                 let importService = AdiumImportService(store: context.environment.store, transcripts: context.environment.transcripts)
                 let result = try await importService.importLogs(from: sources) { progress in
                     let pct = progress.totalFiles > 0
@@ -69,7 +69,7 @@ extension DuckoCLI {
                         print("    \(error.displayText)")
                     }
                     if result.errors.count > 10 {
-                        print("    ... and \(result.errors.count - 10) more")
+                        print("    … and \(result.errors.count - 10) more")
                     }
                 }
             }
