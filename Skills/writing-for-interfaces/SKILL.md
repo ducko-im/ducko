@@ -12,7 +12,6 @@ description: >
   store listings, API docs, brand guides, cover letters, or interview questions — this is a
   technical writing skill for interface language.
 license: MIT
-context: fork
 ---
 
 # Writing for Interfaces
