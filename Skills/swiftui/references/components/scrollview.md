@@ -6,7 +6,7 @@ Use `ScrollView` with `LazyVStack`, `LazyHStack`, or `LazyVGrid` when you need c
 
 ## Core patterns
 
-- Prefer `ScrollView` + `LazyVStack` for chat-like or custom feed layouts.
+- Prefer `ScrollView` + `LazyVStack` for custom feed layouts. For a chat transcript that follows new rows or pages older ones, follow "Chat Transcripts" in [../scroll-patterns.md](../scroll-patterns.md) instead.
 - Use `ScrollView(.horizontal)` + `LazyHStack` for chips, tags, avatars, and media strips.
 - Use `LazyVGrid` for icon/media grids; prefer adaptive columns when possible.
 - Use `ScrollViewReader` for scroll-to-top/bottom and anchor-based jumps.
