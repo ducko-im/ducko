@@ -34,6 +34,7 @@ struct REPLCommand {
         case config = "/config"
         case moderate = "/moderate"
         case sendfile = "/sendfile"
+        case senddirect = "/senddirect"
         case accept = "/accept"
         case decline = "/decline"
         case transfers = "/transfers"
@@ -78,6 +79,7 @@ struct REPLCommand {
             case .config: ["  /config [submit-default] Show room config or accept defaults"]
             case .moderate: ["  /moderate [reason]       Moderate last message in room"]
             case .sendfile: ["  /sendfile [jid] <path>   Send a file"]
+            case .senddirect: ["  /senddirect <jid> <path> Send a file directly to the contact's device"]
             case .accept: ["  /accept [id]             Accept incoming file transfer into Downloads"]
             case .decline: ["  /decline [id]            Decline incoming file transfer"]
             case .transfers: ["  /transfers               List active transfers"]
@@ -95,7 +97,7 @@ struct REPLCommand {
             switch self {
             case .send, .add, .remove, .reply, .retract, .edit, .search, .approve, .deny, .directedPresence, .encrypt, .pref: hasArguments
             case .roster, .who, .profile, .unregisterAccount, .transfers, .connectionInfo, .help, .quit: !hasArguments
-            case .status, .history, .checkRegistration, .submitRegistration, .join, .leave, .members, .topic, .nick, .destroy, .voice, .kick, .pm, .affiliations, .config, .moderate, .sendfile, .accept, .decline, .rooms, .avatar: true
+            case .status, .history, .checkRegistration, .submitRegistration, .join, .leave, .members, .topic, .nick, .destroy, .voice, .kick, .pm, .affiliations, .config, .moderate, .sendfile, .senddirect, .accept, .decline, .rooms, .avatar: true
             }
         }
     }

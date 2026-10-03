@@ -108,6 +108,11 @@ public actor FileTranscriptStore: TranscriptStore {
         try appendRecord(record, to: fileURL, conversationID: conversationID)
     }
 
+    public func appendNote(_ note: TimelineNote) async throws {
+        let fileURL = transcriptFileURL(conversationID: note.conversationID, dateString: Self.dateString(for: note.timestamp))
+        try appendRecord(TranscriptRecord.from(note), to: fileURL, conversationID: note.conversationID)
+    }
+
     /// Locates the date file containing the amendment's target message within `conversationID`.
     /// Returns nil if the target cannot be found in the indexes or by scanning the conversation's files.
     private func resolveAmendmentDate(amendment: TranscriptAmendment, conversationID: UUID) -> String? {
@@ -196,14 +201,35 @@ public actor FileTranscriptStore: TranscriptStore {
             if result.count >= limit { break }
         }
 
-        result.sort { $0.timestamp > $1.timestamp }
-        return Array(result.prefix(limit))
+        // Newest first. Timestamps are stored to the second, so messages written within one second tie, and among
+        // those the one written later is the newer.
+        let newestFirst = result.enumerated().sorted { lhs, rhs in
+            lhs.element.timestamp == rhs.element.timestamp ? lhs.offset > rhs.offset : lhs.element.timestamp > rhs.element.timestamp
+        }
+        return newestFirst.prefix(limit).map(\.element)
     }
 
     public func fetchMessages(for conversationID: UUID, on date: Date) async throws -> [ChatMessage] {
         let dateStr = Self.dateString(for: date)
         let fileURL = transcriptFileURL(conversationID: conversationID, dateString: dateStr)
         return try readAndMaterialize(fileURL: fileURL, conversationID: conversationID)
+    }
+
+    public func fetchNotes(for conversationID: UUID, since: Date?, before: Date?) async throws -> [TimelineNote] {
+        // A note lives in the file of its own day, so a file is skipped when its whole day lies outside the bounds.
+        let sinceDay = since.map(Self.dateString(for:))
+        let beforeDay = before.map(Self.dateString(for:))
+        var result: [TimelineNote] = []
+        for (dateString, fileURL) in try listDateFiles(for: conversationID) {
+            if let sinceDay, dateString < sinceDay { continue }
+            if let beforeDay, dateString > beforeDay { continue }
+            result.append(contentsOf: readNotes(fileURL: fileURL, conversationID: conversationID).filter { note in
+                if let since, note.timestamp < since { return false }
+                if let before, note.timestamp >= before { return false }
+                return true
+            })
+        }
+        return result.sorted { $0.timestamp < $1.timestamp }
     }
 
     // MARK: - Lookup
@@ -468,6 +494,8 @@ public actor FileTranscriptStore: TranscriptStore {
                     if let amendment = record.toAmendment() {
                         amendments.append(amendment)
                     }
+                case .note:
+                    break
                 }
             } catch {
                 log.debug("Skipping malformed transcript line: \(error)")
@@ -476,6 +504,16 @@ public actor FileTranscriptStore: TranscriptStore {
 
         applyAmendments(amendments, to: &accumulator.messages, stanzaToID: accumulator.stanzaToID, serverToID: accumulator.serverToID)
         return accumulator.order.compactMap { accumulator.messages[$0] }
+    }
+
+    private func readNotes(fileURL: URL, conversationID: UUID) -> [TimelineNote] {
+        guard let data = try? Data(contentsOf: fileURL) else { return [] }
+        // The substring check skips the JSON decode for the message and amendment lines that make up nearly every file.
+        let marker = Data(#""type":"note""#.utf8)
+        return data.split(separator: UInt8(ascii: "\n")).compactMap { line in
+            guard line.firstRange(of: marker) != nil else { return nil }
+            return try? decoder.decode(TranscriptRecord.self, from: Data(line)).toNote(conversationID: conversationID)
+        }
     }
 
     /// Per-file materialization state. `order` preserves insertion order (the dict
@@ -512,9 +550,10 @@ public actor FileTranscriptStore: TranscriptStore {
         for amendment in amendments {
             // UUID-bearing amendments fail closed: stanzaID/serverID fallback
             // would re-introduce the `ducko-N` collision risk this field
-            // exists to prevent. Legacy amendments without a UUID (carbon
-            // receipts, chat markers, message errors) still resolve via
-            // stanzaID/serverID.
+            // exists to prevent. Amendments without a UUID still resolve via
+            // stanzaID/serverID: chat markers in a room or a private chat with one
+            // of its occupants, moderation, and the receipts, markers and errors
+            // stored before those named the message.
             let targetID: UUID? = if let uuid = amendment.targetMessageID {
                 messages[uuid] != nil ? uuid : nil
             } else if let sid = amendment.targetStanzaID {
@@ -541,6 +580,9 @@ public actor FileTranscriptStore: TranscriptStore {
                 msg.htmlBody = nil
             case .delivery:
                 msg.isDelivered = true
+            case .displayed:
+                msg.isDelivered = true
+                msg.isDisplayed = true
             case .error:
                 msg.errorText = amendment.errorText
             }

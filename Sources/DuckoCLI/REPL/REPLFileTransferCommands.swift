@@ -2,23 +2,26 @@ import DuckoCore
 import DuckoXMPP
 import Foundation
 
-func handleSendFileREPLCommand(_ arguments: String, context: REPLContext, currentRoom: String?) async {
+/// `directly` sends the file straight to one of the contact's devices instead of uploading it. That needs a contact,
+/// so the current room is never taken as the target, and every way of leaving the contact out gets the same usage line.
+func handleSendFileREPLCommand(_ arguments: String, context: REPLContext, currentRoom: String?, directly: Bool = false) async {
+    let directUsage = directly ? "Usage: /senddirect <jid> <path>" : nil
     guard !arguments.isEmpty else {
-        print("Usage: /sendfile [jid] <path>")
+        print(directUsage ?? "Usage: /sendfile [jid] <path>")
         return
     }
 
     let jidString: String
     let filePath: String
-    switch parseSendFileArgs(arguments, currentRoom: currentRoom) {
+    switch parseSendFileArgs(arguments, currentRoom: directly ? nil : currentRoom) {
     case let .send(target, path):
         jidString = target
         filePath = path
     case .missingPath:
-        print("Usage: /sendfile <jid> <path>")
+        print(directUsage ?? "Usage: /sendfile <jid> <path>")
         return
     case .noTarget:
-        print(context.formatter.formatError(CLIError.noConversationTarget))
+        print(directUsage ?? context.formatter.formatError(CLIError.noConversationTarget))
         return
     }
 
@@ -28,16 +31,36 @@ func handleSendFileREPLCommand(_ arguments: String, context: REPLContext, curren
     }
 
     do {
-        let ftContext = FileTransferCLIContext(
-            accountID: context.accountID, environment: context.environment, formatter: context.formatter
-        )
-        try await sendFileFromCLI(
-            filePath: filePath, recipientJID: recipientJID,
-            body: nil, context: ftContext
-        )
+        if directly {
+            try await startDirectTransferFromREPL(filePath: filePath, recipientJID: recipientJID, context: context)
+        } else {
+            let ftContext = FileTransferCLIContext(
+                accountID: context.accountID, environment: context.environment, formatter: context.formatter
+            )
+            try await sendFileFromCLI(filePath: filePath, recipientJID: recipientJID, body: nil, context: ftContext)
+        }
     } catch {
         print(context.formatter.formatError(error))
     }
+}
+
+/// Returns once the file is on record as being sent. The transfer itself lasts until the contact has accepted and
+/// received the file, and the prompt should not hang on someone else's answer.
+private func startDirectTransferFromREPL(filePath: String, recipientJID: BareJID, context: REPLContext) async throws {
+    let fileURL = URL(fileURLWithPath: filePath)
+    guard FileManager.default.fileExists(atPath: fileURL.path) else {
+        throw CLIError.fileNotFound(filePath)
+    }
+    let (env, accountID, jidString) = (context.environment, context.accountID, recipientJID.description)
+    // The contact's devices are asked first. Once the file is on record, a transfer that finds no device to go to
+    // only shows in `/transfers` and the history.
+    await env.fileTransferService.refreshDirectTransferSupport(forJIDString: jidString, accountID: accountID)
+    guard await env.fileTransferService.canSendDirectly(toJIDString: jidString, accountID: accountID) else {
+        throw FileTransferService.FileTransferError.directTransferUnavailable
+    }
+    let conversation = try await env.chatService.openConversation(for: recipientJID, accountID: accountID)
+    try await env.fileTransferService.startDirectTransfer(url: fileURL, in: conversation, accountID: accountID)
+    print("Sending \(fileURL.lastPathComponent) to \(jidString) directly. Use /transfers to check progress.")
 }
 
 func handleAcceptREPLCommand(_ arguments: String, context: REPLContext) async {
@@ -100,7 +123,6 @@ func handleTransfersREPLCommand(context: REPLContext) async {
         let state = formatTransferState(transfer.state)
         let direction = transfer.direction == .outgoing ? "outgoing" : "incoming"
         let method = switch transfer.method {
-        case .auto: "auto"
         case .httpUpload: "http"
         case .jingle: "jingle"
         }

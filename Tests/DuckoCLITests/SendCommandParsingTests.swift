@@ -58,9 +58,9 @@ struct SendCommandParsingTests {
 // MARK: - TransferMethodParsingTests
 
 struct TransferMethodParsingTests {
-    @Test func `parse auto method`() throws {
+    @Test func `parse auto method as an upload`() throws {
         let method = try parseTransferMethod("auto")
-        #expect(method == .auto)
+        #expect(method == .httpUpload)
     }
 
     @Test func `parse http method`() throws {
@@ -73,9 +73,9 @@ struct TransferMethodParsingTests {
         #expect(method == .jingle)
     }
 
-    @Test func `parse nil defaults to auto`() throws {
+    @Test func `parse nil defaults to an upload`() throws {
         let method = try parseTransferMethod(nil)
-        #expect(method == .auto)
+        #expect(method == .httpUpload)
     }
 
     @Test func `parse case insensitive`() throws {

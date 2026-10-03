@@ -64,7 +64,11 @@ func handleHistoryCommand(_ arguments: String, context: REPLContext) async {
             jid: bareJID, before: nil, limit: limit,
             environment: context.environment, accountID: context.accountID
         )
-        printHistory(messages, formatter: context.formatter, accountJID: context.accountJID)
+        let notes = try await fetchHistoryNotes(
+            jid: bareJID, among: messages, before: nil,
+            environment: context.environment, accountID: context.accountID
+        )
+        printHistory(messages, notes: notes, formatter: context.formatter, accountJID: context.accountJID)
     } catch {
         print(context.formatter.formatError(error))
     }

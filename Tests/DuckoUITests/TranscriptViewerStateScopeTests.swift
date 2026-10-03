@@ -149,6 +149,24 @@ extension TranscriptViewerStateScopeTests {
         }
     }
 
+    @Test func `a day shows the timeline notes written on it`() async throws {
+        let fixture = try RaceFixture()
+        await fixture.seed()
+        let note = TimelineNote(
+            conversationID: fixture.first.id, timestamp: fixture.latest.addingTimeInterval(60), kind: .encryptionEnabledByContact
+        )
+        try await fixture.transcripts.mock.appendNote(note)
+
+        await fixture.state.selectConversation(fixture.first)
+        // Armed: the day the note was written on is the one shown.
+        #expect(fixture.state.selectedDate == fixture.latest)
+        #expect(fixture.state.notes == [note])
+        #expect(fixture.state.timelineItems.last?.id == note.id)
+
+        await fixture.state.selectDate(fixture.older)
+        #expect(fixture.state.notes.isEmpty)
+    }
+
     @Test(arguments: [false, true], [false, true])
     func `new conversation wins regardless of detail completion order`(pauseDay: Bool, oldFinishesFirst: Bool) async throws {
         let fixture = try RaceFixture()

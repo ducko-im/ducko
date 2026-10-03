@@ -10,7 +10,12 @@ final class TranscriptViewerState {
     var accounts: [Account] = []
     var selectedConversation: Conversation?
     var messages: [ChatMessage] = []
+    var notes: [TimelineNote] = []
     var positions: [UUID: MessagePosition] = [:]
+
+    var timelineItems: [TimelineItem] {
+        TimelineItem.merged(messages: messages, notes: notes)
+    }
 
     // Date-based detail navigation
     var messageDates: [Date] = []
@@ -139,6 +144,7 @@ final class TranscriptViewerState {
 
     private func resetSelectionState() {
         messages = []
+        notes = []
         positions = [:]
         messageDates = []
         messageDateCounts = [:]
@@ -202,6 +208,7 @@ final class TranscriptViewerState {
         let revision = selectionRevision
         selectedDate = date
         messages = []
+        notes = []
         positions = [:]
         isLoadingDetail = false
         guard let date, let conversation = selectedConversation else { return }
@@ -219,9 +226,14 @@ final class TranscriptViewerState {
 
     private func loadDay(_ date: Date, conversation: Conversation, revision: Int) async throws {
         let dateMessages = try await environment.chatService.fetchMessageHistory(for: conversation.id, on: date)
+        // A transcript day is a UTC day, the span one transcript file covers.
+        let dateNotes = await environment.chatService.fetchNotes(
+            for: conversation.id, since: date, before: date.addingTimeInterval(24 * 60 * 60)
+        )
         guard revision == selectionRevision else { return }
         messages = dateMessages
-        positions = computeMessagePositions(dateMessages)
+        notes = dateNotes
+        positions = computeMessagePositions(timelineItems)
     }
 
     func performTranscriptSearch() async {

@@ -347,16 +347,14 @@ final class AXDriver {
     }
 
     func parentElement(of element: AXUIElement) -> AXUIElement? {
-        var parentValue: AnyObject?
-        let err = AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parentValue)
-        guard err == .success,
-              let parent = parentValue,
-              CFGetTypeID(parent) == AXUIElementGetTypeID()
-        else {
-            return nil
-        }
+        elementAttribute(element, kAXParentAttribute)
+    }
+
+    /// An attribute whose value is itself an element, like the parent or the focused window.
+    func elementAttribute(_ element: AXUIElement, _ name: String) -> AXUIElement? {
+        guard let value = readAttribute(element, name), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         // CFGetTypeID guard above proves the cast is safe; Swift can't.
-        return unsafeDowncast(parent, to: AXUIElement.self)
+        return unsafeDowncast(value, to: AXUIElement.self)
     }
 
     /// Finds the first `kAXButtonRole` descendant under any of the application's

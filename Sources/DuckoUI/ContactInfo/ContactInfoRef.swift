@@ -19,7 +19,7 @@ extension Conversation {
     /// The Contact Info window for a 1:1 chat's peer. `nil` for rooms and MUC private messages, which have no roster
     /// contact, and for imported conversations with no account.
     var contactInfoRef: ContactInfoRef? {
-        guard let accountID, type == .chat, occupantNickname == nil else { return nil }
+        guard let accountID, isDirectChat else { return nil }
         return ContactInfoRef(accountID: accountID, jid: jid.description)
     }
 }

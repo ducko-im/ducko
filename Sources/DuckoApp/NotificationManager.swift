@@ -48,6 +48,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         NSApp.dockTile.badgeLabel = totalUnread > 0 ? "\(totalUnread)" : nil
     }
 
+    /// Bounces the Dock icon once. Does nothing while the app is active.
+    func bounceDockIcon() {
+        NSApp.requestUserAttention(.informationalRequest)
+    }
+
     // MARK: - UNUserNotificationCenterDelegate
 
     nonisolated func userNotificationCenter(

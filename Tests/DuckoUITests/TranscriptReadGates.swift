@@ -83,6 +83,10 @@ struct GatedTranscriptStore: TranscriptStore {
         try await mock.appendAmendment(amendment, conversationID: conversationID)
     }
 
+    func appendNote(_ note: TimelineNote) async throws {
+        try await mock.appendNote(note)
+    }
+
     func fetchMessages(for conversationID: UUID, before: Date?, limit: Int) async throws -> [ChatMessage] {
         try await mock.fetchMessages(for: conversationID, before: before, limit: limit)
     }
@@ -91,6 +95,10 @@ struct GatedTranscriptStore: TranscriptStore {
         let result = try await mock.fetchMessages(for: conversationID, on: date)
         try await gates.pause(.day(conversationID, date))
         return result
+    }
+
+    func fetchNotes(for conversationID: UUID, since: Date?, before: Date?) async throws -> [TimelineNote] {
+        try await mock.fetchNotes(for: conversationID, since: since, before: before)
     }
 
     func findMessage(id: UUID, conversationID: UUID) async throws -> ChatMessage? {
@@ -192,8 +200,8 @@ struct GatedTranscriptPersistenceStore: PersistenceStore {
         try await mock.upsertConversation(conversation)
     }
 
-    func updateConversationIfExists(_ conversation: Conversation) async throws -> Bool {
-        try await mock.updateConversationIfExists(conversation)
+    func updateConversation(_ conversationID: UUID, _ change: @Sendable (inout Conversation) -> Void) async throws -> Conversation? {
+        try await mock.updateConversation(conversationID, change)
     }
 
     func fetchAllConversations() async throws -> [Conversation] {

@@ -268,6 +268,13 @@ struct PlainFormatterTests {
         #expect(output.contains("alice@example.com"))
     }
 
+    @Test func `format event displayed marker reads as a read marker, and other markers print nothing`() throws {
+        let jid = try #require(JID.parse("alice@example.com/res"))
+        let output = try #require(formatter.formatEvent(.chatMarkerReceived(messageID: "msg-1", type: .displayed, from: jid), accountID: UUID()))
+        #expect(output == "read marker: msg-1 from alice@example.com")
+        #expect(formatter.formatEvent(.chatMarkerReceived(messageID: "msg-1", type: .received, from: jid), accountID: UUID()) == nil)
+    }
+
     @Test func `format event message corrected`() throws {
         let jid = try #require(JID.parse("alice@example.com/res"))
         let output = try #require(formatter.formatEvent(.messageCorrected(originalID: "msg-1", newBody: "fixed", from: jid), accountID: UUID()))
@@ -337,6 +344,14 @@ struct PlainFormatterTests {
         #expect(!output.contains("me@example.com"))
     }
 
+    // MARK: - formatNote
+
+    @Test func `format note reads as a line of its own, not as a message from the contact`() {
+        let note = TimelineNote(conversationID: UUID(), timestamp: Date(timeIntervalSince1970: 1_772_280_000), kind: .encryptionEnabledByContact)
+        let output = formatter.formatNote(note, contactName: "bob@example.com")
+        #expect(output == "[2026-02-28T12:00:00.000Z] -- Encryption enabled because bob@example.com sent an encrypted message")
+    }
+
     // MARK: - formatMessage Markers
 
     @Test func `format message delivered`() {
@@ -353,6 +368,24 @@ struct PlainFormatterTests {
         )
         let output = formatter.formatMessage(message)
         #expect(output.contains("[delivered]"))
+    }
+
+    @Test func `format message read`() {
+        let message = ChatMessage(
+            id: UUID(),
+            conversationID: UUID(),
+            fromJID: "bob@example.com",
+            body: "Hi",
+            timestamp: Date(),
+            isOutgoing: true,
+            isDelivered: true,
+            isDisplayed: true,
+            isEdited: false,
+            type: "chat"
+        )
+        let output = formatter.formatMessage(message)
+        #expect(output.contains("[read]"))
+        #expect(!output.contains("[delivered]"))
     }
 
     @Test func `format message delivered not shown for incoming`() {

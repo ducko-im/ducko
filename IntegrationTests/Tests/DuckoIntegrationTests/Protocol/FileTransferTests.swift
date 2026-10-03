@@ -98,9 +98,6 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 let bobJID = try harness.jid(for: TestCredentials.bob)
 
                 let fixtureURL = try Self.makeFixtureFile(harness: harness)
-                // Pinning `.httpUpload` bypasses the `.auto` resolver; `.auto`
-                // always picks `.httpUpload` for bare-JID conversations, so the
-                // explicit method is what makes this test deterministic.
                 let conversation = try await harness.environment.chatService.openConversation(for: bobJID, accountID: alice.accountID)
 
                 await withKnownIssue("Server lacks HTTP upload service", isIntermittent: true) {
@@ -158,6 +155,13 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 let result = try await sendTask.value
                 #expect(result.isEmpty)
+
+                // The file's row in Alice's chat says the contact received it.
+                let sentRow = try #require(
+                    await harness.environment.chatService.loadMessages(for: conversation.id).last { $0.isOutgoing }
+                )
+                #expect(sentRow.isDelivered)
+                #expect(sentRow.errorText == nil)
 
                 // JingleModule emits `.jingleFileTransferCompleted` on the
                 // receiver (Bob), not the sender — see `runJingleRoundTrip`.

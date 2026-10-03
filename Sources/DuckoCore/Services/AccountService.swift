@@ -205,10 +205,12 @@ public final class AccountService {
 
         // Auto-link imported conversations whose source JID matches this account
         let imported = try await store.fetchConversations(importSourceJID: jidString)
-        for var conv in imported {
-            conv.accountID = account.id
-            conv.importSourceJID = nil
-            try await store.upsertConversation(conv)
+        for conversation in imported {
+            let accountID = account.id
+            try await store.updateConversation(conversation.id) {
+                $0.accountID = accountID
+                $0.importSourceJID = nil
+            }
         }
 
         try? await loadAccounts()

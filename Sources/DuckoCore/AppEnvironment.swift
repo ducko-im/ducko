@@ -90,6 +90,7 @@ public final class AppEnvironment {
         profileService.setAccountService(accountService)
         fileTransferService.setAccountService(accountService)
         fileTransferService.setChatService(chatService)
+        fileTransferService.setPresenceService(presenceService)
         omemoService.setAccountService(accountService)
         omemoService.setChatService(chatService)
         accountService.setOMEMOService(omemoService)

@@ -25,9 +25,7 @@ struct MessageMetadataView: View {
             }
 
             if message.isOutgoing, message.isDelivered {
-                Image(systemName: "checkmark")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                deliveryMark
             }
 
             if message.isRetracted {
@@ -50,6 +48,23 @@ struct MessageMetadataView: View {
         }
         .opacity(isVisible ? 1 : 0)
         .animation(.easeInOut(duration: 0.15), value: isVisible)
+    }
+
+    /// One check once the message reached the contact, two once they read it.
+    private var deliveryMark: some View {
+        let label = message.isDisplayed ? "Read" : "Delivered"
+        return HStack(spacing: -4) {
+            Image(systemName: "checkmark")
+            if message.isDisplayed {
+                Image(systemName: "checkmark")
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .help(label)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(message.isDisplayed ? "read-indicator" : "delivered-indicator")
     }
 
     @ViewBuilder

@@ -44,8 +44,8 @@ private struct EmptyPersistenceStore: PersistenceStore {
 
     func upsertConversation(_: Conversation) async throws {}
     @discardableResult
-    func updateConversationIfExists(_: Conversation) async throws -> Bool {
-        false
+    func updateConversation(_: UUID, _: @Sendable (inout Conversation) -> Void) async throws -> Conversation? {
+        nil
     }
 
     func fetchAllConversations() async throws -> [Conversation] {

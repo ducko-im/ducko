@@ -4,10 +4,6 @@ import SwiftUI
 struct TranscriptDetailView: View {
     let state: TranscriptViewerState
 
-    private var messages: [ChatMessage] {
-        state.messages
-    }
-
     private var isGroupchat: Bool {
         state.selectedConversation?.type == .groupchat
     }
@@ -86,15 +82,20 @@ struct TranscriptDetailView: View {
     private var messageListView: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(messages) { message in
-                    let pos = state.positions[message.id] ?? MessagePosition(isFirstInGroup: true, isLastInGroup: true)
+                ForEach(state.timelineItems) { item in
+                    switch item {
+                    case let .message(message):
+                        let pos = state.positions[message.id] ?? MessagePosition(isFirstInGroup: true, isLastInGroup: true)
 
-                    TranscriptBubbleView(
-                        message: message,
-                        position: pos,
-                        isGroupchat: isGroupchat,
-                        isSearchResult: state.searchResults.contains(message.id)
-                    )
+                        TranscriptBubbleView(
+                            message: message,
+                            position: pos,
+                            isGroupchat: isGroupchat,
+                            isSearchResult: state.searchResults.contains(message.id)
+                        )
+                    case let .note(note):
+                        TimelineNoteView(note: note, contactName: state.selectedConversation?.displayTitle ?? "")
+                    }
                 }
             }
         }

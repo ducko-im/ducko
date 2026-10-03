@@ -3,65 +3,116 @@ import DuckoCore
 import SwiftUI
 
 struct PendingAttachmentBar: View {
-    let windowState: ChatWindowState
+    @Bindable var windowState: ChatWindowState
 
     var body: some View {
         if !windowState.pendingAttachments.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(windowState.pendingAttachments) { attachment in
-                        PendingAttachmentCard(attachment: attachment) {
-                            windowState.removeAttachment(id: attachment.id)
+            HStack(spacing: 8) {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 6) {
+                        ForEach(windowState.pendingAttachments) { attachment in
+                            PendingAttachmentChip(attachment: attachment) {
+                                windowState.removeAttachment(id: attachment.id)
+                            }
                         }
                     }
+                    .padding(.leading, 12)
+                    .padding(.top, 8)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                // Never, not hidden: with scroll bars set to always show, a hidden one still appears and doubles the
+                // bar's height.
+                .scrollIndicators(.never)
+                // On the scroll view alone: an identifier on the whole bar would replace the pop-up's own.
+                .accessibilityIdentifier("pending-attachments")
+
+                if windowState.offersDirectTransfer || windowState.sendsFilesUnencryptedInEncryptedChat {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        if windowState.offersDirectTransfer {
+                            sendMethodPicker
+                        }
+                        // Said once beneath the menu rather than in each of its items, which keeps them short.
+                        if windowState.sendsFilesUnencryptedInEncryptedChat {
+                            Text("Not end-to-end encrypted")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("Files are not end-to-end encrypted")
+                                .accessibilityIdentifier("attachment-encryption-note")
+                        }
+                    }
+                    .padding(.top, 8)
+                    .padding(.trailing, 12)
+                }
             }
-            .background(Color(.windowBackgroundColor))
-            .accessibilityIdentifier("pending-attachments")
+        }
+    }
+
+    /// Both ways are always listed, so a direct transfer that is not possible right now shows greyed out instead of
+    /// going missing.
+    private var sendMethodPicker: some View {
+        Picker("Send", selection: $windowState.sendsAttachmentsDirectly) {
+            Text("Upload").tag(false)
+            Text("Send Directly")
+                .tag(true)
+                .selectionDisabled(!windowState.canSendDirectly)
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .fixedSize()
+        .accessibilityIdentifier("attachment-send-method")
+        .task(id: windowState.contactOnlineResources) {
+            await windowState.refreshDirectTransferSupport()
         }
     }
 }
 
-// MARK: - PendingAttachmentCard
+// MARK: - PendingAttachmentChip
 
-private struct PendingAttachmentCard: View {
+/// One queued file on a single line, so the bar stays as low as the message field it sits above.
+private struct PendingAttachmentChip: View {
+    private static let thumbnailSize: CGFloat = 24
+
     let attachment: DraftAttachment
     let onRemove: () -> Void
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            VStack(spacing: 4) {
-                if attachment.isImage, let nsImage = NSImage(contentsOf: attachment.url) {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 56, height: 56)
-                        .clipShape(.rect(cornerRadius: 6))
-                } else {
-                    Image(systemName: "doc")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 56, height: 56)
-                }
+        HStack(spacing: 6) {
+            thumbnail
+                .frame(width: Self.thumbnailSize, height: Self.thumbnailSize)
 
-                Text(attachment.fileName)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .frame(maxWidth: 64)
-            }
-            .padding(4)
+            Text(attachment.fileName)
+                .font(.callout)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 180)
 
             Button {
                 onRemove()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .offset(x: 4, y: -4)
+            .accessibilityLabel("Remove \(attachment.fileName)")
+        }
+        .padding(.leading, 4)
+        .padding(.trailing, 6)
+        .padding(.vertical, 4)
+        .background(.quaternary, in: .rect(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if attachment.isImage, let nsImage = NSImage(contentsOf: attachment.url) {
+            Image(nsImage: nsImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: Self.thumbnailSize, height: Self.thumbnailSize)
+                .clipShape(.rect(cornerRadius: 5))
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: "doc")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
         }
     }
 }

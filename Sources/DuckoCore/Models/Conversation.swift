@@ -16,6 +16,8 @@ public struct Conversation: Sendable, Identifiable {
     public var roomSubject: String?
     public var roomNickname: String?
     public var encryptionEnabled: Bool
+    /// The user switched encryption off in this chat, so a contact's encrypted message does not switch it back on.
+    public var encryptionOptedOut: Bool
     public var occupantNickname: String?
     public var lastReadTimestamp: Date?
     public var createdAt: Date
@@ -39,6 +41,7 @@ public struct Conversation: Sendable, Identifiable {
         roomSubject: String? = nil,
         roomNickname: String? = nil,
         encryptionEnabled: Bool = false,
+        encryptionOptedOut: Bool = false,
         occupantNickname: String? = nil,
         lastReadTimestamp: Date? = nil,
         createdAt: Date
@@ -57,9 +60,15 @@ public struct Conversation: Sendable, Identifiable {
         self.roomSubject = roomSubject
         self.roomNickname = roomNickname
         self.encryptionEnabled = encryptionEnabled
+        self.encryptionOptedOut = encryptionOptedOut
         self.occupantNickname = occupantNickname
         self.lastReadTimestamp = lastReadTimestamp
         self.createdAt = createdAt
+    }
+
+    /// A chat with one contact: not a room, and not a private chat with a room's occupant.
+    public var isDirectChat: Bool {
+        type == .chat && occupantNickname == nil
     }
 
     /// Non-empty title: the set name, else the JID's local part, else the full JID.

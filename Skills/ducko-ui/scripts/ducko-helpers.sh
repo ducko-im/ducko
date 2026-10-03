@@ -213,8 +213,9 @@ EOF
 # inside a grouped `Form`.
 # The transient SwiftUI menu may render at process level (a sibling of the
 # windows) or under the window, so search the process's menus first, then fall
-# back to walking the window subtree. A missing item keys Escape while DuckoApp
-# is still frontmost, so the open menu can't swallow later scripts' input.
+# back to walking the window subtree. A missing or greyed-out item keys Escape
+# while DuckoApp is still frontmost, so the open menu can't swallow later
+# scripts' input.
 # Args: menu_item_name source_var [window_var] [error_msg] [on_success]
 ducko_as_click_context_menu_item() {
     local menu_item_name="$1"
@@ -236,6 +237,11 @@ ducko_as_click_context_menu_item() {
             end repeat
             if menuItem is missing value then set menuItem to my findByRoleAndName(${window_var}, "AXMenuItem", "${menu_item_name}", 0, 30)
             if menuItem is missing value then
+                if frontmost then key code 53
+                return "ERROR: ${error_msg}"
+            end if
+            -- A click on a greyed-out item does nothing and reports no error.
+            if not (enabled of menuItem) then
                 if frontmost then key code 53
                 return "ERROR: ${error_msg}"
             end if

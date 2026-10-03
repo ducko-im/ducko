@@ -13,7 +13,8 @@ public struct Attachment: Sendable, Identifiable, Codable {
     public enum Origin: String, Sendable, Codable {
         /// Supplied by a peer, or otherwise not written by this app.
         case remote
-        /// Written to the downloads folder by this app, after a transfer the user accepted.
+        /// A file on this Mac that the user put there: one this app wrote to the downloads folder after a transfer the
+        /// user accepted, or one the user chose to send directly.
         case locallySaved
     }
 
@@ -44,8 +45,8 @@ public struct Attachment: Sendable, Identifiable, Codable {
         self.savedOrigin = .remote
     }
 
-    /// An attachment for a file this app itself saved to the downloads folder. The only way to reach `.locallySaved`,
-    /// so provenance cannot be claimed by a caller parsing a peer's stanza.
+    /// An attachment for a file this app itself saved to the downloads folder, or one the user chose to send directly.
+    /// The only way to reach `.locallySaved`, so provenance cannot be claimed by a caller parsing a peer's stanza.
     public static func locallySaved(
         id: UUID,
         fileURL: URL,
@@ -61,8 +62,9 @@ public struct Attachment: Sendable, Identifiable, Codable {
     }
 
     /// The attachment's own file when it lives on disk, which is what makes Quick Look and Reveal in Finder possible.
-    /// Only a file this app saved qualifies: a peer that sends a `file:` URL is naming a path on the recipient's
-    /// machine, and honouring it would open the recipient's own documents inside the sender's message.
+    /// Only a file this app saved, or one the user chose to send directly, qualifies: a peer that sends a `file:` URL is
+    /// naming a path on the recipient's machine, and honouring it would open the recipient's own documents inside the
+    /// sender's message.
     public var localFileURL: URL? {
         guard origin == .locallySaved, let parsed = URL(string: url), parsed.isFileURL else { return nil }
         return parsed
@@ -80,9 +82,9 @@ public struct Attachment: Sendable, Identifiable, Codable {
         mimeType?.hasPrefix("image/") == true
     }
 
-    /// The name the attachment is shown under. Unless this app saved the file, a peer chose the name, so it is reduced
-    /// to one visible file name the way an offered file's is: a direction override or a control character could
-    /// otherwise make it read as a different file.
+    /// The name the attachment is shown under. Unless the file is one this app saved or the user chose to send, a peer
+    /// chose the name, so it is reduced to one visible file name the way an offered file's is: a direction override or a
+    /// control character could otherwise make it read as a different file.
     public var displayFileName: String {
         guard let fileName, !fileName.isEmpty else { return Self.fileName(forLink: url) }
         return origin == .locallySaved ? fileName : JingleFileDescription.sanitizeFileName(fileName)

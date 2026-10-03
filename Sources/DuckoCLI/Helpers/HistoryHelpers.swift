@@ -25,6 +25,24 @@ func fetchHistory(
     return try await environment.chatService.fetchMessageHistory(for: conversation.id, before: before, limit: limit)
 }
 
+/// A chat's timeline notes, with the name they call the contact by.
+struct HistoryNotes {
+    let notes: [TimelineNote]
+    let contactName: String
+}
+
+/// The timeline notes that belong among `messages`: those from the oldest message on, up to `before`.
+func fetchHistoryNotes(
+    jid: BareJID, among messages: [ChatMessage], before: Date?,
+    environment: AppEnvironment, accountID: UUID
+) async throws -> HistoryNotes {
+    guard let conversation = try await resolveConversation(jid: jid, environment: environment, accountID: accountID) else {
+        return HistoryNotes(notes: [], contactName: jid.description)
+    }
+    let notes = await environment.chatService.fetchNotes(for: conversation.id, since: messages.first?.timestamp, before: before)
+    return HistoryNotes(notes: notes, contactName: jid.description)
+}
+
 func searchHistory(
     jid: BareJID, query: String, limit: Int,
     environment: AppEnvironment, accountID: UUID
@@ -47,12 +65,20 @@ private func resolveConversation(
     return conversations.first(where: { $0.jid == jid && $0.accountID == accountID })
 }
 
-func printHistory(_ messages: [ChatMessage], formatter: any CLIFormatter, accountJID: BareJID? = nil) {
-    guard !messages.isEmpty else {
+func printHistory(
+    _ messages: [ChatMessage], notes: HistoryNotes? = nil,
+    formatter: any CLIFormatter, accountJID: BareJID? = nil
+) {
+    guard !messages.isEmpty || notes?.notes.isEmpty == false else {
         print(formatter.formatEmptyResult(.messages))
         return
     }
-    for message in messages {
-        print(formatter.formatMessage(message, accountJID: accountJID))
+    for item in TimelineItem.merged(messages: messages, notes: notes?.notes ?? []) {
+        switch item {
+        case let .message(message): print(formatter.formatMessage(message, accountJID: accountJID))
+        case let .note(note):
+            guard let notes else { continue }
+            print(formatter.formatNote(note, contactName: notes.contactName))
+        }
     }
 }

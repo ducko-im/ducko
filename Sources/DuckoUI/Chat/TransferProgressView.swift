@@ -7,8 +7,10 @@ struct TransferProgressView: View {
     let accountID: UUID?
 
     var body: some View {
+        // Only uploads are listed here. A file sent directly reports on its own row in the chat, and one being
+        // received on a row standing in for the sender's message.
         let transfers = environment.fileTransferService.activeTransfers.filter {
-            isActive($0.state) && (accountID == nil || $0.accountID == accountID)
+            isUploading($0.state) && (accountID == nil || $0.accountID == accountID)
         }
         if !transfers.isEmpty {
             VStack(spacing: 4) {
@@ -23,12 +25,12 @@ struct TransferProgressView: View {
         }
     }
 
-    private func isActive(_ state: FileTransferService.TransferState) -> Bool {
+    private func isUploading(_ state: FileTransferService.TransferState) -> Bool {
         switch state {
-        case .requestingSlot, .uploading, .negotiating, .connectingTransport,
-             .transferring, .awaitingAcceptance:
+        case .requestingSlot, .uploading:
             true
-        case .completed, .failed, .completedTransfer, .received:
+        case .completed, .failed, .negotiating, .connectingTransport, .transferring, .awaitingAcceptance,
+             .completedTransfer, .received:
             false
         }
     }
@@ -40,7 +42,10 @@ private struct TransferProgressRow: View {
     let transfer: FileTransferService.ActiveTransfer
 
     var body: some View {
+        // On this account's side, where the uploaded file's message will be.
         HStack(spacing: 8) {
+            Spacer(minLength: 0)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(transfer.fileName)
                     .font(.callout)
@@ -51,9 +56,7 @@ private struct TransferProgressRow: View {
                     .foregroundStyle(.secondary)
             }
 
-            Spacer()
-
-            if let progress = transferProgress {
+            if let progress = uploadProgress {
                 ProgressView(value: progress)
                     .frame(width: 100)
             } else {
@@ -72,35 +75,11 @@ private struct TransferProgressRow: View {
     }
 
     private var stateLabel: String {
-        switch transfer.state {
-        case .requestingSlot:
-            "Requesting upload slot..."
-        case let .uploading(progress):
-            "Uploading \(Int(progress * 100))%"
-        case .negotiating:
-            "Negotiating..."
-        case .connectingTransport:
-            "Connecting..."
-        case let .transferring(progress):
-            "Transferring \(Int(progress * 100))%"
-        case .awaitingAcceptance:
-            "Awaiting acceptance..."
-        case .completed, .completedTransfer, .received:
-            "Completed"
-        case let .failed(reason):
-            reason
-        }
+        uploadProgress.map { "Uploading \(Int($0 * 100))%" } ?? "Requesting upload slot..."
     }
 
-    private var transferProgress: Double? {
-        switch transfer.state {
-        case let .uploading(progress):
-            progress
-        case let .transferring(progress):
-            progress
-        case .requestingSlot, .negotiating, .connectingTransport, .awaitingAcceptance,
-             .completed, .completedTransfer, .received, .failed:
-            nil
-        }
+    /// `nil` while the upload's slot is still being requested.
+    private var uploadProgress: Double? {
+        if case let .uploading(progress) = transfer.state { progress } else { nil }
     }
 }

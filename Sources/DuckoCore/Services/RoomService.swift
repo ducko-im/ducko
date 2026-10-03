@@ -531,11 +531,10 @@ final class RoomService {
             pendingTasks[taskID] = Task { [weak self] in
                 defer { self?.pendingTasks[taskID] = nil }
                 guard let self else { return }
-                var updated = conversation
-                updated.roomNickname = occupant.nickname
+                let nickname = occupant.nickname
                 // Conditional update, not upsert: a `.roomDestroyed` could have
                 // deleted this room while we awaited — never resurrect it.
-                guard await (try? store.updateConversationIfExists(updated)) == true else { return }
+                guard let updated = try? await store.updateConversation(conversation.id, { $0.roomNickname = nickname }) else { return }
                 // Mirror the store guard in the cache: `updateCachedConversation`
                 // no-ops when the slot is already gone, so a wholesale republish
                 // can't re-insert a concurrently destroyed room into `openConversations`.

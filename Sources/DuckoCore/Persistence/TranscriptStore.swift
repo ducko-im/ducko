@@ -6,11 +6,14 @@ public protocol TranscriptStore: Sendable {
     func appendMessage(_ message: ChatMessage) async throws
     func appendMessages(_ messages: [ChatMessage]) async throws
     func appendAmendment(_ amendment: TranscriptAmendment, conversationID: UUID) async throws
+    func appendNote(_ note: TimelineNote) async throws
 
     // MARK: - Read
 
     func fetchMessages(for conversationID: UUID, before: Date?, limit: Int) async throws -> [ChatMessage]
     func fetchMessages(for conversationID: UUID, on date: Date) async throws -> [ChatMessage]
+    /// The notes stamped at or after `since` and before `before`, oldest first. A nil bound is open.
+    func fetchNotes(for conversationID: UUID, since: Date?, before: Date?) async throws -> [TimelineNote]
 
     // MARK: - Lookup
 

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Send a file straight to one of a contact's devices with Send Directly in the attachment bar, or with `/senddirect` in `ducko interactive`, instead of uploading it to the server, with a note in encrypted chats that files are not end-to-end encrypted
+- Switch a chat's encryption on when the contact sends an encrypted message, with a note in the chat saying so, unless you switched it off yourself
+- Open a contact's chat when they write or offer a file, behind the window you are in, without taking the keyboard and without marking it read, and bounce the Dock icon once
+- Show delivered and read as separate checkmarks on your messages, print read markers as they arrive in `ducko interactive`, and mark read messages `[read]` in history
+- Show a chat's unread count, or a typing bubble while the contact types, in its tab
+
 ### Changed
 
 - Show a photo sent as a file as the photo itself instead of its link, in your own messages as well as received ones
@@ -15,6 +23,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Offer Copy Link for a shared file in the message context menu, and no longer offer Edit for it
 - Show a code block in its own box with a copy button on hover, and show inline code in a monospaced font
 - Insert a line break in the message field with Shift or Option plus Return or Enter, and send with the keypad's Enter key as well as Return
+- Show the typing indicator and a file being received as rows at the end of the chat
+- Count a chat as read only while its window is focused, so messages that arrive while it is behind another window or the app is in the background stay unread
+- Keep typing and presence updates coming while any Ducko window is on screen, also behind another app, and tell the server the app is inactive only once none is
+- Title notifications with the contact's name from your contact list
+- Upload a file with `ducko send --file` unless `--method jingle` is given, and accept a contact's bare address with `--method jingle`, which then picks one of their devices that takes direct transfers
 
 ### Fixed
 
@@ -26,6 +39,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix "Last seen" jumping to the moment you connect for contacts who were already offline
 - Fix unreadable text in history for imported messages that carry their own background color
 - Fix encrypted messages that carry no text showing up as undecryptable
+- Fix a failed file upload going unreported
+- Fix uploaded files losing their original name
+- Fix messages sent within the same second showing in the wrong order
+- Fix a delivery checkmark or send error landing on a received message instead of your own, or on your private message to another member of a room
+- Fix a destroyed room reappearing when one of its messages arrives late
 
 ## [0.4.0] - 2026-09-24
 

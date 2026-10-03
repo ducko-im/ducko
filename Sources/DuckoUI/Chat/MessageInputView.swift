@@ -75,7 +75,9 @@ struct MessageInputView: View {
                 .disabled(!canSend)
                 .accessibilityIdentifier("send-button")
             }
-            .padding(12)
+            .padding([.horizontal, .bottom], 12)
+            // Queued files sit right above the field with no separator, so they are kept close to it.
+            .padding(.top, windowState.pendingAttachments.isEmpty ? 12 : 6)
         }
         .fileImporter(
             isPresented: $windowState.isShowingFileImporter,
@@ -113,12 +115,17 @@ struct MessageInputView: View {
             if hasAttachments {
                 await windowState.sendAttachments()
             }
+            // A text that then sends fine clears the send error, which would hide a file that failed just before it.
+            let attachmentError = hasAttachments ? windowState.lastSendError : nil
             if !body.isEmpty {
                 await windowState.sendMessage(body)
             }
             // Restore composer text only on typed send errors (e.g. encryption-required-but-no-trusted-devices); untyped failures leave the composer empty.
             if windowState.lastSendError != nil, let failedBody = windowState.lastFailedSendBody {
                 windowState.draftText = failedBody
+            }
+            if windowState.lastSendError == nil {
+                windowState.lastSendError = attachmentError
             }
             isSending = false
         }
@@ -130,10 +137,12 @@ struct MessageInputView: View {
             guard url.startAccessingSecurityScopedResource() else { continue }
             defer { url.stopAccessingSecurityScopedResource() }
 
-            // Copy to temp so the security-scoped bookmark isn't needed later
-            let tempDir = FileManager.default.temporaryDirectory
-            let dest = tempDir.appendingPathComponent("\(UUID().uuidString)-\(url.lastPathComponent)")
-            guard (try? FileManager.default.copyItem(at: url, to: dest)) != nil else { continue }
+            // Copy to temp so the security-scoped bookmark isn't needed later. The copy keeps the file's own name, in a
+            // folder of its own, because that name is what the recipient is shown.
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            let dest = folder.appendingPathComponent(url.lastPathComponent)
+            guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
+                  (try? FileManager.default.copyItem(at: url, to: dest)) != nil else { continue }
             windowState.addAttachment(url: dest)
         }
     }

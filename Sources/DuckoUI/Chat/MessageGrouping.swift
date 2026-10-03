@@ -6,17 +6,17 @@ struct MessagePosition {
     let isLastInGroup: Bool
 }
 
+/// A note between two messages ends the group before it and starts a new one after it.
 func computeMessagePositions(
-    _ messages: [ChatMessage],
+    _ items: [TimelineItem],
     groupingInterval: TimeInterval = 120
 ) -> [UUID: MessagePosition] {
-    guard !messages.isEmpty else { return [:] }
-
     var positions: [UUID: MessagePosition] = [:]
 
-    for (index, message) in messages.enumerated() {
-        let prevMessage = index > 0 ? messages[index - 1] : nil
-        let nextMessage = index < messages.count - 1 ? messages[index + 1] : nil
+    for (index, item) in items.enumerated() {
+        guard case let .message(message) = item else { continue }
+        let prevMessage = index > 0 ? items[index - 1].message : nil
+        let nextMessage = index < items.count - 1 ? items[index + 1].message : nil
 
         let isFirstInGroup = !isSameGroup(message, as: prevMessage, interval: groupingInterval)
         let isLastInGroup = !isSameGroup(message, as: nextMessage, interval: groupingInterval)
@@ -25,6 +25,12 @@ func computeMessagePositions(
     }
 
     return positions
+}
+
+private extension TimelineItem {
+    var message: ChatMessage? {
+        if case let .message(message) = self { message } else { nil }
+    }
 }
 
 private func isSameGroup(_ a: ChatMessage, as b: ChatMessage?, interval: TimeInterval) -> Bool {

@@ -28,6 +28,9 @@ struct JSONFormatter: CLIFormatter {
         if message.isDelivered {
             dict["delivered"] = "true"
         }
+        if message.isDisplayed {
+            dict["read"] = "true"
+        }
         if message.isEncrypted {
             dict["encrypted"] = "true"
         }
@@ -45,6 +48,15 @@ struct JSONFormatter: CLIFormatter {
             dict["attachments"] = extraAttachments.map(\.url).joined(separator: ",")
         }
         return encode(dict)
+    }
+
+    func formatNote(_ note: TimelineNote, contactName: String) -> String {
+        encode([
+            "type": "note",
+            "kind": note.kind.rawValue,
+            "text": note.text(contactName: contactName),
+            "timestamp": formatTimestamp(note.timestamp)
+        ])
     }
 
     func formatEmptyResult(_ result: CLIEmptyResult) -> String {
@@ -157,6 +169,7 @@ struct JSONFormatter: CLIFormatter {
         case let .presenceSubscriptionApproved(from: jid): encode(["type": "subscription_approved", "from": jid.description])
         case let .presenceSubscriptionRevoked(from: jid): encode(["type": "subscription_revoked", "from": jid.description])
         case let .deliveryReceiptReceived(messageID, from): encode(["type": "delivery_receipt", "messageID": messageID, "from": from.bareJID.description, "account": account])
+        case let .chatMarkerReceived(messageID, .displayed, from): encode(["type": "read_marker", "messageID": messageID, "from": from.bareJID.description, "account": account])
         case let .messageCorrected(originalID, newBody, from): encode(["type": "message_corrected", "originalID": originalID, "newBody": newBody, "from": from.bareJID.description, "account": account])
         case let .messageError(_, from, error): formatMessageError(from: from, error: error, account: account)
         case let .messageRetracted(originalID, from): encode(["type": "message_retracted", "original_id": originalID, "from": from.bareJID.description, "account": account])

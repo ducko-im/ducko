@@ -37,7 +37,9 @@ struct ANSIFormatter: CLIFormatter {
         if message.isEdited {
             line += " \(Color.dim)[edited]\(Color.reset)"
         }
-        if message.isOutgoing, message.isDelivered {
+        if message.isOutgoing, message.isDisplayed {
+            line += " \(Color.green)\u{2713}\u{2713}\(Color.reset)"
+        } else if message.isOutgoing, message.isDelivered {
             line += " \(Color.green)\u{2713}\(Color.reset)"
         }
         if let errorText = message.errorText {
@@ -47,6 +49,10 @@ struct ANSIFormatter: CLIFormatter {
             line += "\n" + formatFileMessage(fileName: attachment.displayFileName, url: attachment.url, fileSize: attachment.fileSize)
         }
         return line
+    }
+
+    func formatNote(_ note: TimelineNote, contactName: String) -> String {
+        "\(Color.dim)[\(iso8601(note.timestamp))] -- \(note.text(contactName: contactName))\(Color.reset)"
     }
 
     func formatEmptyResult(_ result: CLIEmptyResult) -> String {
@@ -114,6 +120,7 @@ struct ANSIFormatter: CLIFormatter {
         case let .presenceSubscriptionApproved(from: jid): "\(Color.green)✓ Subscription approved by \(jid)\(Color.reset)"
         case let .presenceSubscriptionRevoked(from: jid): "\(Color.yellow)✗ Subscription revoked by \(jid)\(Color.reset)"
         case let .deliveryReceiptReceived(messageID, from): "\(Color.dim)\u{2713} delivery receipt: \(messageID) from \(from.bareJID)\(Color.reset)"
+        case let .chatMarkerReceived(messageID, .displayed, from): "\(Color.dim)\u{2713}\u{2713} read marker: \(messageID) from \(from.bareJID)\(Color.reset)"
         case let .messageCorrected(_, newBody, from): "\(Color.yellow)message corrected by \(from.bareJID): \(newBody)\(Color.reset)"
         case let .messageError(_, from, error): "\(Color.red)message error from \(from.bareJID): \(error.displayText)\(Color.reset)"
         case let .messageRetracted(originalID, from): "\(Color.dim)\u{2298} message retracted by \(from.bareJID) (id: \(originalID))\(Color.reset)"

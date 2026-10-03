@@ -86,6 +86,8 @@ struct MessageContentView<Header: View, Footer: View>: View {
                 }
             }
 
+            DirectTransferStatusView(message: message)
+
             MessageMetadataView(
                 message: message,
                 isVisible: isMetadataVisible

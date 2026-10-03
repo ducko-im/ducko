@@ -418,6 +418,11 @@ public final class OMEMOService {
             chatService.learnResourceLock(from: from, accountID: accountID, sequence: lockSequence)
         }
         await chatService.persistEncryptedMessage(message, in: conversation, accountID: accountID)
+        // Only a message from the contact that this device could read counts. An echo of the user's own message says
+        // nothing about the contact, and a failed decrypt is no ground for encrypting the reply.
+        if !isOutgoing, decryptedBody != nil {
+            await chatService.enableEncryptionForContact(in: conversation.id, accountID: accountID)
+        }
 
         // Persist session state after decryption (ratchet may have advanced)
         if let client = accountService?.connectedClient(for: accountID),

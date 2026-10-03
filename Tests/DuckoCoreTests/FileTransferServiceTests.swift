@@ -120,6 +120,481 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
     }
 
     @MainActor
+    struct DirectSend {
+        private static func isUnavailable(_ error: FileTransferService.FileTransferError?) -> Bool {
+            if case .directTransferUnavailable? = error { true } else { false }
+        }
+
+        @Test
+        func `A direct send with no session to go to fails on its own row and is not uploaded`() async throws {
+            let transcripts = MockTranscriptStore()
+            let chatService = ChatService(store: MockPersistenceStore(), transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+            let service = FileTransferService()
+            service.setChatService(chatService)
+            let conversation = makeConversation()
+
+            try await withTemporaryDirectory { directory in
+                let fileURL = directory.appendingPathComponent("notes.txt")
+                try "hello".write(to: fileURL, atomically: true, encoding: .utf8)
+
+                let error = await #expect(throws: FileTransferService.FileTransferError.self) {
+                    try await service.sendFile(url: fileURL, in: conversation, accountID: testAccountID, method: .jingle)
+                }
+                #expect(Self.isUnavailable(error))
+
+                // The file has its row in the chat, carrying the reason, and the transfer under the same id failed.
+                let stored = try #require(await transcripts.messages.first)
+                let row = try #require(await transcripts.fetchMessages(for: stored.conversationID, before: nil, limit: 10).first)
+                #expect(row.isOutgoing)
+                #expect(row.attachments.first?.localFileURL == fileURL)
+                #expect(row.errorText == "The contact has no device online that can receive files directly")
+                #expect(!row.isDelivered)
+                #expect(service.activeTransfers.map(\.id) == [row.id])
+                #expect(failureReason(service, rowID: row.id) == row.errorText)
+            }
+        }
+
+        @Test
+        func `A room has no one device to send to directly`() async throws {
+            let transcripts = MockTranscriptStore()
+            let chatService = ChatService(store: MockPersistenceStore(), transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+            let service = FileTransferService()
+            service.setChatService(chatService)
+
+            try await withTemporaryDirectory { directory in
+                let fileURL = directory.appendingPathComponent("notes.txt")
+                try "hello".write(to: fileURL, atomically: true, encoding: .utf8)
+
+                let error = await #expect(throws: FileTransferService.FileTransferError.self) {
+                    try await service.sendFile(
+                        url: fileURL, in: makeConversation(type: .groupchat), accountID: testAccountID, method: .jingle
+                    )
+                }
+                #expect(Self.isUnavailable(error))
+                #expect(await transcripts.messages.isEmpty)
+                #expect(service.activeTransfers.isEmpty)
+            }
+        }
+
+        @Test(arguments: [nil, "The peer declined the transfer"])
+        func `A directly sent file's row keeps how the transfer ended`(failure: String?) async throws {
+            let transcripts = MockTranscriptStore()
+            let chatService = ChatService(store: MockPersistenceStore(), transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+            let conversation = makeConversation()
+            let rowID = UUID()
+            let file = DuckoCore.Attachment.locallySaved(
+                id: UUID(), fileURL: URL(fileURLWithPath: "/tmp/notes.txt"), mimeType: "text/plain", fileSize: 5
+            )
+            let conversationID = try await chatService.recordSentFile(file, id: rowID, to: conversation.jid, accountID: testAccountID)
+
+            await chatService.recordSentFileOutcome(messageID: rowID, in: conversationID, failure: failure)
+
+            let row = try #require(await chatService.loadMessages(for: conversationID).first)
+            #expect(row.id == rowID)
+            #expect(row.isDelivered == (failure == nil))
+            #expect(row.errorText == failure)
+        }
+
+        struct SessionChoice {
+            /// The contact's online sessions, in the order the contact shows them.
+            let online: [String]
+            let capable: [String]
+            let locked: String?
+            let expected: String?
+        }
+
+        @Test(arguments: [
+            // The session the contact last wrote from wins when it takes direct transfers.
+            SessionChoice(online: ["phone", "laptop"], capable: ["phone", "laptop"], locked: "laptop", expected: "laptop"),
+            // One that does not is passed over for the first shown session that does.
+            SessionChoice(online: ["phone", "laptop"], capable: ["phone"], locked: "laptop", expected: "phone"),
+            SessionChoice(online: ["phone", "laptop", "tablet"], capable: ["laptop", "tablet"], locked: nil, expected: "laptop"),
+            SessionChoice(online: ["phone", "laptop"], capable: [], locked: "phone", expected: nil),
+            SessionChoice(online: [], capable: [], locked: nil, expected: nil)
+        ])
+        func `A direct send goes to the session last written from, else the first shown one that takes it`(choice: SessionChoice) throws {
+            let contact = try #require(BareJID.parse("friend@example.com"))
+            let sessions = choice.online.compactMap { FullJID(bareJID: contact, resourcePart: $0) }
+
+            let chosen = DirectTransferResolver.chooseSession(among: sessions, lockedResource: choice.locked) {
+                choice.capable.contains($0.resourcePart)
+            }
+
+            #expect(chosen?.resourcePart == choice.expected)
+        }
+    }
+
+    /// Which of a contact's sessions a direct send goes to, through a connected client whose peer sessions answer the
+    /// question the way the test sets them up to.
+    @MainActor
+    struct DirectTransferTargets {
+        private static let contact = BareJID(localPart: "friend", domainPart: "example.com")!
+
+        private enum Answer {
+            /// Takes file transfers.
+            case capable
+            /// Answers without the file transfer feature.
+            case incapable
+            /// Answers with an error.
+            case refusing
+            /// Never answers.
+            case silent
+        }
+
+        @MainActor
+        private struct Harness {
+            let accountService: AccountService
+            let chatService: ChatService
+            let presenceService: PresenceService
+            let service: FileTransferService
+            let transport: MockTransport
+            let accountID: UUID
+            let connectTask: Task<Void, any Error>
+
+            func deliver(_ type: XMPPPresence.PresenceType? = nil, from resource: String?, priority: Int = 0) async throws {
+                var presence = XMPPPresence(type: type)
+                presence.priority = priority
+                let contact = DirectTransferTargets.contact
+                let from: JID = if let resource {
+                    try .full(#require(FullJID(bareJID: contact, resourcePart: resource)))
+                } else {
+                    .bare(contact)
+                }
+                let event = XMPPEvent.presenceUpdated(from: from, presence: presence)
+                await presenceService.handleEvent(event, accountID: accountID)
+                service.handleJingleEvent(event, accountID: accountID)
+            }
+
+            var canSendDirectly: Bool {
+                service.canSendDirectly(toJIDString: DirectTransferTargets.contact.description, accountID: accountID)
+            }
+
+            func refresh() async {
+                await service.refreshDirectTransferSupport(forJIDString: DirectTransferTargets.contact.description, accountID: accountID)
+            }
+
+            /// How often `resource` was asked whether it takes file transfers.
+            func questions(to resource: String) async -> Int {
+                await transport.sentBytes.count { bytes in
+                    let stanza = String(decoding: bytes, as: UTF8.self)
+                    return stanza.contains("disco#info") && stanza.contains("to=\"\(DirectTransferTargets.contact)/\(resource)\"")
+                }
+            }
+        }
+
+        private static func connect(_ answers: [String: Answer]) async throws -> Harness {
+            let store = MockPersistenceStore()
+            let account = try Account(
+                id: UUID(), jid: #require(BareJID.parse(testJIDString)), isEnabled: true, connectOnLaunch: false, createdAt: Date()
+            )
+            await store.addAccount(account)
+            let transport = MockTransport()
+            await transport.autoReply { stanza in
+                guard let id = stanza.firstMatch(of: /\sid=["']([^"']+)["']/)?.output.1,
+                      let to = stanza.firstMatch(of: /\sto=["']([^"']+)["']/)?.output.1 else { return nil }
+                if stanza.contains("disco#items") {
+                    return "<iq type='result' id='\(id)' from='\(to)'><query xmlns='http://jabber.org/protocol/disco#items'/></iq>"
+                }
+                guard stanza.contains("disco#info"), let resource = to.split(separator: "/").dropFirst().first else { return nil }
+                switch answers[String(resource)] {
+                case .capable?:
+                    return "<iq type='result' id='\(id)' from='\(to)'><query xmlns='http://jabber.org/protocol/disco#info'>"
+                        + "<feature var='urn:xmpp:jingle:1'/><feature var='urn:xmpp:jingle:apps:file-transfer:5'/></query></iq>"
+                case .incapable?:
+                    return "<iq type='result' id='\(id)' from='\(to)'><query xmlns='http://jabber.org/protocol/disco#info'>"
+                        + "<feature var='urn:xmpp:jingle:1'/></query></iq>"
+                case .refusing?:
+                    return "<iq type='error' id='\(id)' from='\(to)'><error type='cancel'>"
+                        + "<service-unavailable xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>"
+                case .silent?, nil:
+                    return nil
+                }
+            }
+            let accountService = makeAccountService(
+                store: store, clientFactory: MockXMPPClientFactory(transport: transport, modules: [ServiceDiscoveryModule(), JingleModule()])
+            )
+            try await accountService.loadAccounts()
+            let chatService = ChatService(store: store, transcripts: MockTranscriptStore(), filterPipeline: MessageFilterPipeline())
+            let presenceService = makePresenceService()
+            let service = FileTransferService()
+            service.setAccountService(accountService)
+            service.setChatService(chatService)
+            service.setPresenceService(presenceService)
+            let (_, connectTask) = try await driveMockConnect(accountService, accountID: account.id, transport: transport)
+            return Harness(
+                accountService: accountService, chatService: chatService, presenceService: presenceService, service: service,
+                transport: transport, accountID: account.id, connectTask: connectTask
+            )
+        }
+
+        private static func tearDown(_ harness: Harness) async {
+            harness.connectTask.cancel()
+            await harness.accountService.disconnectAll()
+        }
+
+        /// Starts a direct send to the contact with no session named and returns the session the offer went to.
+        private static func offeredSession(_ harness: Harness) async throws -> String? {
+            try await withTemporaryDirectory { directory in
+                let fileURL = directory.appendingPathComponent("notes.txt")
+                try "abc".write(to: fileURL, atomically: true, encoding: .utf8)
+                let conversation = try await harness.chatService.openConversation(for: contact, accountID: harness.accountID)
+                try await harness.service.startDirectTransfer(url: fileURL, in: conversation, accountID: harness.accountID)
+                let transport = harness.transport
+                let offer = OfferBox()
+                let outcome = try await boundedOutcome {
+                    await offer.set(transport.waitForSent { $0.contains("session-initiate") })
+                }
+                guard outcome != nil, let stanza = await offer.stanza else { return nil }
+                return stanza.firstMatch(of: /\sto=["'][^"'\/]+\/([^"']+)["']/).map { String($0.output.1) }
+            }
+        }
+
+        private actor OfferBox {
+            var stanza: String?
+
+            func set(_ stanza: String?) {
+                self.stanza = stanza
+            }
+        }
+
+        @Test
+        func `Only a session that says it takes file transfers can be sent to directly`() async throws {
+            let harness = try await Self.connect(["phone": .incapable, "laptop": .capable])
+            // The phone is the session the contact shows first.
+            try await harness.deliver(from: "phone", priority: 5)
+            #expect(!harness.canSendDirectly)
+
+            await harness.refresh()
+            // Armed: the phone was asked and its answer is in.
+            #expect(await harness.questions(to: "phone") == 1)
+            #expect(!harness.canSendDirectly)
+
+            try await harness.deliver(from: "laptop")
+            await harness.refresh()
+            #expect(harness.canSendDirectly)
+            #expect(try await Self.offeredSession(harness) == "laptop")
+            await Self.tearDown(harness)
+        }
+
+        @Test
+        func `A session that answers with an error is taken as a no and not asked again`() async throws {
+            let harness = try await Self.connect(["phone": .refusing])
+            try await harness.deliver(from: "phone")
+
+            await harness.refresh()
+            await harness.refresh()
+
+            #expect(await harness.questions(to: "phone") == 1)
+            #expect(!harness.canSendDirectly)
+            await Self.tearDown(harness)
+        }
+
+        @Test(arguments: [true, false])
+        func `A session that went offline is asked again when it comes back`(wholeContact: Bool) async throws {
+            let harness = try await Self.connect(["laptop": .capable])
+            try await harness.deliver(from: "laptop")
+            await harness.refresh()
+            try #require(harness.canSendDirectly)
+
+            // Unavailable from the bare JID speaks for every session the contact had.
+            try await harness.deliver(.unavailable, from: wholeContact ? nil : "laptop")
+            try await harness.deliver(from: "laptop")
+            // Whatever runs under the name now has not answered yet.
+            #expect(!harness.canSendDirectly)
+
+            await harness.refresh()
+            #expect(harness.canSendDirectly)
+            #expect(await harness.questions(to: "laptop") == 2)
+            await Self.tearDown(harness)
+        }
+
+        @Test
+        func `Answers outlast a dropped connection and end with a new session`() async throws {
+            let harness = try await Self.connect(["laptop": .capable])
+            try await harness.deliver(from: "laptop")
+            await harness.refresh()
+            try #require(harness.canSendDirectly)
+
+            // A dropped connection may resume, with no presence sent again.
+            harness.service.handleJingleEvent(.disconnected(.connectionLost("The connection was lost")), accountID: harness.accountID)
+            #expect(harness.canSendDirectly)
+
+            let ownSession = try #require(FullJID.parse("\(testJIDString)/ducko"))
+            harness.service.handleJingleEvent(.connected(ownSession), accountID: harness.accountID)
+            #expect(!harness.canSendDirectly)
+            await Self.tearDown(harness)
+        }
+
+        @Test
+        func `A session already known to take the file is offered it without waiting on one that is silent`() async throws {
+            let harness = try await Self.connect(["laptop": .capable, "tablet": .silent])
+            try await harness.deliver(from: "laptop")
+            await harness.refresh()
+            try #require(harness.canSendDirectly)
+            try await harness.deliver(from: "tablet", priority: 5)
+
+            #expect(try await Self.offeredSession(harness) == "laptop")
+            #expect(await harness.questions(to: "tablet") == 0)
+            await Self.tearDown(harness)
+        }
+
+        @Test
+        func `A direct send asks the contact's sessions itself when none has been asked yet`() async throws {
+            let harness = try await Self.connect(["laptop": .capable])
+            try await harness.deliver(from: "laptop")
+            try #require(!harness.canSendDirectly)
+
+            #expect(try await Self.offeredSession(harness) == "laptop")
+            #expect(await harness.questions(to: "laptop") == 1)
+            await Self.tearDown(harness)
+        }
+
+        @Test
+        func `A direct send cut off by the app quitting leaves its row without an outcome`() async throws {
+            let harness = try await Self.connect(["laptop": .capable])
+            try await harness.deliver(from: "laptop")
+            await harness.refresh()
+            // Armed: the offer is out, and the contact has not answered it.
+            #expect(try await Self.offeredSession(harness) == "laptop")
+
+            let tasks = harness.service.takePendingTasks()
+            for task in tasks {
+                task.cancel()
+            }
+            let outcome = try await boundedOutcome {
+                for task in tasks {
+                    await task.value
+                }
+            }
+            try #require(outcome != nil)
+
+            let conversation = try await harness.chatService.openConversation(for: Self.contact, accountID: harness.accountID)
+            let row = try #require(await harness.chatService.loadMessages(for: conversation.id).last)
+            #expect(row.errorText == nil)
+            #expect(!row.isDelivered)
+            await Self.tearDown(harness)
+        }
+
+        @Test
+        func `The session the contact last wrote from is the one a direct send goes to`() async throws {
+            let harness = try await Self.connect(["laptop": .capable, "tablet": .capable])
+            // The laptop is the session the contact shows first.
+            try await harness.deliver(from: "laptop", priority: 5)
+            try await harness.deliver(from: "tablet")
+            await harness.refresh()
+            var message = try XMPPMessage(type: .chat, to: .bare(#require(BareJID.parse(testJIDString))), id: "in-1")
+            message.from = try .full(#require(FullJID(bareJID: Self.contact, resourcePart: "tablet")))
+            message.body = "hi"
+            await harness.chatService.handleEvent(.messageReceived(message), accountID: harness.accountID)
+
+            #expect(try await Self.offeredSession(harness) == "tablet")
+            await Self.tearDown(harness)
+        }
+
+        @Test
+        func `At most eight of a contact's sessions are asked at a time`() async throws {
+            let resources = (1 ... 9).map { "device-\($0)" }
+            let harness = try await Self.connect(Dictionary(uniqueKeysWithValues: resources.map { ($0, Answer.capable) }))
+            for resource in resources {
+                try await harness.deliver(from: resource)
+            }
+            func questions() async -> Int {
+                var count = 0
+                for resource in resources {
+                    count += await harness.questions(to: resource)
+                }
+                return count
+            }
+
+            await harness.refresh()
+            #expect(await questions() == 8)
+
+            await harness.refresh()
+            #expect(await questions() == 9)
+            await Self.tearDown(harness)
+        }
+
+        @Test
+        func `A question still waiting for its answer is not sent again, even when its caller is cancelled`() async throws {
+            let harness = try await Self.connect(["tablet": .silent])
+            try await harness.deliver(from: "tablet")
+            let first = Task { await harness.refresh() }
+            _ = await harness.transport.waitForSent { $0.contains("disco#info") && $0.contains("/tablet") }
+
+            // A view asks from a task that ends like this whenever the contact's sessions change. Either refresh goes
+            // on waiting for the answer, so the waits here only give a question that did get sent again the time to go
+            // out.
+            first.cancel()
+            _ = try await boundedOutcome(timeout: .milliseconds(300)) { await first.value }
+            let second = Task { await harness.refresh() }
+            _ = try await boundedOutcome(timeout: .milliseconds(300)) { await second.value }
+
+            #expect(await harness.questions(to: "tablet") == 1)
+            await Self.tearDown(harness)
+            await first.value
+            await second.value
+        }
+
+        /// The capable answer to the question a refresh put to `resource`, as the session sends it.
+        private static func capableAnswer(to question: String, from resource: String) throws -> String {
+            let id = try #require(question.firstMatch(of: /\sid=["']([^"']+)["']/)?.output.1)
+            return "<iq type='result' id='\(id)' from='\(contact)/\(resource)'><query xmlns='http://jabber.org/protocol/disco#info'>"
+                + "<feature var='urn:xmpp:jingle:1'/><feature var='urn:xmpp:jingle:apps:file-transfer:5'/></query></iq>"
+        }
+
+        @Test
+        func `A direct send waits for the answer to a question that is already on its way`() async throws {
+            let harness = try await Self.connect(["tablet": .silent])
+            try await harness.deliver(from: "tablet")
+            let asking = Task { await harness.refresh() }
+            let question = try #require(await harness.transport.waitForSent { $0.contains("disco#info") && $0.contains("/tablet") })
+
+            let sending = Task { try await Self.offeredSession(harness) }
+            // The send cannot have its session yet. The wait gives one that gave up at once the time to do so.
+            _ = try await boundedOutcome(timeout: .milliseconds(300)) { _ = try await sending.value }
+            try await harness.transport.simulateReceive(Self.capableAnswer(to: question, from: "tablet"))
+
+            #expect(try await sending.value == "tablet")
+            #expect(await harness.questions(to: "tablet") == 1)
+            await asking.value
+            await Self.tearDown(harness)
+        }
+
+        @Test
+        func `A session whose question got no answer is asked again`() async throws {
+            let harness = try await Self.connect(["laptop": .capable])
+            try await harness.deliver(from: "laptop")
+            await harness.transport.failNextSend(matching: "disco#info", error: XMPPClientError.sendFailed("The connection was closed"))
+
+            await harness.refresh()
+            // Armed: the first question never went out, and that is not taken as a no.
+            try #require(await harness.questions(to: "laptop") == 0)
+            #expect(!harness.canSendDirectly)
+
+            await harness.refresh()
+            #expect(harness.canSendDirectly)
+            await Self.tearDown(harness)
+        }
+
+        @Test
+        func `An answer to a question asked before the session went offline is not kept for what came back`() async throws {
+            let harness = try await Self.connect(["tablet": .silent])
+            try await harness.deliver(from: "tablet")
+            let first = Task { await harness.refresh() }
+            let question = try #require(await harness.transport.waitForSent { $0.contains("disco#info") && $0.contains("/tablet") })
+
+            try await harness.deliver(.unavailable, from: "tablet")
+            try await harness.deliver(from: "tablet")
+            // The old session's answer arrives only now.
+            try await harness.transport.simulateReceive(Self.capableAnswer(to: question, from: "tablet"))
+            await first.value
+
+            #expect(!harness.canSendDirectly)
+            await Self.tearDown(harness)
+        }
+    }
+
+    @MainActor
     struct ActiveTransferTracking {
         @Test
         func `Transfer appears in activeTransfers during send attempt`() async throws {
@@ -187,6 +662,9 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 mediaType: "application/pdf"
             )
 
+            var announced: [FileTransferService.IncomingFileOffer] = []
+            service.onIncomingOffer = { announced.append($0) }
+
             service.handleJingleEvent(.jingleFileTransferReceived(offer), accountID: testAccountID)
 
             #expect(service.incomingOffers.count == 1)
@@ -196,6 +674,13 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
 
             // The row belongs to the accepted transfer, so an offer still waiting on the user has none.
             #expect(service.activeTransfers.isEmpty)
+
+            // Each offer, of either kind, is announced once as the banner will show it, so that one arriving while no
+            // chat window is open can still be noticed.
+            try seedOOBOffer(service, id: "oob-1", offerID: "link-offer")
+            #expect(announced.map(\.offerID) == ["test-offer", "link-offer"])
+            #expect(announced.map(\.fileName) == ["document.pdf", "file.bin"])
+            #expect(announced.map(\.fromJIDString) == ["sender@example.com", "sender@example.com"])
         }
     }
 
@@ -568,7 +1053,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             (FileTransferService.FileTransferError.noUploadModule, "File upload is not available"),
             (FileTransferService.FileTransferError.noJingleModule, "Direct file transfer is not available"),
             (FileTransferService.FileTransferError.uploadFailed("request too large"), "Upload failed: request too large"),
-            (FileTransferService.FileTransferError.jingleFailed("Invalid recipient address: bob"), "File transfer failed: Invalid recipient address: bob")
+            (FileTransferService.FileTransferError.directTransferUnavailable, "The contact has no device online that can receive files directly")
         ])
         func `FileTransferError renders a readable message`(error: FileTransferService.FileTransferError, expected: String) {
             let error: any Error = error
@@ -850,7 +1335,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             await harness.transport.simulateReceive(Self.transportReplaceXML(sid: "empty-sid"))
             try await Self.drain(tasks)
 
-            #expect(failureReason(harness.service, sid: "empty-sid") == "File transfer failed: The file size is invalid")
+            #expect(failureReason(harness.service, sid: "empty-sid") == "The file size is invalid")
             await Self.tearDown(harness)
         }
 
@@ -906,6 +1391,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 }
                 #expect(try Data(contentsOf: fileURL) == Data([1, 2, 3]))
                 #expect(fileURL.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL)
+                #expect(row?.peerJIDString == "bob@example.com")
                 let conversation = try #require(try await harness.store.fetchConversations(for: harness.accountID).first)
                 let message = try #require(await harness.chatService.loadMessages(for: conversation.id).first)
                 #expect(message.attachments.first?.origin == .locallySaved)
@@ -1032,7 +1518,8 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             let initiate = try #require(await harness.transport.waitForSent { $0.contains("session-initiate") })
             let initiateID = try #require(initiate.firstMatch(of: /\sid=["']([^"']+)["']/)?.output.1)
             await harness.transport.simulateReceive("<iq type='result' id='\(initiateID)' from='\(peerJID)'/>")
-            try await poll { harness.service.activeTransfers.contains { $0.method == .jingle && $0.direction == .outgoing } }
+            // The row exists before its session does, so wait for the row to be given the session's sid.
+            try await poll { harness.service.activeTransfers.contains { $0.method == .jingle && $0.direction == .outgoing && $0.sid != nil } }
             let sid = try #require(harness.service.activeTransfers.first { $0.method == .jingle && $0.direction == .outgoing }?.sid)
             return (initiate, sid)
         }
@@ -1112,6 +1599,11 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 #expect(outcome != nil)
 
                 #expect(failureReason(harness.service, sid: sid) == "The peer declined the transfer")
+                // The file's row in the chat keeps the reason once the transfer row is gone.
+                let conversationID = try #require(harness.chatService.openConversations.first?.id)
+                let row = try #require(await harness.chatService.loadMessages(for: conversationID).first)
+                #expect(row.attachments.first?.localFileURL == fileURL)
+                #expect(row.errorText == "The peer declined the transfer")
                 await Self.tearDown(harness)
             }
         }
@@ -1135,6 +1627,10 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 service.handleJingleEvent(.jingleFileTransferFailed(sid: sid, reason: .decline), accountID: accountID)
 
                 #expect(failureReason(service, sid: sid) == "The peer declined the transfer")
+                // The task's own error named the same reason under a label. Both rows keep the reason alone.
+                let conversationID = try #require(harness.chatService.openConversations.first?.id)
+                let row = try #require(await harness.chatService.loadMessages(for: conversationID).first)
+                #expect(row.errorText == "The peer declined the transfer")
                 await Self.tearDown(harness)
             }
         }
@@ -1148,7 +1644,10 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             try await harness.service.acceptIncomingTransfer(offerID, accountID: harness.accountID)
 
             #expect(harness.service.incomingOffers.isEmpty)
-            let state = harness.service.activeTransfers.first { $0.sid == "banner-sid" }?.state
+            let row = harness.service.activeTransfers.first { $0.sid == "banner-sid" }
+            // The sender's bare JID is what the chat with them finds the row by.
+            #expect(row?.peerJIDString == "bob@example.com")
+            let state = row?.state
             guard case .connectingTransport? = state else {
                 Issue.record("Expected connectingTransport, got \(String(describing: state))")
                 await Self.tearDown(harness)

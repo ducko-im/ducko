@@ -293,6 +293,7 @@ struct SwiftDataPersistenceStoreTests {
             conversation.roomSubject = "Subject"
             conversation.roomNickname = "Self"
             conversation.encryptionEnabled = true
+            conversation.encryptionOptedOut = true
             conversation.occupantNickname = "Other"
             conversation.lastReadTimestamp = createdAt
             try await store.upsertConversation(conversation)
@@ -319,6 +320,7 @@ struct SwiftDataPersistenceStoreTests {
             conversation.roomSubject = nil
             conversation.roomNickname = nil
             conversation.encryptionEnabled = false
+            conversation.encryptionOptedOut = false
             conversation.occupantNickname = nil
             conversation.lastReadTimestamp = nil
             try await store.upsertConversation(conversation)
@@ -335,6 +337,7 @@ struct SwiftDataPersistenceStoreTests {
             #expect(cleared.roomSubject == nil)
             #expect(cleared.roomNickname == nil)
             #expect(cleared.encryptionEnabled == false)
+            #expect(cleared.encryptionOptedOut == false)
             #expect(cleared.occupantNickname == nil)
             #expect(cleared.lastReadTimestamp == nil)
         }
@@ -355,8 +358,55 @@ struct SwiftDataPersistenceStoreTests {
             #expect(inserted.roomSubject == "Subject")
             #expect(inserted.roomNickname == "Self")
             #expect(inserted.encryptionEnabled == true)
+            #expect(inserted.encryptionOptedOut == true)
             #expect(inserted.occupantNickname == "Other")
             #expect(inserted.lastReadTimestamp == conversation.createdAt)
+        }
+
+        @Test
+        func `Updating a conversation changes the stored row, not the caller's older copy of it`() async throws {
+            let store = try outer.makeStore()
+            let account = outer.makeAccount()
+            try await store.saveAccount(account)
+            var conversation = outer.makeConversation(accountID: account.id)
+            conversation.unreadCount = 1
+            try await store.upsertConversation(conversation)
+            // What another writer stored after the caller last read the row.
+            conversation.encryptionEnabled = true
+            conversation.isMuted = true
+            try await store.upsertConversation(conversation)
+
+            let date = conversation.createdAt.addingTimeInterval(60)
+            let updated = try await store.updateConversation(conversation.id) {
+                $0.lastMessageDate = date
+                $0.lastMessagePreview = "Hello"
+                $0.unreadCount += 1
+            }
+
+            let stored = try #require(try await store.fetchConversations(for: account.id).first)
+            #expect(updated?.unreadCount == 2)
+            #expect(stored.lastMessageDate == date)
+            #expect(stored.lastMessagePreview == "Hello")
+            #expect(stored.unreadCount == 2)
+            #expect(stored.encryptionEnabled)
+            #expect(stored.isMuted)
+        }
+
+        @Test
+        func `Updating a conversation can move it to another account`() async throws {
+            let store = try outer.makeStore()
+            let first = outer.makeAccount()
+            let second = outer.makeAccount(jid: "other@example.com")
+            try await store.saveAccount(first)
+            try await store.saveAccount(second)
+            let conversation = outer.makeConversation(accountID: first.id)
+            try await store.upsertConversation(conversation)
+
+            let secondID = second.id
+            try await store.updateConversation(conversation.id) { $0.accountID = secondID }
+
+            #expect(try await store.fetchConversations(for: first.id).isEmpty)
+            #expect(try await store.fetchConversations(for: secondID).map(\.id) == [conversation.id])
         }
 
         @Test
@@ -505,24 +555,7 @@ struct SwiftDataPersistenceStoreTests {
         }
 
         @Test
-        func `Update conversation if exists updates an existing row`() async throws {
-            let store = try outer.makeStore()
-            let account = outer.makeAccount()
-            try await store.saveAccount(account)
-
-            var conversation = outer.makeConversation(accountID: account.id)
-            try await store.upsertConversation(conversation)
-
-            conversation.unreadCount = 7
-            let updated = try await store.updateConversationIfExists(conversation)
-
-            #expect(updated)
-            let fetched = try await store.fetchConversations(for: account.id)
-            #expect(fetched.first?.unreadCount == 7)
-        }
-
-        @Test
-        func `Update conversation if exists does not insert a missing row`() async throws {
+        func `Updating a conversation does not insert a missing row`() async throws {
             let store = try outer.makeStore()
             let account = outer.makeAccount()
             try await store.saveAccount(account)
@@ -530,9 +563,9 @@ struct SwiftDataPersistenceStoreTests {
             // A conversation that was never persisted (or was deleted) must not be
             // recreated — the guard against resurrecting a destroyed room.
             let ghost = outer.makeConversation(accountID: account.id)
-            let updated = try await store.updateConversationIfExists(ghost)
+            let updated = try await store.updateConversation(ghost.id) { $0.unreadCount = 7 }
 
-            #expect(!updated)
+            #expect(updated == nil)
             let fetched = try await store.fetchConversations(for: account.id)
             #expect(fetched.isEmpty)
         }

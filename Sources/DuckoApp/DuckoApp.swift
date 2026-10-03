@@ -48,8 +48,15 @@ struct DuckoApp: App {
     private var openChatAction: OpenChatAction {
         OpenChatAction { jidString, accountID in
             chatContainer.open(jidString, accountID: accountID)
-            openWindow(id: "chat")
+            openChatWindow()
         }
+    }
+
+    /// Brings the chat window up because the user asked for it. One that is just opening on its own stays in front
+    /// from here on.
+    private func openChatWindow() {
+        QuietWindow.stopWatching()
+        openWindow(id: "chat")
     }
 
     var body: some Scene {
@@ -131,7 +138,7 @@ struct DuckoApp: App {
 
             CommandGroup(after: .newItem) {
                 Button("New Chat") {
-                    openWindow(id: "chat")
+                    openChatWindow()
                     chatContainer.newChat()
                 }
                 .keyboardShortcut("n")
@@ -327,25 +334,68 @@ struct DuckoApp: App {
     }
 
     private func wireNotifications() {
-        environment.chatService.onIncomingMessage = { [weak notificationManager] message, conversation in
-            guard let notificationManager else { return }
-            guard !conversation.isMuted else { return }
-            guard conversation.id != environment.chatService.activeConversationID else { return }
+        wireMessageAttention()
+        wireFileOfferAttention()
+        notificationManager.onNotificationTapped = { [chatContainer] jidString, accountID in
+            chatContainer.open(jidString, accountID: accountID)
+            openChatWindow()
+        }
+    }
 
-            let senderName = conversation.displayTitle
-            notificationManager.postMessageNotification(
-                from: senderName,
-                body: message.previewText,
-                jidString: conversation.jid.description,
-                accountID: conversation.accountID,
-                avatarData: nil
+    private func wireMessageAttention() {
+        environment.chatService.onIncomingMessage = { message, conversation in
+            let jidString = conversation.jid.description
+            let contact = conversation.accountID.flatMap { environment.rosterService.contact(jidString: jidString, accountID: $0) }
+            let attention = IncomingAttention.forMessage(
+                message, in: conversation,
+                isFromRosterContact: contact != nil,
+                isInView: conversation.id == environment.chatService.activeConversationID
+            )
+            act(
+                on: attention,
+                senderName: IncomingAttention.senderName(in: conversation, rosterName: contact?.displayName, jidString: jidString),
+                body: message.previewText, jidString: jidString, accountID: conversation.accountID
             )
         }
+    }
 
-        notificationManager.onNotificationTapped = { [openWindow, chatContainer] jidString, accountID in
-            chatContainer.open(jidString, accountID: accountID)
-            openWindow(id: "chat")
+    /// A file offer waits in a banner inside the chat window, so without this it would go unseen whenever that window
+    /// is closed.
+    private func wireFileOfferAttention() {
+        environment.fileTransferService.onIncomingOffer = { offer in
+            let conversation = IncomingAttention.chat(
+                withSender: offer.fromJIDString, accountID: offer.accountID, among: environment.chatService.openConversations
+            )
+            let contact = environment.rosterService.contact(jidString: offer.fromJIDString, accountID: offer.accountID)
+            let attention = IncomingAttention.forFileOffer(
+                in: conversation,
+                isFromRosterContact: contact != nil,
+                isInView: conversation.map { $0.id == environment.chatService.activeConversationID } ?? false
+            )
+            act(
+                on: attention,
+                senderName: IncomingAttention.senderName(in: conversation, rosterName: contact?.displayName, jidString: offer.fromJIDString),
+                body: "Wants to send you \(offer.fileName)", jidString: offer.fromJIDString, accountID: offer.accountID
+            )
         }
+    }
+
+    private func act(on attention: IncomingAttention, senderName: String, body: String, jidString: String, accountID: UUID?) {
+        if attention.opensChatQuietly, let accountID {
+            openChatQuietly(withJIDString: jidString, accountID: accountID)
+        }
+        guard attention.notifies else { return }
+        notificationManager.postMessageNotification(
+            from: senderName, body: body, jidString: jidString, accountID: accountID, avatarData: nil
+        )
+        notificationManager.bounceDockIcon()
+    }
+
+    /// Gives the chat a tab, and a chat window to show it in, without interrupting: the tab is not switched to and the
+    /// window does not take the keyboard.
+    private func openChatQuietly(withJIDString jidString: String, accountID: UUID) {
+        chatContainer.openInBackground(jidString, accountID: accountID)
+        QuietWindow.show(identifier: "chat") { openWindow(id: "chat") } settling: { chatContainer.isOpeningQuietly = $0 }
     }
 
     private func exportLogs() {
@@ -368,20 +418,34 @@ struct DuckoApp: App {
 
 // MARK: - App Lifecycle Observer
 
-/// Observes NSApplication active/resign notifications for XEP-0352 CSI.
+/// Tells the server whether anyone can see the app (XEP-0352 CSI). A server holds typing and presence updates back
+/// from a client that says it is inactive. So the app says so only while none of its windows is on screen, since one
+/// that is merely behind another app's still shows who is typing and who is online.
 /// Retained by `DuckoApp` for the app's lifetime, independent of any window.
 @MainActor
-private final class AppStateObserver {
+final class AppStateObserver {
     init(accountService: AccountService) {
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil, queue: .main
-        ) { _ in Task { @MainActor in await accountService.setAppActive(true) } }
+        let changes = [
+            NSApplication.didBecomeActiveNotification,
+            NSApplication.didResignActiveNotification,
+            NSWindow.didChangeOcclusionStateNotification
+        ]
+        for name in changes {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                Task { @MainActor in
+                    let windows = NSApp.windows.map {
+                        (isTitled: $0.styleMask.contains(.titled), isOnScreen: $0.occlusionState.contains(.visible))
+                    }
+                    await accountService.setAppActive(Self.isAppVisible(isActive: NSApp.isActive, windows: windows))
+                }
+            }
+        }
+    }
 
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didResignActiveNotification,
-            object: nil, queue: .main
-        ) { _ in Task { @MainActor in await accountService.setAppActive(false) } }
+    /// Checks each titled window rather than the app's own occlusion state, which counts the menu bar item's window,
+    /// and that window is on screen whenever the menu bar is.
+    nonisolated static func isAppVisible(isActive: Bool, windows: [(isTitled: Bool, isOnScreen: Bool)]) -> Bool {
+        isActive || windows.contains { $0.isTitled && $0.isOnScreen }
     }
 }
 

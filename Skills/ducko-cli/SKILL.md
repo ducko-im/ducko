@@ -35,7 +35,7 @@ Unless noted otherwise, each subcommand connects, performs its action, and disco
 
 Send a message or file, then disconnect. At least one of `--file` or `body` is required. When both are provided, the file is uploaded first, then the body is sent as a separate caption message.
 
-`--method auto` (default) picks HTTP upload; `http` forces XEP-0363; `jingle` forces XEP-0234 peer-to-peer and requires a full JID with resource.
+`--method auto` (the default) and `http` upload the file over XEP-0363. `jingle` sends it peer-to-peer over XEP-0234 and returns only once the contact has accepted and received it, or the transfer has failed. With a full JID, `jingle` sends to that session. With a bare JID it picks one of the contact's online sessions that takes direct transfers. That needs the contact's presence to have arrived, so in this connect-send-disconnect command a full JID is the reliable form. A direct send appears in the chat's history as a sent file, marked `[delivered]` once it arrives or `[error: <reason>]` when it fails.
 
 ```
 ducko send alice@example.com "Hello"
@@ -65,6 +65,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/config` — show room configuration fields
 - `/rooms [service]` — discover available rooms on MUC service
 - `/sendfile [jid] <path>` — send a file (uses current room if jid omitted)
+- `/senddirect <jid> <path>` — send a file straight to one of the contact's online devices (XEP-0234) instead of uploading it. The contact's devices are asked first. The command prints an error when the file is missing or when no device takes direct transfers. Otherwise it prints `Sending <file> to <jid> directly. Use /transfers to check progress.` and the prompt returns. A decline, or a transfer that fails once under way, is printed when it happens. A failure before that point, such as the device refusing the offer or the file's contents not being readable, prints nothing and shows only in `/transfers` and the history.
 - `/accept [id]` — accept an incoming file offer (Jingle or link) and save it to `~/Downloads`. The id is the one printed in the `[File offer]` line. Without an id, it takes this account's newest offer.
 - `/decline [id]` — decline an incoming file offer. Without an id, it takes this account's newest offer.
 - `/transfers` — list active file transfers with progress
@@ -75,7 +76,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/avatar [jid]` — view avatar info (own if no JID, contact's if given)
 - `/profile` — view own vCard profile
 - `/connection-info` — show TLS connection info (protocol, cipher, certificate)
-- `/encrypt <jid> on|off` — toggle OMEMO encryption for a conversation
+- `/encrypt <jid> on|off` — toggle OMEMO encryption for a conversation. `off` also keeps a contact's encrypted message from switching it back on.
 - `/pref chatstates on|off` — toggle chat state notifications (typing indicators)
 - `/pref markers on|off` — toggle displayed markers (read receipts)
 - `/reply <jid> <message>` — reply to last incoming message from JID
@@ -90,7 +91,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `help` — show available commands
 - `quit` / `exit` — disconnect and exit
 
-Interactive mode also prints async events as they arrive: typing indicators, delivery receipts, message corrections, Jingle transfer state changes, and MUC lifecycle events (`[new room]`, nickname changes, room destruction). Terminal bell rings on incoming messages and file transfer offers.
+Interactive mode also prints async events as they arrive: typing indicators, delivery receipts, read markers, message corrections, Jingle transfer state changes, and MUC lifecycle events (`[new room]`, nickname changes, room destruction). Terminal bell rings on incoming messages and file transfer offers.
 
 ```
 ducko interactive
@@ -399,11 +400,13 @@ ducko import adium --path ~/Library/Application\ Support/Adium\ 2.0/Users/Defaul
 [2026-02-27T10:00:15Z] <- alice@example.com: Secret message [encrypted]
 ```
 
-`<-` = incoming, `->` = outgoing. Markers: `[delivered]` for delivery receipts, `[edited]` for corrected messages, `[encrypted]` for OMEMO-encrypted messages, `[error: ...]` for errors. An OMEMO message that could not be decrypted reads `<jid>: error: This message could not be decrypted` in place of its body.
+`<-` = incoming, `->` = outgoing. Markers: `[delivered]` for delivery receipts, `[read]` instead once the contact has read the message, `[edited]` for corrected messages, `[encrypted]` for OMEMO-encrypted messages, `[error: ...]` for errors. An OMEMO message that could not be decrypted reads `<jid>: error: This message could not be decrypted` in place of its body.
+
+History also prints timeline notes, which are not messages, on lines of their own: `[<timestamp>] -- Encryption enabled because <jid> sent an encrypted message`.
 
 ### ANSI
 
-Same as plain with color codes (green incoming, cyan outgoing, red errors, dim timestamps). Delivery shown as green checkmark, edited as dim `[edited]`, encrypted shown as lock icon. Default in terminal.
+Same as plain with color codes (green incoming, cyan outgoing, red errors, dim timestamps). Delivery shown as one green checkmark and read as two, edited as dim `[edited]`, encrypted as dim green `[encrypted]`, notes dimmed. Default in terminal.
 
 ### JSON
 
@@ -411,7 +414,9 @@ Same as plain with color codes (green incoming, cyan outgoing, red errors, dim t
 {"body":"Hello","direction":"incoming","from":"alice@example.com","timestamp":"2026-02-27T10:00:00Z","type":"message"}
 ```
 
-Optional keys: `"delivered":"true"`, `"edited":"true"`, `"encrypted":"true"`, `"error":"..."`, and `"undecryptable":"true"` for an OMEMO message that could not be decrypted (its `body` is then empty). Keys are sorted alphabetically.
+Optional keys: `"delivered":"true"`, `"read":"true"` (with `"delivered"` also set), `"edited":"true"`, `"encrypted":"true"`, `"error":"..."`, and `"undecryptable":"true"` for an OMEMO message that could not be decrypted (its `body` is then empty). Keys are sorted alphabetically.
+
+A timeline note in history is a record of its own: `{"kind":"encryption-enabled-by-contact","text":"...","timestamp":"...","type":"note"}`.
 
 Empty lists emit one `<kind>_empty` record instead of text: `accounts_empty`, `roster_empty`, `bookmarks_empty`, `rooms_empty`, `room_participants_empty`, `searched_channels_empty`, `messages_empty`, `omemo_identity_empty` or `omemo_devices_empty`. Account-scoped records carry `"account"`. `omemo_devices_empty` adds `"jid"`, and `room_participants_empty` carries `"room"`. OMEMO commands emit `omemo_fingerprint`, `omemo_device` (`jid`, `deviceID`, `trust`, and `fingerprint` when known) and `omemo_trust` records.
 
@@ -438,6 +443,8 @@ DUCKO_PROFILE=<unique> .build/debug/DuckoCLI account add --no-connect --password
 printf '/status\n/roster\n/join chat@conference.example.com alice\n/members\n/leave\nquit\n' \
   | DUCKO_PROFILE=<unique> .build/debug/DuckoCLI interactive --output plain
 ```
+
+Output sent to a pipe or file is block-buffered and arrives only when the session exits. To read results while the session runs (for example, to wait for an incoming offer before answering it), drive the REPL under a pseudo-terminal instead: a `tmux -L <name>` session (`send-keys` to type a line, `capture-pane` to read) or `script -q <log> …`. A pseudo-terminal counts as a terminal, so still pass `--output plain`.
 
 `/approve <jid>` adds a `subscription=none` roster stub for that JID on the server even when no request was pending. Remove it afterwards with `roster remove <jid>`, or use a syntactically invalid JID when only the error path matters.
 

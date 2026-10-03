@@ -179,6 +179,15 @@ struct ANSIFormatterTests {
         #expect(output.contains("\u{001B}[36m"))
     }
 
+    // MARK: - Notes
+
+    @Test func `note is dimmed`() {
+        let note = TimelineNote(conversationID: UUID(), timestamp: Date(timeIntervalSince1970: 1_772_280_000), kind: .encryptionEnabledByContact)
+        let output = formatter.formatNote(note, contactName: "bob@example.com")
+        #expect(output.contains("-- Encryption enabled because bob@example.com sent an encrypted message"))
+        #expect(output.hasPrefix("\u{001B}[2m"))
+    }
+
     // MARK: - Message Markers
 
     @Test func `delivered shows checkmark`() {
@@ -195,6 +204,24 @@ struct ANSIFormatterTests {
         )
         let output = formatter.formatMessage(message)
         #expect(output.contains("\u{2713}"))
+        #expect(!output.contains("\u{2713}\u{2713}"))
+    }
+
+    @Test func `read shows two checkmarks`() {
+        let message = ChatMessage(
+            id: UUID(),
+            conversationID: UUID(),
+            fromJID: "bob@example.com",
+            body: "Hi",
+            timestamp: Date(),
+            isOutgoing: true,
+            isDelivered: true,
+            isDisplayed: true,
+            isEdited: false,
+            type: "chat"
+        )
+        let output = formatter.formatMessage(message)
+        #expect(output.contains("\u{2713}\u{2713}"))
     }
 
     @Test func `edited shows dim marker`() {
@@ -220,6 +247,13 @@ struct ANSIFormatterTests {
         let jid = try #require(JID.parse("alice@example.com/res"))
         let output = try #require(formatter.formatEvent(.deliveryReceiptReceived(messageID: "msg-1", from: jid), accountID: UUID()))
         #expect(output.contains("\u{001B}[2m")) // dim
+    }
+
+    @Test func `displayed marker event shows two checks`() throws {
+        let jid = try #require(JID.parse("alice@example.com/res"))
+        let output = try #require(formatter.formatEvent(.chatMarkerReceived(messageID: "msg-1", type: .displayed, from: jid), accountID: UUID()))
+        #expect(output.contains("\u{2713}\u{2713} read marker: msg-1 from alice@example.com"))
+        #expect(formatter.formatEvent(.chatMarkerReceived(messageID: "msg-1", type: .acknowledged, from: jid), accountID: UUID()) == nil)
     }
 
     @Test func `message error event uses red`() throws {

@@ -40,8 +40,11 @@ struct ChatContainerStateTests {
             credentialStore: NullCredentialStore()
         )
         try await environment.accountService.loadAccounts()
+        // Focused, as a chat window the user is working in is. The tests about an unfocused window clear it.
+        let container = ChatContainerState(environment: environment)
+        container.isWindowFocused = true
         return Fixture(
-            container: ChatContainerState(environment: environment),
+            container: container,
             environment: environment,
             store: store,
             accountID: account.id,
@@ -105,6 +108,13 @@ struct ChatContainerStateTests {
             await Task.yield()
         }
         Issue.record("tab \(jid) did not finish loading within budget")
+    }
+
+    /// Gives an activation that was scheduled the turns it needs, before a test asserts that none happened.
+    private func letScheduledActivationsRun() async {
+        for _ in 0 ..< 200 {
+            await Task.yield()
+        }
     }
 
     @Test func `open appends a tab and selects it`() async throws {
@@ -313,6 +323,143 @@ struct ChatContainerStateTests {
 
         await release.signal()
         try await waitUntil { stateB.conversation != nil && !stateB.isLoading }
+
+        #expect(chatService.activeConversationID == nil)
+    }
+
+    @Test func `the selected tab is the active conversation only while the chat window is focused`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        await openAndAwaitLoad(container, "a@example.com", id)
+        let conversationA = try #require(container.state(for: key("a@example.com", id))?.conversation)
+        try await waitUntil { chatService.activeConversationID == conversationA.id }
+
+        container.isWindowFocused = false
+        try await waitUntil { chatService.activeConversationID == nil }
+
+        container.isWindowFocused = true
+        try await waitUntil { chatService.activeConversationID == conversationA.id }
+    }
+
+    @Test func `closing the selected tab of an unfocused chat window activates no other`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        await openAndAwaitLoad(container, "a@example.com", id)
+        await openAndAwaitLoad(container, "b@example.com", id)
+        let conversationB = try #require(container.state(for: key("b@example.com", id))?.conversation)
+        try await waitUntil { chatService.activeConversationID == conversationB.id }
+        container.isWindowFocused = false
+        try await waitUntil { chatService.activeConversationID == nil }
+
+        container.close(key("b@example.com", id))
+        // Armed: the neighbor took the selection, so only the window's focus stands between it and activation.
+        #expect(container.selectedKey == key("a@example.com", id))
+        await letScheduledActivationsRun()
+
+        #expect(chatService.activeConversationID == nil)
+    }
+
+    @Test func `a tab opened in an unfocused chat window becomes active once the window is focused`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        container.isWindowFocused = false
+
+        await openAndAwaitLoad(container, "a@example.com", id)
+        let stateA = try #require(container.state(for: key("a@example.com", id)))
+        try await waitUntil { !stateA.isLoading }
+        #expect(chatService.activeConversationID == nil)
+
+        container.isWindowFocused = true
+        try await waitUntil { chatService.activeConversationID == stateA.conversation?.id }
+    }
+
+    @Test func `a tab opened in the background leaves the selected tab and the active conversation alone`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        await openAndAwaitLoad(container, "a@example.com", id)
+        let conversationA = try #require(container.state(for: key("a@example.com", id))?.conversation)
+        try await waitUntil { chatService.activeConversationID == conversationA.id }
+
+        container.openInBackground("b@example.com", accountID: id)
+        let stateB = try #require(container.state(for: key("b@example.com", id)))
+        try await waitUntil { stateB.conversation != nil && !stateB.isLoading }
+
+        #expect(container.orderedTabs == [key("a@example.com", id), key("b@example.com", id)])
+        #expect(container.selectedKey == key("a@example.com", id))
+        #expect(chatService.activeConversationID == conversationA.id)
+    }
+
+    @Test func `a tab opened in the background is selected when it is the only one`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let id = fixture.accountID
+
+        container.openInBackground("a@example.com", accountID: id)
+        container.openInBackground("a@example.com", accountID: id)
+
+        #expect(container.orderedTabs == [key("a@example.com", id)])
+        #expect(container.selectedKey == key("a@example.com", id))
+    }
+
+    @Test func `a further message for a tab open in the background leaves the selection alone`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let id = fixture.accountID
+        await openAndAwaitLoad(container, "a@example.com", id)
+        container.openInBackground("b@example.com", accountID: id)
+
+        container.openInBackground("b@example.com", accountID: id)
+
+        #expect(container.orderedTabs == [key("a@example.com", id), key("b@example.com", id)])
+        #expect(container.selectedKey == key("a@example.com", id))
+    }
+
+    @Test func `a chat window opening on its own is not in view, even while it has the keyboard`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        container.isWindowFocused = false
+        container.isOpeningQuietly = true
+
+        // The window has the keyboard for a moment, both while its tab loads and after.
+        container.isWindowFocused = true
+        container.openInBackground("a@example.com", accountID: id)
+        let stateA = try #require(container.state(for: key("a@example.com", id)))
+        try await waitUntil { stateA.conversation != nil && !stateA.isLoading }
+        container.isWindowFocused = false
+        container.isWindowFocused = true
+        // Armed: the tab is selected and loaded in a focused window, so only the quiet opening keeps it inactive.
+        #expect(container.selectedKey == key("a@example.com", id))
+        await letScheduledActivationsRun()
+        #expect(chatService.activeConversationID == nil)
+
+        // The user goes to the window, which ends the quiet opening.
+        container.isOpeningQuietly = false
+        try await waitUntil { chatService.activeConversationID == stateA.conversation?.id }
+    }
+
+    @Test func `a quiet opening that ends behind another window leaves the chat inactive`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        container.isWindowFocused = false
+        container.isOpeningQuietly = true
+        container.openInBackground("a@example.com", accountID: id)
+        let stateA = try #require(container.state(for: key("a@example.com", id)))
+        try await waitUntil { stateA.conversation != nil && !stateA.isLoading }
+
+        container.isOpeningQuietly = false
+        await letScheduledActivationsRun()
 
         #expect(chatService.activeConversationID == nil)
     }

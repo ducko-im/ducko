@@ -49,6 +49,40 @@ enum ChatServiceErrorTests {
 
         @Test
         @MainActor
+        func `Message error lands on the sent message, not a received one with the same id`() async throws {
+            let store = MockPersistenceStore()
+            let transcripts = MockTranscriptStore()
+            let service = makeChatService(store: store, transcripts: transcripts)
+
+            let conversationID = UUID()
+            await store.addConversation(Conversation(
+                id: conversationID, accountID: testAccountID, jid: contactJID,
+                type: .chat, isPinned: false, isMuted: false, unreadCount: 0, createdAt: Date()
+            ))
+            let start = Date(timeIntervalSince1970: 1_700_000_000)
+            let rows = [true, false].enumerated().map { offset, isOutgoing in
+                ChatMessage(
+                    id: UUID(), conversationID: conversationID, stanzaID: "ducko-7",
+                    fromJID: contactJID.description, body: "Hello",
+                    timestamp: start.addingTimeInterval(Double(offset)), isOutgoing: isOutgoing,
+                    isDelivered: false, isEdited: false, type: "chat"
+                )
+            }
+            for row in rows {
+                await transcripts.addMessage(row)
+            }
+
+            let from = try #require(JID.parse("contact@example.com/res"))
+            let stanzaError = XMPPStanzaError(errorType: .cancel, condition: .serviceUnavailable)
+            await service.handleEvent(.messageError(messageID: "ducko-7", from: from, error: stanzaError), accountID: testAccountID)
+
+            let messages = try await transcripts.fetchMessages(for: conversationID, before: nil, limit: 50)
+            #expect(messages.first { $0.id == rows[0].id }?.errorText == "The service is unavailable")
+            #expect(messages.first { $0.id == rows[1].id }?.errorText == nil)
+        }
+
+        @Test
+        @MainActor
         func `Message error without ID is ignored`() async throws {
             let store = MockPersistenceStore()
             let transcripts = MockTranscriptStore()

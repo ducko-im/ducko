@@ -67,7 +67,11 @@ extension DuckoCLI {
                 }
             }
 
-            printHistory(messages, formatter: formatter, accountJID: selectedAccount.jid)
+            let notes = try await fetchHistoryNotes(
+                jid: bareJID, among: messages, before: beforeDate,
+                environment: env, accountID: selectedAccount.id
+            )
+            printHistory(messages, notes: notes, formatter: formatter, accountJID: selectedAccount.jid)
         }
     }
 }

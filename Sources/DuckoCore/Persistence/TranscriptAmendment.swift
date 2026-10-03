@@ -2,7 +2,7 @@ import Foundation
 
 public struct TranscriptAmendment: Sendable {
     public enum Action: String, Sendable, Codable {
-        case edit, retract, delivery, error
+        case edit, retract, delivery, displayed, error
     }
 
     public var action: Action

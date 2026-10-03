@@ -193,6 +193,19 @@ struct JSONFormatterTests {
         #expect(output == nil)
     }
 
+    // MARK: - Notes
+
+    @Test func `note carries its kind and text`() throws {
+        let note = TimelineNote(conversationID: UUID(), timestamp: Date(timeIntervalSince1970: 1_772_280_000), kind: .encryptionEnabledByContact)
+        let output = formatter.formatNote(note, contactName: "bob@example.com")
+        let data = try #require(output.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+        #expect(json["type"] == "note")
+        #expect(json["kind"] == "encryption-enabled-by-contact")
+        #expect(json["text"] == "Encryption enabled because bob@example.com sent an encrypted message")
+        #expect(json["timestamp"] == "2026-02-28T12:00:00Z")
+    }
+
     // MARK: - Message Markers
 
     @Test func `message includes delivered`() throws {
@@ -211,6 +224,26 @@ struct JSONFormatterTests {
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["delivered"] == "true")
+        #expect(json["read"] == nil)
+    }
+
+    @Test func `message includes read`() throws {
+        let message = ChatMessage(
+            id: UUID(),
+            conversationID: UUID(),
+            fromJID: "bob@example.com",
+            body: "Hi",
+            timestamp: Date(),
+            isOutgoing: true,
+            isDelivered: true,
+            isDisplayed: true,
+            isEdited: false,
+            type: "chat"
+        )
+        let output = formatter.formatMessage(message)
+        let data = try #require(output.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+        #expect(json["read"] == "true")
     }
 
     @Test func `message includes edited`() throws {
@@ -241,6 +274,17 @@ struct JSONFormatterTests {
         #expect(json["type"] == "delivery_receipt")
         #expect(json["messageID"] == "msg-1")
         #expect(json["from"] == "alice@example.com")
+    }
+
+    @Test func `displayed marker event is a read marker in JSON`() throws {
+        let jid = try #require(JID.parse("alice@example.com/res"))
+        let output = try #require(formatter.formatEvent(.chatMarkerReceived(messageID: "msg-1", type: .displayed, from: jid), accountID: UUID()))
+        let data = try #require(output.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+        #expect(json["type"] == "read_marker")
+        #expect(json["messageID"] == "msg-1")
+        #expect(json["from"] == "alice@example.com")
+        #expect(formatter.formatEvent(.chatMarkerReceived(messageID: "msg-1", type: .received, from: jid), accountID: UUID()) == nil)
     }
 
     // MARK: - Attachments

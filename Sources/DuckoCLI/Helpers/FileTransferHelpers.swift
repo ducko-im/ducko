@@ -8,12 +8,11 @@ struct FileTransferCLIContext {
     let formatter: any CLIFormatter
 }
 
+/// `auto`, the default, uploads: a direct transfer is only ever the sender's explicit choice.
 func parseTransferMethod(_ string: String?) throws -> FileTransferService.TransferMethod {
-    guard let string else { return .auto }
+    guard let string else { return .httpUpload }
     switch string.lowercased() {
-    case "auto":
-        return .auto
-    case "http":
+    case "auto", "http":
         return .httpUpload
     case "jingle":
         return .jingle
@@ -24,7 +23,7 @@ func parseTransferMethod(_ string: String?) throws -> FileTransferService.Transf
 
 func sendFileFromCLI(
     filePath: String, recipientJID: BareJID,
-    body: String?, method: FileTransferService.TransferMethod = .auto,
+    body: String?, method: FileTransferService.TransferMethod = .httpUpload,
     peerJID: String? = nil, context: FileTransferCLIContext
 ) async throws {
     let fileURL = URL(fileURLWithPath: filePath)

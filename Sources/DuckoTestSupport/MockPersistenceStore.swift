@@ -216,11 +216,11 @@ public actor MockPersistenceStore: PersistenceStore {
     }
 
     @discardableResult
-    public func updateConversationIfExists(_ conversation: Conversation) async throws -> Bool {
+    public func updateConversation(_ conversationID: UUID, _ change: @Sendable (inout Conversation) -> Void) async throws -> Conversation? {
         await awaitConversationWriteGate()
-        guard let index = conversations.firstIndex(where: { $0.id == conversation.id }) else { return false }
-        conversations[index] = conversation
-        return true
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return nil }
+        change(&conversations[index])
+        return conversations[index]
     }
 
     public func fetchAllConversations() async throws -> [Conversation] {

@@ -1,9 +1,10 @@
 import Foundation
 
-/// A single line in a `.jsonl` transcript file. Either a message or an amendment.
+/// A single line in a `.jsonl` transcript file: a message, an amendment to one, or a timeline note.
 enum TranscriptRecord: Codable {
     case message(MessageEntry)
     case amendment(AmendmentEntry)
+    case note(NoteEntry)
 
     // MARK: - Message Entry
 
@@ -37,6 +38,14 @@ enum TranscriptRecord: Codable {
         var errorText: String?
     }
 
+    // MARK: - Note Entry
+
+    struct NoteEntry: Codable {
+        var id: UUID
+        var timestamp: Date
+        var kind: TimelineNote.Kind
+    }
+
     // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {
@@ -51,6 +60,8 @@ enum TranscriptRecord: Codable {
             self = try .message(MessageEntry(from: decoder))
         case "amend":
             self = try .amendment(AmendmentEntry(from: decoder))
+        case "note":
+            self = try .note(NoteEntry(from: decoder))
         default:
             throw DecodingError.dataCorrupted(
                 .init(codingPath: [CodingKeys.type], debugDescription: "Unknown record type: \(type)")
@@ -66,6 +77,9 @@ enum TranscriptRecord: Codable {
             try entry.encode(to: encoder)
         case let .amendment(entry):
             try container.encode("amend", forKey: .type)
+            try entry.encode(to: encoder)
+        case let .note(entry):
+            try container.encode("note", forKey: .type)
             try entry.encode(to: encoder)
         }
     }
@@ -103,6 +117,10 @@ enum TranscriptRecord: Codable {
         ))
     }
 
+    static func from(_ note: TimelineNote) -> TranscriptRecord {
+        .note(NoteEntry(id: note.id, timestamp: note.timestamp, kind: note.kind))
+    }
+
     /// What a failed decrypt was recorded as before the flag existed: an encrypted message with this sentence as its
     /// body.
     private static let undecryptableBodyBeforeFlag = "Could not decrypt this message"
@@ -128,6 +146,11 @@ enum TranscriptRecord: Codable {
             isUndecryptable: isUndecryptable,
             attachments: entry.attachments
         )
+    }
+
+    func toNote(conversationID: UUID) -> TimelineNote? {
+        guard case let .note(entry) = self else { return nil }
+        return TimelineNote(id: entry.id, conversationID: conversationID, timestamp: entry.timestamp, kind: entry.kind)
     }
 
     func toAmendment() -> TranscriptAmendment? {

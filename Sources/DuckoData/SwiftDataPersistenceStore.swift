@@ -244,17 +244,17 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
     }
 
     @discardableResult
-    public func updateConversationIfExists(_ conversation: Conversation) throws -> Bool {
-        let conversationID = conversation.id
+    public func updateConversation(_ conversationID: UUID, _ change: @Sendable (inout Conversation) -> Void) throws -> Conversation? {
         var descriptor = FetchDescriptor<ConversationRecord>(
             predicate: #Predicate { $0.id == conversationID }
         )
         descriptor.fetchLimit = 1
-        guard let existing = try modelContext.fetch(descriptor).first else { return false }
+        guard let existing = try modelContext.fetch(descriptor).first, var conversation = existing.toDomain() else { return nil }
 
+        change(&conversation)
         try applyUpdate(to: existing, from: conversation)
         try modelContext.save()
-        return true
+        return conversation
     }
 
     /// Applies `conversation`'s fields onto an existing record and reconciles its account

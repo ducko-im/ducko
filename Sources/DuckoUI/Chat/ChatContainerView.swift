@@ -4,6 +4,7 @@ import SwiftUI
 public struct ChatContainerView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(ChatContainerState.self) private var container
+    @Environment(\.appearsActive) private var appearsActive
 
     public init() {}
 
@@ -51,6 +52,12 @@ public struct ChatContainerView: View {
         }
         .onChange(of: observedConversationIDs) {
             container.pruneClosedConversations()
+        }
+        .onChange(of: appearsActive, initial: true) {
+            container.isWindowFocused = appearsActive
+        }
+        .onDisappear {
+            container.isWindowFocused = false
         }
         .sheet(isPresented: $container.isShowingNewChat) {
             NewChatSheet { jidString, accountID in

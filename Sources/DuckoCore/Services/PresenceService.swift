@@ -450,6 +450,16 @@ public final class PresenceService {
         return wasOnline && !hasOnlineSession(bareJID, accountID: accountID)
     }
 
+    /// The resources of a contact's online sessions, in the order the contact shows them.
+    func onlineResources(of jid: BareJID, accountID: UUID) -> [String] {
+        (contactSessionsByAccount[accountID]?[jid] ?? [:]).sorted(by: Self.isShownBefore).map(\.key).filter { !$0.isEmpty }
+    }
+
+    public func onlineResources(ofJIDString jidString: String, accountID: UUID) -> [String] {
+        guard let jid = BareJID.parse(jidString) else { return [] }
+        return onlineResources(of: jid, accountID: accountID)
+    }
+
     /// Sets what one contact shows from its sessions and reports whether that changed, so a stanza from a session that
     /// is not the one shown costs no republish.
     private func publishPresence(of jid: BareJID, accountID: UUID) -> Bool {

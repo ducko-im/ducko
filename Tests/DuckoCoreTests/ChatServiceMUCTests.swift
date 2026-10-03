@@ -324,6 +324,37 @@ enum ChatServiceMUCTests {
             #expect(afterStore.isEmpty)
         }
 
+        /// A message whose room was destroyed while it was on its way must not re-insert the room, and what was
+        /// written for it goes too. A chat with a contact does start again with such a message.
+        @Test(arguments: [Conversation.ConversationType.groupchat, .chat])
+        @MainActor
+        func `a message for a conversation deleted meanwhile brings back a chat but not a room`(
+            type: Conversation.ConversationType
+        ) async throws {
+            let store = makeStore()
+            let transcripts = makeTranscripts()
+            let service = makeChatService(store: store, transcripts: transcripts)
+            // The copy the message's handler holds, of a row that is gone from the store by now.
+            let conversation = Conversation(
+                id: UUID(), accountID: testAccountID, jid: testRoomJID, type: type,
+                isPinned: false, isMuted: false, unreadCount: 0, createdAt: Date()
+            )
+            var notified = false
+            service.onIncomingMessage = { _, _ in notified = true }
+            let message = ChatMessage(
+                id: UUID(), conversationID: conversation.id, stanzaID: "late-1", fromJID: testRoomJID.description, body: "late",
+                timestamp: Date(), isOutgoing: false, isDelivered: false, isEdited: false, type: type.rawValue
+            )
+
+            await service.persistEncryptedMessage(message, in: conversation, accountID: testAccountID)
+
+            let isStored = try await store.fetchConversations(for: testAccountID).contains { $0.id == conversation.id }
+            let isTranscriptDeleted = await transcripts.deletedTranscriptConversationIDs.contains(conversation.id)
+            #expect(isStored == (type == .chat))
+            #expect(isTranscriptDeleted == (type == .groupchat))
+            #expect(notified == (type == .chat))
+        }
+
         @Test
         @MainActor
         func `disconnect clears all three room maps`() async {

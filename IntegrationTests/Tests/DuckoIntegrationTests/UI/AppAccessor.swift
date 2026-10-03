@@ -657,9 +657,9 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
     /// Clears `identifier` and types `text` via hardware-style keystrokes, like
     /// `clearAndType`, but WITHOUT asserting the field's `kAXValue` reconciles.
     /// Use for SwiftUI `TextField`s whose typed text isn't surfaced via
-    /// `kAXValueAttribute` (e.g. the borderless contact-list search field): the
-    /// `@State` binding still commits, so assert on the resulting behavior (rows
-    /// appearing/disappearing) instead of on the field's value.
+    /// `kAXValueAttribute` at once: the `@State` binding still commits, so
+    /// assert on the resulting behavior (rows appearing/disappearing) or poll
+    /// the value with `waitForValue`.
     func replaceText(_ text: String, intoIdentifier identifier: String) async throws {
         await ensureFrontmost()
         try Self.setFocused(axDriver.resolveElement(identifier: identifier), identifier: identifier)
@@ -686,6 +686,64 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
             // Preserve pacing so the field editor consumes each Unicode event.
             usleep(10000)
         }
+    }
+
+    /// Activates the app and returns whether it is frontmost afterwards.
+    func bringToFront() async -> Bool {
+        await ensureFrontmost()
+        return isFrontmost()
+    }
+
+    func isFrontmost() -> Bool {
+        guard let pid = process?.processIdentifier else { return false }
+        return NSRunningApplication(processIdentifier: pid)?.isActive ?? false
+    }
+
+    /// Brings the window holding `identifier` to the front and makes it the
+    /// app's main window, as the user going to it does.
+    func raiseWindow(containing identifier: String) async throws {
+        try await retryOnStaleElement(identifier: identifier) {
+            try self.axDriver.raiseWindow(of: self.axDriver.resolveElement(identifier: identifier))
+        }
+        await ensureFrontmost()
+    }
+
+    /// The titles of the app's windows. Unlike the element helpers, which raise
+    /// and focus what they act on, it only reads, so a test can assert that
+    /// something the app did on its own left the keyboard where it was.
+    func windowTitles() -> [String] {
+        guard let pid = process?.processIdentifier else { return [] }
+        let windows = axDriver.readAttribute(AXUIElementCreateApplication(pid), kAXWindowsAttribute) as? [AXUIElement] ?? []
+        return windows.compactMap { axDriver.readAttribute($0, kAXTitleAttribute) as? String }
+    }
+
+    /// Waits until the app has `count` windows. Only reads, like
+    /// `windowTitles()`.
+    func waitForWindowCount(_ count: Int, timeout: Duration) async throws {
+        try await pollUntil(timeout: timeout) { self.windowTitles().count == count }
+    }
+
+    /// The title of the window that has the keyboard. Only reads, like
+    /// `windowTitles()`.
+    func focusedWindowTitle() -> String? {
+        guard let pid = process?.processIdentifier,
+              let window = axDriver.elementAttribute(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute) else { return nil }
+        return axDriver.readAttribute(window, kAXTitleAttribute) as? String
+    }
+
+    /// Whether `identifier` is the element that has the keyboard. Only reads,
+    /// like `windowTitles()`.
+    func hasKeyboardFocus(identifier: String) -> Bool {
+        guard let pid = process?.processIdentifier else { return false }
+        var element = axDriver.elementAttribute(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute)
+        // The element with the keyboard can be the field's editor, a level or two below the element that carries the
+        // identifier.
+        for _ in 0 ..< 4 {
+            guard let current = element else { return false }
+            if axDriver.readAttribute(current, kAXIdentifierAttribute) as? String == identifier { return true }
+            element = axDriver.parentElement(of: current)
+        }
+        return false
     }
 
     /// Resolves `identifier` and reads `kAXValueAttribute` (falling back to

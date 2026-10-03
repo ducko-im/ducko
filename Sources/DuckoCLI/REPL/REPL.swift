@@ -73,6 +73,7 @@ private func dispatchREPLCommand(
     case .config: await handleConfigREPLCommand(arguments, context: context, currentRoom: currentRoom)
     case .moderate: await handleModerateREPLCommand(arguments, context: context, currentRoom: currentRoom)
     case .sendfile: await handleSendFileREPLCommand(arguments, context: context, currentRoom: currentRoom)
+    case .senddirect: await handleSendFileREPLCommand(arguments, context: context, currentRoom: nil, directly: true)
     case .accept: await handleAcceptREPLCommand(arguments, context: context)
     case .decline: await handleDeclineREPLCommand(arguments, context: context)
     case .transfers: await handleTransfersREPLCommand(context: context)

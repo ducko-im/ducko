@@ -14,7 +14,7 @@ The scripts can be allowlisted in `settings.local.json` (see Permission Allowlis
 DuckoApp ships separate windows:
 
 - **Contact List** (`id: "contacts"`) — singleton, main window after login (roster, status picker, search).
-- **Chat** (`id: "chat"`) — singleton tabbed window holding every open conversation as a bottom tab (`chat-tab-bar`); opened/raised by double-click or New Chat. Switching tabs preserves each conversation's draft, search, and sidebar state.
+- **Chat** (`id: "chat"`) — singleton tabbed window holding every open conversation as a bottom tab (`chat-tab-bar`); opened/raised by double-click or New Chat. A roster contact's message or file offer also opens it behind the window the user is in, without taking focus, and adds a tab for that chat without selecting it. A muted chat is left alone. A test run that receives messages can therefore end up with tabs it did not open. Switching tabs preserves each conversation's draft, search, and sidebar state.
 - **Contact Info** (`id: "contact-info"`, keyed by `ContactInfoRef`) — Get Info window: identity, roster/subscription state, vCard, and Block/Remove. Opened from the chat header (i) button, a contact's "Get Info" context item, or Contact ▸ Get Info (⌘⇧I).
 - **Chat Transcripts** (`id: "transcripts"`) — singleton history window; the header clock, a contact's "History" context item, and Contact ▸ History (⌘L) retarget it to that conversation.
 - **MenuBarExtra** — quick status, Show Contact List, Quit.
@@ -59,7 +59,7 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `jid-field` | JID field in account setup | Contacts |
 | `password-field` | Password field in account setup | Contacts |
 | `connect-button` | Connect button in account setup | Contacts |
-| `typing-indicator` | Typing indicator dots | Chat |
+| `typing-indicator` | Typing row at the end of the message list while the contact types, laid out like one of their messages; its label reads "<name> is typing" | Chat |
 | `reply-compose-bar` | Reply/edit compose bar above input | Chat |
 | `message-search-bar` | Cmd+F search bar in chat | Chat |
 | `sort-mode-menu` | "Sort Contacts" picker, in the View menu bar | Contacts (menu bar) |
@@ -91,7 +91,11 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `send-directed-presence-menu-item` | "Send Directed Presence" context menu item on a contact | Contacts |
 | `attachment-button` | Paperclip file picker button | Chat |
 | `pending-attachments` | Pending attachment bar above input | Chat |
-| `transfer-progress` | Progress indicator for an active file transfer | Chat |
+| `attachment-send-method` | Pop-up at the end of the pending attachment bar of a 1:1 chat, choosing Upload or Send Directly. Send Directly is greyed out unless the contact is online with a device that takes direct transfers. | Chat |
+| `attachment-encryption-note` | "Not end-to-end encrypted" at the end of the pending attachment bar, beneath the pop-up where there is one, while files are queued in a chat with encryption on. Its accessibility label reads "Files are not end-to-end encrypted". | Chat |
+| `direct-transfer-status` | Status line under a file sent directly (waiting for the contact to accept, sending, sent directly, or the reason it failed) or under a file being received | Chat |
+| `transfer-progress` | Progress strip for a file being uploaded. A file sent directly reports on its own row through `direct-transfer-status`, and one being received on a `receiving-file-row`. | Chat |
+| `receiving-file-row` | Row at the end of the message list for a file the chat's contact is sending right now, shown like one of their messages with "Receiving…" under it until the saved file's message replaces it | Chat |
 | `file-drop-overlay` | Drag-and-drop overlay | Chat |
 | `attachment-view` | Attachment in message bubble | Chat |
 | `attachment-preview-button` | File attachment card that opens the system Quick Look panel. Disabled for remote files. | Chat |
@@ -168,6 +172,9 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `confirm-password-field` | Confirm password field | Change Password |
 | `encrypted-indicator` | Lock icon on encrypted messages | Chat |
 | `undecryptable-indicator` | Warning lock on an encrypted message that could not be decrypted, shown instead of `encrypted-indicator` | Chat |
+| `delivered-indicator` | One checkmark on a sent message that reached the contact | Chat |
+| `read-indicator` | Two checkmarks on a sent message the contact has read, shown instead of `delivered-indicator` | Chat |
+| `timeline-note` | Note between messages, such as encryption having been switched on by a contact's encrypted message | Chat, Chat Transcripts |
 | `encryption-menu` | Encryption menu button in chat header | Chat |
 | `device-fingerprints-sheet` | Device fingerprints sheet | Chat |
 | `device-row-{deviceID}` | Individual device row | Device Fingerprints |
@@ -190,8 +197,8 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `history-button` | History (clock) button in chat header | Chat |
 | `disconnected-strip` | "You're offline" strip under the chat header | Chat |
 | `chat-tab-bar` | Bottom conversation tab bar | Chat |
-| `chat-tab-{jid}` | Individual conversation tab chip (account-qualified as `chat-tab-{jid}\|{account-jid}` when the same JID is open under more than one account) | Chat |
-| `chat-tab-close-{jid}` | Close button on a conversation tab (revealed on hover, replacing the tab icon; account-qualified to match the chip) | Chat |
+| `chat-tab-{jid}` | Individual conversation tab chip (account-qualified as `chat-tab-{jid}\|{account-jid}` when the same JID is open under more than one account). Its leading slot shows an unread count (capped at 9+), else a typing bubble while the contact types, else the presence dot or the room or private-chat icon. Its accessibility value reads "N unread message(s)" or "Typing", and is empty otherwise. | Chat |
+| `chat-tab-close-{jid}` | Close button on a conversation tab (revealed on hover, replacing the leading slot; account-qualified to match the chip) | Chat |
 | `chat-tab-overflow` | Dropdown for tabs that don't fit the bar width | Chat |
 | `chat-empty-state` | Placeholder (with New Chat button) shown when no tab is open | Chat |
 | `contact-context-get-info` | "Get Info" context menu item on a contact | Contacts |
@@ -282,6 +289,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-encrypt.sh` | Open encryption menu, optionally toggle or open fingerprints | `[on\|off\|fingerprints]` (optional) |
 | `ducko-device-trust.sh` | Trust/untrust/verify an OMEMO device | `DEVICE_ID ACTION` (`ACTION`: trust\|untrust\|verify) |
 | `ducko-attach.sh` | Attach a file via the attachment button in chat | `FILE_PATH` |
+| `ducko-send-method.sh` | Print or choose how the queued files are sent | `[upload\|direct]` (optional) |
 | `ducko-change-nickname.sh` | Change MUC nickname via participant sidebar context menu | `NICKNAME` |
 | `ducko-private-message.sh` | Send a MUC private message via the participant sidebar context menu | `NICKNAME` |
 | `ducko-room-topic.sh` | View or set the room topic | `[TEXT]` (optional; no args prints current topic) |
@@ -763,7 +771,7 @@ $SCRIPTS/ducko-screenshot.sh "live-before.png"   # header shows e.g. "1 particip
 printf '/join room@conference.example.com clibot\n' \
   | DUCKO_PROFILE=clibot .build/debug/DuckoCLI interactive
 
-# 3. Bring DuckoApp frontmost WITHOUT relaunching (CSI active flushes queued pushes), then screenshot.
+# 3. Bring DuckoApp frontmost WITHOUT relaunching (activating it sends CSI active, which flushes queued pushes), then screenshot.
 #    Do NOT use ducko-launch.sh here — it kills and relaunches, destroying the joined tab.
 osascript -e 'tell application "System Events" to set frontmost of process "DuckoApp" to true'
 $SCRIPTS/ducko-screenshot.sh "live-after.png"
@@ -773,7 +781,7 @@ $SCRIPTS/ducko-screenshot.sh "live-after.png"
 $SCRIPTS/ducko-stop.sh
 ```
 
-- **The GUI must be frontmost while observing.** DuckoApp sends XEP-0352 `CSI inactive` whenever it is not the frontmost app, and the server then **queues** MUC presence/subject pushes, flushing them only on `CSI active`. A background-driven observation sees a stale header/subject and wrongly concludes the live-read is broken — activate the app (`set frontmost`) before screenshotting; do not relaunch.
+- **A DuckoApp window must be on screen while observing.** DuckoApp sends XEP-0352 `CSI inactive` while it is not the frontmost app and none of its windows is visible (hidden, minimized, fully covered, or on another Space). The server then **queues** MUC presence and subject pushes and flushes them only on `CSI active`. An observation made with no window visible sees a stale header or subject and wrongly concludes the live read is broken. Activate the app (`set frontmost`) before screenshotting, and do not relaunch.
 - **Subject-change variant.** Ad-hoc MUC rooms restrict `/topic` to moderators, so the first occupant to join a fresh room owns it. To test a live subject update, have account B join the empty room **first** (becoming owner) and keep its REPL session open while the GUI joins as a guest, then issue `/topic <subject>` and assert `room-subject-view` updates live. Participant-count and presence updates (above) need no ownership and work from any second occupant.
 - Use a **separate `DUCKO_PROFILE`** for the CLI account so its credentials and SwiftData don't collide with the GUI profile.
 
@@ -792,7 +800,10 @@ $SCRIPTS/ducko-new-chat.sh "CHAT_PARTNER_JID"
 $SCRIPTS/ducko-attach.sh "/path/to/test-file.png"
 $SCRIPTS/ducko-screenshot.sh "file-attached.png"
 
-# 3. Send (the attached file appears in pending-attachments bar, send delivers it)
+# 3. Send (the attached file appears in pending-attachments bar, send delivers it).
+#    Upload is preselected. To send the file straight to the contact's device instead, run the line below first.
+#    It fails unless the contact is online with a device that takes direct transfers.
+# $SCRIPTS/ducko-send-method.sh direct
 $SCRIPTS/ducko-send.sh "Here's a file"
 $SCRIPTS/ducko-screenshot.sh "file-sent.png"
 
@@ -876,9 +887,9 @@ To allow these scripts in `settings.local.json` without prompts:
 
 ## Notes
 
-- Scripts use `keystroke` (not `set value`) to trigger SwiftUI bindings.
+- Scripts use `keystroke` (not `set value`) to trigger SwiftUI bindings. Keystrokes land in whatever app is frontmost, so while the user works on the same machine a typing script (`ducko-send.sh`, or `ducko-attach.sh` through the file-picker helper) can type into their app. Post key events to the instance's PID instead (see the `AppAccessor.postKey` note below).
 - App activation uses `set frontmost of process` (works with SwiftPM builds).
-- When the app is **not frontmost** it sends XEP-0352 `CSI inactive`, and the server queues MUC presence/subject pushes until `CSI active` — so verifying any **live** update (subject, participant count, presence) requires the app frontmost first, or the observation reads stale.
+- Verifying any **live** update (subject, participant count, presence) needs a DuckoApp window on screen first. Otherwise CSI holds the pushes back (see "A DuckoApp window must be on screen while observing" above).
 - Multi-step interactions are bundled in single osascript blocks to avoid focus loss.
 - Element targeting uses recursive UI-element-tree walks (`findByAttr` and siblings) because `entire contents` silently collapses on deeply nested SwiftUI / NSTableView accessibility trees on macOS 26. Scripts that need these handlers source `ducko-helpers.sh` and emit `$(ducko_as_handlers)` in an unquoted heredoc. Scripts targeting shallow sheets, such as New Chat, Add Contact and Join Room, still use `entire contents` where it reaches their controls. SwiftUI `Picker` segments and Room Settings tabs expose their label through `AXDescription`, so scripts match that attribute. Confirmation-dialog buttons do too, so `ducko_as_click_button_by_label` falls back to it when a button has no title.
 - On macOS 27, other SwiftUI buttons in a sheet, such as Room Settings' Save, expose neither a title nor `AXDescription` to System Events, although Swift AX reads their description. Drive those by identifier or through Swift AX.
@@ -896,6 +907,11 @@ To allow these scripts in `settings.local.json` without prompts:
 - The installed production app's executable is also named `DuckoApp`, and `swift run` launches the build product by a path relative to the checkout (`.build/out/Products/Debug/DuckoApp`). Anchor any process match for the dev app to this checkout's paths and accept the relative form, as `ducko-stop.sh` does.
 - While the production app runs, System Events `process "DuckoApp"` can resolve to it, so the helper scripts, which target the app by that name, can act on production. Drive the dev instance through PID-targeted AX (`AXUIElementCreateApplication(pid)`, as `ducko-dismiss.swift` does). AX actions need no focus: `AXShowMenu` on a `contact-row-*` followed by pressing its "Start Chat" menu item opens a chat, and `AXPress` works on `status-picker` and on picker radios. Open a menu with whichever action the element advertises — `AXShowMenu` returns success without opening the menu on a control that does not advertise it, such as `account-actions-menu`, a `Menu` inside a grouped `Form`, which advertises only `AXPress`. `AppAccessor.pressMenuItem` and `ducko_as_click_context_menu_item` both branch on the advertised action list. Prefer these to synthesized mouse clicks, which land on whatever window is frontmost.
 - A throwaway `DUCKO_PROFILE` gets a persisted account from the CLI (`DuckoCLI account add --no-connect`), after which the GUI opens on Contacts with no Welcome screen. That account has Connect on Launch off, so it starts Offline: `AXPress` `status-picker`, then press its Available item.
+- A throwaway profile folder (`~/Library/Application Support/Ducko-Dev-<profile>/`) holds file-based credentials and OMEMO keys. `rm` may be aliased to `trash` in the shell profile, so remove the folder with `/bin/rm -rf` to keep it out of the Trash.
+- A packaged bundle's app menu is "Ducko" (Ducko ▸ Quit Ducko); a bare debug binary's is "DuckoApp" (DuckoApp ▸ Quit DuckoApp). A script that quits or opens app-menu items by title must use the title matching how the instance was launched.
+- `ducko-attach.sh` reports success even when its Open panel stays open. Confirm the panel closed before checking the attachment. To attach without System Events keystrokes, open the panel with `attachment-button` and fill it through PID-targeted AX or key events posted to the PID, then press Open.
+- A leftover Open or Save panel, or a context menu left open, blocks the instance: AX walks and AppleScript calls then hang. Check for a leftover panel with `peekaboo window list --pid <pid>`, which reads the window list without AX, and cancel it. Close a context menu as soon as its items are read, with `AXCancel` on the menu or Escape posted to the PID. Run probes and scripts under a timeout (for example `perl -e 'alarm 30; exec @ARGV' <command>`) so a stuck step fails fast.
+- A capture taken right after a message arrives can catch the message list mid-scroll. Wait about two seconds before judging layout from a capture.
 - To get an outgoing bubble without typing into the GUI, send from a second session of the same account while the GUI is connected, such as the CLI under another profile. It arrives as a carbon.
 - A `message-bubble-{id}` is one combined accessibility element whose value contains the message's text, unless the message has attachments, a link preview or a code block. Then the bubble is a container that reports no value, and its `attachment-view`, `link-preview` and `code-block` children are separate elements.
 - To type into the dev instance alone, activate it by PID (`NSRunningApplication(processIdentifier:)`, not `set frontmost of process`) and post Unicode key events to that PID, as `AppAccessor.postKey` does. This fills `new-chat-jid-field` after File ▸ New Chat; pressing `start-chat-button` then opens a chat with a JID that has no contact row.

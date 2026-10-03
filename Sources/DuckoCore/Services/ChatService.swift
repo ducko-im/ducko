@@ -47,6 +47,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// resume on the MainActor out of order.
     private var lockSequenceByPeer: [UUID: [BareJID: UInt64]] = [:]
     private var nextInboundLockSequence: UInt64 = 0
+    /// Chats whose encryption a contact's message is switching on right now.
+    private var encryptionSwitchesInFlight: Set<UUID> = []
+    /// The message each conversation's last displayed marker named, so looking at an unchanged chat again does not
+    /// send the contact the same marker again.
+    private var lastDisplayedMarkerSent: [UUID: UUID] = [:]
     /// Registry of pending room-join waiters keyed by `(accountID, room)`.
     var roomJoinNotifiers: [RoomJoinKey: RoomJoinNotifier] {
         roomService.roomJoinNotifiers
@@ -113,6 +118,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             return .bare(jid)
         }
         return .full(fullJID)
+    }
+
+    /// The resource the contact last wrote from, while it is still online.
+    func lockedResource(for jid: BareJID, accountID: UUID) -> String? {
+        lockedResourcesByAccount[accountID]?[jid]
     }
 
     /// Releases the lock for `jid`, so subsequent sends fall back to the bare JID.
@@ -336,7 +346,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             messages = []
             return
         }
-        messages = await loadMessages(for: id)
+        let loaded = await loadMessages(for: id)
+        // A later selection, or the chat going out of view, took over during the load. It owns `messages` now, and
+        // this one must not mark a chat read that nobody is looking at any more.
+        guard activeConversationID == id else { return }
+        messages = loaded
         // Only bump when the active conversation actually changed: re-selecting
         // the same conversation is a no-op for observers, and the unconditional
         // bump triggered a redundant `windowState.refreshMessages()` round-trip.
@@ -367,11 +381,42 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         return try await openConversation(for: jid, accountID: accountID)
     }
 
+    /// The user's own switch. Switching it off also keeps a contact's encrypted message from switching it back on.
     public func setEncryptionEnabled(_ enabled: Bool, for conversationID: UUID, accountID: UUID) async throws {
-        guard var conversation = openConversations.first(where: { $0.id == conversationID }) else { return }
-        conversation.encryptionEnabled = enabled
-        try await store.upsertConversation(conversation)
-        try await setConversations(store.fetchConversations(for: accountID), for: accountID)
+        try await mutateConversation(conversationID, accountID: accountID) {
+            $0.encryptionEnabled = enabled
+            $0.encryptionOptedOut = !enabled
+        }
+    }
+
+    /// Switches a 1:1 chat's encryption on because the contact sent an encrypted message, so the reply is not sent in
+    /// the clear. Leaves a note in the timeline saying so, and does nothing once the user has switched it off.
+    func enableEncryptionForContact(in conversationID: UUID, accountID: UUID) async {
+        // Each event runs in its own task, so the messages of a burst can all get here before the first one's switch is
+        // stored. Only the first goes on: the rest would each leave a note of their own.
+        guard let conversation = openConversations.first(where: { $0.id == conversationID }),
+              conversation.isDirectChat, !conversation.encryptionEnabled, !conversation.encryptionOptedOut,
+              encryptionSwitchesInFlight.insert(conversationID).inserted else { return }
+        defer { encryptionSwitchesInFlight.remove(conversationID) }
+        do {
+            // Decided again on the row as it is stored: the copy above can be older than a switch-off the user made a
+            // moment ago, and that one holds.
+            let stored = try await store.updateConversation(conversationID) {
+                guard !$0.encryptionEnabled, !$0.encryptionOptedOut else { return }
+                $0.encryptionEnabled = true
+            }
+            try await setConversations(store.fetchConversations(for: accountID), for: accountID)
+            guard let stored, stored.encryptionEnabled, !stored.encryptionOptedOut else { return }
+        } catch {
+            log.warning("Could not switch encryption on after an encrypted message: \(error)")
+            return
+        }
+        do {
+            try await transcripts.appendNote(TimelineNote(conversationID: conversationID, kind: .encryptionEnabledByContact))
+        } catch {
+            log.warning("Could not note that encryption was switched on: \(error)")
+        }
+        bumpRevision(for: conversationID)
     }
 
     /// Persists an encrypted message received via OMEMO. Called by OMEMOService.
@@ -770,17 +815,29 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     private func sendDisplayedMarkerIfNeeded(for message: ChatMessage, in conversation: Conversation, accountID: UUID) async {
+        let markedID: String
+        let messageType: XMPPMessage.MessageType
         switch conversation.type {
         case .chat:
-            if let stanzaID = message.stanzaID {
-                try? await sendDisplayedMarker(to: conversation.jid, messageStanzaID: stanzaID, accountID: accountID)
-            }
+            guard let stanzaID = message.stanzaID else { return }
+            (markedID, messageType) = (stanzaID, .chat)
         case .groupchat:
             guard let serverID = message.serverID,
                   let client = accountService?.connectedClient(for: accountID),
                   let mucModule = await client.module(ofType: MUCModule.self),
                   mucModule.nickname(in: conversation.jid) != nil else { return }
-            try? await sendDisplayedMarker(to: conversation.jid, messageStanzaID: serverID, accountID: accountID, messageType: .groupchat)
+            (markedID, messageType) = (serverID, .groupchat)
+        }
+        // Remembered by the message itself, not by the id the marker names: another client can use that id again for
+        // a later message. And remembered before the send, so a second look during it does not send the marker twice.
+        guard ChatPreferences.shared.enableDisplayedMarkers, lastDisplayedMarkerSent[conversation.id] != message.id else { return }
+        lastDisplayedMarkerSent[conversation.id] = message.id
+        do {
+            try await sendDisplayedMarker(to: conversation.jid, messageStanzaID: markedID, accountID: accountID, messageType: messageType)
+        } catch {
+            if lastDisplayedMarkerSent[conversation.id] == message.id {
+                lastDisplayedMarkerSent[conversation.id] = nil
+            }
         }
     }
 
@@ -1074,14 +1131,14 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         try await mutateConversation(conversationID, accountID: accountID) { $0.isMuted.toggle() }
     }
 
+    /// Changes a stored conversation and publishes the result. `mutate` runs on the row as it is stored, so a change
+    /// made here never writes back fields that a message arriving at the same moment has just updated.
     private func mutateConversation(
         _ conversationID: UUID,
         accountID: UUID,
-        _ mutate: (inout Conversation) -> Void
+        _ mutate: @Sendable (inout Conversation) -> Void
     ) async throws {
-        guard var conversation = openConversations.first(where: { $0.id == conversationID }) else { return }
-        mutate(&conversation)
-        try await store.upsertConversation(conversation)
+        try await store.updateConversation(conversationID, mutate)
         try await setConversations(store.fetchConversations(for: accountID), for: accountID)
     }
 
@@ -1193,35 +1250,90 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     // MARK: - Private: Event Handlers
 
     private func handleDeliveryReceipt(messageID: String, from: JID, accountID: UUID) async {
-        guard let conversationID = await conversationID(for: from, accountID: accountID) else { return }
-        try? await transcripts.appendAmendment(
-            TranscriptAmendment(action: .delivery, targetStanzaID: messageID),
-            conversationID: conversationID
-        )
+        guard let conversationID = await conversation(forSender: from, accountID: accountID)?.id,
+              await amendSentMessage(stanzaID: messageID, in: conversationID, { TranscriptAmendment(action: .delivery, targetMessageID: $0) })
+        else { return }
         await messagesChanged(in: conversationID)
+    }
+
+    /// Amends the message this account sent under `stanzaID`. Returns `false`, having written nothing, when it sent
+    /// none.
+    private func amendSentMessage(stanzaID: String, in conversationID: UUID, _ amendment: (UUID) -> TranscriptAmendment) async -> Bool {
+        let recent = await (try? transcripts.fetchMessages(for: conversationID, before: nil, limit: Self.sentLookback)) ?? []
+        guard let message = await sentMessage(stanzaID: stanzaID, among: recent, in: conversationID) else { return false }
+        try? await transcripts.appendAmendment(amendment(message.id), conversationID: conversationID)
+        return true
+    }
+
+    /// The message this account sent under `stanzaID`: the newest such among `recent`, else the newest in the whole
+    /// transcript. Only sent messages match, since every client numbers its own stanzas and a received message can
+    /// carry the same stanza id.
+    private func sentMessage(stanzaID: String, among recent: [ChatMessage], in conversationID: UUID) async -> ChatMessage? {
+        if let message = recent.first(where: { $0.isOutgoing && $0.stanzaID == stanzaID }) { return message }
+        let older = try? await transcripts.findMessages(stanzaID: stanzaID, conversationID: conversationID)
+        return older?.filter(\.isOutgoing).max { $0.timestamp < $1.timestamp }
     }
 
     private func handleChatMarker(messageID: String, type: ChatMarkerType, from: JID, accountID: UUID) async {
         guard type == .displayed else { return }
-        guard let conversationID = await conversationID(for: from, accountID: accountID) else { return }
-        try? await transcripts.appendAmendment(
-            TranscriptAmendment(action: .delivery, targetStanzaID: messageID),
-            conversationID: conversationID
-        )
-        await messagesChanged(in: conversationID)
+        guard let conversation = await conversation(forSender: from, accountID: accountID) else { return }
+        if conversation.isDirectChat {
+            guard await markDisplayed(upTo: messageID, in: conversation.id) else { return }
+        } else {
+            // In a room, one occupant's marker says nothing about the others, so it counts as a delivery there, and so
+            // it does in a private chat with one of the room's occupants.
+            try? await transcripts.appendAmendment(
+                TranscriptAmendment(action: .delivery, targetStanzaID: messageID),
+                conversationID: conversation.id
+            )
+        }
+        await messagesChanged(in: conversation.id)
     }
 
-    /// Returns `true` if the element contained a receipt or chat marker that was handled.
-    private func handleCarbonReceiptOrMarker(_ element: DuckoXMPP.XMLElement, from: JID, accountID: UUID) async -> Bool {
+    /// How many of a chat's newest messages, received ones included, a sent message is looked up in, and a displayed
+    /// marker is carried back through.
+    private static let sentLookback = 200
+
+    /// Marks the sent message a displayed marker names as read, and the ones sent before it: a marker covers every
+    /// message up to the one it names (XEP-0333). Messages already read are left alone, which makes a repeated marker
+    /// a no-op. Beyond the lookback, only the named message is marked and the rest keep the mark they have. Returns
+    /// whether any message was marked.
+    private func markDisplayed(upTo stanzaID: String, in conversationID: UUID) async -> Bool {
+        guard let recent = try? await transcripts.fetchMessages(for: conversationID, before: nil, limit: Self.sentLookback),
+              let named = await sentMessage(stanzaID: stanzaID, among: recent, in: conversationID) else { return false }
+        // Newest first, so the messages sent before the named one follow it.
+        let covered = recent.firstIndex { $0.id == named.id }.map { Array(recent[$0...]) } ?? [named]
+        // A marker speaks only for messages the contact received: one that failed, and a directly sent file, which has
+        // no stanza, keep their own outcome. A read message does not end the walk, since an older one can turn up
+        // behind it later, when the archive delivers what another of the user's devices sent.
+        let unread = covered.filter { $0.isOutgoing && $0.stanzaID != nil && $0.errorText == nil && !$0.isDisplayed }
+        for message in unread {
+            try? await transcripts.appendAmendment(
+                TranscriptAmendment(action: .displayed, targetMessageID: message.id),
+                conversationID: conversationID
+            )
+        }
+        return !unread.isEmpty
+    }
+
+    /// Returns `true` if the element is a receipt or chat marker. One the contact sent is recorded. One that another of
+    /// the user's devices sent acknowledges the contact's message, and says nothing about the user's own.
+    private func handleCarbonReceiptOrMarker(
+        _ element: DuckoXMPP.XMLElement, from: JID, accountID: UUID, isOutgoing: Bool
+    ) async -> Bool {
         if let received = element.child(named: "received", namespace: XMPPNamespaces.receipts),
            let messageID = received.attribute("id") {
-            await handleDeliveryReceipt(messageID: messageID, from: from, accountID: accountID)
+            if !isOutgoing {
+                await handleDeliveryReceipt(messageID: messageID, from: from, accountID: accountID)
+            }
             return true
         }
         for markerType in ChatMarkerType.allCases {
             if let marker = element.child(named: markerType.rawValue, namespace: XMPPNamespaces.chatMarkers),
                let messageID = marker.attribute("id") {
-                await handleChatMarker(messageID: messageID, type: markerType, from: from, accountID: accountID)
+                if !isOutgoing {
+                    await handleChatMarker(messageID: messageID, type: markerType, from: from, accountID: accountID)
+                }
                 return true
             }
         }
@@ -1309,12 +1421,12 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     private func handleMessageError(messageID: String?, errorText: String, from: JID, accountID: UUID) async {
-        guard let messageID else { return }
-        guard let conversationID = await conversationID(for: from, accountID: accountID) else { return }
-        try? await transcripts.appendAmendment(
-            TranscriptAmendment(action: .error, targetStanzaID: messageID, errorText: errorText),
-            conversationID: conversationID
-        )
+        guard let messageID,
+              let conversationID = await conversation(forSender: from, accountID: accountID)?.id,
+              await amendSentMessage(stanzaID: messageID, in: conversationID, {
+                  TranscriptAmendment(action: .error, targetMessageID: $0, errorText: errorText)
+              })
+        else { return }
         await messagesChanged(in: conversationID)
     }
 
@@ -1470,9 +1582,41 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         await persistAndNotify(message, in: conversation, accountID: accountID)
     }
 
+    /// Adds a file this account is sending directly to its chat, where it shows like any other attachment. Returns the
+    /// conversation the row went into.
+    func recordSentFile(_ attachment: Attachment, id: UUID, to jid: BareJID, accountID: UUID) async throws -> UUID {
+        let conversation = try await findOrCreateConversation(for: jid, accountID: accountID)
+        let message = ChatMessage(
+            id: id,
+            conversationID: conversation.id,
+            fromJID: jid.description,
+            body: "",
+            timestamp: Date(),
+            isOutgoing: true,
+            isDelivered: false,
+            isEdited: false,
+            type: "chat",
+            attachments: [attachment]
+        )
+        try await persistMessage(message, in: conversation, accountID: accountID)
+        return conversation.id
+    }
+
+    /// Records how a directly sent file ended: delivered, or the reason it was not.
+    func recordSentFileOutcome(messageID: UUID, in conversationID: UUID, failure: String?) async {
+        let amendment = if let failure {
+            TranscriptAmendment(action: .error, targetMessageID: messageID, errorText: failure)
+        } else {
+            TranscriptAmendment(action: .delivery, targetMessageID: messageID)
+        }
+        try? await transcripts.appendAmendment(amendment, conversationID: conversationID)
+        await messagesChanged(in: conversationID)
+    }
+
     private func persistAndNotify(_ message: ChatMessage, in conversation: Conversation, accountID: UUID) async {
         let isActiveConversation = conversation.id == activeConversationID
-        try? await persistMessage(message, in: conversation, incrementUnread: !isActiveConversation, accountID: accountID)
+        let isKept = await (try? persistMessage(message, in: conversation, incrementUnread: !isActiveConversation, accountID: accountID))
+        guard isKept != false else { return }
 
         if isActiveConversation {
             try? await store.markConversationRead(conversation.id)
@@ -1501,10 +1645,9 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
     private func handleRoomSubjectChanged(room: BareJID, subject: String?, accountID: UUID) async {
         let conversations = await (try? store.fetchConversations(for: accountID)) ?? []
-        guard var conversation = conversations.first(where: { $0.jid == room && $0.type == .groupchat }) else { return }
-        conversation.roomSubject = subject
-        try? await store.upsertConversation(conversation)
-        updateCachedConversation(conversation)
+        guard let conversation = conversations.first(where: { $0.jid == room && $0.type == .groupchat }),
+              let updated = try? await store.updateConversation(conversation.id, { $0.roomSubject = subject }) else { return }
+        updateCachedConversation(updated)
     }
 
     /// Clears the room's occupancy state and finishes its pending join waiter without success.
@@ -1806,7 +1949,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
         // Handle receipt/marker carbons (bodyless) before the body guard.
         // Carbon-forwarded stanzas bypass ReceiptsModule dispatch, so parse XML directly.
-        if await handleCarbonReceiptOrMarker(forwarded.message.element, from: .bare(jid), accountID: accountID) {
+        if await handleCarbonReceiptOrMarker(forwarded.message.element, from: .bare(jid), accountID: accountID, isOutgoing: isOutgoing) {
             return
         }
 
@@ -1912,25 +2055,44 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         return false
     }
 
+    /// Returns `false` when the message was not kept because its room is gone.
+    @discardableResult
     private func persistMessage(
         _ message: ChatMessage,
         in conversation: Conversation,
         incrementUnread: Bool = false,
         accountID: UUID
-    ) async throws {
+    ) async throws -> Bool {
         try await transcripts.appendMessage(message)
 
-        var updated = conversation
-        updated.lastMessageDate = message.timestamp
-        updated.lastMessagePreview = String(message.previewText.prefix(100))
-        if incrementUnread {
-            updated.unreadCount += 1
+        // Only what this message changes is written to the conversation's row. The caller's copy was taken before its
+        // own awaits, and writing all of it back would undo what another handler stored meanwhile, such as encryption
+        // that the contact's previous message switched on.
+        let (date, preview) = (message.timestamp, String(message.previewText.prefix(100)))
+        let record: @Sendable (inout Conversation) -> Void = {
+            $0.lastMessageDate = date
+            $0.lastMessagePreview = preview
+            if incrementUnread {
+                $0.unreadCount += 1
+            }
         }
-        try await store.upsertConversation(updated)
+        if try await store.updateConversation(conversation.id, record) == nil {
+            // The row went away while this message was on its way. A chat the user deleted starts again with it. A
+            // room that was destroyed does not come back for a straggler, and what was just written for it goes too:
+            // without its row, no later cleanup would find it.
+            guard conversation.type == .chat else {
+                try? await transcripts.deleteTranscripts(for: conversation.id)
+                return false
+            }
+            var created = conversation
+            record(&created)
+            try await store.upsertConversation(created)
+        }
 
         try await setConversations(store.fetchConversations(for: accountID), for: accountID)
 
         await messagesChanged(in: conversation.id)
+        return true
     }
 
     private func isDuplicate(stanzaID: String?, from jid: BareJID, occupantNickname: String? = nil, accountID: UUID) async -> Bool {
@@ -2014,6 +2176,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         try await transcripts.fetchMessages(for: conversationID, on: date)
     }
 
+    /// The timeline notes stamped at or after `since` and before `before`. A nil bound is open.
+    public func fetchNotes(for conversationID: UUID, since: Date?, before: Date? = nil) async -> [TimelineNote] {
+        await (try? transcripts.fetchNotes(for: conversationID, since: since, before: before)) ?? []
+    }
+
     // MARK: - Server History
 
     public func fetchServerHistory(
@@ -2080,18 +2247,20 @@ public final class ChatService { // swiftlint:disable:this type_body_length
                 // those appends, delete the transcript it recreated rather than leave an
                 // orphaned JSONL the account-purge sweep can no longer reach. Checked
                 // after the appends so no transcript write can follow it; the metadata
-                // write below is guarded separately by `updateConversationIfExists`.
+                // write below is guarded separately by `updateConversation`.
                 guard try await store.fetchConversations(for: accountID).contains(where: { $0.id == conversation.id }) else {
                     try? await transcripts.deleteTranscripts(for: conversation.id)
                     continue
                 }
                 if let lastMessage = newMessages.last {
-                    var updated = conversation
-                    updated.lastMessageDate = lastMessage.timestamp
-                    updated.lastMessagePreview = String(lastMessage.previewText.prefix(100))
-                    // Conditional update, not upsert: the conversation may have been
-                    // destroyed during this MAM round-trip — don't recreate it.
-                    try await store.updateConversationIfExists(updated)
+                    // Updates an existing row only, since the conversation may have been destroyed during this MAM
+                    // round-trip. It writes only the last message's date and preview, because `conversation` was read
+                    // before the round-trip and the rest of it may have changed since.
+                    let (date, preview) = (lastMessage.timestamp, String(lastMessage.previewText.prefix(100)))
+                    try await store.updateConversation(conversation.id) {
+                        $0.lastMessageDate = date
+                        $0.lastMessagePreview = preview
+                    }
                 }
             }
             try await setConversations(store.fetchConversations(for: accountID), for: accountID)
@@ -2293,12 +2462,9 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         accountID: UUID
     ) async throws -> Conversation {
         let conversations = try await store.fetchConversations(for: accountID)
-        if var existing = conversations.first(where: { $0.jid == room && $0.type == .groupchat }) {
-            if let nickname, existing.roomNickname != nickname {
-                existing.roomNickname = nickname
-                try await store.upsertConversation(existing)
-            }
-            return existing
+        if let existing = conversations.first(where: { $0.jid == room && $0.type == .groupchat }) {
+            guard let nickname, existing.roomNickname != nickname else { return existing }
+            return try await store.updateConversation(existing.id) { $0.roomNickname = nickname } ?? existing
         }
 
         let conversation = Conversation(
@@ -2317,23 +2483,42 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         return conversation
     }
 
-    /// Resolves the conversation ID for a JID, checking in-memory list first then the store.
     private func conversationID(for from: JID, accountID: UUID, occupantNickname: String? = nil) async -> UUID? {
+        await conversation(for: from, accountID: accountID, occupantNickname: occupantNickname)?.id
+    }
+
+    /// The conversation a receipt, marker or error from `from` speaks about. A room's occupant writes from the room's
+    /// address with their nickname as the resource, so what they send belongs to the private chat with them when there
+    /// is one, and never to the private chat with another occupant.
+    private func conversation(forSender from: JID, accountID: UUID) async -> Conversation? {
+        let bareJID = from.bareJID
+        var candidates = openConversations.filter { $0.jid == bareJID && $0.accountID == accountID }
+        if candidates.isEmpty {
+            candidates = await ((try? store.fetchConversations(for: accountID)) ?? []).filter { $0.jid == bareJID }
+        }
+        if case let .full(sender) = from, let privateChat = candidates.first(where: { $0.occupantNickname == sender.resourcePart }) {
+            return privateChat
+        }
+        return candidates.first { $0.occupantNickname == nil }
+    }
+
+    /// Resolves the conversation for a JID, checking in-memory list first then the store.
+    private func conversation(for from: JID, accountID: UUID, occupantNickname: String? = nil) async -> Conversation? {
         let bareJID = from.bareJID
         let predicate: (Conversation) -> Bool = {
             $0.jid == bareJID && $0.accountID == accountID &&
                 (occupantNickname == nil || $0.occupantNickname == occupantNickname)
         }
         if let cached = openConversations.first(where: predicate) {
-            return cached.id
+            return cached
         }
         if let chatConv = try? await store.fetchConversation(jid: bareJID.description, type: .chat, accountID: accountID, importSourceJID: nil),
            occupantNickname == nil || chatConv.occupantNickname == occupantNickname {
-            return chatConv.id
+            return chatConv
         }
         if let groupConv = try? await store.fetchConversation(jid: bareJID.description, type: .groupchat, accountID: accountID, importSourceJID: nil),
            occupantNickname == nil || groupConv.occupantNickname == occupantNickname {
-            return groupConv.id
+            return groupConv
         }
         return nil
     }

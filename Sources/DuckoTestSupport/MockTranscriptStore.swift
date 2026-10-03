@@ -4,9 +4,17 @@ import Foundation
 public actor MockTranscriptStore: TranscriptStore {
     public var messages: [ChatMessage] = []
     public var amendments: [(amendment: TranscriptAmendment, conversationID: UUID)] = []
+    public private(set) var notes: [TimelineNote] = []
     public private(set) var deletedTranscriptConversationIDs: [UUID] = []
+    private var fetchMessagesGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
 
     public init() {}
+
+    /// Holds the next `fetchMessages(for:before:limit:)` until `release` is signaled, signaling `entered` once it is
+    /// held.
+    public func installFetchMessagesGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
+        fetchMessagesGate = (entered, release)
+    }
 
     public func addMessage(_ message: ChatMessage) {
         messages.append(message)
@@ -26,14 +34,27 @@ public actor MockTranscriptStore: TranscriptStore {
         amendments.append((amendment, conversationID))
     }
 
+    public func appendNote(_ note: TimelineNote) async throws {
+        notes.append(note)
+    }
+
     // MARK: - Read
 
     public func fetchMessages(for conversationID: UUID, before: Date?, limit: Int) async throws -> [ChatMessage] {
+        if let gate = fetchMessagesGate {
+            fetchMessagesGate = nil
+            await gate.entered.signal()
+            await gate.release.wait()
+        }
         var filtered = messages.filter { $0.conversationID == conversationID }
         if let before {
             filtered = filtered.filter { $0.timestamp < before }
         }
-        var result = Array(filtered.sorted(by: { $0.timestamp > $1.timestamp }).prefix(limit))
+        // As in the file store: of two messages with one timestamp, the one appended later is the newer.
+        let newestFirst = filtered.enumerated().sorted { lhs, rhs in
+            lhs.element.timestamp == rhs.element.timestamp ? lhs.offset > rhs.offset : lhs.element.timestamp > rhs.element.timestamp
+        }
+        var result = newestFirst.prefix(limit).map(\.element)
         result = applyAmendments(to: result)
         return result
     }
@@ -46,6 +67,15 @@ public actor MockTranscriptStore: TranscriptStore {
         }
         filtered = applyAmendments(to: filtered)
         return filtered.sorted { $0.timestamp < $1.timestamp }
+    }
+
+    public func fetchNotes(for conversationID: UUID, since: Date?, before: Date?) async throws -> [TimelineNote] {
+        notes.filter { note in
+            guard note.conversationID == conversationID else { return false }
+            if let since, note.timestamp < since { return false }
+            if let before, note.timestamp >= before { return false }
+            return true
+        }.sorted { $0.timestamp < $1.timestamp }
     }
 
     // MARK: - Lookup
@@ -165,6 +195,9 @@ public actor MockTranscriptStore: TranscriptStore {
                     result[index].htmlBody = nil
                 case .delivery:
                     result[index].isDelivered = true
+                case .displayed:
+                    result[index].isDelivered = true
+                    result[index].isDisplayed = true
                 case .error:
                     if let errorText = amendment.errorText {
                         result[index].errorText = errorText

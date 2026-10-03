@@ -11,11 +11,14 @@ struct ChatWindowStateTests {
 
     private struct Fixture {
         let windowState: ChatWindowState
+        let environment: AppEnvironment
         let transcripts: MockTranscriptStore
         let accountID: UUID
     }
 
-    private static func makeFixture() async throws -> Fixture {
+    private static func makeFixture(
+        jidString: String = jidString, type: Conversation.ConversationType = .chat
+    ) async throws -> Fixture {
         let store = MockPersistenceStore()
         let transcripts = MockTranscriptStore()
         let jid = try #require(BareJID.parse(jidString))
@@ -32,7 +35,7 @@ struct ChatWindowStateTests {
             id: UUID(),
             accountID: account.id,
             jid: jid,
-            type: .chat,
+            type: type,
             isPinned: false,
             isMuted: false,
             unreadCount: 0,
@@ -46,7 +49,7 @@ struct ChatWindowStateTests {
         try await environment.accountService.loadAccounts()
         let windowState = ChatWindowState(jidString: jidString, accountID: account.id, environment: environment)
         await windowState.load()
-        return Fixture(windowState: windowState, transcripts: transcripts, accountID: account.id)
+        return Fixture(windowState: windowState, environment: environment, transcripts: transcripts, accountID: account.id)
     }
 
     @Test func `windowState carries the opened accountID`() async throws {
@@ -342,5 +345,134 @@ struct ChatWindowStateTests {
         // displayName falls back to the frozen copy, while roomSubject (no fallback) goes nil.
         #expect(windowState.displayName == "Room Name")
         #expect(windowState.roomSubject == nil)
+    }
+
+    // MARK: - Attachments
+
+    private static func incomingTransfer(
+        from peer: String, accountID: UUID, state: FileTransferService.TransferState = .transferring(progress: 0.5),
+        direction: FileTransferService.TransferDirection = .incoming
+    ) -> FileTransferService.ActiveTransfer {
+        .init(
+            id: UUID(), accountID: accountID, fileName: "photo.png", fileSize: 3,
+            state: state, method: .jingle, direction: direction, sid: UUID().uuidString, peerJIDString: peer
+        )
+    }
+
+    @Test func `queued files go the way that was chosen, and a new batch starts with upload again`() async throws {
+        let fixture = try await Self.makeFixture()
+        let windowState = fixture.windowState
+        try await withTemporaryDirectory { directory in
+            let fileURL = directory.appendingPathComponent("notes.txt")
+            try "hello".write(to: fileURL, atomically: true, encoding: .utf8)
+
+            // Upload, the choice every batch starts with: this account is not connected, so the composer says so and
+            // the chat gets no row.
+            windowState.addAttachment(url: fileURL)
+            #expect(!windowState.sendsAttachmentsDirectly)
+            await windowState.sendAttachments()
+            #expect(windowState.lastSendError != nil)
+            #expect(await fixture.transcripts.messages.isEmpty)
+
+            // Directly: the file gets its row, which carries the reason once no device turns out to take it.
+            windowState.addAttachment(url: fileURL)
+            windowState.sendsAttachmentsDirectly = true
+            windowState.addAttachment(url: fileURL)
+            #expect(windowState.sendsAttachmentsDirectly)
+            await windowState.sendAttachments()
+            #expect(windowState.lastSendError == nil)
+            let rows = await fixture.transcripts.messages
+            #expect(rows.count == 2)
+            #expect(rows.allSatisfy { $0.isOutgoing && $0.attachments.first?.localFileURL == fileURL })
+            try await waitUntil { fixture.environment.fileTransferService.activeTransfers.allSatisfy { transfer in
+                if case .failed = transfer.state { true } else { false }
+            } }
+
+            windowState.addAttachment(url: fileURL)
+            #expect(!windowState.sendsAttachmentsDirectly)
+        }
+    }
+
+    @Test func `a direct send that cannot start says so in the composer`() async throws {
+        let fixture = try await Self.makeFixture()
+        let windowState = fixture.windowState
+        windowState.addAttachment(url: URL(fileURLWithPath: "/nonexistent/notes.txt"))
+        windowState.sendsAttachmentsDirectly = true
+
+        await windowState.sendAttachments()
+
+        #expect(windowState.lastSendError?.hasPrefix("Could not read the file") == true)
+        #expect(await fixture.transcripts.messages.isEmpty)
+    }
+
+    @Test func `only files the chat's own contact is sending right now get a receiving row`() async throws {
+        let fixture = try await Self.makeFixture()
+        let service = fixture.environment.fileTransferService
+        let receiving = Self.incomingTransfer(from: Self.jidString, accountID: fixture.accountID)
+        service.registerTransferForTesting(receiving)
+        service.registerTransferForTesting(Self.incomingTransfer(from: "carol@example.com", accountID: fixture.accountID))
+        service.registerTransferForTesting(Self.incomingTransfer(from: Self.jidString, accountID: UUID()))
+        service.registerTransferForTesting(Self.incomingTransfer(from: Self.jidString, accountID: fixture.accountID, state: .awaitingAcceptance))
+        service.registerTransferForTesting(Self.incomingTransfer(from: Self.jidString, accountID: fixture.accountID, direction: .outgoing))
+
+        #expect(fixture.windowState.receivingTransfers.map(\.id) == [receiving.id])
+    }
+
+    @Test func `a room gets no receiving row for a file one of its occupants is sending`() async throws {
+        let roomJIDString = "room@conference.example.com"
+        let fixture = try await Self.makeFixture(jidString: roomJIDString, type: .groupchat)
+        // Armed: the tab is the room's own chat.
+        try #require(fixture.windowState.conversation?.type == .groupchat)
+        // An occupant's bare JID is the room's.
+        fixture.environment.fileTransferService.registerTransferForTesting(
+            Self.incomingTransfer(from: roomJIDString, accountID: fixture.accountID)
+        )
+
+        #expect(fixture.windowState.receivingTransfers.isEmpty)
+    }
+
+    @Test func `the note that files are not encrypted follows a switch made while the chat is open`() async throws {
+        let fixture = try await Self.makeFixture()
+        let conversationID = try #require(fixture.windowState.conversation?.id)
+        #expect(!fixture.windowState.sendsFilesUnencryptedInEncryptedChat)
+
+        // Encryption is switched on after the tab loaded its own copy of the chat.
+        try await fixture.environment.chatService.setEncryptionEnabled(true, for: conversationID, accountID: fixture.accountID)
+
+        #expect(fixture.windowState.sendsFilesUnencryptedInEncryptedChat)
+    }
+
+    // MARK: - Notes
+
+    @Test func `a chat's timeline notes are loaded with its messages`() async throws {
+        let fixture = try await Self.makeFixture()
+        let conversationID = try #require(fixture.windowState.conversation?.id)
+        let note = TimelineNote(conversationID: conversationID, kind: .encryptionEnabledByContact)
+        try await fixture.transcripts.appendNote(note)
+
+        await fixture.windowState.refreshMessages()
+
+        #expect(fixture.windowState.notes == [note])
+        #expect(fixture.windowState.timelineItems.map(\.id) == [note.id])
+    }
+
+    @Test func `opening a chat loads the notes from its oldest loaded message on`() async throws {
+        let fixture = try await Self.makeFixture()
+        let conversationID = try #require(fixture.windowState.conversation?.id)
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let earlier = TimelineNote(conversationID: conversationID, timestamp: start.addingTimeInterval(-10), kind: .encryptionEnabledByContact)
+        let later = TimelineNote(conversationID: conversationID, timestamp: start.addingTimeInterval(10), kind: .encryptionEnabledByContact)
+        try await fixture.transcripts.appendNote(earlier)
+        try await fixture.transcripts.appendNote(later)
+        await fixture.transcripts.addMessage(ChatMessage(
+            id: UUID(), conversationID: conversationID, stanzaID: "m1", fromJID: Self.jidString, body: "hi",
+            timestamp: start, isOutgoing: false, isDelivered: false, isEdited: false, type: "chat"
+        ))
+
+        let opened = ChatWindowState(jidString: Self.jidString, accountID: fixture.accountID, environment: fixture.environment)
+        await opened.load()
+
+        // A note older than everything loaded belongs with the older messages, which are not on screen yet.
+        #expect(opened.notes == [later])
     }
 }

@@ -222,6 +222,22 @@ enum PresenceServiceTests {
     @MainActor
     struct ContactSessions {
         @Test
+        func `A contact's online sessions are listed the one it shows first, down to the least available`() async throws {
+            let service = makePresenceService()
+            try await deliver(makePresence(show: .dnd), from: "desk", to: service)
+            try await deliver(makePresence(show: .away), from: "phone", to: service)
+            try await deliver(makePresence(priority: 5), from: "tablet", to: service)
+            try await deliver(makePresence(), from: "laptop", to: service)
+            try await deliver(makePresence(), from: "archive", to: service)
+            try await deliver(makePresence(type: .unavailable), from: "gone", to: service)
+
+            let resources = service.onlineResources(ofJIDString: contactJID.description, accountID: testAccountID)
+
+            // Highest priority first, then by availability, then by name.
+            #expect(resources == ["tablet", "archive", "laptop", "phone", "desk"])
+        }
+
+        @Test
         func `A contact stays online until its last session goes`() async throws {
             let service = makePresenceService()
             try await deliver(makePresence(), from: "laptop", to: service)

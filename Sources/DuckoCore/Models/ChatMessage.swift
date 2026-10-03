@@ -11,6 +11,8 @@ public struct ChatMessage: Sendable, Identifiable {
     public var timestamp: Date
     public var isOutgoing: Bool
     public var isDelivered: Bool
+    /// The contact has read this outgoing message. Read implies delivered.
+    public var isDisplayed: Bool
     public var isEdited: Bool
     public var editedAt: Date?
     public var type: String
@@ -34,6 +36,7 @@ public struct ChatMessage: Sendable, Identifiable {
         timestamp: Date,
         isOutgoing: Bool,
         isDelivered: Bool,
+        isDisplayed: Bool = false,
         isEdited: Bool,
         editedAt: Date? = nil,
         type: String,
@@ -55,6 +58,7 @@ public struct ChatMessage: Sendable, Identifiable {
         self.timestamp = timestamp
         self.isOutgoing = isOutgoing
         self.isDelivered = isDelivered
+        self.isDisplayed = isDisplayed
         self.isEdited = isEdited
         self.editedAt = editedAt
         self.type = type

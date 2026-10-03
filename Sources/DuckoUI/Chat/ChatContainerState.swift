@@ -19,6 +19,33 @@ public final class ChatContainerState {
         }
     }
 
+    /// Whether the chat window is the focused window of the active app.
+    public var isWindowFocused = false {
+        didSet { inViewChanged(from: oldValue && !isOpeningQuietly) }
+    }
+
+    /// Set while the window, opened on its own for a contact's message or file offer, is still being put behind the
+    /// window the user is in. It can be the focused window for a moment then, without the user having gone to it.
+    public var isOpeningQuietly = false {
+        didSet { inViewChanged(from: isWindowFocused && !oldValue) }
+    }
+
+    /// Whether the user is looking at the chat window. The selected tab is the active conversation only while they
+    /// are: messages arriving in a chat window that is closed, behind another window, in a backgrounded app, or only
+    /// just opening on its own are unread, not seen.
+    private var isInView: Bool {
+        isWindowFocused && !isOpeningQuietly
+    }
+
+    private func inViewChanged(from wasInView: Bool) {
+        guard isInView != wasInView else { return }
+        if isInView, let selectedState {
+            scheduleActivation(of: selectedState)
+        } else {
+            scheduleDeactivation()
+        }
+    }
+
     /// Drives the container-owned New Chat sheet so the tab-bar "+" and the menu-bar
     /// New Chat command work when the chat window is frontmost — the Contacts window
     /// (owner of the original new-chat sheet) isn't the focused scene then.
@@ -53,20 +80,34 @@ public final class ChatContainerState {
     public func open(_ jidString: String, accountID: UUID?) {
         let key = ConversationKey(accountID: accountID, jid: jidString)
         if states[key] == nil {
-            let state = ChatWindowState(jidString: jidString, accountID: accountID, environment: environment)
-            states[key] = state
-            orderedTabs.append(key)
+            addTab(key, selecting: true)
+        } else {
+            select(key)
+        }
+    }
+
+    /// Adds a tab without switching to it. It becomes the selected tab only when there is no other.
+    public func openInBackground(_ jidString: String, accountID: UUID?) {
+        let key = ConversationKey(accountID: accountID, jid: jidString)
+        guard states[key] == nil else { return }
+        addTab(key, selecting: selectedKey == nil)
+    }
+
+    private func addTab(_ key: ConversationKey, selecting: Bool) {
+        let state = ChatWindowState(jidString: key.jid, accountID: key.accountID, environment: environment)
+        states[key] = state
+        orderedTabs.append(key)
+        if selecting {
             selectedKey = key
-            // `load()` ends by calling `chatService.selectConversation`, so the freshly
-            // opened tab becomes the active conversation without a separate activation.
+            // While the window is in view, `load()` ends by calling `chatService.selectConversation`,
+            // so the freshly opened tab becomes the active conversation without a separate
+            // activation. Otherwise it is activated when the window comes into view.
             // Bump the generation so any in-flight select/close activation finds itself
             // stale and bails instead of re-pointing the active conversation behind this
             // newly opened, now-selected tab.
             activationGeneration += 1
-            Task { await state.load { [weak self, weak state] in self?.isCurrentTab(state) ?? false } }
-        } else {
-            select(key)
         }
+        Task { await state.load { [weak self, weak state] in self?.canActivate(state) ?? false } }
     }
 
     public func select(_ key: ConversationKey) {
@@ -140,10 +181,10 @@ public final class ChatContainerState {
     /// now-visible tab.
     private var activationGeneration = 0
 
-    /// True only while `state` is the selected tab's own instance, so a load finishing in a background, closed, or
-    /// reopened tab can't activate it.
-    private func isCurrentTab(_ state: ChatWindowState?) -> Bool {
-        guard let state, let selectedKey else { return false }
+    /// True only while `state` is the selected tab's own instance in a chat window that is in view, so a load finishing
+    /// in a background, closed, or reopened tab, or in a window nobody is looking at, can't activate it.
+    private func canActivate(_ state: ChatWindowState?) -> Bool {
+        guard isInView, let state, let selectedKey else { return false }
         return states[selectedKey] === state
     }
 
@@ -153,9 +194,10 @@ public final class ChatContainerState {
         Task { await activate(state, generation: generation) }
     }
 
-    /// Clears `ChatService.activeConversationID` when the last tab closes. Otherwise it
-    /// keeps pointing at the just-closed conversation, which `ChatService` treats as
-    /// active — auto-marking its incoming messages read and suppressing their unread count.
+    /// Clears `ChatService.activeConversationID` when the last tab closes or the window goes
+    /// out of view. Otherwise it keeps pointing at a conversation nobody is looking at, which
+    /// `ChatService` treats as active — auto-marking its incoming messages read and suppressing
+    /// their unread count.
     private func scheduleDeactivation() {
         activationGeneration += 1
         let generation = activationGeneration
@@ -172,7 +214,7 @@ public final class ChatContainerState {
     /// otherwise a freshly-activated hidden tab could be marked read while showing stale
     /// messages received while it was hidden.
     private func activate(_ state: ChatWindowState, generation: Int) async {
-        guard generation == activationGeneration else { return }
+        guard generation == activationGeneration, isInView else { return }
         guard let conversationID = state.conversation?.id else { return }
         let accountID = state.conversation?.accountID ?? environment.accountService.accounts.first?.id
         await environment.chatService.selectConversation(conversationID, accountID: accountID)

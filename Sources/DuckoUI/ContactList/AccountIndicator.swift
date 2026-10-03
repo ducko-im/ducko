@@ -41,7 +41,7 @@ enum AccountIndicator {
         accountService: AccountService,
         rosterService: RosterService
     ) -> String? {
-        let isDirect = conversation.map { $0.type != .groupchat && $0.occupantNickname == nil } ?? true
+        let isDirect = conversation?.isDirectChat ?? true
         guard isDirect, let accountID = key.accountID else { return nil }
         return label(for: accountID, bareJID: key.jid, accountService: accountService, rosterService: rosterService)
     }

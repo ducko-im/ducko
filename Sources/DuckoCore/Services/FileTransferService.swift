@@ -1,4 +1,3 @@
-import CoreServices
 import DuckoXMPP
 import Foundation
 import Logging
@@ -11,7 +10,6 @@ public final class FileTransferService {
     // MARK: - Types
 
     public enum TransferMethod: Sendable {
-        case auto
         case httpUpload
         case jingle
     }
@@ -53,12 +51,15 @@ public final class FileTransferService {
         public var state: TransferState
         public let method: TransferMethod
         public let direction: TransferDirection
-        public let sid: String?
+        /// Set once the session exists. An outgoing direct transfer has its row before it has a session.
+        public var sid: String?
+        /// Who an incoming transfer comes from, as a bare JID, so the chat with them can show it.
+        public let peerJIDString: String?
 
         public init(
             id: UUID, accountID: UUID, fileName: String, fileSize: Int64,
             state: TransferState, method: TransferMethod = .httpUpload,
-            direction: TransferDirection = .outgoing, sid: String? = nil
+            direction: TransferDirection = .outgoing, sid: String? = nil, peerJIDString: String? = nil
         ) {
             self.id = id
             self.accountID = accountID
@@ -68,6 +69,16 @@ public final class FileTransferService {
             self.method = method
             self.direction = direction
             self.sid = sid
+            self.peerJIDString = peerJIDString
+        }
+
+        /// Whether this is a file a contact is sending that was accepted and is not saved yet.
+        public var isReceiving: Bool {
+            guard direction == .incoming else { return false }
+            switch state {
+            case .negotiating, .connectingTransport, .transferring: return true
+            case .requestingSlot, .uploading, .completed, .failed, .awaitingAcceptance, .completedTransfer, .received: return false
+            }
         }
     }
 
@@ -95,7 +106,7 @@ public final class FileTransferService {
         case noUploadModule
         case noJingleModule
         case uploadFailed(String)
-        case jingleFailed(String)
+        case directTransferUnavailable
 
         public var errorDescription: String? {
             switch self {
@@ -107,7 +118,7 @@ public final class FileTransferService {
             case .noUploadModule: "File upload is not available"
             case .noJingleModule: "Direct file transfer is not available"
             case let .uploadFailed(reason): "Upload failed: \(reason)"
-            case let .jingleFailed(reason): "File transfer failed: \(reason)"
+            case .directTransferUnavailable: "The contact has no device online that can receive files directly"
             }
         }
     }
@@ -183,23 +194,31 @@ public final class FileTransferService {
     /// kinds reach the same Accept and Decline, which route by offer id. An OOB offer declares no size, so it reports zero.
     /// Ordered by arrival across both kinds, so the last one is the newest whichever kind it is.
     public var viewIncomingOffers: [IncomingFileOffer] {
-        let jingle = incomingOffers.map { pending in
-            (pending.receivedAt, IncomingFileOffer(
-                offerID: pending.offer.offerID, fileName: pending.offer.fileName, fileSize: pending.offer.fileSize,
-                fromJIDString: pending.offer.from.bareJID.description, accountID: pending.accountID
-            ))
-        }
-        let oob = incomingOOBOffers.map { pending in
-            (pending.receivedAt, IncomingFileOffer(
-                offerID: pending.offer.offerID, fileName: pending.displayFileName,
-                fileSize: 0, fromJIDString: pending.offer.from.bareJID.description, accountID: pending.accountID
-            ))
-        }
+        let jingle = incomingOffers.map { ($0.receivedAt, Self.viewOffer($0)) }
+        let oob = incomingOOBOffers.map { ($0.receivedAt, Self.viewOffer($0)) }
         return (jingle + oob).sorted { $0.0 < $1.0 }.map(\.1)
     }
 
+    private static func viewOffer(_ pending: PendingJingleOffer) -> IncomingFileOffer {
+        IncomingFileOffer(
+            offerID: pending.offer.offerID, fileName: pending.offer.fileName, fileSize: pending.offer.fileSize,
+            fromJIDString: pending.offer.from.bareJID.description, accountID: pending.accountID
+        )
+    }
+
+    private static func viewOffer(_ pending: PendingOOBOffer) -> IncomingFileOffer {
+        IncomingFileOffer(
+            offerID: pending.offer.offerID, fileName: pending.displayFileName,
+            fileSize: 0, fromJIDString: pending.offer.from.bareJID.description, accountID: pending.accountID
+        )
+    }
+
+    /// Called when an offer starts waiting on the user.
+    public var onIncomingOffer: ((IncomingFileOffer) -> Void)?
+
     private weak var accountService: AccountService?
     private weak var chatService: ChatService?
+    private let directTransfers = DirectTransferResolver()
     /// Fire-and-forget Jingle receive tasks that outlive the accept call that spawned them.
     /// Drained by `AppEnvironment.shutdown(within:)` so they can't race teardown; each task removes its
     /// own handle on completion via `defer`.
@@ -213,18 +232,30 @@ public final class FileTransferService {
 
     func setAccountService(_ service: AccountService) {
         accountService = service
+        directTransfers.accountService = service
     }
 
     func setChatService(_ service: ChatService) {
         chatService = service
+        directTransfers.chatService = service
+    }
+
+    func setPresenceService(_ service: PresenceService) {
+        directTransfers.presenceService = service
     }
 
     // MARK: - Lifecycle
 
-    /// Drops an account's waiting offers, which died with the connection that carried them, and fails each row still
-    /// waiting on the user. Rows of transfers already under way keep their own outcome. Runs on `.disconnected` and on
-    /// the lifecycle teardowns that bypass it.
+    /// Runs on the lifecycle teardowns that bypass `.disconnected`. Those also end what is known of the contacts'
+    /// sessions, and with it which of them take direct transfers.
     func purgeAccount(_ accountID: UUID) {
+        dropWaitingOffers(for: accountID)
+        directTransfers.forgetAccount(accountID)
+    }
+
+    /// Drops an account's waiting offers, which died with the connection that carried them, and fails each row still
+    /// waiting on the user. Rows of transfers already under way keep their own outcome.
+    private func dropWaitingOffers(for accountID: UUID) {
         offerGeneration[accountID, default: 0] &+= 1
         incomingOffers.removeAll { $0.accountID == accountID }
         incomingOOBOffers.removeAll { $0.accountID == accountID }
@@ -266,26 +297,53 @@ public final class FileTransferService {
     @discardableResult
     public func sendFile(
         url: URL, in conversation: Conversation, accountID: UUID,
-        method: TransferMethod = .auto,
+        method: TransferMethod = .httpUpload,
         peerJID: String? = nil,
         onProgress: (@MainActor @Sendable (Double) -> Void)? = nil
     ) async throws -> String {
-        let file: FileInfo
+        let file = try Self.fileInfo(at: url)
+        switch method {
+        case .httpUpload:
+            return try await sendFileViaHTTP(file, in: conversation, accountID: accountID, onProgress: onProgress)
+        case .jingle:
+            let transfer = try await recordDirectTransfer(of: file, in: conversation, accountID: accountID)
+            try await runDirectTransfer(transfer, peer: peerJID)
+            return ""
+        }
+    }
+
+    /// Starts sending a file directly and returns once the file has its row in the chat. What goes wrong before that
+    /// is thrown, since no row exists yet to show it. The transfer itself runs on until the contact has accepted and
+    /// received the file, and the row reports how it ends.
+    public func startDirectTransfer(url: URL, in conversation: Conversation, accountID: UUID) async throws {
+        let transfer = try await recordDirectTransfer(of: Self.fileInfo(at: url), in: conversation, accountID: accountID)
+        let taskID = UUID()
+        pendingTasks[taskID] = Task { [weak self] in
+            defer { self?.pendingTasks[taskID] = nil }
+            try? await self?.runDirectTransfer(transfer, peer: nil)
+        }
+    }
+
+    private static func fileInfo(at url: URL) throws -> FileInfo {
         do {
-            file = try FileInfo(readingAttributesAt: url)
+            return try FileInfo(readingAttributesAt: url)
         } catch {
             throw FileTransferError.fileReadFailed(error.localizedDescription)
         }
+    }
 
-        let resolved = await resolveMethod(method, peerJIDString: peerJID ?? conversation.jid.description, accountID: accountID)
+    // MARK: - Direct Transfer Targets
 
-        switch resolved {
-        case .httpUpload, .auto:
-            return try await sendFileViaHTTP(file, in: conversation, accountID: accountID, onProgress: onProgress)
-        case .jingle:
-            let peer = peerJID ?? conversation.jid.description
-            return try await sendFileViaJingle(file, peer: peer, accountID: accountID, onProgress: onProgress)
-        }
+    /// Whether a direct transfer to the contact has a session to go to, from the answers received so far.
+    public func canSendDirectly(toJIDString jidString: String, accountID: UUID) -> Bool {
+        guard let jid = BareJID.parse(jidString) else { return false }
+        return directTransfers.target(for: jid, accountID: accountID) != nil
+    }
+
+    /// Asks the contact's online sessions that have not answered yet whether they take direct transfers.
+    public func refreshDirectTransferSupport(forJIDString jidString: String, accountID: UUID) async {
+        guard let jid = BareJID.parse(jidString) else { return }
+        await directTransfers.refresh(for: jid, accountID: accountID)
     }
 
     // MARK: - Jingle Event Handling
@@ -303,14 +361,28 @@ public final class FileTransferService {
             finishSession(sid: sid, accountID: accountID, state: .failed(reason.displayText))
         case let .oobIQOfferReceived(offer):
             trackIncomingOOBOffer(offer, accountID: accountID)
-        case .disconnected:
-            purgeAccount(accountID)
+        case let .disconnected(reason):
+            dropWaitingOffers(for: accountID)
+            // What the contacts' sessions answered is kept for as long as the sessions themselves are: through a
+            // dropped connection, whose stream may resume without presence being sent again, and no further.
+            if case .requested = reason {
+                directTransfers.forgetAccount(accountID)
+            }
+        case .connected:
+            directTransfers.forgetAccount(accountID)
+        case let .presenceUpdated(from, presence):
+            guard presence.presenceType == .unavailable else { break }
+            switch from {
+            case let .full(session): directTransfers.forget(session, accountID: accountID)
+            // Unavailable from the bare JID speaks for every session the contact had.
+            case let .bare(contact): directTransfers.forgetContact(contact, accountID: accountID)
+            }
         case .jingleChecksumReceived:
             break
-        case .connected, .streamResumed, .authenticationFailed,
+        case .streamResumed, .authenticationFailed,
              .messageReceived, .presenceReceived, .iqReceived,
              .rosterUpdated,
-             .presenceUpdated, .presenceSubscriptionRequest,
+             .presenceSubscriptionRequest,
              .presenceSubscriptionApproved, .presenceSubscriptionRevoked,
              .messageCarbonReceived, .messageCarbonSent,
              .archivedMessagesLoaded,
@@ -332,6 +404,7 @@ public final class FileTransferService {
     private func trackIncomingOOBOffer(_ offer: OOBIQOffer, accountID: UUID) {
         let pending = PendingOOBOffer(offer: offer, accountID: accountID, receivedAt: Date(), rowID: UUID())
         incomingOOBOffers.append(pending)
+        onIncomingOffer?(Self.viewOffer(pending))
         let transfer = ActiveTransfer(
             id: pending.rowID,
             accountID: accountID,
@@ -340,7 +413,8 @@ public final class FileTransferService {
             state: .awaitingAcceptance,
             method: .httpUpload,
             direction: .incoming,
-            sid: offer.id
+            sid: offer.id,
+            peerJIDString: offer.from.bareJID.description
         )
         activeTransfers.append(transfer)
     }
@@ -348,7 +422,9 @@ public final class FileTransferService {
     /// Records an offer waiting on the user. Its transfer row is created when the user accepts, so the banner is the
     /// only thing on screen until then and a declined offer leaves nothing behind.
     private func trackIncomingOffer(_ offer: JingleFileOffer, accountID: UUID) {
-        incomingOffers.append(PendingJingleOffer(offer: offer, accountID: accountID, receivedAt: Date()))
+        let pending = PendingJingleOffer(offer: offer, accountID: accountID, receivedAt: Date())
+        incomingOffers.append(pending)
+        onIncomingOffer?(Self.viewOffer(pending))
     }
 
     /// Moves a session's transfer row to its final state and drops its pending offer. The module holds one session per
@@ -399,7 +475,8 @@ public final class FileTransferService {
             state: .connectingTransport,
             method: .jingle,
             direction: .incoming,
-            sid: offer.sid
+            sid: offer.sid,
+            peerJIDString: offer.from.bareJID.description
         ))
 
         let generation = offerGeneration[accountID, default: 0]
@@ -569,163 +646,6 @@ public final class FileTransferService {
         try await Self.downloadRemoteFile(from: url, named: name, into: downloadsDirectory).fileURL
     }
 
-    /// Downloads a file a peer linked to and saves it into `directory` the way `saveReceivedFile` does. Only a web
-    /// address is fetched, and only a 200 is kept. An error page or a partial response arrives as a status rather than
-    /// an error, and saved under the file's name it would pass for the file. The server must declare the body's length
-    /// and every byte of it must arrive, since a body cut off where its framing allows an end reads as a finished one.
-    /// The body is streamed to disk and capped at `maxDownloadSize`.
-    nonisolated static func downloadRemoteFile(
-        from url: URL, named name: String, into directory: URL
-    ) async throws -> (fileURL: URL, byteCount: Int64) {
-        guard url.isWebAddress else {
-            throw FileTransferError.downloadFailed("The link is not a web address")
-        }
-        let stagingURL = FileManager.default.temporaryDirectory
-            .appending(path: "ducko-download-\(UUID().uuidString)", directoryHint: .notDirectory)
-        defer { try? FileManager.default.removeItem(at: stagingURL) }
-
-        var request = URLRequest(url: url)
-        // The declared length counts the bytes as sent, so a body decoded on arrival could not be checked against it.
-        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-        let byteCount: Int64
-        do {
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                bytes.task.cancel()
-                throw FileTransferError.downloadFailed("The file is not available at that link")
-            }
-            if let encoding = http.value(forHTTPHeaderField: "Content-Encoding"), encoding.lowercased() != "identity" {
-                bytes.task.cancel()
-                throw FileTransferError.downloadFailed("The server sent the file in a form whose size cannot be checked")
-            }
-            let expectedLength = response.expectedContentLength
-            guard expectedLength >= 0 else {
-                bytes.task.cancel()
-                throw FileTransferError.downloadFailed("The server did not provide a file size")
-            }
-            guard expectedLength <= maxDownloadSize else {
-                bytes.task.cancel()
-                throw FileTransferError.downloadFailed("The file is too large")
-            }
-            byteCount = try await writeDownload(bytes, expectedLength: expectedLength, to: stagingURL)
-        } catch let error as FileTransferError {
-            throw error
-        } catch {
-            throw FileTransferError.downloadFailed(error.localizedDescription)
-        }
-        return try (saveReceivedFile(movingFrom: stagingURL, named: name, in: directory), byteCount)
-    }
-
-    /// Streams a download to `fileURL` in chunks, refusing a body that does not come to exactly `expectedLength` bytes.
-    private nonisolated static func writeDownload(
-        _ bytes: URLSession.AsyncBytes, expectedLength: Int64, to fileURL: URL
-    ) async throws -> Int64 {
-        guard FileManager.default.createFile(atPath: fileURL.path, contents: nil) else {
-            throw FileTransferError.downloadFailed("The download could not be stored")
-        }
-        let handle = try FileHandle(forWritingTo: fileURL)
-        defer { try? handle.close() }
-        let chunkSize = 64 * 1024
-        var chunk: [UInt8] = []
-        chunk.reserveCapacity(chunkSize)
-        var total: Int64 = 0
-        for try await byte in bytes {
-            chunk.append(byte)
-            guard chunk.count == chunkSize else { continue }
-            total += Int64(chunk.count)
-            guard total <= expectedLength else {
-                bytes.task.cancel()
-                throw FileTransferError.downloadFailed("The download does not match the file size the server gave")
-            }
-            try handle.write(contentsOf: chunk)
-            chunk.removeAll(keepingCapacity: true)
-        }
-        total += Int64(chunk.count)
-        guard total == expectedLength else {
-            throw FileTransferError.downloadFailed("The download does not match the file size the server gave")
-        }
-        try handle.write(contentsOf: chunk)
-        return total
-    }
-
-    /// Writes a received file into `directory` under `name`, adding a number when that name is taken, and quarantines it
-    /// like any other download. The name reaches here from a peer, so it is sanitized before it can become a path.
-    public nonisolated static func saveReceivedFile(_ bytes: [UInt8], named name: String, in directory: URL) async throws -> URL {
-        let data = Data(bytes)
-        return try placeReceivedFile(named: name, in: directory) { try data.write(to: $0, options: .withoutOverwriting) }
-    }
-
-    /// Moves a downloaded file into `directory` under `name`, with the same naming and quarantine as `saveReceivedFile`.
-    nonisolated static func saveReceivedFile(movingFrom stagingURL: URL, named name: String, in directory: URL) throws -> URL {
-        try placeReceivedFile(named: name, in: directory) { try FileManager.default.moveItem(at: stagingURL, to: $0) }
-    }
-
-    /// Places a received file under the first free variant of its sanitized name, using `write`, which must fail with
-    /// `CocoaError.fileWriteFileExists` rather than replace a file already there, then quarantines it.
-    private nonisolated static func placeReceivedFile(
-        named name: String, in directory: URL, write: (URL) throws -> Void
-    ) throws -> URL {
-        let safeName = JingleFileDescription.sanitizeFileName(name)
-        let nameURL = URL(filePath: safeName, directoryHint: .notDirectory)
-        let stem = nameURL.deletingPathExtension().lastPathComponent
-        let pathExtension = nameURL.pathExtension
-        var written: URL?
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            for number in 1 ... 1000 {
-                let candidate = number == 1 ? safeName : [stem + " \(number)", pathExtension].filter { !$0.isEmpty }.joined(separator: ".")
-                let fileURL = directory.appending(path: candidate, directoryHint: .notDirectory)
-                do {
-                    try write(fileURL)
-                } catch CocoaError.fileWriteFileExists {
-                    continue
-                }
-                written = fileURL
-                break
-            }
-        } catch {
-            throw FileTransferError.fileSaveFailed(error.localizedDescription)
-        }
-        guard var fileURL = written else {
-            throw FileTransferError.fileSaveFailed("Every name for the file is taken")
-        }
-
-        var values = URLResourceValues()
-        // The file came from a contact in a chat, which is the provenance Gatekeeper should tell the user about.
-        values.quarantineProperties = [kLSQuarantineTypeKey as String: kLSQuarantineTypeInstantMessageAttachment as String]
-        do {
-            try fileURL.setResourceValues(values)
-        } catch {
-            // Unmarked, the file would open with none of the checks macOS gives a download, so it is not one this side
-            // hands on as saved.
-            try? FileManager.default.removeItem(at: fileURL)
-            throw FileTransferError.fileSaveFailed(error.localizedDescription)
-        }
-        return fileURL
-    }
-
-    // MARK: - Private: Method Resolution
-
-    private func resolveMethod(_ method: TransferMethod, peerJIDString: String, accountID: UUID) async -> TransferMethod {
-        switch method {
-        case .httpUpload, .jingle:
-            return method
-        case .auto:
-            if FullJID.parse(peerJIDString) != nil,
-               let peerJID = BareJID.parse(peerJIDString),
-               await peerSupportsJingle(peerJID, accountID: accountID) {
-                return .jingle
-            }
-            return .httpUpload
-        }
-    }
-
-    private func peerSupportsJingle(_ peerJID: BareJID, accountID: UUID) async -> Bool {
-        guard let client = accountService?.connectedClient(for: accountID) else { return false }
-        guard let capsModule = await client.module(ofType: CapsModule.self) else { return false }
-        return capsModule.isFeatureSupported(XMPPNamespaces.jingle, by: peerJID)
-    }
-
     // MARK: - Private: HTTP Upload
 
     private func sendFileViaHTTP(
@@ -761,41 +681,54 @@ public final class FileTransferService {
 
     // MARK: - Private: Jingle Transfer
 
-    private func sendFileViaJingle(
-        _ file: FileInfo, peer: String, accountID: UUID,
-        onProgress _: (@MainActor @Sendable (Double) -> Void)?
-    ) async throws -> String {
-        let jingleModule = try await jingleModule(for: accountID)
+    /// A file on its way to a contact directly, from the moment it has its row.
+    private struct DirectTransfer {
+        /// The id of the file's row in the chat and of its transfer row, which is how the chat finds the live state
+        /// of its row.
+        let id: UUID
+        let file: FileInfo
+        let contact: BareJID
+        let conversationID: UUID
+        let accountID: UUID
+    }
 
-        guard let peerJID = FullJID.parse(peer) else {
-            // Jingle requires a full JID (with resource) to target a specific client.
-            // BareJID conversations need resource resolution via presence before Jingle.
-            throw FileTransferError.jingleFailed("A direct transfer needs the recipient's full address with a resource: \(peer)")
+    /// Gives the file its row in the chat and its transfer row before anything about the transfer itself can fail, so
+    /// every outcome has somewhere to show.
+    private func recordDirectTransfer(
+        of file: FileInfo, in conversation: Conversation, accountID: UUID
+    ) async throws -> DirectTransfer {
+        guard conversation.isDirectChat, let chatService else {
+            throw FileTransferError.directTransferUnavailable
         }
-
-        let (fileData, hash) = try await Self.readAndHash(at: file.url)
-        // The size is taken from the bytes that were hashed, not from the earlier attribute read. A file still being
-        // written changes between the two, and the peer would then stop short of a size it never receives or fail the
-        // checksum on bytes that no longer match.
-        let fileDesc = JingleFileDescription(
-            name: file.name, size: Int64(fileData.count), mediaType: file.mimeType, hash: hash
-        )
-        let sid = try await jingleModule.initiateFileTransfer(to: peerJID, file: fileDesc)
-
         let transferID = UUID()
-        let transfer = ActiveTransfer(
-            id: transferID,
-            accountID: accountID,
-            fileName: file.name,
-            fileSize: fileDesc.size,
-            state: .negotiating,
-            method: .jingle,
-            direction: .outgoing,
-            sid: sid
+        let attachment = Attachment.locallySaved(id: UUID(), fileURL: file.url, mimeType: file.mimeType, fileSize: file.size)
+        let conversationID = try await chatService.recordSentFile(attachment, id: transferID, to: conversation.jid, accountID: accountID)
+        activeTransfers.append(ActiveTransfer(
+            id: transferID, accountID: accountID, fileName: file.name, fileSize: file.size,
+            state: .negotiating, method: .jingle, direction: .outgoing
+        ))
+        return DirectTransfer(
+            id: transferID, file: file, contact: conversation.jid, conversationID: conversationID, accountID: accountID
         )
-        activeTransfers.append(transfer)
+    }
 
+    private func runDirectTransfer(_ transfer: DirectTransfer, peer: String?) async throws {
+        let (transferID, file, accountID) = (transfer.id, transfer.file, transfer.accountID)
         do {
+            let peerJID = try await directTransferPeer(named: peer, for: transfer.contact, accountID: accountID)
+            let jingleModule = try await jingleModule(for: accountID)
+            let (fileData, hash) = try await Self.readAndHash(at: file.url)
+            // The size is taken from the bytes that were hashed, not from the earlier attribute read. A file still being
+            // written changes between the two, and the peer would then stop short of a size it never receives or fail the
+            // checksum on bytes that no longer match.
+            let fileDesc = JingleFileDescription(
+                name: file.name, size: Int64(fileData.count), mediaType: file.mimeType, hash: hash
+            )
+            let sid = try await jingleModule.initiateFileTransfer(to: peerJID, file: fileDesc)
+            if let index = activeTransfers.firstIndex(where: { $0.id == transferID }) {
+                activeTransfers[index].sid = sid
+            }
+
             try await jingleModule.awaitTransportReady(sid: sid)
             updateTransferState(id: transferID, state: .connectingTransport)
             updateTransferState(id: transferID, state: .transferring(progress: 0))
@@ -804,11 +737,46 @@ public final class FileTransferService {
             updateTransferState(id: transferID, state: .completedTransfer)
             // A send can end its session without a completion event, which leaves its sid free for a later session.
             endedSessionRows.insert(transferID)
-            return ""
+            await chatService?.recordSentFileOutcome(messageID: transferID, in: transfer.conversationID, failure: nil)
         } catch {
+            // Cancelled means the app is quitting. Nothing is known of how the transfer would have ended, so nothing
+            // is recorded.
+            if Task.isCancelled { throw error }
+            // The chat row keeps the reason the transfer row ended up with, which is the session's own failure event
+            // when that came first.
             recordJingleTransferFailure(error, id: transferID)
+            let reason = failureText(ofTransfer: transferID) ?? Self.failureDetail(of: error)
+            await chatService?.recordSentFileOutcome(messageID: transferID, in: transfer.conversationID, failure: reason)
             throw error
         }
+    }
+
+    /// What went wrong, without the summary label an error's description leads with: a transfer's row already reads
+    /// as a file that failed.
+    private static func failureDetail(of error: any Error) -> String {
+        switch error as? JingleModule.JingleError {
+        case let .transportFailed(reason)?, let .transportNegotiationFailed(reason)?: reason
+        case .notConnected?, .sessionNotFound?, .noConnectedJID?, .alreadyAccepted?, nil: error.localizedDescription
+        }
+    }
+
+    /// The session a direct transfer goes to: the one `peer` names, else one chosen among the contact's online
+    /// sessions, asking those that have not answered only when none known takes direct transfers.
+    private func directTransferPeer(named peer: String?, for jid: BareJID, accountID: UUID) async throws -> FullJID {
+        if let peer, let named = FullJID.parse(peer) { return named }
+        // A session already known to take the file is used at once: asking the rest first would hold the offer back
+        // for as long as a session that has gone silent takes to time out.
+        if let known = directTransfers.target(for: jid, accountID: accountID) { return known }
+        await directTransfers.refresh(for: jid, accountID: accountID)
+        guard let target = directTransfers.target(for: jid, accountID: accountID) else {
+            throw FileTransferError.directTransferUnavailable
+        }
+        return target
+    }
+
+    private func failureText(ofTransfer id: UUID) -> String? {
+        guard case let .failed(text) = activeTransfers.first(where: { $0.id == id })?.state else { return nil }
+        return text
     }
 
     // MARK: - Private: HTTP Upload Helpers
@@ -953,7 +921,7 @@ public final class FileTransferService {
     func recordJingleTransferFailure(_ error: any Error, id: UUID) {
         guard let index = activeTransfers.firstIndex(where: { $0.id == id }) else { return }
         if error is JingleModule.JingleError, case .failed = activeTransfers[index].state { return }
-        setTransferState(.failed(error.localizedDescription), at: index)
+        setTransferState(.failed(Self.failureDetail(of: error)), at: index)
     }
 }
 

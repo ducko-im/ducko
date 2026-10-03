@@ -178,6 +178,24 @@ enum FileTranscriptStoreTests {
                 #expect(fetched[0].body == "old")
             }
         }
+
+        @Test
+        func `Messages written within one second come back newest first`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                // Timestamps are stored to the second, so these three tie once written.
+                let second = Date(timeIntervalSince1970: 1_772_280_000)
+                let older = makeMessage(stanzaID: "older", body: "older", timestamp: second.addingTimeInterval(-60))
+                try await store.appendMessage(older)
+                for (offset, body) in ["first", "second", "third"].enumerated() {
+                    try await store.appendMessage(makeMessage(stanzaID: body, body: body, timestamp: second.addingTimeInterval(Double(offset) / 10)))
+                }
+
+                let fetched = try await store.fetchMessages(for: testConversationID, before: nil, limit: 50)
+
+                #expect(fetched.map(\.body) == ["third", "second", "first", "older"])
+            }
+        }
     }
 
     struct Amendments {
@@ -213,6 +231,23 @@ enum FileTranscriptStoreTests {
                 let fetched = try await store.fetchMessages(for: testConversationID, before: nil, limit: 50)
                 #expect(fetched[0].isRetracted == true)
                 #expect(fetched[0].body == "")
+            }
+        }
+
+        @Test
+        func `Displayed amendment marks the message read and delivered`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                let msg = makeMessage(stanzaID: "s1", body: "hello", isOutgoing: true)
+                try await store.appendMessage(msg)
+
+                try await store.appendAmendment(TranscriptAmendment(
+                    action: .displayed, targetMessageID: msg.id
+                ), conversationID: testConversationID)
+
+                let fetched = try await store.fetchMessages(for: testConversationID, before: nil, limit: 50)
+                #expect(fetched[0].isDisplayed == true)
+                #expect(fetched[0].isDelivered == true)
             }
         }
 
@@ -448,6 +483,78 @@ enum FileTranscriptStoreTests {
                     let raw = try String(contentsOf: fileURL, encoding: .utf8)
                     #expect(!raw.contains("\"type\":\"amend\""), "Unexpected amendment record in \(fileURL.lastPathComponent)")
                 }
+            }
+        }
+    }
+
+    struct Notes {
+        @Test
+        func `A note is stored beside the messages without becoming one`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                let day = Date(timeIntervalSince1970: 1_772_280_000)
+                try await store.appendMessage(makeMessage(stanzaID: "s1", timestamp: day))
+                let note = TimelineNote(conversationID: testConversationID, timestamp: day.addingTimeInterval(1), kind: .encryptionEnabledByContact)
+                try await store.appendNote(note)
+
+                #expect(try await store.fetchNotes(for: testConversationID, since: nil, before: nil) == [note])
+                #expect(try await store.fetchMessages(for: testConversationID, before: nil, limit: 50).count == 1)
+                #expect(try await store.fetchMessages(for: testConversationID, on: day).count == 1)
+                #expect(try await store.messageDateCounts(for: testConversationID).map(\.count) == [1])
+            }
+        }
+
+        @Test
+        func `Notes are fetched within their bounds across day files, oldest first`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                let start = Date(timeIntervalSince1970: 1_772_280_000)
+                let oneDay: TimeInterval = 24 * 60 * 60
+                let notes = (0 ..< 4).map { index in
+                    TimelineNote(
+                        conversationID: testConversationID,
+                        timestamp: start.addingTimeInterval(Double(index) * oneDay),
+                        kind: .encryptionEnabledByContact
+                    )
+                }
+                // Written newest first, so the order returned is not the order stored.
+                for note in notes.reversed() {
+                    try await store.appendNote(note)
+                }
+                // On the lower bound's own day, a minute before it.
+                try await store.appendNote(TimelineNote(
+                    conversationID: testConversationID, timestamp: notes[1].timestamp.addingTimeInterval(-60), kind: .encryptionEnabledByContact
+                ))
+                // On the upper bound's own day, a minute before it and so within the bounds.
+                let lastWithin = TimelineNote(
+                    conversationID: testConversationID, timestamp: notes[3].timestamp.addingTimeInterval(-60), kind: .encryptionEnabledByContact
+                )
+                try await store.appendNote(lastWithin)
+
+                let middle = try await store.fetchNotes(for: testConversationID, since: notes[1].timestamp, before: notes[3].timestamp)
+
+                #expect(middle == [notes[1], notes[2], lastWithin])
+            }
+        }
+
+        @Test
+        func `A note of a kind this build does not know is skipped`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                let day = Date(timeIntervalSince1970: 1_772_280_000)
+                let message = makeMessage(stanzaID: "s1", timestamp: day)
+                try await store.appendMessage(message)
+                let file = dir.appendingPathComponent(testConversationID.uuidString)
+                    .appendingPathComponent(FileTranscriptStore.dateString(for: day) + ".jsonl")
+                let handle = try FileHandle(forWritingTo: file)
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data(
+                    #"{"id":"\#(UUID().uuidString)","kind":"from-a-later-release","timestamp":"2026-02-28T12:00:01Z","type":"note"}"#.utf8 + [0x0A]
+                ))
+                try handle.close()
+
+                #expect(try await store.fetchNotes(for: testConversationID, since: nil, before: nil).isEmpty)
+                #expect(try await store.fetchMessages(for: testConversationID, before: nil, limit: 50).map(\.id) == [message.id])
             }
         }
     }

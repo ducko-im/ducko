@@ -515,6 +515,29 @@ enum ChatServiceMAMTests {
             #expect(!wasDeleted)
             await harness.accountService.disconnect(accountID: harness.accountID)
         }
+
+        @Test
+        @MainActor
+        func `a sync writes the preview and leaves what changed on the row meanwhile`() async throws {
+            let harness = try await makeGroupMAMHarness()
+
+            try await driveSyncWithHeldArchive(harness: harness) { harness in
+                // What other handlers stored while the archive was on its way.
+                try await harness.store.updateConversation(harness.conversation.id) {
+                    $0.isMuted = true
+                    $0.unreadCount = 3
+                }
+            }
+
+            let stored = try #require(
+                try await harness.store.fetchConversations(for: harness.accountID).first { $0.id == harness.conversation.id }
+            )
+            // Armed: the sync did write to the row.
+            #expect(stored.lastMessagePreview != nil)
+            #expect(stored.isMuted)
+            #expect(stored.unreadCount == 3)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
     }
 }
 

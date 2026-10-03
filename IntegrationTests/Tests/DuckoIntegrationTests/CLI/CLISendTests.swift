@@ -66,19 +66,14 @@ extension DuckoIntegrationTests.CLILayer {
                 )
                 await bobCLI.addCleanup { await bobREPL.terminate() }
 
-                // Don't pass `--method jingle`: `sendFileViaJingle`
-                // rejects bare JIDs and the test only has bob's bare
-                // JID to work with. The auto path uses HTTP File Upload
-                // (XEP-0363) and sends the resulting URL as a regular
+                // Without `--method`, a file goes by HTTP File Upload
+                // (XEP-0363) and the resulting URL is sent as a regular
                 // chat message; bob's REPL surfaces it via
                 // `formatIncomingMessage` rather than `formatFileOffer`.
                 // The asserted substring is the file's UUID nonce —
                 // present in the upload-server URL — so the assertion
                 // proves end-to-end delivery without depending on which
-                // formatter handler ran. Driving `/accept` and a
-                // completion marker requires Jingle, which requires
-                // full-JID peer resolution we can't seed from a
-                // bare-JID CLI invocation; tracked as a follow-up.
+                // formatter handler ran.
                 let sent = try await aliceCLI.run([
                     "send", "--file", fileURL.path, bob.jid,
                     "--output", "plain"
@@ -108,7 +103,7 @@ extension DuckoIntegrationTests.CLILayer {
                 try await aliceCLI.seedAccount(alice)
 
                 // Bob's REPL (plain output) surfaces both his bound full JID (connection event) and the
-                // incoming file offer. The full JID — with resource — is the only handle Jingle can target,
+                // incoming file offer. The full JID — with resource — names the one session the offer goes to,
                 // and bob's own connection event is the only CLI surface that exposes it. Bob (rather than
                 // dave) is used because he is part of the base credential set, so this test runs unconditionally
                 // rather than skipping behind `isDaveAvailable`; a Jingle transfer routes by full-JID IQ
@@ -140,6 +135,52 @@ extension DuckoIntegrationTests.CLILayer {
                     containing: "Transfer completed",
                     timeout: TestTimeout.fileTransfer
                 )
+            }
+        }
+
+        @Test
+        @MainActor func `REPL /senddirect says what stops a send and finds the contact's device by itself`() async throws {
+            try await CLIProcess.withProcessPair { aliceCLI, bobCLI in
+                let alice = TestCredentials.alice
+                let bob = TestCredentials.bob
+
+                let fileNonce = UUID().uuidString
+                let fileURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("ducko-inttest-senddirect-\(fileNonce).txt", isDirectory: false)
+                try "ducko-senddirect-\(fileNonce)\n".write(to: fileURL, atomically: true, encoding: .utf8)
+                await aliceCLI.addCleanup { try? FileManager.default.removeItem(at: fileURL) }
+
+                let aliceREPL = try await REPLSession.start(cli: aliceCLI, credentials: alice, arguments: ["--output", "plain"])
+                await aliceCLI.addCleanup { await aliceREPL.terminate() }
+
+                // A file that is not there, and a contact with no device online, are said at the prompt.
+                try await aliceREPL.send("/senddirect \(bob.jid) /nonexistent/\(fileNonce).txt")
+                _ = try await aliceREPL.waitForOutput(containing: "File not found")
+                try await aliceREPL.send("/senddirect \(bob.jid) \(fileURL.path)")
+                let refused = try await aliceREPL.waitForOutput(containing: "no device online")
+                #expect(!refused.contains("Use /transfers"))
+
+                let bobREPL = try await REPLSession.start(cli: bobCLI, credentials: bob, arguments: ["--output", "plain"])
+                await bobCLI.addCleanup { await bobREPL.terminate() }
+
+                // Only bob's bare JID is given: his device is found by asking the sessions his presence announces.
+                // That presence takes a moment to arrive after he connects, so the command is tried again until it
+                // goes through.
+                var isSending = false
+                for _ in 0 ..< 10 where !isSending {
+                    let cursor = await aliceREPL.cursor()
+                    try await aliceREPL.send("/senddirect \(bob.jid) \(fileURL.path)")
+                    let output = try await aliceREPL.waitForOutput(containingAnyOf: ["Use /transfers", "no device online"], after: cursor)
+                    isSending = output.dropFirst(cursor).contains("Use /transfers")
+                    if !isSending {
+                        try await Task.sleep(for: .seconds(1))
+                    }
+                }
+                try #require(isSending)
+
+                _ = try await bobREPL.waitForOutput(containing: "[File offer]", timeout: TestTimeout.fileTransfer)
+                try await bobREPL.send("/accept")
+                _ = try await bobREPL.waitForOutput(containing: "Transfer completed", timeout: TestTimeout.fileTransfer)
             }
         }
 

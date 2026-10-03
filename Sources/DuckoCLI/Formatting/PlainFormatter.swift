@@ -22,7 +22,9 @@ struct PlainFormatter: CLIFormatter {
         if message.isEdited {
             line += " [edited]"
         }
-        if message.isOutgoing, message.isDelivered {
+        if message.isOutgoing, message.isDisplayed {
+            line += " [read]"
+        } else if message.isOutgoing, message.isDelivered {
             line += " [delivered]"
         }
         if let errorText = message.errorText {
@@ -32,6 +34,10 @@ struct PlainFormatter: CLIFormatter {
             line += "\n" + formatFileMessage(fileName: attachment.displayFileName, url: attachment.url, fileSize: attachment.fileSize)
         }
         return line
+    }
+
+    func formatNote(_ note: TimelineNote, contactName: String) -> String {
+        "[\(iso8601(note.timestamp))] -- \(note.text(contactName: contactName))"
     }
 
     func formatEmptyResult(_ result: CLIEmptyResult) -> String {
@@ -89,6 +95,7 @@ struct PlainFormatter: CLIFormatter {
         case let .presenceSubscriptionApproved(from: jid): "Subscription approved by \(jid)"
         case let .presenceSubscriptionRevoked(from: jid): "Subscription revoked by \(jid)"
         case let .deliveryReceiptReceived(messageID, from): "delivery receipt: \(messageID) from \(from.bareJID)"
+        case let .chatMarkerReceived(messageID, .displayed, from): "read marker: \(messageID) from \(from.bareJID)"
         case let .messageCorrected(_, newBody, from): "message corrected by \(from.bareJID): \(newBody)"
         case let .messageError(_, from, error): "message error from \(from.bareJID): \(error.displayText)"
         case let .messageRetracted(originalID, from): "[retracted] message retracted by \(from.bareJID) (id: \(originalID))"

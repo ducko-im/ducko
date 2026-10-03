@@ -73,6 +73,103 @@ extension DuckoIntegrationTests.UILayer {
             }
         }
 
+        @MainActor private static func waitUntilTypingInContactSearch(_ app: AppAccessor) async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+            while ContinuousClock.now < deadline {
+                if await isTypingInContactSearch(app) { return }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let isTyping = await isTypingInContactSearch(app)
+            try #require(isTyping, "The contact search field did not keep the keyboard")
+        }
+
+        /// Whether the Contacts window is the focused one and its search field has the keyboard.
+        @MainActor private static func isTypingInContactSearch(_ app: AppAccessor) async -> Bool {
+            let focusedWindow = await app.focusedWindowTitle()
+            let hasKeyboard = await app.hasKeyboardFocus(identifier: "contact-search-field")
+            return focusedWindow == "Contacts" && hasKeyboard
+        }
+
+        @Test(.enabled(
+            if: AppAccessor.appBundleExists && AppAccessor.isAccessibilityTrusted && CLIProcess.binaryExists,
+            "Ducko.app missing, AX trust not granted, or DuckoCLI binary missing"
+        ))
+        @MainActor func `a contact's message opens their chat without taking the keyboard`() async throws {
+            let bobProfile = "inttest-ui-bob-\(UUID().uuidString.prefix(8))"
+            try await UISeededApp.withSeededApp { app in
+                let bob = TestCredentials.bob
+                try await app.waitForContactRow(bob)
+
+                // The user is typing in the Contacts window, with no chat window open. What is typed so far matches
+                // no contact.
+                try await app.pressKey(CGKeyCode(kVK_ANSI_F), modifiers: .maskCommand)
+                try await app.waitForElement(identifier: "contact-search-field", timeout: TestTimeout.uiElement)
+                try await app.replaceText("zz", intoIdentifier: "contact-search-field")
+                try await app.waitForAbsence(identifier: "contact-row-\(bob.jid)", timeout: TestTimeout.uiElement)
+                let windowsBefore = await app.windowTitles()
+                #expect(windowsBefore == ["Contacts"])
+
+                try await CLIProcess.withProcess(profile: bobProfile) { bobCLI in
+                    let bobREPL = try await REPLSession.start(cli: bobCLI, credentials: bob)
+                    await bobCLI.addCleanup { await bobREPL.terminate() }
+
+                    // The app is the one in front, where a window that opens takes the keyboard unless it is kept
+                    // from it. Behind another app it never would, and the checks below would hold for nothing.
+                    let isInFront = await app.bringToFront()
+                    let isTypingInSearch = await Self.isTypingInContactSearch(app)
+                    try #require(isInFront && isTypingInSearch)
+
+                    let body = "ui-quiet-\(UUID().uuidString.prefix(8))"
+                    try await bobREPL.send("send \(TestCredentials.alice.jid) \(body)")
+
+                    // The chat window appears on its own. Until the keyboard has been checked, it is only looked
+                    // for by reading the window list: resolving an element in it could raise it.
+                    try await app.waitForWindowCount(2, timeout: TestTimeout.event)
+                    let wasStillInFront = await app.isFrontmost()
+                    try #require(wasStillInFront, "Another app came to the front while the chat window opened")
+                    // The new window can have the keyboard for a moment before it is put back, so the search field
+                    // is given that moment to have it again.
+                    try await Self.waitUntilTypingInContactSearch(app)
+
+                    // What is typed next goes on after what was there. Typed over a selection of the whole field, it
+                    // would replace it.
+                    try await app.typeIntoFocusedElement("bob", clearFirst: false)
+                    try await app.waitForValue("zzbob", identifier: "contact-search-field")
+
+                    // The window is kept back for a second after it opens. Once that is over the keyboard is still
+                    // where it was, and the chat counts as opened but not looked at: unread, with nothing telling
+                    // the contact it was read.
+                    try await Task.sleep(for: .milliseconds(1500))
+                    let isTypingInSearchLater = await Self.isTypingInContactSearch(app)
+                    #expect(isTypingInSearchLater)
+                    try await app.waitForValue("1 unread message", identifier: "chat-tab-\(bob.jid)")
+                    let sawReadMarker = await (try? bobREPL.waitForOutput(containing: "read marker", timeout: .seconds(2))) != nil
+                    #expect(!sawReadMarker)
+
+                    // A further message, with the chat window already there, leaves the keyboard alone as well.
+                    try await bobREPL.send("send \(TestCredentials.alice.jid) \(body)-2")
+                    try await app.waitForValue("2 unread messages", identifier: "chat-tab-\(bob.jid)")
+                    let isTypingInSearchAfterSecond = await Self.isTypingInContactSearch(app)
+                    #expect(isTypingInSearchAfterSecond)
+
+                    // The chat it opened holds the message.
+                    try await app.waitForElement(identifier: "message-list", timeout: TestTimeout.event)
+                    try await app.waitForDescendant(
+                        role: kAXStaticTextRole as String,
+                        withSubstring: body,
+                        underIdentifier: "message-list",
+                        timeout: TestTimeout.event
+                    )
+
+                    // Going to the chat is what makes it read: the count clears and the contact is told. This is
+                    // also what shows the check for no read marker above could have failed.
+                    try await app.raiseWindow(containing: "message-field")
+                    try await app.waitForValue("", identifier: "chat-tab-\(bob.jid)")
+                    _ = try await bobREPL.waitForOutput(containing: "read marker", timeout: TestTimeout.event)
+                }
+            }
+        }
+
         @Test(.enabled(
             if: AppAccessor.appBundleExists && AppAccessor.isAccessibilityTrusted && CLIProcess.binaryExists,
             "Ducko.app missing, AX trust not granted, or DuckoCLI binary missing"

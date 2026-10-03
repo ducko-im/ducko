@@ -41,15 +41,6 @@ struct MessageBubbleView: View {
         theme.current.showAvatars && !message.isOutgoing && theme.current.avatarPosition == .leading
     }
 
-    @ViewBuilder
-    private var avatarView: some View {
-        if let contact = windowState.contact, !windowState.isGroupchat {
-            AvatarView(contact: contact, size: theme.current.avatarSize)
-        } else {
-            ParticipantAvatarView(nickname: message.fromJID, size: theme.current.avatarSize)
-        }
-    }
-
     var body: some View {
         let linkPreview = linkPreview
         HStack(alignment: .bottom) {
@@ -57,7 +48,7 @@ struct MessageBubbleView: View {
 
             if showAvatar {
                 if position.isLastInGroup {
-                    avatarView
+                    SenderAvatarView(windowState: windowState, nickname: message.fromJID)
                 } else {
                     Color.clear
                         .frame(width: theme.current.avatarSize, height: theme.current.avatarSize)
@@ -92,6 +83,21 @@ struct MessageBubbleView: View {
         .accessibilityIdentifier("message-bubble-\(message.id)")
         .contextMenu {
             MessageContextMenu(message: message, windowState: windowState)
+        }
+    }
+}
+
+/// The avatar beside an incoming row: the contact's in a one-to-one chat, the occupant's in a room.
+struct SenderAvatarView: View {
+    @Environment(ThemeEngine.self) private var theme
+    let windowState: ChatWindowState
+    let nickname: String
+
+    var body: some View {
+        if let contact = windowState.contact, !windowState.isGroupchat {
+            AvatarView(contact: contact, size: theme.current.avatarSize)
+        } else {
+            ParticipantAvatarView(nickname: nickname, size: theme.current.avatarSize)
         }
     }
 }

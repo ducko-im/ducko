@@ -184,6 +184,235 @@ enum OMEMOServiceTests {
         }
     }
 
+    struct EncryptionFollowsContact {
+        @MainActor
+        private struct Fixture {
+            let service: OMEMOService
+            let chatService: ChatService
+            let accountService: AccountService
+            let store: MockPersistenceStore
+            let transcripts: MockTranscriptStore
+            let accountID: UUID
+            let peer: BareJID
+            /// The chat with `peer` as it was stored before any message arrived.
+            let seeded: Conversation
+
+            /// Both chats are stored with encryption off, so no test depends on what a chat opened on the fly would
+            /// take from this machine's "encrypt by default" preference.
+            static func make() async throws -> Fixture {
+                let store = MockPersistenceStore()
+                let transcripts = MockTranscriptStore()
+                let ownJID = try #require(BareJID(localPart: "me", domainPart: "example.com"))
+                let peer = try #require(BareJID(localPart: "peer", domainPart: "example.com"))
+                let account = Account(id: UUID(), jid: ownJID, isEnabled: true, connectOnLaunch: false, createdAt: Date())
+                await store.addAccount(account)
+                var seeded: [Conversation] = []
+                for jid in [peer, ownJID] {
+                    let conversation = Conversation(
+                        id: UUID(), accountID: account.id, jid: jid, type: .chat,
+                        isPinned: false, isMuted: false, unreadCount: 0, encryptionEnabled: false, createdAt: Date()
+                    )
+                    await store.addConversation(conversation)
+                    seeded.append(conversation)
+                }
+                let accountService = makeAccountService(store: store)
+                try await accountService.loadAccounts()
+                let chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+                let service = makeOMEMOService(store: MockOMEMOStore())
+                service.setAccountService(accountService)
+                service.setChatService(chatService)
+                return Fixture(
+                    service: service, chatService: chatService, accountService: accountService, store: store,
+                    transcripts: transcripts, accountID: account.id, peer: peer, seeded: seeded[0]
+                )
+            }
+
+            var ownJID: BareJID? {
+                accountService.accounts.first?.jid
+            }
+
+            func receiveEncrypted(body: String?, stanzaID: String, from sender: BareJID? = nil) async {
+                await service.handleEvent(
+                    .omemoEncryptedMessageReceived(from: .bare(sender ?? peer), decryptedBody: body, senderDeviceID: 0, stanzaID: stanzaID),
+                    accountID: accountID
+                )
+            }
+
+            func conversation(with jid: BareJID) -> Conversation? {
+                chatService.openConversations.first { $0.jid == jid }
+            }
+
+            var conversation: Conversation? {
+                conversation(with: peer)
+            }
+        }
+
+        @Test
+        @MainActor
+        func `A readable encrypted message switches the chat's encryption on and leaves a note`() async throws {
+            let fixture = try await Fixture.make()
+
+            await fixture.receiveEncrypted(body: "hello", stanzaID: "omemo-1")
+            await fixture.receiveEncrypted(body: "again", stanzaID: "omemo-2")
+
+            let conversation = try #require(fixture.conversation)
+            #expect(conversation.encryptionEnabled)
+            // One note for the switch, none for the messages that follow it.
+            let notes = await fixture.transcripts.notes
+            #expect(notes.map(\.kind) == [.encryptionEnabledByContact])
+            #expect(notes.first?.conversationID == conversation.id)
+        }
+
+        @Test
+        @MainActor
+        func `Encrypted messages handled at once leave one note between them`() async throws {
+            let fixture = try await Fixture.make()
+
+            // Each event is handled in a task of its own, as the app dispatches them.
+            await withTaskGroup(of: Void.self) { group in
+                for index in 1 ... 3 {
+                    group.addTask { await fixture.receiveEncrypted(body: "hello", stanzaID: "omemo-\(index)") }
+                }
+            }
+
+            #expect(try #require(fixture.conversation).encryptionEnabled)
+            #expect(await fixture.transcripts.notes.count == 1)
+        }
+
+        @Test
+        @MainActor
+        func `A second switch started while the first is being stored leaves no note of its own`() async throws {
+            let fixture = try await Fixture.make()
+            try await fixture.chatService.loadConversations(for: fixture.accountID)
+            let entered = AsyncSemaphore()
+            let release = AsyncSemaphore()
+            await fixture.store.installConversationWriteGate(entered: entered, release: release)
+
+            let first = Task { @MainActor in
+                await fixture.chatService.enableEncryptionForContact(in: fixture.seeded.id, accountID: fixture.accountID)
+            }
+            await entered.wait()
+            await fixture.chatService.enableEncryptionForContact(in: fixture.seeded.id, accountID: fixture.accountID)
+            await release.signal()
+            await first.value
+
+            #expect(try #require(fixture.conversation).encryptionEnabled)
+            #expect(await fixture.transcripts.notes.count == 1)
+        }
+
+        @Test
+        @MainActor
+        func `A switch-off stored a moment ago holds against a contact's encrypted message`() async throws {
+            let fixture = try await Fixture.make()
+            try await fixture.chatService.loadConversations(for: fixture.accountID)
+            // The user's switch-off is stored, and the copy of the chat the service holds does not show it yet.
+            try await fixture.store.updateConversation(fixture.seeded.id) { $0.encryptionOptedOut = true }
+            try #require(fixture.conversation?.encryptionOptedOut == false)
+
+            await fixture.chatService.enableEncryptionForContact(in: fixture.seeded.id, accountID: fixture.accountID)
+
+            let conversation = try #require(fixture.conversation)
+            #expect(!conversation.encryptionEnabled)
+            #expect(conversation.encryptionOptedOut)
+            #expect(await fixture.transcripts.notes.isEmpty)
+        }
+
+        @Test
+        @MainActor
+        func `A room's encryption is not switched on by an encrypted message`() async throws {
+            let fixture = try await Fixture.make()
+            let room = try Conversation(
+                id: UUID(), accountID: fixture.accountID, jid: #require(BareJID(localPart: "room", domainPart: "conference.example.com")),
+                type: .groupchat, isPinned: false, isMuted: false, unreadCount: 0, encryptionEnabled: false, createdAt: Date()
+            )
+            await fixture.store.addConversation(room)
+            try await fixture.chatService.loadConversations(for: fixture.accountID)
+
+            await fixture.chatService.enableEncryptionForContact(in: room.id, accountID: fixture.accountID)
+
+            #expect(fixture.chatService.openConversations.first { $0.id == room.id }?.encryptionEnabled == false)
+            #expect(await fixture.transcripts.notes.isEmpty)
+        }
+
+        @Test
+        @MainActor
+        func `A message handled with an older copy of the chat does not switch its encryption back off`() async throws {
+            let fixture = try await Fixture.make()
+            await fixture.receiveEncrypted(body: "hello", stanzaID: "omemo-1")
+            // Armed: the switch is stored, so the older copy below disagrees with it.
+            try #require(fixture.conversation?.encryptionEnabled == true)
+
+            let late = ChatMessage(
+                id: UUID(), conversationID: fixture.seeded.id, fromJID: fixture.peer.description, body: "late",
+                timestamp: Date(), isOutgoing: false, isDelivered: false, isEdited: false, type: "chat"
+            )
+            await fixture.chatService.persistEncryptedMessage(late, in: fixture.seeded, accountID: fixture.accountID)
+
+            let conversation = try #require(fixture.conversation)
+            #expect(conversation.encryptionEnabled)
+            #expect(conversation.unreadCount == 2)
+        }
+
+        @Test
+        @MainActor
+        func `Switching a chat's encryption or muting it writes that alone, not the copy of the chat it started from`() async throws {
+            let fixture = try await Fixture.make()
+            try await fixture.chatService.loadConversations(for: fixture.accountID)
+            // Armed: the service holds a copy of the chat, which what is stored next makes the older one.
+            try #require(fixture.conversation?.unreadCount == 0)
+
+            try await fixture.store.updateConversation(fixture.seeded.id) { $0.unreadCount = 3 }
+            try await fixture.chatService.setEncryptionEnabled(true, for: fixture.seeded.id, accountID: fixture.accountID)
+            #expect(try #require(fixture.conversation).encryptionEnabled)
+            #expect(fixture.conversation?.unreadCount == 3)
+
+            try await fixture.store.updateConversation(fixture.seeded.id) { $0.unreadCount = 5 }
+            try await fixture.chatService.toggleMute(conversationID: fixture.seeded.id, accountID: fixture.accountID)
+            #expect(try #require(fixture.conversation).isMuted)
+            #expect(fixture.conversation?.unreadCount == 5)
+        }
+
+        @Test
+        @MainActor
+        func `A message that could not be decrypted leaves encryption off`() async throws {
+            let fixture = try await Fixture.make()
+
+            await fixture.receiveEncrypted(body: nil, stanzaID: "omemo-bad")
+
+            #expect(try #require(fixture.conversation).encryptionEnabled == false)
+            #expect(await fixture.transcripts.notes.isEmpty)
+        }
+
+        @Test
+        @MainActor
+        func `An echo of the user's own encrypted message leaves encryption off`() async throws {
+            let fixture = try await Fixture.make()
+
+            let ownJID = try #require(fixture.ownJID)
+
+            await fixture.receiveEncrypted(body: "mine", stanzaID: "omemo-own", from: ownJID)
+
+            // Armed: the echo was stored, as an outgoing message.
+            #expect(await fixture.transcripts.messages.last?.isOutgoing == true)
+            #expect(try #require(fixture.conversation(with: ownJID)).encryptionEnabled == false)
+            #expect(await fixture.transcripts.notes.isEmpty)
+        }
+
+        @Test
+        @MainActor
+        func `Encryption the user switched off stays off`() async throws {
+            let fixture = try await Fixture.make()
+            await fixture.receiveEncrypted(body: "hello", stanzaID: "omemo-1")
+            let conversationID = try #require(fixture.conversation).id
+            try await fixture.chatService.setEncryptionEnabled(false, for: conversationID, accountID: fixture.accountID)
+
+            await fixture.receiveEncrypted(body: "again", stanzaID: "omemo-2")
+
+            #expect(try #require(fixture.conversation).encryptionEnabled == false)
+            #expect(await fixture.transcripts.notes.count == 1)
+        }
+    }
+
     /// Locks the production `OMEMOService` conformance to
     /// `SeenDeviceClassificationProviding` — the per-device classification
     /// cache must persist across reads, stay isolated per account, lazy-load

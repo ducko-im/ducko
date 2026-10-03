@@ -22,12 +22,13 @@ public protocol PersistenceStore: Sendable {
     func fetchConversation(jid: String, type: Conversation.ConversationType, accountID: UUID?, importSourceJID: String?) async throws -> Conversation?
     func fetchConversations(importSourceJID: String) async throws -> [Conversation]
     func upsertConversation(_ conversation: Conversation) async throws
-    /// Updates an existing conversation, or no-ops (returning `false`) when no row
-    /// with that ID exists. Unlike `upsertConversation`, this never inserts — so
-    /// stale in-flight async work can't resurrect a conversation deleted while it
-    /// was awaiting.
+    /// Changes an existing conversation's row and returns the conversation as stored afterwards, or `nil` when no
+    /// row with that ID exists. `change` is applied to the row as it is stored, not to a copy the caller read
+    /// earlier, so it writes only what it sets and cannot undo what another writer stored meanwhile. Unlike
+    /// `upsertConversation`, this never inserts, so stale in-flight async work can't resurrect a conversation deleted
+    /// while it was awaiting.
     @discardableResult
-    func updateConversationIfExists(_ conversation: Conversation) async throws -> Bool
+    func updateConversation(_ conversationID: UUID, _ change: @Sendable (inout Conversation) -> Void) async throws -> Conversation?
     func fetchAllConversations() async throws -> [Conversation]
     func markConversationRead(_ conversationID: UUID) async throws
     func deleteConversation(_ conversationID: UUID) async throws

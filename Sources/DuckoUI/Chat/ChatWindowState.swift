@@ -10,7 +10,13 @@ public final class ChatWindowState {
     var conversation: Conversation?
     var contact: Contact?
     var messages: [ChatMessage] = []
+    /// The timeline notes from the oldest loaded message on.
+    var notes: [TimelineNote] = []
     var isLoading = false
+
+    var timelineItems: [TimelineItem] {
+        TimelineItem.merged(messages: messages, notes: notes)
+    }
 
     // MARK: - Display
 
@@ -78,7 +84,50 @@ public final class ChatWindowState {
     // MARK: - Attachments
 
     var pendingAttachments: [DraftAttachment] = []
+    /// Whether the queued files go straight to the contact instead of being uploaded. Upload is preselected for every
+    /// new batch.
+    var sendsAttachmentsDirectly = false
     var isShowingFileImporter = false
+
+    /// A direct transfer goes to one contact's device, so a room and a private chat within one only upload.
+    var offersDirectTransfer: Bool {
+        conversation?.isDirectChat == true
+    }
+
+    /// Encryption covers a chat's messages. A file is not encrypted on either way it can be sent: an upload is readable
+    /// by the server that holds it, and a direct transfer by whatever its bytes pass through.
+    var sendsFilesUnencryptedInEncryptedChat: Bool {
+        liveConversation?.encryptionEnabled == true
+    }
+
+    var isContactTyping: Bool {
+        environment.chatService.isPartnerTyping(jidString: jidString, accountID: accountID)
+    }
+
+    /// The files this chat's contact is sending right now, each of which gets a row at the end of the timeline until
+    /// its message replaces it. A room's occupant shares the room's address, so only a chat with one contact has them.
+    var receivingTransfers: [FileTransferService.ActiveTransfer] {
+        guard conversation?.isDirectChat == true, let accountID = resolvedAccountID else { return [] }
+        return environment.fileTransferService.activeTransfers.filter { transfer in
+            transfer.isReceiving && transfer.accountID == accountID && transfer.peerJIDString == jidString
+        }
+    }
+
+    var canSendDirectly: Bool {
+        guard let accountID = resolvedAccountID else { return false }
+        return environment.fileTransferService.canSendDirectly(toJIDString: jidString, accountID: accountID)
+    }
+
+    /// The contact's online sessions, in the order the contact shows them.
+    var contactOnlineResources: [String] {
+        guard let accountID = resolvedAccountID else { return [] }
+        return environment.presenceService.onlineResources(ofJIDString: jidString, accountID: accountID)
+    }
+
+    func refreshDirectTransferSupport() async {
+        guard let accountID = resolvedAccountID else { return }
+        await environment.fileTransferService.refreshDirectTransferSupport(forJIDString: jidString, accountID: accountID)
+    }
 
     // MARK: - Groupchat
 
@@ -155,6 +204,7 @@ public final class ChatWindowState {
             }
             conversation = conv
             messages = await environment.chatService.loadMessages(for: conv.id)
+            await loadNotes()
             prefetchLinkPreviews()
             guard shouldActivate() else { return }
             await environment.chatService.selectConversation(conv.id, accountID: accountID)
@@ -166,7 +216,13 @@ public final class ChatWindowState {
     func refreshMessages() async {
         guard let conversationID = conversation?.id else { return }
         messages = await environment.chatService.loadMessages(for: conversationID)
+        await loadNotes()
         prefetchLinkPreviews()
+    }
+
+    private func loadNotes() async {
+        guard let conversationID = conversation?.id else { return }
+        notes = await environment.chatService.fetchNotes(for: conversationID, since: messages.first?.timestamp)
     }
 
     func sendMessage(_ body: String) async {
@@ -330,6 +386,7 @@ public final class ChatWindowState {
             } else {
                 messages = older + messages
             }
+            await loadNotes()
             lastLoadHistoryError = nil
         } catch {
             log.warning("Failed to load older messages: \(error)")
@@ -433,6 +490,9 @@ public final class ChatWindowState {
             fileName: url.lastPathComponent,
             mimeType: mimeType
         )
+        if pendingAttachments.isEmpty {
+            sendsAttachmentsDirectly = false
+        }
         pendingAttachments.append(draft)
     }
 
@@ -465,17 +525,21 @@ public final class ChatWindowState {
         guard let conversation else { return }
 
         let attachmentsToSend = pendingAttachments
+        let directly = sendsAttachmentsDirectly
         clearAttachments()
+        lastSendError = nil
 
+        let fileTransferService = environment.fileTransferService
         for attachment in attachmentsToSend {
             do {
-                try await environment.fileTransferService.sendFile(
-                    url: attachment.url,
-                    in: conversation,
-                    accountID: accountID
-                )
+                if directly {
+                    // Returns once the file has its row in the chat, which reports how the transfer goes from there.
+                    try await fileTransferService.startDirectTransfer(url: attachment.url, in: conversation, accountID: accountID)
+                } else {
+                    try await fileTransferService.sendFile(url: attachment.url, in: conversation, accountID: accountID)
+                }
             } catch {
-                // Transfer failed — tracked in FileTransferService.activeTransfers
+                lastSendError = error.localizedDescription
             }
         }
     }
