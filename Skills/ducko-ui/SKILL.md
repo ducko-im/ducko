@@ -14,10 +14,14 @@ The scripts can be allowlisted in `settings.local.json` (see Permission Allowlis
 DuckoApp ships separate windows:
 
 - **Contact List** (`id: "contacts"`) — singleton, main window after login (roster, status picker, search).
-- **Chat** (`id: "chat"`) — singleton tabbed window holding every open conversation as a bottom tab (`chat-tab-bar`); opened/raised by double-click or New Chat. A roster contact's message or file offer also opens it behind the window the user is in, without taking focus, and adds a tab for that chat without selecting it. A muted chat is left alone. A test run that receives messages can therefore end up with tabs it did not open. Switching tabs preserves each conversation's draft, search, and sidebar state.
+- **Chat** (`id: "chat"`) — singleton tabbed window holding every open conversation as a bottom tab (`chat-tab-bar`). Double-click or New Chat opens or raises it. A roster contact's message or file offer also opens it behind the window the user is in, without taking focus, and adds a tab for that chat without selecting it. A muted chat is left alone. Switching tabs preserves each conversation's draft, search, and sidebar state.
 - **Contact Info** (`id: "contact-info"`, keyed by `ContactInfoRef`) — Get Info window: identity, roster/subscription state, vCard, and Block/Remove. Opened from the chat header (i) button, a contact's "Get Info" context item, or Contact ▸ Get Info (⌘⇧I).
 - **Chat Transcripts** (`id: "transcripts"`) — singleton history window; the header clock, a contact's "History" context item, and Contact ▸ History (⌘L) retarget it to that conversation.
 - **MenuBarExtra** — quick status, Show Contact List, Quit.
+
+The Chat window's tabs survive a relaunch, in their order and with the same tab selected. The window itself reopens at launch only when it was open at quit. Otherwise it stays closed, and the tabs come back once a chat is next opened. `ducko-stop.sh` followed by `ducko-launch.sh` is such a relaunch. A test run can therefore start with tabs from an earlier run, and incoming messages can add tabs it did not open. A restored chat window opens in front of Contacts, which leaves the Contacts-only menu commands (Join Room…, Bookmarks…, Add Contact…) disabled, so run `ducko-focus-contacts.sh` after `ducko-launch.sh` before any Contacts step.
+
+A room joined through the Join Room sheet, an accepted invitation or the REPL's `/join` is joined again on every connect until Leave Room, `/leave`, or being kicked or banned. A profile that ended a run inside a room therefore starts the next one in it. To end a run clean, run `ducko-leave-room.sh` for each joined room and `ducko-chat-tabs.sh close-all` before `ducko-stop.sh`.
 
 The Contacts window has **no toolbar**. Its actions live in the app menu bar. File holds New Chat (⌘N), Join Room… (⌘⇧N), Bookmarks… (⌘⇧B) and Close All Chats (⌥⌘W). The Contact menu holds Add Contact… (⌘D) and My Profile…. Its Get Info (⌘⇧I), History (⌘L) and Send File… (⌘⇧F) act on the selected Contacts row or the active chat, while Remove Contact… (⌘⌫) acts only on the selected Contacts row. The Status menu sets presence (⌘⇧Y Available, ⌘Y toggle, Custom…). View holds sort order and Hide Offline (⌘⇧H). Window holds Show/Hide Contact List (⌘/) and chat tab cycling (⌃⇥/⌃⇧⇥). `⌘F` reveals the roster search field (`contact-search-field`). Scripts drive these via keyboard shortcuts or menu-bar clicks (`menu bar item ... of menu bar 1`), not window buttons.
 
@@ -361,10 +365,11 @@ When an account already exists, the app auto-connects on launch using Keychain c
 ```bash
 SCRIPTS="Skills/ducko-ui/scripts"
 
-# 1. Launch (auto-connects, shows contact list)
+# 1. Launch (auto-connects, shows the contact list, plus the chat window if it was open at quit)
 $SCRIPTS/ducko-launch.sh
 
-# 2. Screenshot to verify contact list
+# 2. Screenshot to verify the contact list. Raise it first, since a restored chat window can be in front.
+$SCRIPTS/ducko-focus-contacts.sh
 $SCRIPTS/ducko-screenshot.sh "after-relaunch.png"
 
 # 3. Start a chat and send a message
@@ -772,7 +777,8 @@ printf '/join room@conference.example.com clibot\n' \
   | DUCKO_PROFILE=clibot .build/debug/DuckoCLI interactive
 
 # 3. Bring DuckoApp frontmost WITHOUT relaunching (activating it sends CSI active, which flushes queued pushes), then screenshot.
-#    Do NOT use ducko-launch.sh here — it kills and relaunches, destroying the joined tab.
+#    Do NOT use ducko-launch.sh here. It kills and relaunches the app. The tab comes back and the room is
+#    joined again on a new connection, so the screenshot would show a fresh join instead of a live update.
 osascript -e 'tell application "System Events" to set frontmost of process "DuckoApp" to true'
 $SCRIPTS/ducko-screenshot.sh "live-after.png"
 # Assert: header participant count 1 -> 2 and the sidebar lists clibot — live, no tab reopen.
@@ -914,8 +920,12 @@ To allow these scripts in `settings.local.json` without prompts:
 - A capture taken right after a message arrives can catch the message list mid-scroll. Wait about two seconds before judging layout from a capture.
 - To get an outgoing bubble without typing into the GUI, send from a second session of the same account while the GUI is connected, such as the CLI under another profile. It arrives as a carbon.
 - A `message-bubble-{id}` is one combined accessibility element whose value contains the message's text, unless the message has attachments, a link preview or a code block. Then the bubble is a container that reports no value, and its `attachment-view`, `link-preview` and `code-block` children are separate elements.
-- To type into the dev instance alone, activate it by PID (`NSRunningApplication(processIdentifier:)`, not `set frontmost of process`) and post Unicode key events to that PID, as `AppAccessor.postKey` does. This fills `new-chat-jid-field` after File ▸ New Chat; pressing `start-chat-button` then opens a chat with a JID that has no contact row.
+- To type into the dev instance alone, activate it by PID (`NSRunningApplication(processIdentifier:)`, not `set frontmost of process`) and post Unicode key events to that PID, as `AppAccessor.postKey` does. When `activate()` called from a background process leaves the instance behind, set the `AXFrontmost` attribute of its application element (`AXUIElementCreateApplication(pid)`) instead. This fills `new-chat-jid-field` after File ▸ New Chat; pressing `start-chat-button` then opens a chat with a JID that has no contact row.
 - Neither the `-AppleInterfaceStyle Dark` launch argument nor `defaults write DuckoApp AppleInterfaceStyle Dark` switches the debug binary to dark appearance, so a dark-appearance check needs the system setting. Ask the user to switch it.
 - AX titles render the status rows' checkmark and dash marks as the object replacement character `￼` (U+FFFC), so a title read shows which rows are marked but not how. Each account shows exactly one status, so among the five global status rows (Available through Offline), read a single marked row as a checkmark and two or more as dashes. A per-account submenu only ever checks one row. Saved-status rows can't be read this way, so screenshot the open menu for those, or whenever the distinction must be confirmed.
 - Another agent session working in this repo can have its own DuckoApp up, including one built from a git worktree, and `process "DuckoApp"` resolves to whichever instance the system picks. Its clicks then land in that app and its failures read as script flakes. List the peer sessions, ask before driving the GUI, and say when you are done. Only the close paths take a `DUCKO_PID` (`ducko-connection-info.sh close`, `ducko-dismiss-roster-notice.sh`); every open path matches by name, so to scope one, copy `scripts/` to a scratch directory and replace `process "DuckoApp"` with `(first application process whose unix id is <pid>)`. The integration harness is unaffected, since `AppAccessor` targets by PID.
+- Quit a PID-targeted instance with `NSRunningApplication(processIdentifier:).terminate()`, which takes the app's own quit path. Pressing Quit through accessibility in the app menu or the menu-bar extra works only for the frontmost instance: on a background instance the press returns success and does nothing. Tabs and the chat window's open state are saved on every change, so they survive a kill as well. Use the real quit when the quit path itself is under test, since the windows close on the way out and that must not count as the user closing the chat window.
+- Allow about ten seconds for a quit, since the app disconnects first, and confirm the process has exited before launching the next instance on the same profile. An instance can ignore the quit request, and a launch then runs beside it. Stop a stuck one by PID.
+- To let the user try relaunch behavior, run the debug binary in a loop that starts it again whenever it exits, such as `while [ ! -f "$STOP_FILE" ]; do DUCKO_PROFILE=<name> .build/debug/DuckoApp; sleep 1; done`, so ⌘Q shows the relaunch without a terminal. To end it, create the stop file, then quit the instance by PID.
+- The chat window's saved tabs are the `chatSavedTabs` key in the debug defaults domain (`im.ducko.dev`, or `im.ducko.dev.<profile>` under a `DUCKO_PROFILE`). To return a profile to no saved tabs, delete the key while no instance of that profile runs, since a running one writes it again on its next tab change.
 - A sheet that fetches on appear needs an identifier on its settled (non-loading) content, not only on the sheet container: the container mounts while the request is in flight, so a wait on it passes before the fetch resolves and cannot fail when the fetch breaks. `server-info-content` and `registration-form-content` follow this; give new loading sheets the same pair.

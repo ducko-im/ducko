@@ -849,14 +849,19 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
     /// Joins `jid` and awaits the matching `.roomJoined` self-presence echo. Notifier registers BEFORE join is sent so the echo cannot race ahead.
     /// Throws `.timeout(jid)` if the echo doesn't arrive within `timeout`; rethrows `joinRoom` errors after cleanup.
+    /// With `remember`, the room is joined again on later connects. Without it, whether the room is rejoined stays
+    /// as it was.
     public func joinRoomAwaitingEcho(
         jid: BareJID,
         nickname: String,
         password: String? = nil,
         accountID: UUID,
-        timeout: Duration = .seconds(5)
+        timeout: Duration = .seconds(5),
+        remember: Bool = true
     ) async throws {
-        try await roomService.joinRoomAwaitingEcho(jid: jid, nickname: nickname, password: password, accountID: accountID, timeout: timeout)
+        try await roomService.joinRoomAwaitingEcho(
+            jid: jid, nickname: nickname, password: password, accountID: accountID, timeout: timeout, remember: remember
+        )
     }
 
     /// String overload of `joinRoomAwaitingEcho(jid:…)`. Throws `.invalidJID` on parse failure.
@@ -865,9 +870,12 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         nickname: String,
         password: String? = nil,
         accountID: UUID,
-        timeout: Duration = .seconds(5)
+        timeout: Duration = .seconds(5),
+        remember: Bool = true
     ) async throws {
-        try await roomService.joinRoomAwaitingEcho(jidString: jidString, nickname: nickname, password: password, accountID: accountID, timeout: timeout)
+        try await roomService.joinRoomAwaitingEcho(
+            jidString: jidString, nickname: nickname, password: password, accountID: accountID, timeout: timeout, remember: remember
+        )
     }
 
     /// Atomically registers a one-shot notifier for the next `.roomJoined` matching `(accountID, jid)`. Synchronous + MainActor
@@ -886,8 +894,14 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         await roomService.awaitRoomJoinedEcho(stream: stream, timeout: timeout)
     }
 
-    public func leaveRoom(jid: BareJID, accountID: UUID) async throws {
-        try await roomService.leaveRoom(jid: jid, accountID: accountID)
+    /// With `forget`, the room is not joined again on later connects. Without it, whether the room is rejoined stays
+    /// as it was.
+    public func leaveRoom(jid: BareJID, accountID: UUID, forget: Bool = true) async throws {
+        try await roomService.leaveRoom(jid: jid, accountID: accountID, forget: forget)
+    }
+
+    func rejoinRooms(accountID: UUID, excluding autoJoined: Set<BareJID>) async {
+        await roomService.rejoinRooms(accountID: accountID, excluding: autoJoined)
     }
 
     public func sendGroupMessage(to room: BareJID, body: String, accountID: UUID, attachments: [Attachment] = []) async throws {
@@ -936,8 +950,8 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         try await roomService.joinRoom(jidString: jidString, nickname: nickname, password: password, accountID: accountID)
     }
 
-    public func leaveRoom(jidString: String, accountID: UUID) async throws {
-        try await roomService.leaveRoom(jidString: jidString, accountID: accountID)
+    public func leaveRoom(jidString: String, accountID: UUID, forget: Bool = true) async throws {
+        try await roomService.leaveRoom(jidString: jidString, accountID: accountID, forget: forget)
     }
 
     public func sendGroupMessage(toJIDString jidString: String, body: String, accountID: UUID) async throws {
@@ -1211,7 +1225,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             handlePresenceForResourceLock(from: from, presence: presence, accountID: accountID)
         case let .roomJoined(room, occupancy, created): await roomService.handleRoomJoined(room: room, occupancy: occupancy, isNewlyCreated: created, accountID: accountID)
         case let .roomOccupantJoined(room, occupant): roomService.handleRoomOccupantJoined(room: room, occupant: occupant, accountID: accountID)
-        case let .roomOccupantLeft(room, occupant, _): roomService.handleRoomOccupantLeft(room: room, occupant: occupant, accountID: accountID)
+        case let .roomOccupantLeft(room, occupant, reason): await roomService.handleRoomOccupantLeft(room: room, occupant: occupant, reason: reason, accountID: accountID)
         case let .roomOccupantNickChanged(room, old, occupant): roomService.handleRoomOccupantNickChanged(room: room, oldNickname: old, occupant: occupant, accountID: accountID)
         case let .roomSubjectChanged(room, subject, _): await handleRoomSubjectChanged(room: room, subject: subject, accountID: accountID)
         case let .roomInviteReceived(invite): roomService.handleRoomInviteReceived(invite, accountID: accountID)

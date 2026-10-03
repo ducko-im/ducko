@@ -76,7 +76,7 @@ extension DuckoCLI {
                 let nick = nickname ?? defaultNickname(for: selectedAccount)
                 try await env.chatService.joinRoomAwaitingEcho(
                     jidString: jid, nickname: nick,
-                    accountID: selectedAccount.id, timeout: .seconds(15)
+                    accountID: selectedAccount.id, timeout: .seconds(15), remember: false
                 )
 
                 let participantCount = await MainActor.run { env.chatService.participantCount(forRoomJIDString: jid, accountID: selectedAccount.id) }
@@ -113,12 +113,12 @@ extension DuckoCLI {
                     let nick = nickname ?? defaultNickname(for: selectedAccount)
                     try await env.chatService.joinRoomAwaitingEcho(
                         jidString: jid, nickname: nick,
-                        accountID: selectedAccount.id, timeout: .seconds(15)
+                        accountID: selectedAccount.id, timeout: .seconds(15), remember: false
                     )
 
                     await printRoomMembers(jidString: jid, accountID: selectedAccount.id, environment: env, formatter: formatter)
 
-                    try await env.chatService.leaveRoom(jidString: jid, accountID: selectedAccount.id)
+                    try await env.chatService.leaveRoom(jidString: jid, accountID: selectedAccount.id, forget: false)
                 }
             }
         }
@@ -148,12 +148,12 @@ extension DuckoCLI {
                     let nick = nickname ?? defaultNickname(for: selectedAccount)
                     try await env.chatService.joinRoomAwaitingEcho(
                         jidString: jid, nickname: nick,
-                        accountID: selectedAccount.id, timeout: .seconds(15)
+                        accountID: selectedAccount.id, timeout: .seconds(15), remember: false
                     )
 
                     try await env.chatService.sendGroupMessage(toJIDString: jid, body: body, accountID: selectedAccount.id)
 
-                    try await env.chatService.leaveRoom(jidString: jid, accountID: selectedAccount.id)
+                    try await env.chatService.leaveRoom(jidString: jid, accountID: selectedAccount.id, forget: false)
                 }
             }
         }
@@ -182,7 +182,7 @@ private func runRoomLoop(roomJID: String, formatter: any CLIFormatter, environme
     }
 
     // quit or stdin closed
-    try? await environment.chatService.leaveRoom(jidString: roomJID, accountID: accountID)
+    try? await environment.chatService.leaveRoom(jidString: roomJID, accountID: accountID, forget: false)
     await environment.accountService.disconnect(accountID: accountID)
     Foundation.exit(0)
 }

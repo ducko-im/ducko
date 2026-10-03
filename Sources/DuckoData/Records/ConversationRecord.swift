@@ -16,6 +16,7 @@ final class ConversationRecord {
     var importSourceJID: String?
     var roomSubject: String?
     var roomNickname: String?
+    var rejoinsOnConnect: Bool = false
     var encryptionEnabled: Bool = false
     var encryptionOptedOut: Bool = false
     var occupantNickname: String?

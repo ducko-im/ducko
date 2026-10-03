@@ -35,9 +35,11 @@ struct DuckoApp: App {
             let transcripts = FileTranscriptStore.makeDefault()
             let env = AppEnvironment(store: store, transcripts: transcripts, omemoStore: omemoStore, linkPreviewFetcher: LPLinkPreviewFetcher())
             self.environment = env
-            self.chatContainer = ChatContainerState(environment: env)
+            let chatContainer = ChatContainerState(environment: env, defaults: PreferencesDefaults.store)
+            self.chatContainer = chatContainer
             AppStateObserver(accountService: env.accountService)
             AppDelegate.environment = env
+            AppDelegate.chatContainer = chatContainer
         } catch {
             fatalError("Failed to create model container: \(error)")
         }
@@ -458,6 +460,7 @@ final class AppStateObserver {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak static var environment: AppEnvironment?
+    weak static var chatContainer: ChatContainerState?
 
     /// Bound on `disconnectAll`. A stuck TCP/TLS write must not be allowed to
     /// hold AppKit's terminate-later reply forever — the user can already see
@@ -480,6 +483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Self.chatContainer?.stopSavingTabs()
         guard let environment = Self.environment else { return .terminateNow }
         Task { @MainActor in
             await Self.performShutdown(environment)

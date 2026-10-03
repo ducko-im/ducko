@@ -77,7 +77,8 @@ final class RoomService {
         nickname: String,
         password: String? = nil,
         accountID: UUID,
-        timeout: Duration = .seconds(5)
+        timeout: Duration = .seconds(5),
+        remember: Bool = true
     ) async throws {
         let (notifierID, stream) = registerRoomJoinNotifier(jid: jid, accountID: accountID)
         // `clearRoomJoinNotifier` is identity-aware and idempotent, so running
@@ -91,6 +92,9 @@ final class RoomService {
         if !yielded {
             throw ChatServiceError.timeout(jid)
         }
+        if remember {
+            await setRejoinsOnConnect(true, room: jid, accountID: accountID)
+        }
     }
 
     func joinRoomAwaitingEcho(
@@ -98,14 +102,15 @@ final class RoomService {
         nickname: String,
         password: String? = nil,
         accountID: UUID,
-        timeout: Duration = .seconds(5)
+        timeout: Duration = .seconds(5),
+        remember: Bool = true
     ) async throws {
         guard let jid = BareJID.parse(jidString) else {
             throw ChatServiceError.invalidJID(jidString)
         }
         try await joinRoomAwaitingEcho(
             jid: jid, nickname: nickname, password: password,
-            accountID: accountID, timeout: timeout
+            accountID: accountID, timeout: timeout, remember: remember
         )
     }
 
@@ -147,11 +152,45 @@ final class RoomService {
         }
     }
 
-    func leaveRoom(jid: BareJID, accountID: UUID) async throws {
+    func leaveRoom(jid: BareJID, accountID: UUID, forget: Bool = true) async throws {
+        // Before the connection check, so leaving while offline still keeps the room from being joined again.
+        if forget {
+            await setRejoinsOnConnect(false, room: jid, accountID: accountID)
+        }
         guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
         guard let mucModule = await client.module(ofType: MUCModule.self) else { return }
         try await mucModule.leaveRoom(jid)
         clearRoomState(for: jid, accountID: accountID)
+    }
+
+    /// Rejoins the rooms the user is in on a new connection, which starts out in no room. Rooms in `autoJoined` are
+    /// left to their bookmark, whose nickname and password apply.
+    func rejoinRooms(accountID: UUID, excluding autoJoined: Set<BareJID>) async {
+        let conversations = await (try? store.fetchConversations(for: accountID)) ?? []
+        for conversation in conversations where conversation.rejoinsOnConnect && !autoJoined.contains(conversation.jid) {
+            guard let nickname = conversation.roomNickname else { continue }
+            do {
+                try await joinRoom(jid: conversation.jid, nickname: nickname, accountID: accountID)
+            } catch {
+                log.warning("Failed to rejoin a room: \(error)")
+                log.debug("The room that could not be rejoined is \(conversation.jid)")
+            }
+        }
+    }
+
+    private func storedRoom(_ room: BareJID, accountID: UUID) async -> Conversation? {
+        try? await store.fetchConversation(jid: room.description, type: .groupchat, accountID: accountID, importSourceJID: nil)
+    }
+
+    private func setRejoinsOnConnect(_ rejoins: Bool, room: BareJID, accountID: UUID) async {
+        guard let conversation = await storedRoom(room, accountID: accountID) else { return }
+        await setRejoinsOnConnect(rejoins, for: conversation)
+    }
+
+    private func setRejoinsOnConnect(_ rejoins: Bool, for conversation: Conversation) async {
+        guard conversation.rejoinsOnConnect != rejoins,
+              let updated = try? await store.updateConversation(conversation.id, { $0.rejoinsOnConnect = rejoins }) else { return }
+        didUpdateConversation(updated)
     }
 
     func joinRoom(jidString: String, nickname: String, password: String? = nil, accountID: UUID) async throws {
@@ -161,11 +200,11 @@ final class RoomService {
         try await joinRoom(jid: jid, nickname: nickname, password: password, accountID: accountID)
     }
 
-    func leaveRoom(jidString: String, accountID: UUID) async throws {
+    func leaveRoom(jidString: String, accountID: UUID, forget: Bool = true) async throws {
         guard let jid = BareJID.parse(jidString) else {
             throw ChatServiceError.invalidJID(jidString)
         }
-        try await leaveRoom(jid: jid, accountID: accountID)
+        try await leaveRoom(jid: jid, accountID: accountID, forget: forget)
     }
 
     func roomMemberJIDs(roomJIDString: String, accountID: UUID) async throws -> [BareJID] {
@@ -443,8 +482,7 @@ final class RoomService {
         switch reason {
         case .notJoined:
             log.warning("MUC self-ping: not joined \(room), triggering rejoin")
-            let conversation = await (try? store.fetchConversation(jid: room.description, type: .groupchat, accountID: accountID, importSourceJID: nil))
-            let nickname = conversation?.roomNickname ?? room.localPart ?? "user"
+            let nickname = await storedRoom(room, accountID: accountID)?.roomNickname ?? room.localPart ?? "user"
             do {
                 try await joinRoom(jid: room, nickname: nickname, accountID: accountID)
             } catch {
@@ -495,9 +533,19 @@ final class RoomService {
         roomParticipants[key] = list
     }
 
-    func handleRoomOccupantLeft(room: BareJID, occupant: RoomOccupant, accountID: UUID) {
+    func handleRoomOccupantLeft(room: BareJID, occupant: RoomOccupant, reason: OccupantLeaveReason?, accountID: UUID) async {
         let key = RoomJoinKey(accountID: accountID, room: room)
         roomParticipants[key]?.removeAll { $0.nickname == occupant.nickname }
+
+        switch reason {
+        case .kicked, .banned, .affiliationChanged:
+            // The stored room, not the cached one: the cache is only filled where conversations are listed.
+            guard let stored = await storedRoom(room, accountID: accountID), stored.roomNickname == occupant.nickname else { return }
+            await setRejoinsOnConnect(false, for: stored)
+        case .serviceShutdown, nil:
+            // Only being thrown out ends the user's stay. A service that shuts down comes back.
+            break
+        }
     }
 
     func handleRoomInviteReceived(_ invite: RoomInvite, accountID: UUID) {

@@ -8,15 +8,24 @@ import SwiftUI
 /// distinct tabs, and a MUC PM (`room@conf/nick`) stays distinct from the room (`room@conf`).
 @MainActor @Observable
 public final class ChatContainerState {
-    public private(set) var orderedTabs: [ConversationKey] = []
+    public private(set) var orderedTabs: [ConversationKey] = [] {
+        didSet { saveTabs() }
+    }
+
     private var states: [ConversationKey: ChatWindowState] = [:]
     public var selectedKey: ConversationKey? {
         didSet {
+            saveTabs()
             // The chat window's one file importer rebinds to the newly selected tab, so the outgoing tab's request
             // would otherwise reopen the picker when that tab comes back.
             guard let oldValue, oldValue != selectedKey else { return }
             states[oldValue]?.isShowingFileImporter = false
         }
+    }
+
+    /// Whether the chat window is open. Saved with the tabs, so a relaunch knows whether to bring it back.
+    public var isWindowOpen = false {
+        didSet { saveTabs() }
     }
 
     /// Whether the chat window is the focused window of the active app.
@@ -52,9 +61,11 @@ public final class ChatContainerState {
     public var isShowingNewChat = false
 
     private let environment: AppEnvironment
+    private let defaults: UserDefaults
 
-    public init(environment: AppEnvironment) {
+    public init(environment: AppEnvironment, defaults: UserDefaults) {
         self.environment = environment
+        self.defaults = defaults
     }
 
     public var selectedState: ChatWindowState? {
@@ -171,6 +182,62 @@ public final class ChatContainerState {
         for key in stale {
             close(key)
         }
+    }
+
+    // MARK: - Restoring After a Relaunch
+
+    private struct SavedTabs: Codable {
+        let orderedTabs: [ConversationKey]
+        let selectedKey: ConversationKey?
+        let isWindowOpen: Bool
+    }
+
+    private enum Keys {
+        static let savedTabs = "chatSavedTabs"
+    }
+
+    private var hasRestoredTabs = false
+    private var isQuitting = false
+
+    /// Reopens the tabs that were open when the app last ran, leaving out those of an account that is gone or
+    /// disabled. Returns whether the chat window was open then and has a tab to show. Call after the accounts have
+    /// loaded: before that, every tab counts as belonging to no account and is left out.
+    public func restoreTabs() -> Bool {
+        guard !hasRestoredTabs else { return false }
+        // What is open now replaces the last session's record, whether or not there was one to restore.
+        defer {
+            hasRestoredTabs = true
+            saveTabs()
+        }
+        guard let data = defaults.data(forKey: Keys.savedTabs),
+              let saved = try? JSONDecoder().decode(SavedTabs.self, from: data) else { return false }
+
+        let enabledAccountIDs = Set(environment.accountService.enabledAccounts.map(\.id))
+        let tabs = saved.orderedTabs.filter { key in
+            guard let accountID = key.accountID else { return false }
+            return enabledAccountIDs.contains(accountID)
+        }
+        let savedSelection = saved.selectedKey.flatMap { tabs.contains($0) ? $0 : nil }
+        // A chat opened before this ran is the one the user asked for, so it stays selected.
+        let selected = selectedKey ?? savedSelection ?? tabs.first
+        for key in tabs where states[key] == nil {
+            addTab(key, selecting: key == selected)
+        }
+        return saved.isWindowOpen && hasTabs
+    }
+
+    /// Call when the app starts to quit. Its windows close on the way out, which is not the user closing the chat
+    /// window, so what is saved stays as it was at that moment.
+    public func stopSavingTabs() {
+        isQuitting = true
+    }
+
+    private func saveTabs() {
+        // Until the last session's tabs are back, saving would replace them with a launch's empty window.
+        guard hasRestoredTabs, !isQuitting else { return }
+        let saved = SavedTabs(orderedTabs: orderedTabs, selectedKey: selectedKey, isWindowOpen: isWindowOpen)
+        guard let data = try? JSONEncoder().encode(saved) else { return }
+        defaults.set(data, forKey: Keys.savedTabs)
     }
 
     // MARK: - Activation

@@ -56,8 +56,12 @@ public struct ChatContainerView: View {
         .onChange(of: appearsActive, initial: true) {
             container.isWindowFocused = appearsActive
         }
+        .onAppear {
+            container.isWindowOpen = true
+        }
         .onDisappear {
             container.isWindowFocused = false
+            container.isWindowOpen = false
         }
         .sheet(isPresented: $container.isShowingNewChat) {
             NewChatSheet { jidString, accountID in

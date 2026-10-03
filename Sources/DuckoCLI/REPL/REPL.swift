@@ -23,7 +23,7 @@ func runREPL(formatter: any CLIFormatter, environment: AppEnvironment, accountID
 
 private func quitREPL(context: REPLContext, currentRoom: String?) async -> Never {
     if let currentRoom {
-        try? await context.environment.chatService.leaveRoom(jidString: currentRoom, accountID: context.accountID)
+        try? await context.environment.chatService.leaveRoom(jidString: currentRoom, accountID: context.accountID, forget: false)
     }
     await context.environment.accountService.disconnect(accountID: context.accountID)
     Foundation.exit(0)

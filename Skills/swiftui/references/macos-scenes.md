@@ -198,6 +198,12 @@ struct VideoCall: App {
 
 > **Recommendation:** In most cases, prefer `WindowGroup` for the primary scene. Use `Window` for supplementary singleton windows.
 
+### Restoring a Window's content across launches
+
+`.restorationBehavior(.disabled)` (macOS 15.0+) keeps the system from reopening the window at launch. Observed with the macOS 27 SDK, it also stops the window's frame from being remembered: the window opens at its default size and position, and a moved or resized frame is not saved. When the app restores a window's content itself, leave restoration automatic and reopen the window with `openWindow(id:)` at launch.
+
+Observed with the macOS 27 SDK, a window's `onDisappear` fires while the app terminates. State saved from it, such as "the window is closed", is then indistinguishable at the next launch from the user closing the window. Stop saving that state once `applicationShouldTerminate` commits to quitting.
+
 ---
 
 ## UtilityWindow (macOS-only)

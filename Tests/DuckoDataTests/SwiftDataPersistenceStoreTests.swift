@@ -292,6 +292,7 @@ struct SwiftDataPersistenceStoreTests {
             conversation.unreadCount = 3
             conversation.roomSubject = "Subject"
             conversation.roomNickname = "Self"
+            conversation.rejoinsOnConnect = true
             conversation.encryptionEnabled = true
             conversation.encryptionOptedOut = true
             conversation.occupantNickname = "Other"
@@ -319,6 +320,7 @@ struct SwiftDataPersistenceStoreTests {
             conversation.lastMessagePreview = nil
             conversation.roomSubject = nil
             conversation.roomNickname = nil
+            conversation.rejoinsOnConnect = false
             conversation.encryptionEnabled = false
             conversation.encryptionOptedOut = false
             conversation.occupantNickname = nil
@@ -336,6 +338,7 @@ struct SwiftDataPersistenceStoreTests {
             #expect(cleared.lastMessagePreview == nil)
             #expect(cleared.roomSubject == nil)
             #expect(cleared.roomNickname == nil)
+            #expect(cleared.rejoinsOnConnect == false)
             #expect(cleared.encryptionEnabled == false)
             #expect(cleared.encryptionOptedOut == false)
             #expect(cleared.occupantNickname == nil)
@@ -357,6 +360,7 @@ struct SwiftDataPersistenceStoreTests {
             #expect(inserted.unreadCount == 3)
             #expect(inserted.roomSubject == "Subject")
             #expect(inserted.roomNickname == "Self")
+            #expect(inserted.rejoinsOnConnect == true)
             #expect(inserted.encryptionEnabled == true)
             #expect(inserted.encryptionOptedOut == true)
             #expect(inserted.occupantNickname == "Other")

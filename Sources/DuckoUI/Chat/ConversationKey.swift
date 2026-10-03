@@ -11,7 +11,7 @@ import Foundation
 /// carries a concrete account. Not reused from `ConversationRef` (the load-time identity): a key
 /// built at open time would have nil `conversationID`/`type` and never match a later
 /// `ConversationRef(conversation:)`, a hash-stability footgun.
-public struct ConversationKey: Hashable {
+public struct ConversationKey: Hashable, Codable {
     public let accountID: UUID?
     public let jid: String
 

@@ -11,8 +11,15 @@ struct ChatContainerStateTests {
         let container: ChatContainerState
         let environment: AppEnvironment
         let store: MockPersistenceStore
+        let preferences: PreferencesFixture
         let accountID: UUID
         let accountID2: UUID
+
+        /// A container as the next launch builds it: the same accounts and preferences, and no tabs yet.
+        @MainActor
+        func relaunched() -> ChatContainerState {
+            ChatContainerState(environment: environment, defaults: preferences.defaults)
+        }
     }
 
     private static func makeFixture() async throws -> Fixture {
@@ -40,13 +47,17 @@ struct ChatContainerStateTests {
             credentialStore: NullCredentialStore()
         )
         try await environment.accountService.loadAccounts()
+        let preferences = PreferencesFixture()
+        let container = ChatContainerState(environment: environment, defaults: preferences.defaults)
+        // Nothing is saved until the last session's tabs have been restored, as the app does at launch.
+        _ = container.restoreTabs()
         // Focused, as a chat window the user is working in is. The tests about an unfocused window clear it.
-        let container = ChatContainerState(environment: environment)
         container.isWindowFocused = true
         return Fixture(
             container: container,
             environment: environment,
             store: store,
+            preferences: preferences,
             accountID: account.id,
             accountID2: account2.id
         )
@@ -91,7 +102,7 @@ struct ChatContainerStateTests {
         let environment = AppEnvironment(store: store, transcripts: transcripts, credentialStore: NullCredentialStore())
         try await environment.accountService.loadAccounts()
         return PruneFixture(
-            container: ChatContainerState(environment: environment),
+            container: ChatContainerState(environment: environment, defaults: PreferencesFixture().defaults),
             environment: environment,
             account: account,
             roomJID: roomJID
@@ -476,6 +487,109 @@ struct ChatContainerStateTests {
 
         container.select(key("bob@example.com", id))
         #expect(container.state(for: key("bob@example.com", id))?.draftText == "half-typed")
+    }
+
+    @Test func `a relaunch brings back the tabs in their order with the same one selected`() async throws {
+        let fixture = try await Self.makeFixture()
+        let id = fixture.accountID
+        let container = fixture.container
+        container.open("a@example.com", accountID: id)
+        container.open("b@example.com", accountID: id)
+        container.open("room@conference.example.com/nick", accountID: id)
+        container.select(key("b@example.com", id))
+        container.isWindowOpen = true
+
+        let relaunched = fixture.relaunched()
+        let reopensWindow = relaunched.restoreTabs()
+
+        #expect(reopensWindow)
+        #expect(relaunched.orderedTabs == [key("a@example.com", id), key("b@example.com", id), key("room@conference.example.com/nick", id)])
+        #expect(relaunched.selectedKey == key("b@example.com", id))
+    }
+
+    @Test func `a chat window closed before quitting stays closed and keeps its tabs`() async throws {
+        let fixture = try await Self.makeFixture()
+        let id = fixture.accountID
+        let container = fixture.container
+        container.open("a@example.com", accountID: id)
+        container.isWindowOpen = true
+        container.isWindowOpen = false
+
+        let relaunched = fixture.relaunched()
+        let reopensWindow = relaunched.restoreTabs()
+
+        #expect(!reopensWindow)
+        #expect(relaunched.orderedTabs == [key("a@example.com", id)])
+    }
+
+    @Test func `the chat window closing as the app quits does not count as closed`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        container.open("a@example.com", accountID: fixture.accountID)
+        container.isWindowOpen = true
+
+        container.stopSavingTabs()
+        container.isWindowOpen = false
+
+        #expect(fixture.relaunched().restoreTabs())
+    }
+
+    @Test func `a relaunch leaves out the tabs of an account that is disabled or gone`() async throws {
+        let fixture = try await Self.makeFixture()
+        let id = fixture.accountID
+        let container = fixture.container
+        container.open("a@example.com", accountID: id)
+        container.open("b@example.com", accountID: UUID())
+        container.open("c@example.com", accountID: fixture.accountID2)
+        container.isWindowOpen = true
+        var disabled = try #require(fixture.environment.accountService.accounts.first { $0.id == fixture.accountID2 })
+        disabled.isEnabled = false
+        try await fixture.environment.accountService.updateAccount(disabled)
+        try await fixture.environment.accountService.loadAccounts()
+
+        let relaunched = fixture.relaunched()
+        let reopensWindow = relaunched.restoreTabs()
+
+        #expect(reopensWindow)
+        #expect(relaunched.orderedTabs == [key("a@example.com", id)])
+        #expect(relaunched.selectedKey == key("a@example.com", id))
+    }
+
+    @Test func `a chat opened before the tabs are back stays selected and is kept`() async throws {
+        let fixture = try await Self.makeFixture()
+        let id = fixture.accountID
+        let container = fixture.container
+        container.open("a@example.com", accountID: id)
+
+        let relaunched = fixture.relaunched()
+        relaunched.open("b@example.com", accountID: id)
+        _ = relaunched.restoreTabs()
+
+        #expect(relaunched.orderedTabs == [key("b@example.com", id), key("a@example.com", id)])
+        #expect(relaunched.selectedKey == key("b@example.com", id))
+        let relaunchedAgain = fixture.relaunched()
+        _ = relaunchedAgain.restoreTabs()
+        #expect(relaunchedAgain.orderedTabs == [key("b@example.com", id), key("a@example.com", id)])
+    }
+
+    @Test func `restored tabs are not looked at until the chat window is in view`() async throws {
+        let fixture = try await Self.makeFixture()
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        let container = fixture.container
+        await openAndAwaitLoad(container, "a@example.com", id)
+        container.isWindowFocused = false
+        try await waitUntil { chatService.activeConversationID == nil }
+
+        let relaunched = fixture.relaunched()
+        _ = relaunched.restoreTabs()
+        let state = try #require(relaunched.state(for: key("a@example.com", id)))
+        try await waitUntil { state.conversation != nil && !state.isLoading }
+        await letScheduledActivationsRun()
+        #expect(chatService.activeConversationID == nil)
+
+        relaunched.isWindowFocused = true
+        try await waitUntil { chatService.activeConversationID == state.conversation?.id }
     }
 
     @Test func `a MUC PM is a distinct tab from its room`() async throws {

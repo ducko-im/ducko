@@ -94,7 +94,7 @@ struct SenderAvatarView: View {
     let nickname: String
 
     var body: some View {
-        if let contact = windowState.contact, !windowState.isGroupchat {
+        if !windowState.isGroupchat, let contact = windowState.contact {
             AvatarView(contact: contact, size: theme.current.avatarSize)
         } else {
             ParticipantAvatarView(nickname: nickname, size: theme.current.avatarSize)

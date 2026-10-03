@@ -51,8 +51,7 @@ public final class BookmarksService {
     }
 
     #if DEBUG
-        /// Test seam: seeds per-account bookmarks without a live PEP fetch, so per-account purge/isolation
-        /// can be exercised in unit tests.
+        /// Test seam: seeds per-account bookmarks without a live PEP fetch.
         func setBookmarksForTesting(_ bookmarks: [RoomBookmark], accountID: UUID) {
             bookmarksByAccount[accountID] = bookmarks
         }
@@ -126,6 +125,7 @@ public final class BookmarksService {
                 await client.awaitInitialPresenceSent()
             }
             await loadBookmarks(accountID: accountID)
+            await rejoinRooms(accountID: accountID)
         case let .pepItemsPublished(from, node, items)
             where node == XMPPNamespaces.bookmarks2:
             await handleBookmarksPublished(from: from, items: items, accountID: accountID)
@@ -203,6 +203,14 @@ public final class BookmarksService {
                 accountID: accountID
             )
         }
+    }
+
+    /// Rejoins the rooms the user is in that no auto-join bookmark covers, where auto-join is on. Call it after the
+    /// bookmark fetch, whether or not that succeeded: the fetch has already joined the rooms with such a bookmark.
+    private func rejoinRooms(accountID: UUID) async {
+        guard autoJoinEnabled else { return }
+        let autoJoined = (bookmarksByAccount[accountID] ?? []).filter(\.autojoin).compactMap { BareJID.parse($0.jidString) }
+        await chatService?.rejoinRooms(accountID: accountID, excluding: Set(autoJoined))
     }
 
     @discardableResult

@@ -255,17 +255,10 @@ private struct ChatTabChip: View {
     }
 
     private var presenceDisplay: ContactPresenceDisplay {
-        guard let contact = state?.contact ?? scopedContact else {
+        guard let contact = state?.contact else {
             return .unknown
         }
         return ContactPresenceDisplay.resolve(for: contact, accountID: key.accountID, presenceService: environment.presenceService)
-    }
-
-    private var scopedContact: Contact? {
-        guard let accountID = key.accountID else {
-            return environment.rosterService.contact(jidString: key.jid)
-        }
-        return environment.rosterService.contact(jidString: key.jid, accountID: accountID)
     }
 
     /// The disambiguation label shown when this is a direct 1:1 whose bare JID is duplicated across

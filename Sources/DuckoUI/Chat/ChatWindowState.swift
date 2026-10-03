@@ -8,7 +8,6 @@ private let log = Logger(label: "im.ducko.ui.chatwindow")
 @MainActor @Observable
 public final class ChatWindowState {
     var conversation: Conversation?
-    var contact: Contact?
     var messages: [ChatMessage] = [] {
         didSet { prefetchLinkPreviews() }
     }
@@ -39,6 +38,13 @@ public final class ChatWindowState {
     /// survives. For display reads only — routing uses the stable `conversation` copy directly.
     var liveConversation: Conversation? {
         serviceConversation ?? conversation
+    }
+
+    /// The contact as the roster holds it now, so a tab opened before the roster was loaded still gets its name.
+    /// A room and a private chat within one have none, which is known once the conversation is loaded.
+    var contact: Contact? {
+        guard conversation?.isDirectChat != false, let accountID = resolvedAccountID else { return nil }
+        return environment.rosterService.contact(jidString: jidString, accountID: accountID)
     }
 
     var displayName: String {
@@ -203,7 +209,6 @@ public final class ChatWindowState {
                 )
             } else {
                 conv = try await environment.chatService.openConversation(jidString: jidString, accountID: accountID)
-                contact = environment.rosterService.contact(jidString: jidString, accountID: accountID)
             }
             conversation = conv
             messages = await environment.chatService.loadMessages(for: conv.id)
