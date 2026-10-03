@@ -6,13 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-03
+
 ### Added
 
 - Send a file straight to one of a contact's devices with Send Directly in the attachment bar, or with `/senddirect` in `ducko interactive`, instead of uploading it to the server, with a note in encrypted chats that files are not end-to-end encrypted
 - Switch a chat's encryption on when the contact sends an encrypted message, with a note in the chat saying so, unless you switched it off yourself
 - Open a contact's chat when they write or offer a file, behind the window you are in, without taking the keyboard and without marking it read, and bounce the Dock icon once
 - Show delivered and read as separate checkmarks on your messages, print read markers as they arrive in `ducko interactive`, and mark read messages `[read]` in history
-- Show a chat's unread count, or a typing bubble while the contact types, in its tab
+- Show a typing bubble in a chat's tab while the contact types
 
 ### Changed
 
@@ -24,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Show a code block in its own box with a copy button on hover, and show inline code in a monospaced font
 - Insert a line break in the message field with Shift or Option plus Return or Enter, and send with the keypad's Enter key as well as Return
 - Show the typing indicator and a file being received as rows at the end of the chat
+- Show a chat's unread count at the start of its tab, in place of the status dot, instead of after the name
 - Count a chat as read only while its window is focused, so messages that arrive while it is behind another window or the app is in the background stay unread
 - Keep typing and presence updates coming while any Ducko window is on screen, also behind another app, and tell the server the app is inactive only once none is
 - Title notifications with the contact's name from your contact list
@@ -205,7 +208,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release.
 
-[Unreleased]: https://github.com/tobihagemann/ducko/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/tobihagemann/ducko/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/tobihagemann/ducko/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/tobihagemann/ducko/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/tobihagemann/ducko/compare/0.2.1...0.3.0
 [0.2.1]: https://github.com/tobihagemann/ducko/compare/0.2.0...0.2.1
