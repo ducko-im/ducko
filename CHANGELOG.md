@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-04
+
 ### Added
 
 - Bring back the chat window after relaunching Ducko, with the same tabs in the same order and the same one selected
@@ -28,7 +30,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix link preview cards missing from a chat after relaunching Ducko, and from older messages loaded by scrolling back, until the next message arrived
 - Fix a contact's subscription request disappearing when your connection briefly drops
 - Fix a folder being accepted for sending and failing only once the transfer had started, by refusing it right away
-- Fix a long reply being cut off after two lines
 - Fix a message changing height, and the chat shifting with it, when a remote image loads, a delivery mark arrives, or a direct file transfer moves from waiting to sending
 - Fix scrolling back in a chat skipping or repeating messages sent in the same second, and loading the oldest part of the server's history instead of the part right before what is shown, also in `ducko history --server`
 - Fix a read receipt being sent for a chat you had already switched away from
@@ -239,7 +240,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release.
 
-[Unreleased]: https://github.com/tobihagemann/ducko/compare/0.5.0...HEAD
+[Unreleased]: https://github.com/tobihagemann/ducko/compare/0.6.0...HEAD
+[0.6.0]: https://github.com/tobihagemann/ducko/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/tobihagemann/ducko/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/tobihagemann/ducko/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/tobihagemann/ducko/compare/0.2.1...0.3.0
