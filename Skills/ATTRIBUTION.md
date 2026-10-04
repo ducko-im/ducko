@@ -7,6 +7,7 @@ Skills under `Skills/` that derive from upstream open-source agent skills. All u
 These skills were written for Ducko specifically:
 
 - `create-dmg`
+- `demo-screenshots`
 - `ducko-cli`
 - `ducko-ui`
 - `macos-ui-testing`

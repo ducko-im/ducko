@@ -1,6 +1,6 @@
 # Stub-Server Smoke Testing
 
-Exercise stream-level behavior (STARTTLS negotiation, stream features, injected or malformed server data) through the CLI against a local stub instead of a live server.
+Exercise stream-level behavior (STARTTLS negotiation, stream features, injected or malformed server data) through the CLI against a local stub instead of a live server, or run a whole session against a stub that serves a made-up roster.
 
 ## Point the CLI at the Stub
 
@@ -35,3 +35,31 @@ Use `openssl s_client` to see what a live server answers after STARTTLS. Pipe a 
 (printf "<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' to='<domain>' version='1.0'><iq type='get' id='q1'><query xmlns='jabber:iq:register'/></iq>"; perl -e 'select(undef,undef,undef,5)') \
   | perl -e 'alarm 10; exec @ARGV' openssl s_client -connect <host>:5222 -starttls xmpp -xmpphost <domain> -quiet > "$TMPDIR/probe.txt" 2>&1
 ```
+
+## Stub a Whole Session
+
+To take the client past login to a connected session with a roster and contact presence, run [stub.py](../../demo-screenshots/scripts/stub.py):
+
+```bash
+python3 Skills/demo-screenshots/scripts/stub.py <port> <workdir>
+```
+
+`<workdir>` is an existing directory that receives `stub.log`. The stub plays the account `tobias@pond.example`, accepts repeated connections, and runs until killed, so record its PID for cleanup. Edit a copy for other server data.
+
+The stub speaks plaintext, so the account needs Require TLS off. The CLI has no option for it. Add the account, then set it in the throwaway profile's store. The second command must print `1`:
+
+```bash
+DUCKO_PROFILE=<unique> .build/debug/DuckoCLI account add tobias@pond.example --password x --host 127.0.0.1 --port <port> --no-connect
+sqlite3 "$HOME/Library/Application Support/Ducko-Dev-<unique>/default.store" "UPDATE ZACCOUNTRECORD SET ZREQUIRETLS=0; SELECT changes();"
+```
+
+CLI commands on that profile then connect through the stub. A GUI instance on the same profile does so once its status is set to Available.
+
+Beyond Stub Requirements 1 to 5, a stub written from scratch has to:
+
+1. Offer only `PLAIN` in `<mechanisms>`, without `<starttls>`, and answer `<auth>` with `<success/>`.
+2. Parse the restarted stream with a fresh XML parser and offer `<bind/>` in its features.
+3. Answer the bind request with the full JID in `<bind><jid>`, and answer the roster request.
+4. Send the contacts' `<presence>` after the client's first available presence.
+5. Answer the client's other requests: a result for carbons enable, an empty `<blocklist/>`, `item-not-found` for PEP item requests, an empty result for PEP publishes, a `vCard` for `vcard-temp`, and `<fin xmlns='urn:xmpp:mam:2' complete='true'>` for an archive query. Answer any other IQ request with `service-unavailable`.
+6. Echo each request's `to` as the reply's `from`, and omit `from` when the request has no `to`. The client drops a reply to an addressed request that comes from any other JID.

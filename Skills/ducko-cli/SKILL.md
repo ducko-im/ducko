@@ -452,7 +452,7 @@ To stage a pending subscription request, read the requester's `roster list --out
 
 ## Stream-Level Smoke Testing
 
-To exercise STARTTLS negotiation, stream features, or injected server data without a live server, follow [references/stub-server-smoke-testing.md](references/stub-server-smoke-testing.md).
+To exercise STARTTLS negotiation, stream features, injected server data, or a whole session with a made-up roster without a live server, follow [references/stub-server-smoke-testing.md](references/stub-server-smoke-testing.md).
 
 ## Connection Smoke Testing
 
