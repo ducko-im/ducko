@@ -467,7 +467,14 @@ DUCKO_PROFILE=smoke-connect ducko account delete USER_JID
 /bin/rm -rf "$HOME/Library/Application Support/Ducko-Dev-smoke-connect"
 ```
 
-To stage a connection that drops and resumes, add the account with `--host 127.0.0.1 --port <port>` pointing at a local TCP relay that forwards to the server's port 5222. STARTTLS passes through the relay, and the certificate is still checked against the JID's domain. Close the relayed sockets while the relay keeps listening: the client reports the connection lost, reconnects through the relay and resumes its stream, which the file log records as `Stream resumed as <jid>`. A GUI instance started under the same profile uses that account once its status is set to Available, so the relay drops its connection the same way. Afterwards stop the relay, and clean up a profile the GUI ran under as Throwaway Profiles describes.
+To stage a connection that drops and resumes, run the relay and add the account pointing at it. The relay, `ps` and `kill` need to run unsandboxed too:
+
+```
+python3 Skills/ducko-cli/scripts/tcp-relay.py <port> <server-host>   # keep running in the background; forwards 127.0.0.1:<port> to <server-host>:5222
+DUCKO_PROFILE=smoke-connect ducko account add USER_JID --password PASSWORD_HERE --host 127.0.0.1 --port <port> --no-connect
+```
+
+STARTTLS passes through the relay, and the certificate is still checked against the JID's domain. Send `SIGUSR1` to the relay's Python process to close the relayed sockets while it keeps listening: the client reports the connection lost, reconnects through the relay and resumes its stream, which the file log records as `Stream resumed as <jid>`. Take that process's PID from `ps -axo pid,comm,args`: `pgrep -f tcp-relay.py` also matches every wrapper shell whose command line names the script, and a signal sent to the relay's wrapper ends the wrapper and leaves the relay running. A GUI instance started under the same profile uses that account once its status is set to Available, so the relay drops its connection the same way. Afterwards kill that PID to stop the relay, and clean up a profile the GUI ran under as Throwaway Profiles describes.
 
 ## Examples
 
