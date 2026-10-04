@@ -58,9 +58,43 @@ public final class MAMModule: XMPPModule, Sendable {
 
     // MARK: - State
 
+    private struct OpenQuery {
+        /// The archive that was asked: a room's, or the account's own. Nil when the account's address is not known,
+        /// which leaves only a result without a sender to count as the account's own.
+        let archive: BareJID?
+        let isOwnArchive: Bool
+        /// How many results were asked for at most, when the query named a number.
+        let limit: Int?
+        /// Whether the query pages backward, towards older entries, from where it starts.
+        let pagesBackward: Bool
+        var messages: [ArchivedMessage] = []
+
+        /// An archive returns no more than it was asked for. Of what one sends beyond that, the results nearest to
+        /// where the query pages from are kept, so that none is missing next to what is already held: the first
+        /// ones paging forward, the last ones paging backward. A flipped page arrives in reverse, which is not
+        /// accounted for.
+        mutating func take(_ message: ArchivedMessage) {
+            guard let limit, messages.count >= limit else {
+                messages.append(message)
+                return
+            }
+            guard pagesBackward, !messages.isEmpty else { return }
+            messages.removeFirst()
+            messages.append(message)
+        }
+
+        /// An archive answers from its own address (XEP-0313). The account's own may also leave the sender out.
+        /// Takes the raw attribute, so a sender that does not parse is turned away instead of passing as left out.
+        func isAnswered(by rawSender: String?) -> Bool {
+            guard let rawSender else { return isOwnArchive }
+            guard case let .bare(bareJID)? = JID.parse(rawSender) else { return false }
+            return bareJID == archive
+        }
+    }
+
     private struct State {
         var context: ModuleContext?
-        var activeQueries: [String: [ArchivedMessage]] = [:]
+        var activeQueries: [String: OpenQuery] = [:]
     }
 
     private let state: OSAllocatedUnfairLock<State>
@@ -92,13 +126,15 @@ public final class MAMModule: XMPPModule, Sendable {
             return
         }
 
+        // Query IDs are sequential, so anyone can name an open query. Only the archive that was asked is believed.
+        let sender = message.element.attribute("from")
         let appended = state.withLock { state -> Bool in
-            guard state.activeQueries[queryID] != nil else { return false }
-            state.activeQueries[queryID]?.append(archived)
+            guard state.activeQueries[queryID]?.isAnswered(by: sender) == true else { return false }
+            state.activeQueries[queryID]?.take(archived)
             return true
         }
         if !appended {
-            log.debug("Ignoring MAM result for unregistered query: \(queryID)")
+            log.debug("Ignoring MAM result for an unregistered query or from another sender: \(queryID)")
         }
     }
 
@@ -114,7 +150,11 @@ public final class MAMModule: XMPPModule, Sendable {
         let queryID = context.generateID()
 
         // Register the query before sending; defer ensures cleanup on failure
-        state.withLock { $0.activeQueries[queryID] = [] }
+        let pagesBackward = if case .omitted = query.before { false } else { true }
+        let openQuery = OpenQuery(
+            archive: query.to ?? context.connectedJID()?.bareJID, isOwnArchive: query.to == nil, limit: query.max, pagesBackward: pagesBackward
+        )
+        state.withLock { $0.activeQueries[queryID] = openQuery }
         defer { state.withLock { _ = $0.activeQueries.removeValue(forKey: queryID) } }
 
         var iq = XMPPIQ(type: .set, id: context.generateID())
@@ -136,7 +176,7 @@ public final class MAMModule: XMPPModule, Sendable {
         let finElement = try await context.sendIQ(iq)
 
         let messages = state.withLock { state -> [ArchivedMessage] in
-            return state.activeQueries.removeValue(forKey: queryID) ?? []
+            return state.activeQueries.removeValue(forKey: queryID)?.messages ?? []
         }
 
         let fin: MAMFin = if let finElement, let parsed = MAMFin.parse(finElement) {

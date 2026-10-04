@@ -133,6 +133,33 @@ private func groupArchive(queryID: String, archiveID: String, _ spec: GroupArchi
         + "</message></forwarded></result></message>"
 }
 
+/// The next archive query the service sends that `answered` does not hold yet.
+@MainActor
+private func nextArchiveQuery(_ harness: GroupMAMHarness, answered: inout Set<String>) async throws -> ArchiveQuery {
+    let seen = answered
+    let waiting = Task { [transport = harness.transport] in
+        await transport.waitForSent(matching: { $0.contains("urn:xmpp:mam:2") && !seen.contains(extractIQID(from: $0) ?? "") })
+    }
+    try #require(try await boundedOutcome { _ = await waiting.value } != nil)
+    let iq = try #require(await waiting.value)
+    let iqID = try #require(extractIQID(from: iq))
+    answered.insert(iqID)
+    return try ArchiveQuery(iq: iq, iqID: iqID, queryID: #require(extractQueryID(from: iq)))
+}
+
+private struct ArchiveQuery {
+    let iq: String
+    let iqID: String
+    let queryID: String
+}
+
+/// The room archive's closing answer to a query. An incomplete one names the page's first entry.
+private func roomFin(iqID: String, complete: Bool, first: String? = nil) -> String {
+    "<iq type='result' id='\(iqID)' from='\(roomJID.description)'>"
+        + "<fin xmlns='urn:xmpp:mam:2'\(complete ? " complete='true'" : "")>"
+        + "<set xmlns='http://jabber.org/protocol/rsm'>\(first.map { "<first>\($0)</first>" } ?? "")</set></fin></iq>"
+}
+
 // MARK: - Tests
 
 enum ChatServiceMAMTests {
@@ -211,6 +238,115 @@ enum ChatServiceMAMTests {
                     jid: roomJID, accountID: testAccountID, before: nil, limit: 50
                 )
             }
+        }
+    }
+
+    struct ServerPaging {
+        @Test
+        @MainActor
+        func `The first query asks for the last page before the cutoff`() async throws {
+            let harness = try await makeGroupMAMHarness()
+            let cutoff = try Date.ISO8601FormatStyle().parse("2026-02-28T12:00:00Z")
+            let fetchTask = Task { @MainActor in
+                try await harness.chatService.fetchServerHistory(jid: roomJID, accountID: harness.accountID, before: cutoff, limit: 50)
+            }
+            var answered: Set<String> = []
+
+            let query = try await nextArchiveQuery(harness, answered: &answered)
+
+            #expect(query.iq.contains("<before/>"))
+            #expect(query.iq.contains("<max>50</max>"))
+            #expect(query.iq.contains("2026-02-28T12:00:00Z"))
+            await harness.transport.simulateReceive(roomFin(iqID: query.iqID, complete: true))
+            let (messages, hasMore) = try await fetchTask.value
+            #expect(messages.isEmpty)
+            #expect(!hasMore)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        @Test
+        @MainActor
+        func `A page that adds nothing is followed by the page before it`() async throws {
+            let harness = try await makeGroupMAMHarness()
+            await harness.transcripts.addMessage(ChatMessage(
+                id: UUID(), conversationID: harness.conversation.id, stanzaID: "S1", serverID: "R1",
+                fromJID: "bob", body: "already here", timestamp: Date(),
+                isOutgoing: false, isDelivered: true, isEdited: false, type: "groupchat"
+            ))
+            let fetchTask = Task { @MainActor in
+                try await harness.chatService.fetchServerHistory(jid: roomJID, accountID: harness.accountID, before: nil, limit: 50)
+            }
+            var answered: Set<String> = []
+
+            let first = try await nextArchiveQuery(harness, answered: &answered)
+            await harness.transport.simulateReceive(groupArchive(queryID: first.queryID, archiveID: "arch-2", GroupArchiveSpec(
+                fromNick: "bob", serverID: "R1", stanzaID: "S1", body: "already here"
+            )))
+            await harness.transport.simulateReceive(roomFin(iqID: first.iqID, complete: false, first: "arch-2"))
+
+            let second = try await nextArchiveQuery(harness, answered: &answered)
+            #expect(second.iq.contains("<before>arch-2</before>"))
+            #expect(second.iq.contains("<max>50</max>"))
+            await harness.transport.simulateReceive(groupArchive(queryID: second.queryID, archiveID: "arch-1", GroupArchiveSpec(
+                fromNick: "bob", serverID: "R0", stanzaID: "S0", body: "older"
+            )))
+            await harness.transport.simulateReceive(roomFin(iqID: second.iqID, complete: false, first: "arch-1"))
+
+            let (messages, hasMore) = try await fetchTask.value
+            #expect(messages.map(\.body) == ["older"])
+            #expect(hasMore)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        @Test
+        @MainActor
+        func `Ten pages that add nothing end the fetch with more to come`() async throws {
+            let harness = try await makeGroupMAMHarness()
+            let fetchTask = Task { @MainActor in
+                try await harness.chatService.fetchServerHistory(jid: roomJID, accountID: harness.accountID, before: nil, limit: 50)
+            }
+            var answered: Set<String> = []
+
+            for page in 0 ..< 10 {
+                let query = try await nextArchiveQuery(harness, answered: &answered)
+                await harness.transport.simulateReceive(roomFin(iqID: query.iqID, complete: false, first: "arch-\(page)"))
+            }
+
+            let (messages, hasMore) = try await fetchTask.value
+            #expect(messages.isEmpty)
+            #expect(hasMore)
+            #expect(answered.count == 10)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        @Test
+        @MainActor
+        func `An entry that carries no id of its own is stored once, under the archive's id for it`() async throws {
+            let harness = try await makeGroupMAMHarness()
+            var answered: Set<String> = []
+            var fetched: [[ChatMessage]] = []
+
+            for _ in 0 ..< 2 {
+                let fetchTask = Task { @MainActor in
+                    try await harness.chatService.fetchServerHistory(jid: roomJID, accountID: harness.accountID, before: nil, limit: 50)
+                }
+                let query = try await nextArchiveQuery(harness, answered: &answered)
+                await harness.transport.simulateReceive(
+                    "<message from='\(roomJID.description)'>"
+                        + "<result xmlns='urn:xmpp:mam:2' queryid='\(query.queryID)' id='arch-7'>"
+                        + "<forwarded xmlns='urn:xmpp:forward:0'>"
+                        + "<delay xmlns='urn:xmpp:delay' stamp='2026-02-28T10:00:00Z'/>"
+                        + "<message from='\(roomJID.description)/bob' type='groupchat'><body>no ids</body></message>"
+                        + "</forwarded></result></message>"
+                )
+                await harness.transport.simulateReceive(roomFin(iqID: query.iqID, complete: true))
+                try await fetched.append(fetchTask.value.messages)
+            }
+
+            #expect(fetched.map(\.count) == [1, 0])
+            #expect(fetched.first?.first?.serverID == "arch-7")
+            #expect(await harness.transcripts.messages.count == 1)
+            await harness.accountService.disconnect(accountID: harness.accountID)
         }
     }
 

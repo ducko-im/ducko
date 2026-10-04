@@ -193,7 +193,7 @@ Structure every test with clear phases:
 - `.serialized` is scope-dependent: on a bare non-parameterized `@Test func` it has no effect; on a parameterized `@Test` it serializes the argument cases; on `@Suite(.serialized)` it serializes all the suite's contained tests (parameterized or not) and sub-suites relative to each other. See `references/async-tests.md`.
 - `.timeLimit(.seconds(...))` → only `.minutes(...)` is accepted.
 - Unsafe mutable counters captured by async callbacks → use an actor or thread-safe container.
-- `#require`/`#expect` nested inside another `#require`/`#expect`'s argument → fails to compile with "recursive expansion of macro 'require(_:_:sourceLocation:)'"; bind the inner `try #require(...)` to a local first. A single macro nested inside an ordinary call (`Foo(bar: #require(x))`) is fine.
+- `#require` nested inside another `#require`'s argument → fails to compile with "recursive expansion of macro 'require(_:_:sourceLocation:)'"; bind the inner `try #require(...)` to a local first. `#require` inside `#expect` (`#expect(try #require(optional).count == 1)`) compiles with Swift 6.4, and a single macro nested inside an ordinary call (`Foo(bar: #require(x))`) is fine.
 - Key-path argument to a rethrowing call that is the whole `#expect`/`#require` condition (`#expect(!s.contains(where: \.isNumber))`) → fails macro expansion with "call can throw, but it is not marked with 'try' and the error is not handled"; pass a closure instead (`#expect(!s.contains { $0.isNumber })`) or bind the result to a local first.
 
 

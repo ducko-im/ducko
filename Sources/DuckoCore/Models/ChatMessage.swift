@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ChatMessage: Sendable, Identifiable {
+public struct ChatMessage: Sendable, Identifiable, Equatable {
     public var id: UUID
     public var conversationID: UUID
     public var stanzaID: String?

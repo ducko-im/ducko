@@ -42,3 +42,12 @@ public func extractIQID(from xmlString: String) -> String? {
 public func extractIQID(from bytes: [UInt8]) -> String? {
     extractIQID(from: String(decoding: bytes, as: UTF8.self))
 }
+
+/// Extracts the `queryid` attribute value from a raw archive query IQ.
+public func extractQueryID(from xmlString: String) -> String? {
+    guard let range = xmlString.range(of: "queryid=\""),
+          let endRange = xmlString[range.upperBound...].firstIndex(of: "\"") else {
+        return nil
+    }
+    return String(xmlString[range.upperBound ..< endRange])
+}

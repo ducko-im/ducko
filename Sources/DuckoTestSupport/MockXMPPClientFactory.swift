@@ -1,18 +1,18 @@
 import DuckoCore
-@testable import DuckoXMPP
+import DuckoXMPP
 
-struct MockXMPPClientFactory: XMPPClientFactory {
+public struct MockXMPPClientFactory: XMPPClientFactory {
     let transportForAccount: @Sendable (Account) -> any XMPPTransport
     let modulesForAccount: @Sendable (Account) -> [any XMPPModule]
 
-    init(transport: any XMPPTransport, modules: [any XMPPModule] = []) {
+    public init(transport: any XMPPTransport, modules: [any XMPPModule] = []) {
         self.transportForAccount = { _ in transport }
         self.modulesForAccount = { _ in modules }
     }
 
     /// Per-account transport and module resolution, for tests that back two simultaneously
     /// connected accounts (e.g. asserting a broadcast reaches each account's own transport).
-    init(
+    public init(
         transportForAccount: @escaping @Sendable (Account) -> any XMPPTransport,
         modulesForAccount: @escaping @Sendable (Account) -> [any XMPPModule] = { _ in [] }
     ) {
@@ -20,7 +20,7 @@ struct MockXMPPClientFactory: XMPPClientFactory {
         self.modulesForAccount = modulesForAccount
     }
 
-    func makeClient(
+    public func makeClient(
         account: Account,
         password: String,
         previousSMState: SMResumeState?,

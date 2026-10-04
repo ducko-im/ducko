@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct AttachmentView: View {
     @Environment(ThemeEngine.self) private var theme
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(RemoteImageConsent.self) private var remoteImageConsent
     let attachment: Attachment
     let isOutgoing: Bool
     /// Whether a received remote image is fetched without the viewer asking for it.
@@ -13,13 +14,10 @@ struct AttachmentView: View {
     @State private var showQuickLook = false
     @State private var showSheet = false
     @State private var isHovering = false
-    /// Whether the viewer has asked for a remote image to be fetched. Per view, and deliberately not persisted: the
-    /// consent covers this one image in this one session, not every link the sender ever posts.
-    @State private var isRemoteImageRequested = false
 
     /// Your own image is a link you chose, so fetching it tells nobody anything new.
     private var showsRemoteImage: Bool {
-        isOutgoing || loadsIncomingImageOnSight || isRemoteImageRequested
+        isOutgoing || loadsIncomingImageOnSight || remoteImageConsent.isRequested(attachment.id)
     }
 
     private static let maxImageSize: CGFloat = 240
@@ -51,7 +49,7 @@ struct AttachmentView: View {
         if localFileURL != nil {
             showQuickLook = true
         } else if attachment.isImage, attachment.remoteURL != nil, !showsRemoteImage {
-            isRemoteImageRequested = true
+            remoteImageConsent.request(attachment.id)
         } else if attachment.isImage {
             showSheet = true
         }
@@ -61,36 +59,18 @@ struct AttachmentView: View {
         Group {
             if let localFileURL {
                 localImage(localFileURL)
-            } else if let imageURL = attachment.remoteURL {
-                // Rendering a peer's URL on sight would fetch it, telling the sender the recipient's address and the
-                // moment they read the message, so unless told otherwise the viewer asks first.
-                if showsRemoteImage {
-                    AsyncImage(url: imageURL) { phase in
-                        switch phase {
-                        case let .success(image):
-                            image
-                                .resizable()
-                                .scaledToFit()
-                        case .failure:
-                            imagePlaceholder(systemName: "photo.badge.exclamationmark")
-                        case .empty:
-                            imagePlaceholder(systemName: "photo")
-                                .overlay { ProgressView() }
-                        @unknown default:
-                            imagePlaceholder(systemName: "photo")
-                        }
-                    }
-                } else {
-                    imagePlaceholder(systemName: "photo.badge.arrow.down")
-                        .accessibilityIdentifier("attachment-load-image")
-                }
+                    // Aligned to the message's own side: the cap is a maximum, so a smaller image would otherwise
+                    // float in the middle of the capped frame.
+                    .frame(maxWidth: Self.maxImageSize, maxHeight: Self.maxImageSize, alignment: isOutgoing ? .trailing : .leading)
             } else {
-                imagePlaceholder(systemName: "photo")
+                // One frame whatever a remote image's state, so its row keeps its height while the image waits for
+                // a click, loads, or fails. The image has no size to read until it has loaded.
+                Color.clear
+                    .aspectRatio(4 / 3, contentMode: .fit)
+                    .frame(maxWidth: Self.maxImageSize)
+                    .overlay { remoteImage }
             }
         }
-        // Aligned to the message's own side: the cap is a maximum, so a smaller image would otherwise float in the
-        // middle of the capped frame.
-        .frame(maxWidth: Self.maxImageSize, maxHeight: Self.maxImageSize, alignment: isOutgoing ? .trailing : .leading)
         .clipShape(.rect(cornerRadius: 8))
         .onTapGesture { openPreview() }
         .overlay(alignment: .bottomTrailing) {
@@ -98,6 +78,36 @@ struct AttachmentView: View {
                 revealButton(localFileURL)
                     .padding(6)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var remoteImage: some View {
+        if let imageURL = attachment.remoteURL {
+            // Rendering a peer's URL on sight would fetch it, telling the sender the recipient's address and the
+            // moment they read the message, so unless told otherwise the viewer asks first.
+            if showsRemoteImage {
+                AsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        imagePlaceholder(systemName: "photo.badge.exclamationmark")
+                    case .empty:
+                        imagePlaceholder(systemName: "photo")
+                            .overlay { ProgressView() }
+                    @unknown default:
+                        imagePlaceholder(systemName: "photo")
+                    }
+                }
+            } else {
+                imagePlaceholder(systemName: "photo.badge.arrow.down")
+                    .accessibilityIdentifier("attachment-load-image")
+            }
+        } else {
+            imagePlaceholder(systemName: "photo")
         }
     }
 
@@ -115,11 +125,14 @@ struct AttachmentView: View {
         } else {
             // The saved file was moved, deleted, or cannot be decoded.
             imagePlaceholder(systemName: "photo.badge.exclamationmark")
+                .frame(minWidth: 120, minHeight: 80)
+                .fixedSize()
         }
     }
 
     /// Drawn as a bubble of its own: an image-only message has none around it, and a bare icon would float on the chat
-    /// background. The file's name is all that says what the image is while it is not shown.
+    /// background. The file's name is all that says what the image is while it is not shown. Fills the frame it is
+    /// given.
     private func imagePlaceholder(systemName: String) -> some View {
         VStack(spacing: 6) {
             Image(systemName: systemName)
@@ -132,7 +145,7 @@ struct AttachmentView: View {
         }
         .foregroundStyle(theme.textColor(isOutgoing: isOutgoing, colorScheme: colorScheme).opacity(0.6))
         .padding(12)
-        .frame(minWidth: 120, minHeight: 80)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.bubbleColor(isOutgoing: isOutgoing, colorScheme: colorScheme), in: .rect(cornerRadius: 8))
     }
 

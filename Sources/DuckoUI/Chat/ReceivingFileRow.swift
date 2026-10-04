@@ -5,14 +5,15 @@ import SwiftUI
 /// replace it once the file is saved.
 struct ReceivingFileRow: View {
     @Environment(ThemeEngine.self) private var theme
-    let transfer: FileTransferService.ActiveTransfer
+    /// The transfer's id.
+    let id: UUID
+    let file: TranscriptRow.ReceivingFile
     let windowState: ChatWindowState
 
-    /// Shares the transfer's id, which is how its status line finds the transfer.
     private var placeholder: ChatMessage {
         ChatMessage(
-            id: transfer.id,
-            conversationID: windowState.conversation?.id ?? transfer.id,
+            id: id,
+            conversationID: windowState.conversation?.id ?? id,
             fromJID: windowState.jidString,
             body: "",
             timestamp: Date(),
@@ -20,7 +21,7 @@ struct ReceivingFileRow: View {
             isDelivered: false,
             isEdited: false,
             type: "chat",
-            attachments: [Attachment(id: transfer.id, url: "", fileName: transfer.fileName, fileSize: transfer.fileSize)]
+            attachments: [Attachment(id: id, url: "", fileName: file.fileName, fileSize: file.fileSize)]
         )
     }
 
@@ -35,7 +36,8 @@ struct ReceivingFileRow: View {
                 isGroupchatIncoming: false,
                 isMetadataVisible: false,
                 actionSenderName: windowState.displayName,
-                loadsIncomingImagesOnSight: false
+                loadsIncomingImagesOnSight: false,
+                transferStatus: file.status
             )
 
             Spacer(minLength: 60)

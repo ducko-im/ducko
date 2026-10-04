@@ -4,10 +4,11 @@ import SwiftUI
 /// Read-only message bubble for the transcript viewer.
 /// Simplified variant of MessageBubbleView without reply/edit/retract actions.
 struct TranscriptBubbleView: View {
-    let message: ChatMessage
-    let position: MessagePosition
-    let isGroupchat: Bool
-    let isSearchResult: Bool
+    let row: TranscriptRow.Message
+
+    private var message: ChatMessage {
+        row.message
+    }
 
     var body: some View {
         HStack(alignment: .bottom) {
@@ -15,10 +16,11 @@ struct TranscriptBubbleView: View {
 
             MessageContentView(
                 message: message,
-                isGroupchatIncoming: isGroupchat && !message.isOutgoing,
-                isMetadataVisible: position.isLastInGroup,
-                actionSenderName: message.fromJID,
-                loadsIncomingImagesOnSight: false
+                isGroupchatIncoming: row.isGroupchat && !message.isOutgoing,
+                isMetadataVisible: row.position.isLastInGroup,
+                actionSenderName: row.actionSenderName,
+                loadsIncomingImagesOnSight: row.loadsIncomingImagesOnSight,
+                transferStatus: row.transferStatus
             )
             .contextMenu {
                 if !message.isRetracted, !message.isUndecryptable {
@@ -30,11 +32,6 @@ struct TranscriptBubbleView: View {
 
             if !message.isOutgoing { Spacer(minLength: 60) }
         }
-        .padding(.top, position.isFirstInGroup ? 8 : 2)
-        .padding(.horizontal)
-        .background(
-            isSearchResult ? Color.yellow.opacity(0.15) : Color.clear,
-            in: .rect(cornerRadius: 8)
-        )
+        .messageRowFrame(row)
     }
 }

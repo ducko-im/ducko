@@ -332,15 +332,7 @@ struct ContactListTableView: NSViewRepresentable {
 
         private func applyRowDiff(old: [String], new: [String]) {
             guard let tableView else { return }
-            let diff = new.difference(from: old)
-            var removals = IndexSet()
-            var insertions = IndexSet()
-            for change in diff {
-                switch change {
-                case let .remove(offset, _, _): removals.insert(offset)
-                case let .insert(offset, _, _): insertions.insert(offset)
-                }
-            }
+            let (removals, insertions) = new.difference(from: old).rowChanges
             // Slide vertically so children move into/out of the group header
             // (collapse slides up, expand slides down), the standard disclosure
             // motion — in lockstep with the window edge via the shared context.
@@ -612,33 +604,9 @@ final class ContactListResizeGate: NSObject, NSWindowDelegate {
     }
 }
 
-/// `NSTableCellView` hosting one SwiftUI contact-list row, pinned to the cell
-/// so the table's measured row height and the SwiftUI fitting size agree.
-final class ContactListCellView: NSTableCellView {
-    private let host: NSHostingView<ContactListCellContent>
-
-    init(content: ContactListCellContent) {
-        self.host = NSHostingView(rootView: content)
-        super.init(frame: .zero)
-        host.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(host)
-        NSLayoutConstraint.activate([
-            host.leadingAnchor.constraint(equalTo: leadingAnchor),
-            host.trailingAnchor.constraint(equalTo: trailingAnchor),
-            host.topAnchor.constraint(equalTo: topAnchor),
-            host.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func update(content: ContactListCellContent) {
-        host.rootView = content
-    }
-}
+/// The cell hosting one contact-list row. The hosting view keeps its own sizing, so the table's measured row height
+/// and the SwiftUI fitting size agree.
+typealias ContactListCellView = HostingTableCellView<ContactListCellContent>
 
 /// The single concrete SwiftUI view a hosted cell renders, switching on the row
 /// kind and re-injecting the environments the hosted wrappers depend on. One

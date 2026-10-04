@@ -22,6 +22,7 @@ public actor MockPersistenceStore: PersistenceStore {
     private var fetchContactsGateRelease: AsyncSemaphore?
 
     private var conversationWriteGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
+    private var markConversationReadGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var fetchAccountsGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var contactCaptureGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var contactWriteGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
@@ -56,6 +57,11 @@ public actor MockPersistenceStore: PersistenceStore {
 
     public func installConversationWriteGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
         conversationWriteGate = (entered, release)
+    }
+
+    /// Holds the next `markConversationRead` before it writes, signaling `entered` once it is held.
+    public func installMarkConversationReadGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
+        markConversationReadGate = (entered, release)
     }
 
     private func awaitConversationWriteGate() async {
@@ -228,6 +234,11 @@ public actor MockPersistenceStore: PersistenceStore {
     }
 
     public func markConversationRead(_ conversationID: UUID) async throws {
+        if let gate = markConversationReadGate {
+            markConversationReadGate = nil
+            await gate.entered.signal()
+            await gate.release.wait()
+        }
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         conversations[index].unreadCount = 0
         conversations[index].lastReadTimestamp = Date()

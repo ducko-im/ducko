@@ -149,6 +149,18 @@ extension TranscriptViewerStateScopeTests {
         }
     }
 
+    @Test func `a day is shown from its first message`() async throws {
+        let fixture = try RaceFixture()
+        await fixture.seed()
+        await fixture.state.selectConversation(fixture.first)
+        let list = StandInTranscriptList(attachedTo: fixture.state.scroller)
+
+        await fixture.state.selectDate(fixture.older)
+
+        // Once when the day before is taken away, and once when this day's messages are in.
+        #expect(list.settledPositions == [.oldest, .oldest])
+    }
+
     @Test func `a day shows the timeline notes written on it`() async throws {
         let fixture = try RaceFixture()
         await fixture.seed()

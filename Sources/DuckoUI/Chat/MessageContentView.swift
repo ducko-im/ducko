@@ -12,6 +12,7 @@ struct MessageContentView<Header: View, Footer: View>: View {
     let actionSenderName: String
     /// Whether a received remote image is fetched without the viewer asking for it.
     let loadsIncomingImagesOnSight: Bool
+    let transferStatus: DirectTransferStatus?
     @ViewBuilder let header: Header
     @ViewBuilder let footer: Footer
 
@@ -86,13 +87,16 @@ struct MessageContentView<Header: View, Footer: View>: View {
                 }
             }
 
-            DirectTransferStatusView(message: message)
+            DirectTransferStatusView(status: transferStatus)
 
             MessageMetadataView(
                 message: message,
                 isVisible: isMetadataVisible
             )
         }
+        // The row around this stack hands it the row's height, which the stack would share out among its parts by how
+        // much each can give: a reply quote's bar takes what a long text is then cut short by.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func styledBody(_ segments: [MessageBodySegment]) -> some View {
@@ -134,7 +138,8 @@ extension MessageContentView where Header == EmptyView, Footer == EmptyView {
         isGroupchatIncoming: Bool,
         isMetadataVisible: Bool,
         actionSenderName: String,
-        loadsIncomingImagesOnSight: Bool
+        loadsIncomingImagesOnSight: Bool,
+        transferStatus: DirectTransferStatus?
     ) {
         self.init(
             message: message,
@@ -142,6 +147,7 @@ extension MessageContentView where Header == EmptyView, Footer == EmptyView {
             isMetadataVisible: isMetadataVisible,
             actionSenderName: actionSenderName,
             loadsIncomingImagesOnSight: loadsIncomingImagesOnSight,
+            transferStatus: transferStatus,
             header: { EmptyView() },
             footer: { EmptyView() }
         )

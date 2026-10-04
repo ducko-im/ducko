@@ -1,7 +1,7 @@
 import DuckoCore
 import Foundation
 
-struct MessagePosition {
+struct MessagePosition: Equatable {
     let isFirstInGroup: Bool
     let isLastInGroup: Bool
 }

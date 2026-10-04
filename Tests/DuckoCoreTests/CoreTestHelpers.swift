@@ -8,7 +8,7 @@ import Foundation
 // `makeChatService`, `makeCredentials`) stay file-private to keep individual
 // suites uncoupled — only the connect-driving subset is shared here.
 //
-// `extractIQID` lives in `DuckoTestSupport/HandshakeFixtures.swift` (shared with DuckoXMPPTests).
+// `extractIQID` and `extractQueryID` live in `DuckoTestSupport/HandshakeFixtures.swift` (shared with the other test targets).
 
 /// Bound JID used by `MockTransport.testBindResult` — the "alice@example.com"
 /// account fixture for tests that exercise an `AccountService` with a mock
@@ -25,13 +25,4 @@ func makeAccountService(
     clientFactory: any XMPPClientFactory = DefaultXMPPClientFactory()
 ) -> AccountService {
     AccountService(store: store, credentialStore: credentials, clientFactory: clientFactory)
-}
-
-/// Extracts the `queryid="..."` attribute value from a raw MAM query IQ.
-func extractQueryID(from xmlString: String) -> String? {
-    guard let range = xmlString.range(of: "queryid=\""),
-          let endRange = xmlString[range.upperBound...].firstIndex(of: "\"") else {
-        return nil
-    }
-    return String(xmlString[range.upperBound ..< endRange])
 }

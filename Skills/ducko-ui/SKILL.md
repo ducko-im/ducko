@@ -63,7 +63,6 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `jid-field` | JID field in account setup | Contacts |
 | `password-field` | Password field in account setup | Contacts |
 | `connect-button` | Connect button in account setup | Contacts |
-| `typing-indicator` | Typing row at the end of the message list while the contact types, laid out like one of their messages; its label reads "<name> is typing" | Chat |
 | `reply-compose-bar` | Reply/edit compose bar above input | Chat |
 | `message-search-bar` | Cmd+F search bar in chat | Chat |
 | `sort-mode-menu` | "Sort Contacts" picker, in the View menu bar | Contacts (menu bar) |
@@ -155,7 +154,8 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `certFingerprint` | Certificate SHA-256 fingerprint | Connection Info |
 | `server-info-view` | Server contact-info sheet container; Done, Return or Escape dismisses | Server Info |
 | `server-info-content` | Settled (non-loading) content; wait on this rather than the sheet container, which mounts while the server request is still in flight | Server Info |
-| `message-list` | Scrollable message list container | Chat |
+| `message-list` | Message list container: a group holding a scroll area with a table, whose rows hold the message bubbles. Every loaded message has its bubble in the tree, on screen or not. The list's scroll bar takes a value from 0 (oldest loaded) to 1 (newest). | Chat |
+| `jump-to-newest` | Round button at the bottom center of the message list, labelled "Jump to Newest Message", present only while the list is scrolled away from the newest message. | Chat |
 | `message-bubble-{id}` | Individual message bubble (id is ChatMessage.id) | Chat |
 | `retracted-message` | Retracted message tombstone | Chat |
 | `undecryptable-message` | Stand-in bubble for an encrypted message that could not be decrypted | Chat |
@@ -311,6 +311,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-contact-info.sh` | Open the Contact Info window via context menu, optionally block/remove (`remove` confirms) | `JID [block\|remove]` |
 | `ducko-chat-tabs.sh` | List, select, close, or cycle bottom chat tabs, or close all chats (close is best-effort; the hover-revealed close button is merged into the chip's combined element) | `<list\|select\|close\|next\|previous\|close-all> [JID]` |
 | `ducko-chat-header.sh` | Click a chat-header toolbar button (Profile info / History) | `<info\|history>` |
+| `ducko-message-list.sh` | Press the jump button (`jump-to-newest`) in the active chat's message list. Fails while the list is at the newest message, where the button is absent | `jump` |
 | `ducko-invite-user.sh` | Invite a user to a room via context menu | `ROOM_JID INVITEE_JID` |
 | `ducko-destroy-room.sh` | Destroy a room via Room Settings sheet | `ROOM_JID` |
 | `ducko-room-config-save.sh` | Save room config in Room Settings sheet (best-effort; System Events cannot read the Save button's label on macOS 27) | `ROOM_JID` |
@@ -917,7 +918,6 @@ To allow these scripts in `settings.local.json` without prompts:
 - A packaged bundle's app menu is "Ducko" (Ducko ▸ Quit Ducko); a bare debug binary's is "DuckoApp" (DuckoApp ▸ Quit DuckoApp). A script that quits or opens app-menu items by title must use the title matching how the instance was launched.
 - `ducko-attach.sh` reports success even when its Open panel stays open. Confirm the panel closed before checking the attachment. To attach without System Events keystrokes, open the panel with `attachment-button` and fill it through PID-targeted AX or key events posted to the PID, then press Open.
 - A leftover Open or Save panel, or a context menu left open, blocks the instance: AX walks and AppleScript calls then hang. Check for a leftover panel with `peekaboo window list --pid <pid>`, which reads the window list without AX, and cancel it. Close a context menu as soon as its items are read, with `AXCancel` on the menu or Escape posted to the PID. Run probes and scripts under a timeout (for example `perl -e 'alarm 30; exec @ARGV' <command>`) so a stuck step fails fast.
-- A capture taken right after a message arrives can catch the message list mid-scroll. Wait about two seconds before judging layout from a capture.
 - To get an outgoing bubble without typing into the GUI, send from a second session of the same account while the GUI is connected, such as the CLI under another profile. It arrives as a carbon.
 - A `message-bubble-{id}` is one combined accessibility element whose value contains the message's text, unless the message has attachments, a link preview or a code block. Then the bubble is a container that reports no value, and its `attachment-view`, `link-preview` and `code-block` children are separate elements.
 - To type into the dev instance alone, activate it by PID (`NSRunningApplication(processIdentifier:)`, not `set frontmost of process`) and post Unicode key events to that PID, as `AppAccessor.postKey` does. When `activate()` called from a background process leaves the instance behind, set the `AXFrontmost` attribute of its application element (`AXUIElementCreateApplication(pid)`) instead. This fills `new-chat-jid-field` after File ▸ New Chat; pressing `start-chat-button` then opens a chat with a JID that has no contact row.

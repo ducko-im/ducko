@@ -19,15 +19,6 @@ private func makeConnectedClient(mock: MockTransport) async throws -> XMPPClient
     return client
 }
 
-/// Extracts the `queryid` attribute value from a raw XML string.
-private func extractQueryID(from xmlString: String) -> String? {
-    guard let range = xmlString.range(of: "queryid=\""),
-          let endRange = xmlString[range.upperBound...].firstIndex(of: "\"") else {
-        return nil
-    }
-    return String(xmlString[range.upperBound ..< endRange])
-}
-
 private struct MAMIQInfo {
     let iq: String
     let iqID: String
@@ -329,11 +320,120 @@ enum MAMModuleTests {
     }
 }
 
+extension MAMModuleTests {
+    struct ArchiveSender {
+        @Test(arguments: [String?.none, "user@example.com"])
+        func `A result from the account's own archive is collected`(sender: String?) async throws {
+            let mock = MockTransport()
+            let client = try await makeConnectedClient(mock: mock)
+            let module = try #require(await client.module(ofType: MAMModule.self))
+
+            await mock.clearSentBytes()
+            let queryTask = Task { try await module.queryMessages() }
+            await mock.waitForSent(count: 1)
+
+            let mam = try #require(await findMAMIQ(mock: mock))
+            await mock.simulateReceive(archiveResult(from: sender, queryID: mam.queryID))
+            await sendEmptyFin(mock: mock, iqID: mam.iqID)
+
+            let result = try await queryTask.value
+            #expect(result.messages.map(\.messageID) == ["msg-001"])
+
+            await disconnectFast(client)
+        }
+
+        /// The last three do not parse as an address, which must not count as no sender at all.
+        @Test(arguments: [
+            "example.com", "mallory@example.com", "user@example.com/other", "room@conference.example.com",
+            "a b@example.com", "@example.com", "user@example.com/"
+        ])
+        func `A result naming an open query of the account's own archive is dropped when another sender sent it`(sender: String) async throws {
+            let mock = MockTransport()
+            let client = try await makeConnectedClient(mock: mock)
+            let module = try #require(await client.module(ofType: MAMModule.self))
+
+            await mock.clearSentBytes()
+            let queryTask = Task { try await module.queryMessages() }
+            await mock.waitForSent(count: 1)
+
+            let mam = try #require(await findMAMIQ(mock: mock))
+            await mock.simulateReceive(archiveResult(from: sender, queryID: mam.queryID, id: "forged"))
+            // Armed: the same query still collects what its archive sends.
+            await mock.simulateReceive(archiveResult(from: "user@example.com", queryID: mam.queryID))
+            await sendEmptyFin(mock: mock, iqID: mam.iqID)
+
+            let result = try await queryTask.value
+            #expect(result.messages.map(\.messageID) == ["msg-001"])
+
+            await disconnectFast(client)
+        }
+
+        /// Of more results than a query asked for, those nearest to where it pages from are kept.
+        @Test(arguments: [(false, ["msg-001", "msg-002"]), (true, ["msg-002", "msg-003"])])
+        func `Results past the count a query asked for are dropped`(pagesBackward: Bool, kept: [String]) async throws {
+            let mock = MockTransport()
+            let client = try await makeConnectedClient(mock: mock)
+            let module = try #require(await client.module(ofType: MAMModule.self))
+
+            await mock.clearSentBytes()
+            let queryTask = Task { try await module.queryMessages(MAMModule.Query(before: pagesBackward ? .lastPage : .omitted, max: 2)) }
+            await mock.waitForSent(count: 1)
+
+            let mam = try #require(await findMAMIQ(mock: mock))
+            for id in ["msg-001", "msg-002", "msg-003"] {
+                await mock.simulateReceive(archiveResult(from: "user@example.com", queryID: mam.queryID, id: id))
+            }
+            await sendEmptyFin(mock: mock, iqID: mam.iqID)
+
+            let result = try await queryTask.value
+            #expect(result.messages.map(\.messageID) == kept)
+
+            await disconnectFast(client)
+        }
+
+        @Test
+        func `A room query collects the room's results and drops everyone else's`() async throws {
+            let mock = MockTransport()
+            let client = try await makeConnectedClient(mock: mock)
+            let module = try #require(await client.module(ofType: MAMModule.self))
+
+            await mock.clearSentBytes()
+            let roomJID = try #require(BareJID.parse("room@conference.example.com"))
+            let queryTask = Task { try await module.queryMessages(to: roomJID, max: 20) }
+            await mock.waitForSent(count: 1)
+
+            let mam = try #require(await findMAMIQ(mock: mock))
+            for sender in [nil, "user@example.com", "example.com", "room@conference.example.com/nick"] {
+                await mock.simulateReceive(archiveResult(from: sender, queryID: mam.queryID, id: "forged"))
+            }
+            await mock.simulateReceive(archiveResult(from: "room@conference.example.com", queryID: mam.queryID))
+            await mock.simulateReceive(
+                "<iq type='result' id='\(mam.iqID)' from='room@conference.example.com'><fin xmlns='urn:xmpp:mam:2' complete='true'/></iq>"
+            )
+
+            let result = try await queryTask.value
+            #expect(result.messages.map(\.messageID) == ["msg-001"])
+
+            await disconnectFast(client)
+        }
+    }
+}
+
+/// One archive result for `queryID`, sent by `sender`, or without a sender.
+private func archiveResult(from sender: String?, queryID: String, id: String = "msg-001") -> String {
+    "<message\(sender.map { " from='\($0)'" } ?? "")>"
+        + "<result xmlns='urn:xmpp:mam:2' queryid='\(queryID)' id='\(id)'>"
+        + "<forwarded xmlns='urn:xmpp:forward:0'>"
+        + "<delay xmlns='urn:xmpp:delay' stamp='2026-02-28T10:00:00Z'/>"
+        + "<message from='contact@example.com/res' to='user@example.com' type='chat'><body>Archived</body></message>"
+        + "</forwarded></result></message>"
+}
+
 // MARK: - Result Parsing Helpers
 
 private func simulateMAMResults(mock: MockTransport, queryID: String) async {
     await mock.simulateReceive("""
-    <message from='example.com'>\
+    <message from='user@example.com'>\
     <result xmlns='urn:xmpp:mam:2' queryid='\(queryID)' id='msg-001'>\
     <forwarded xmlns='urn:xmpp:forward:0'>\
     <delay xmlns='urn:xmpp:delay' stamp='2026-02-28T10:00:00Z'/>\
@@ -347,7 +447,7 @@ private func simulateMAMResults(mock: MockTransport, queryID: String) async {
     """)
 
     await mock.simulateReceive("""
-    <message from='example.com'>\
+    <message from='user@example.com'>\
     <result xmlns='urn:xmpp:mam:2' queryid='\(queryID)' id='msg-002'>\
     <forwarded xmlns='urn:xmpp:forward:0'>\
     <delay xmlns='urn:xmpp:delay' stamp='2026-02-28T11:00:00Z'/>\

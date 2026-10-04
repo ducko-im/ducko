@@ -3,34 +3,17 @@ import SwiftUI
 
 struct MessageBubbleView: View {
     @Environment(ThemeEngine.self) private var theme
-    let message: ChatMessage
-    let position: MessagePosition
+    /// Everything the bubble draws apart from the avatar. `windowState` is only for the avatar and the menu.
+    let row: TranscriptRow.Message
     let isHovered: Bool
-    let repliedMessage: ChatMessage?
     let windowState: ChatWindowState
+
+    private var message: ChatMessage {
+        row.message
+    }
 
     private var isGroupchatIncoming: Bool {
         message.type == "groupchat" && !message.isOutgoing
-    }
-
-    private var actionSenderName: String {
-        if message.isOutgoing {
-            return "You"
-        }
-        if isGroupchatIncoming {
-            return message.fromJID
-        }
-        return windowState.contact?.displayName ?? message.fromJID
-    }
-
-    private var linkPreview: LinkPreview? {
-        theme.current.showLinkPreviews ? windowState.linkPreview(for: message) : nil
-    }
-
-    /// In a one-to-one chat with someone in your contact list, their photos load on sight. Anyone else's wait for a
-    /// click, so a stranger's link is not fetched merely by being shown.
-    private var loadsIncomingImagesOnSight: Bool {
-        !windowState.isGroupchat && windowState.contact != nil
     }
 
     private var hasCodeBlock: Bool {
@@ -42,12 +25,11 @@ struct MessageBubbleView: View {
     }
 
     var body: some View {
-        let linkPreview = linkPreview
         HStack(alignment: .bottom) {
             if message.isOutgoing { Spacer(minLength: 60) }
 
             if showAvatar {
-                if position.isLastInGroup {
+                if row.position.isLastInGroup {
                     SenderAvatarView(windowState: windowState, nickname: message.fromJID)
                 } else {
                     Color.clear
@@ -58,19 +40,17 @@ struct MessageBubbleView: View {
             MessageContentView(
                 message: message,
                 isGroupchatIncoming: isGroupchatIncoming,
-                isMetadataVisible: position.isLastInGroup || isHovered,
-                actionSenderName: actionSenderName,
-                loadsIncomingImagesOnSight: loadsIncomingImagesOnSight,
+                isMetadataVisible: row.position.isLastInGroup || isHovered,
+                actionSenderName: row.actionSenderName,
+                loadsIncomingImagesOnSight: row.loadsIncomingImagesOnSight,
+                transferStatus: row.transferStatus,
                 header: {
-                    if let replied = repliedMessage {
-                        ReplyQuoteView(
-                            senderName: replied.isOutgoing ? "You" : replied.fromJID,
-                            bodyPreview: replied.previewText
-                        )
+                    if let replyQuote = row.replyQuote {
+                        ReplyQuoteView(senderName: replyQuote.senderName, bodyPreview: replyQuote.previewText)
                     }
                 },
                 footer: {
-                    if let linkPreview {
+                    if let linkPreview = row.linkPreview {
                         LinkPreviewCard(preview: linkPreview)
                     }
                 }
@@ -79,7 +59,7 @@ struct MessageBubbleView: View {
             if !message.isOutgoing { Spacer(minLength: 60) }
         }
         // Attachments, link previews and code blocks carry their own controls, which a combined element would hide from assistive tech.
-        .accessibilityElement(children: message.attachments.isEmpty && linkPreview == nil && !hasCodeBlock ? .combine : .contain)
+        .accessibilityElement(children: message.attachments.isEmpty && row.linkPreview == nil && !hasCodeBlock ? .combine : .contain)
         .accessibilityIdentifier("message-bubble-\(message.id)")
         .contextMenu {
             MessageContextMenu(message: message, windowState: windowState)

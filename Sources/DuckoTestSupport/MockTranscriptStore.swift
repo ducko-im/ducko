@@ -7,6 +7,7 @@ public actor MockTranscriptStore: TranscriptStore {
     public private(set) var notes: [TimelineNote] = []
     public private(set) var deletedTranscriptConversationIDs: [UUID] = []
     private var fetchMessagesGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
+    private var fetchNotesGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
 
     /// The file store keeps one file per GMT day.
     private static let dayCalendar: Calendar = {
@@ -21,6 +22,12 @@ public actor MockTranscriptStore: TranscriptStore {
     /// held.
     public func installFetchMessagesGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
         fetchMessagesGate = (entered, release)
+    }
+
+    /// Holds the next `fetchNotes(for:since:before:)` until `release` is signaled, signaling `entered` once it is held.
+    /// A caller that fetches its messages first is held with those already read.
+    public func installFetchNotesGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
+        fetchNotesGate = (entered, release)
     }
 
     public func addMessage(_ message: ChatMessage) {
@@ -75,7 +82,12 @@ public actor MockTranscriptStore: TranscriptStore {
     }
 
     public func fetchNotes(for conversationID: UUID, since: Date?, before: Date?) async throws -> [TimelineNote] {
-        notes.filter { note in
+        if let gate = fetchNotesGate {
+            fetchNotesGate = nil
+            await gate.entered.signal()
+            await gate.release.wait()
+        }
+        return notes.filter { note in
             guard note.conversationID == conversationID else { return false }
             if let since, note.timestamp < since { return false }
             if let before, note.timestamp >= before { return false }

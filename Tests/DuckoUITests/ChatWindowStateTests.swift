@@ -9,59 +9,15 @@ import Testing
 
 @MainActor
 struct ChatWindowStateTests {
-    private static let jidString = "bob@example.com"
-
-    private struct Fixture {
-        let windowState: ChatWindowState
-        let environment: AppEnvironment
-        let store: MockPersistenceStore
-        let transcripts: MockTranscriptStore
-        let accountID: UUID
-    }
-
-    private static func makeFixture(
-        jidString: String = jidString, type: Conversation.ConversationType = .chat
-    ) async throws -> Fixture {
-        let store = MockPersistenceStore()
-        let transcripts = MockTranscriptStore()
-        let jid = try #require(BareJID.parse(jidString))
-        let aliceJID = try #require(BareJID.parse("alice@example.com"))
-        let account = Account(
-            id: UUID(),
-            jid: aliceJID,
-            isEnabled: true,
-            connectOnLaunch: false,
-            createdAt: Date()
-        )
-        await store.addAccount(account)
-        await store.addConversation(Conversation(
-            id: UUID(),
-            accountID: account.id,
-            jid: jid,
-            type: type,
-            isPinned: false,
-            isMuted: false,
-            unreadCount: 0,
-            createdAt: Date()
-        ))
-        let environment = AppEnvironment(
-            store: store,
-            transcripts: transcripts,
-            credentialStore: NullCredentialStore()
-        )
-        try await environment.accountService.loadAccounts()
-        let windowState = ChatWindowState(jidString: jidString, accountID: account.id, environment: environment)
-        await windowState.load()
-        return Fixture(windowState: windowState, environment: environment, store: store, transcripts: transcripts, accountID: account.id)
-    }
+    private static let jidString = ChatWindowFixture.jidString
 
     @Test func `windowState carries the opened accountID`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         #expect(fixture.windowState.accountID == fixture.accountID)
     }
 
     @Test func `commandTarget offers contact info for a 1:1 chat`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         let target = try #require(fixture.windowState.commandTarget)
         #expect(target.contactInfoRef == ContactInfoRef(accountID: fixture.accountID, jid: Self.jidString))
     }
@@ -111,7 +67,7 @@ struct ChatWindowStateTests {
     }
 
     @Test func `loadOlderMessages sets lastLoadHistoryError when server fetch fails`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         #expect(fixture.windowState.lastLoadHistoryError == nil)
 
         // No connected client → `fetchServerHistory` throws `ChatServiceError.notConnected`.
@@ -121,7 +77,7 @@ struct ChatWindowStateTests {
     }
 
     @Test func `clearLoadHistoryError resets the error state`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         await fixture.windowState.loadOlderMessages()
         try #require(fixture.windowState.lastLoadHistoryError != nil)
 
@@ -131,7 +87,7 @@ struct ChatWindowStateTests {
     }
 
     @Test func `loadOlderMessages clears prior lastLoadHistoryError on success`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         fixture.windowState.lastLoadHistoryError = "stale error"
 
         let conversationID = try #require(fixture.windowState.conversation?.id)
@@ -155,7 +111,7 @@ struct ChatWindowStateTests {
     }
 
     @Test func `sendMessage captures typed ChatService errors and preserves body`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         let typed = "Reach for the sky"
 
         // No connected client → `sendMessage` flows through the
@@ -167,7 +123,7 @@ struct ChatWindowStateTests {
     }
 
     @Test func `clearSendError resets lastSendError`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         fixture.windowState.lastSendError = "Send failed: invalid JID"
         try #require(fixture.windowState.lastSendError != nil)
 
@@ -363,7 +319,7 @@ struct ChatWindowStateTests {
     }
 
     @Test func `queued files go the way that was chosen, and a new batch starts with upload again`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         let windowState = fixture.windowState
         try await withTemporaryDirectory { directory in
             let fileURL = directory.appendingPathComponent("notes.txt")
@@ -397,7 +353,7 @@ struct ChatWindowStateTests {
     }
 
     @Test func `a direct send that cannot start says so in the composer`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         let windowState = fixture.windowState
         windowState.addAttachment(url: URL(fileURLWithPath: "/nonexistent/notes.txt"))
         windowState.sendsAttachmentsDirectly = true
@@ -409,7 +365,7 @@ struct ChatWindowStateTests {
     }
 
     @Test func `only files the chat's own contact is sending right now get a receiving row`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         let service = fixture.environment.fileTransferService
         let receiving = Self.incomingTransfer(from: Self.jidString, accountID: fixture.accountID)
         service.registerTransferForTesting(receiving)
@@ -423,7 +379,7 @@ struct ChatWindowStateTests {
 
     @Test func `a room gets no receiving row for a file one of its occupants is sending`() async throws {
         let roomJIDString = "room@conference.example.com"
-        let fixture = try await Self.makeFixture(jidString: roomJIDString, type: .groupchat)
+        let fixture = try await ChatWindowFixture.make(jidString: roomJIDString, type: .groupchat)
         // Armed: the tab is the room's own chat.
         try #require(fixture.windowState.conversation?.type == .groupchat)
         // An occupant's bare JID is the room's.
@@ -435,7 +391,7 @@ struct ChatWindowStateTests {
     }
 
     @Test func `the note that files are not encrypted follows a switch made while the chat is open`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         let conversationID = try #require(fixture.windowState.conversation?.id)
         #expect(!fixture.windowState.sendsFilesUnencryptedInEncryptedChat)
 
@@ -448,7 +404,7 @@ struct ChatWindowStateTests {
     // MARK: - Notes
 
     @Test func `a chat's timeline notes are loaded with its messages`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         let conversationID = try #require(fixture.windowState.conversation?.id)
         let note = TimelineNote(conversationID: conversationID, kind: .encryptionEnabledByContact)
         try await fixture.transcripts.appendNote(note)
@@ -460,7 +416,7 @@ struct ChatWindowStateTests {
     }
 
     @Test func `opening a chat loads the notes from its oldest loaded message on`() async throws {
-        let fixture = try await Self.makeFixture()
+        let fixture = try await ChatWindowFixture.make()
         let conversationID = try #require(fixture.windowState.conversation?.id)
         let start = Date(timeIntervalSince1970: 1_700_000_000)
         let earlier = TimelineNote(conversationID: conversationID, timestamp: start.addingTimeInterval(-10), kind: .encryptionEnabledByContact)
@@ -482,16 +438,12 @@ struct ChatWindowStateTests {
     // MARK: - Link Previews
 
     @Test func `a link preview that arrives after the messages loaded redraws its bubble`() async throws {
-        let fixture = try await Self.makeFixture()
-        let conversationID = try #require(fixture.windowState.conversation?.id)
-        let link = "https://example.com/page"
+        let fixture = try await ChatWindowFixture.make(linkPreviewFetcher: CountingLinkPreviewFetcher())
         let message = ChatMessage(
-            id: UUID(), conversationID: conversationID, stanzaID: "m1", fromJID: Self.jidString, body: link,
+            id: UUID(), conversationID: fixture.conversationID, stanzaID: "m1", fromJID: Self.jidString, body: "https://example.com/page",
             timestamp: Date(), isOutgoing: false, isDelivered: false, isEdited: false, type: "chat"
         )
         await fixture.transcripts.addMessage(message)
-        // As after a relaunch: the preview is stored, and nothing has read it into memory yet.
-        try await fixture.store.upsertLinkPreview(LinkPreview(url: link, title: "Example", fetchedAt: Date()))
 
         let redrawn = Mutex(false)
         withObservationTracking {
@@ -499,9 +451,10 @@ struct ChatWindowStateTests {
         } onChange: {
             redrawn.withLock { $0 = true }
         }
+        // Nothing is stored for the link, so the message is published without a preview and one is fetched.
         await fixture.windowState.refreshMessages()
         try await waitUntil { redrawn.withLock { $0 } }
 
-        #expect(fixture.windowState.linkPreview(for: message)?.title == "Example")
+        #expect(fixture.windowState.linkPreview(for: message)?.title == "Counted Title")
     }
 }

@@ -1540,12 +1540,10 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
     }
 
     /// Polls `axDriver.readValue(identifier:)` until it equals `expected`. Absorbs
-    /// transient `elementNotFound` during SwiftUI binding commits. Use as
-    /// a precondition gate before `clearAndType` when an `.onChange`
-    /// pre-fills the field.
-    func waitForValue(_ expected: String, identifier: String) async throws {
+    /// transient `elementNotFound` during SwiftUI binding commits.
+    func waitForValue(_ expected: String, identifier: String, timeout: Duration = TestTimeout.uiElement) async throws {
         do {
-            try await pollUntil(timeout: TestTimeout.uiElement) {
+            try await pollUntil(timeout: timeout) {
                 do {
                     return try self.axDriver.readValue(identifier: identifier) == expected
                 } catch TestHarnessError.elementNotFound {
@@ -1553,7 +1551,7 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
                 }
             }
         } catch TestHarnessError.timeout {
-            log.debug("waitForValue timeout (\(TestTimeout.uiElement)) for identifier '\(identifier)'")
+            log.debug("waitForValue timeout (\(timeout)) for identifier '\(identifier)'")
             throw TestHarnessError.timeout
         }
     }

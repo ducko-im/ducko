@@ -689,4 +689,145 @@ struct ChatContainerStateTests {
         container.pruneClosedConversations()
         #expect(container.orderedTabs == [key(fixture.roomJIDString, id)])
     }
+
+    // MARK: - Reading position
+
+    /// Attaches a list to the tab's scroller and has it report a position among earlier messages, as the list does
+    /// when the reader scrolls up.
+    private func scrollUp(_ state: ChatWindowState) -> StandInTranscriptList {
+        let list = StandInTranscriptList(attachedTo: state.scroller)
+        list.arrive(at: .reading(id: UUID(), offset: 40))
+        return list
+    }
+
+    @Test func `a chat scrolled up into earlier messages is not looked at until the view is back at the newest message`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        await openAndAwaitLoad(container, "a@example.com", id)
+        let stateA = try #require(container.state(for: key("a@example.com", id)))
+        let conversationA = try #require(stateA.conversation)
+        try await waitUntil { chatService.activeConversationID == conversationA.id }
+
+        let list = scrollUp(stateA)
+        try await waitUntil { chatService.activeConversationID == nil }
+
+        // What arrives meanwhile is below what is being read, so it counts as unread.
+        var message = try XMPPMessage(type: .chat, to: .bare(#require(BareJID.parse("alice@example.com"))), id: "in-1")
+        message.from = try .bare(#require(BareJID.parse("a@example.com")))
+        message.body = "while scrolled up"
+        await chatService.handleEvent(.messageReceived(message), accountID: id)
+        #expect(chatService.openConversations.first { $0.id == conversationA.id }?.unreadCount == 1)
+
+        // Asking for the newest message is not being there yet.
+        stateA.scroller.scrollToNewest()
+        await letScheduledActivationsRun()
+        #expect(chatService.activeConversationID == nil)
+
+        list.arrive(at: .newest)
+        try await waitUntil { chatService.activeConversationID == conversationA.id }
+        try await waitUntil { chatService.openConversations.first { $0.id == conversationA.id }?.unreadCount == 0 }
+    }
+
+    @Test func `a chat sent back to its newest message while no list shows it is looked at again`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        await openAndAwaitLoad(container, "a@example.com", id)
+        let stateA = try #require(container.state(for: key("a@example.com", id)))
+        let conversationA = try #require(stateA.conversation)
+        let list = scrollUp(stateA)
+        try await waitUntil { chatService.activeConversationID == nil }
+
+        // With no list attached there is no view to arrive anywhere, so the scroller is at the newest message at once.
+        stateA.scroller.detach(list)
+        stateA.scroller.scrollToNewest()
+
+        try await waitUntil { chatService.activeConversationID == conversationA.id }
+    }
+
+    @Test func `selecting a scrolled-up tab leaves no conversation active and still shows what arrived`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        await openAndAwaitLoad(container, "a@example.com", id)
+        let stateA = try #require(container.state(for: key("a@example.com", id)))
+        let conversationA = try #require(stateA.conversation)
+        _ = scrollUp(stateA)
+        await openAndAwaitLoad(container, "b@example.com", id)
+        let conversationB = try #require(container.state(for: key("b@example.com", id))?.conversation)
+        try await waitUntil { chatService.activeConversationID == conversationB.id }
+        let arrival = ChatMessage(
+            id: UUID(), conversationID: conversationA.id, fromJID: "a@example.com", body: "while on the other tab", timestamp: Date(),
+            isOutgoing: false, isDelivered: true, isEdited: false, type: "chat"
+        )
+        try await fixture.environment.transcripts.appendMessage(arrival)
+
+        container.select(key("a@example.com", id))
+
+        try await waitUntil { stateA.messages.contains { $0.id == arrival.id } }
+        try await waitUntil { chatService.activeConversationID == nil }
+        await letScheduledActivationsRun()
+        #expect(chatService.activeConversationID == nil)
+    }
+
+    @Test func `closing the selected tab onto a scrolled-up neighbor still shows what arrived there`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        await openAndAwaitLoad(container, "a@example.com", id)
+        let stateA = try #require(container.state(for: key("a@example.com", id)))
+        let conversationA = try #require(stateA.conversation)
+        _ = scrollUp(stateA)
+        await openAndAwaitLoad(container, "b@example.com", id)
+        let arrival = ChatMessage(
+            id: UUID(), conversationID: conversationA.id, fromJID: "a@example.com", body: "while on the other tab", timestamp: Date(),
+            isOutgoing: false, isDelivered: true, isEdited: false, type: "chat"
+        )
+        try await fixture.environment.transcripts.appendMessage(arrival)
+
+        container.close(key("b@example.com", id))
+
+        #expect(container.selectedKey == key("a@example.com", id))
+        try await waitUntil { stateA.messages.contains { $0.id == arrival.id } }
+        try await waitUntil { chatService.activeConversationID == nil }
+    }
+
+    @Test func `closing the chat window returns every tab to its newest message`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let id = fixture.accountID
+        container.isWindowOpen = true
+        await openAndAwaitLoad(container, "a@example.com", id)
+        await openAndAwaitLoad(container, "b@example.com", id)
+        let stateA = try #require(container.state(for: key("a@example.com", id)))
+        let stateB = try #require(container.state(for: key("b@example.com", id)))
+        // The unselected tab has no list, and the selected one's list stays attached while the window is closed.
+        let listA = scrollUp(stateA)
+        stateA.scroller.detach(listA)
+        let listB = scrollUp(stateB)
+
+        container.isWindowOpen = false
+
+        #expect(stateA.isAtNewest)
+        #expect(listB.settledPositions == [.newest])
+    }
+
+    @Test func `closing the last tab of a focused chat window leaves no conversation active`() async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        await openAndAwaitLoad(container, "a@example.com", id)
+        let conversationA = try #require(container.state(for: key("a@example.com", id))?.conversation)
+        try await waitUntil { chatService.activeConversationID == conversationA.id }
+
+        container.close(key("a@example.com", id))
+
+        try await waitUntil { chatService.activeConversationID == nil }
+    }
 }

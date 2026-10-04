@@ -178,7 +178,10 @@ The set is a mix of Ducko-original skills written for this repo and upstream-der
 
 ## Code Conventions
 
-- **No Objective-C**: pure Swift, no `@objc`, no NSObject subclasses — except NSObject subclasses conforming to AppKit/Foundation delegate protocols (e.g. `AppDelegate`, `NotificationManager`, the contact-list `Coordinator`), and a minimal `@objc` target/action trampoline where AppKit requires a selector (e.g. `NSMenuItem.action`, which can't take a closure)
+- **No Objective-C**: pure Swift, no `@objc`, no NSObject subclasses. The exceptions:
+  - NSObject subclasses conforming to AppKit/Foundation delegate protocols (e.g. `AppDelegate`, `NotificationManager`, the contact-list `Coordinator`)
+  - AppKit view subclasses where an override or a hosted cell is the only hook (e.g. `HostingTableCellView`, `ContactListTableControl`, `QuickLookHostView`, `JumpButtonHost`)
+  - A minimal `@objc` target/action trampoline where AppKit requires a selector (e.g. `NSMenuItem.action`, which can't take a closure)
 - **Value types preferred**: structs and enums over classes, except where reference semantics are required (`@Observable`, `@Model`, actors)
 - **XMLElement naming**: our `XMLElement` struct (in DuckoXMPP) conflicts with Foundation's `NSXMLElement`. In DuckoXMPP files, do not `import Foundation` — use stdlib alternatives instead. In DuckoCore files (which always import Foundation), use `DuckoXMPP.XMLElement` to disambiguate.
 - **Testing**: use Swift Testing (`import Testing`, `@Test`, `#expect`, `#require`), not XCTest. Struct-based suites, parameterized tests via `@Test(arguments:)`.

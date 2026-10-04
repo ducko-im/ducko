@@ -2,6 +2,7 @@ import DuckoCore
 import SwiftUI
 
 struct TranscriptDetailView: View {
+    @Environment(AppEnvironment.self) private var environment
     let state: TranscriptViewerState
 
     private var isGroupchat: Bool {
@@ -79,26 +80,26 @@ struct TranscriptDetailView: View {
 
     // MARK: - Message List
 
-    private var messageListView: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(state.timelineItems) { item in
-                    switch item {
-                    case let .message(message):
-                        let pos = state.positions[message.id] ?? MessagePosition(isFirstInGroup: true, isLastInGroup: true)
+    private var rows: [TranscriptRow] {
+        TranscriptRows.history(
+            items: state.timelineItems,
+            positions: state.positions,
+            details: TranscriptRows.Details(
+                isGroupchat: isGroupchat,
+                displayName: state.selectedConversation?.displayTitle ?? "",
+                searchResults: state.searchResults
+            ),
+            transfers: environment.fileTransferService.activeTransfers
+        )
+    }
 
-                        TranscriptBubbleView(
-                            message: message,
-                            position: pos,
-                            isGroupchat: isGroupchat,
-                            isSearchResult: state.searchResults.contains(message.id)
-                        )
-                    case let .note(note):
-                        TimelineNoteView(note: note, contactName: state.selectedConversation?.displayTitle ?? "")
-                    }
-                }
-            }
-        }
+    private var messageListView: some View {
+        TranscriptListView(
+            rows: rows,
+            scroller: state.scroller,
+            context: .history,
+            remoteImageConsent: state.remoteImageConsent
+        )
         .frame(minWidth: 300)
     }
 }

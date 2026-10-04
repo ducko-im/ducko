@@ -1,0 +1,31 @@
+import AppKit
+import DuckoCore
+import Foundation
+import SwiftUI
+import Testing
+@testable import DuckoUI
+
+@MainActor
+struct MessageContentLayoutTests {
+    @Test func `a reply takes the height its quote and text ask for, whatever height it is offered`() {
+        let preferences = PreferencesFixture()
+        let message = ChatMessage(
+            id: UUID(), conversationID: UUID(), fromJID: "bob@example.com",
+            body: String(repeating: "A reply long enough to wrap onto several lines. ", count: 4),
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000), isOutgoing: true, isDelivered: true, isEdited: false, type: "chat"
+        )
+        let content = MessageContentView(
+            message: message, isGroupchatIncoming: false, isMetadataVisible: true, actionSenderName: "",
+            loadsIncomingImagesOnSight: false, transferStatus: nil,
+            header: { ReplyQuoteView(senderName: "alice@example.com", bodyPreview: "Two lines\nof quoted text") },
+            footer: { EmptyView() }
+        )
+        .environment(preferences.makeThemeEngine())
+        let controller = NSHostingController(rootView: content)
+
+        let offeredLittle = controller.sizeThatFits(in: CGSize(width: 400, height: 60)).height
+        let offeredMuch = controller.sizeThatFits(in: CGSize(width: 400, height: 2000)).height
+
+        #expect(offeredLittle == offeredMuch)
+    }
+}

@@ -36,6 +36,10 @@ final class TranscriptViewerState {
     var searchResults: Set<UUID> = []
     var searchMatchDates: Set<Date> = []
 
+    let remoteImageConsent = RemoteImageConsent()
+    /// One scroller for the window, across days: each day shows from its first message.
+    let scroller = TranscriptScroller()
+
     var isLoading: Bool {
         isLoadingAccounts || isLoadingDetail
     }
@@ -146,6 +150,7 @@ final class TranscriptViewerState {
         messages = []
         notes = []
         positions = [:]
+        scroller.reset(to: .oldest)
         messageDates = []
         messageDateCounts = [:]
         selectedDate = nil
@@ -210,6 +215,7 @@ final class TranscriptViewerState {
         messages = []
         notes = []
         positions = [:]
+        scroller.reset(to: .oldest)
         isLoadingDetail = false
         guard let date, let conversation = selectedConversation else { return }
         isLoadingDetail = true
@@ -234,6 +240,7 @@ final class TranscriptViewerState {
         messages = dateMessages
         notes = dateNotes
         positions = computeMessagePositions(timelineItems)
+        scroller.reset(to: .oldest)
     }
 
     func performTranscriptSearch() async {

@@ -174,7 +174,7 @@ extension DuckoIntegrationTests.UILayer {
             if: AppAccessor.appBundleExists && AppAccessor.isAccessibilityTrusted && CLIProcess.binaryExists,
             "Ducko.app missing, AX trust not granted, or DuckoCLI binary missing"
         ))
-        @MainActor func `bob composing notification surfaces a typing indicator`() async throws {
+        @MainActor func `bob composing notification shows as typing on the chat's tab`() async throws {
             try await UISeededApp.withSeededApp { app in
                 let bob = TestCredentials.bob
                 let alice = TestCredentials.alice
@@ -210,7 +210,7 @@ extension DuckoIntegrationTests.UILayer {
 
                 // Prime the chat-state context with `.active` before
                 // `.composing` per XEP-0085, so a receiver gating on prior
-                // negotiation still surfaces the typing indicator.
+                // negotiation still shows the contact as typing.
                 //
                 // Address alice's bare JID. Prosody now routes to the
                 // live resource because the disconnect-side SM
@@ -222,19 +222,12 @@ extension DuckoIntegrationTests.UILayer {
                 try await chatStates.sendChatState(.active, to: aliceTarget)
                 try await chatStates.sendChatState(.composing, to: aliceTarget)
 
-                try await app.waitForElement(
-                    identifier: "typing-indicator",
-                    timeout: TestTimeout.event
-                )
+                try await app.waitForValue("Typing", identifier: "chat-tab-\(bob.jid)", timeout: TestTimeout.event)
 
                 try await chatStates.sendChatState(.active, to: aliceTarget)
 
-                // Assert dismissal — the indicator must actually disappear,
-                // not merely "may have disappeared by the time we checked".
-                try await app.waitForAbsence(
-                    identifier: "typing-indicator",
-                    timeout: TestTimeout.event
-                )
+                // An empty value is the tab saying nothing: the contact is not typing and nothing is unread.
+                try await app.waitForValue("", identifier: "chat-tab-\(bob.jid)", timeout: TestTimeout.event)
             }
         }
 

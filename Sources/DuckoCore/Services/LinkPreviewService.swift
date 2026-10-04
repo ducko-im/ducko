@@ -30,6 +30,14 @@ public final class LinkPreviewService: Sendable {
         state.withLock { $0.cache[urlString] }
     }
 
+    /// The preview already fetched for `urlString`, from memory or from the store. Never fetches one.
+    public func storedPreview(for urlString: String) async -> LinkPreview? {
+        if let cached = cachedPreview(for: urlString) { return cached }
+        guard let persisted = try? await store.fetchLinkPreview(for: urlString) else { return nil }
+        state.withLock { $0.cache[urlString] = persisted }
+        return persisted
+    }
+
     private enum Resolution {
         case cached(LinkPreview)
         case inFlight(Task<LinkPreview?, Error>)

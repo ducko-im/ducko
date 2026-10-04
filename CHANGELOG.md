@@ -10,17 +10,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Bring back the chat window after relaunching Ducko, with the same tabs in the same order and the same one selected
 - Rejoin the rooms you are in whenever Ducko connects, without an auto-join bookmark, until you leave them, including rooms joined with `/join` in `ducko interactive`
+- Add a button at the bottom of a chat that jumps to the newest message, shown while you are scrolled up
+- Keep each chat's reading position while the chat window is open, so switching tabs and back shows a chat where you left it
 
 ### Changed
 
 - Print a failed direct transfer in `ducko interactive` as `error: <reason> (sid: <id>)`, and mark a failed transfer in `/transfers` with `error:` as well
 - Say "the contact" instead of "the peer" in file transfer and encryption errors, call the list in Device Fingerprints "Contact's Devices", and end menu items and progress labels with a proper ellipsis
+- Keep what you are reading in place when older messages load, a message arrives, a link preview appears, or the window is resized, and keep the newest message in view when you are at the end of the chat
+- Count messages that arrive while you are scrolled up in a chat as unread, and send the read receipt only once you are back at the newest message
+- Show that a contact is typing on the chat's tab only, no longer as a row at the end of the chat
+- Leave a little space between the newest message and the message field
+- Open chats, show incoming messages and resize the chat window faster in chats with a long history
 
 ### Fixed
 
 - Fix link preview cards missing from a chat after relaunching Ducko, and from older messages loaded by scrolling back, until the next message arrived
 - Fix a contact's subscription request disappearing when your connection briefly drops
 - Fix a folder being accepted for sending and failing only once the transfer had started, by refusing it right away
+- Fix a long reply being cut off after two lines
+- Fix a message changing height, and the chat shifting with it, when a remote image loads, a delivery mark arrives, or a direct file transfer moves from waiting to sending
+- Fix scrolling back in a chat skipping or repeating messages sent in the same second, and loading the oldest part of the server's history instead of the part right before what is shown, also in `ducko history --server`
+- Fix a read receipt being sent for a chat you had already switched away from
+
+### Security
+
+- Prevent someone else from slipping messages into a chat's history while Ducko loads it from the server, by accepting history only from the archive that was asked and no more than was asked for
 
 ## [0.5.0] - 2026-10-03
 

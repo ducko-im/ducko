@@ -61,6 +61,34 @@ enum LinkPreviewServiceTests {
         }
     }
 
+    struct StoredPreview {
+        @Test
+        func `A persisted preview is returned and cached without invoking the fetcher`() async throws {
+            let store = MockPersistenceStore()
+            let fetcher = CountingLinkPreviewFetcher()
+            let service = LinkPreviewService(fetcher: fetcher, store: store)
+            let link = "https://example.com/page"
+            try await store.upsertLinkPreview(LinkPreview(url: link, title: "Stored", fetchedAt: Date()))
+
+            let preview = await service.storedPreview(for: link)
+
+            #expect(preview?.title == "Stored")
+            #expect(service.cachedPreview(for: link)?.title == "Stored")
+            #expect(await fetcher.invocationCount == 0)
+        }
+
+        @Test
+        func `An unknown URL has no stored preview and is not fetched`() async {
+            let fetcher = CountingLinkPreviewFetcher()
+            let service = LinkPreviewService(fetcher: fetcher, store: MockPersistenceStore())
+
+            let preview = await service.storedPreview(for: "https://example.com/unknown")
+
+            #expect(preview == nil)
+            #expect(await fetcher.invocationCount == 0)
+        }
+    }
+
     struct Coalescing {
         @Test
         func `Concurrent fetches for the same URL share one fetch`() async throws {

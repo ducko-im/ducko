@@ -359,11 +359,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         }
         try? await store.markConversationRead(id)
         if let accountID {
-            // Update the per-account slot only on a successful fetch — a failed fetch must leave
-            // the slot (and the other accounts' published conversations) untouched.
-            if let fetched = try? await store.fetchConversations(for: accountID) {
-                setConversations(fetched, for: accountID)
-            }
+            await republishConversations(for: accountID)
             await sendDisplayedMarkerForLatest(conversationID: id, accountID: accountID)
         }
     }
@@ -804,12 +800,15 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     private func sendDisplayedMarkerForLatest(conversationID: UUID, accountID: UUID) async {
         guard let conversation = openConversations.first(where: { $0.id == conversationID }) else { return }
 
+        // `messages` holds whichever conversation was selected last, which is another one by now when a later
+        // selection overtook this one.
+        let received = messages.filter { $0.conversationID == conversationID && !$0.isOutgoing }
         switch conversation.type {
         case .chat:
-            guard let message = messages.last(where: { !$0.isOutgoing && $0.stanzaID != nil }) else { return }
+            guard let message = received.last(where: { $0.stanzaID != nil }) else { return }
             await sendDisplayedMarkerIfNeeded(for: message, in: conversation, accountID: accountID)
         case .groupchat:
-            guard let message = messages.last(where: { !$0.isOutgoing && $0.serverID != nil }) else { return }
+            guard let message = received.last(where: { $0.serverID != nil }) else { return }
             await sendDisplayedMarkerIfNeeded(for: message, in: conversation, accountID: accountID)
         }
     }
@@ -828,9 +827,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
                   mucModule.nickname(in: conversation.jid) != nil else { return }
             (markedID, messageType) = (serverID, .groupchat)
         }
+        // A marker says the chat is being looked at, which is decided here, once, after every wait that takes real time.
         // Remembered by the message itself, not by the id the marker names: another client can use that id again for
         // a later message. And remembered before the send, so a second look during it does not send the marker twice.
-        guard ChatPreferences.shared.enableDisplayedMarkers, lastDisplayedMarkerSent[conversation.id] != message.id else { return }
+        guard ChatPreferences.shared.enableDisplayedMarkers, activeConversationID == conversation.id,
+              lastDisplayedMarkerSent[conversation.id] != message.id else { return }
         lastDisplayedMarkerSent[conversation.id] = message.id
         do {
             try await sendDisplayedMarker(to: conversation.jid, messageStanzaID: markedID, accountID: accountID, messageType: messageType)
@@ -1628,16 +1629,31 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     private func persistAndNotify(_ message: ChatMessage, in conversation: Conversation, accountID: UUID) async {
-        let isActiveConversation = conversation.id == activeConversationID
-        let isKept = await (try? persistMessage(message, in: conversation, incrementUnread: !isActiveConversation, accountID: accountID))
+        let countsAsUnread = conversation.id != activeConversationID
+        let isKept = await (try? persistMessage(message, in: conversation, incrementUnread: countsAsUnread, accountID: accountID))
         guard isKept != false else { return }
 
-        if isActiveConversation {
-            try? await store.markConversationRead(conversation.id)
+        // Storing the message took a while, and the chat can have come into view or gone out of it meanwhile, so
+        // whether it is looked at is read again here, for the marker and the read count together. A room's marker
+        // checks once more after its nickname lookup.
+        if conversation.id == activeConversationID {
             await sendDisplayedMarkerIfNeeded(for: message, in: conversation, accountID: accountID)
+            try? await store.markConversationRead(conversation.id)
+            if countsAsUnread {
+                await republishConversations(for: accountID)
+            }
+        } else if !countsAsUnread {
+            _ = try? await store.updateConversation(conversation.id) { $0.unreadCount += 1 }
+            await republishConversations(for: accountID)
         }
 
         onIncomingMessage?(message, conversation)
+    }
+
+    /// Publishes the account's conversations as the store has them. A failed fetch leaves what is published as it is.
+    private func republishConversations(for accountID: UUID) async {
+        guard let fetched = try? await store.fetchConversations(for: accountID) else { return }
+        setConversations(fetched, for: accountID)
     }
 
     /// Handles a destroyed room: clears live room state and removes the
@@ -2216,12 +2232,26 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
         let to: BareJID? = conversation.type == .groupchat ? conversation.jid : nil
         let with: BareJID? = conversation.type == .groupchat ? nil : jid
-        let (archived, fin) = try await mamModule.queryMessages(to: to, with: with, end: endISO, max: limit)
-        let newMessages = try await convertAndDedup(
-            archived: archived, conversation: conversation, accountJID: accountJID
-        )
-        return (newMessages, !fin.complete)
+        // The last page of the range is the one adjacent to `before`. A page can hold nothing to add, only duplicates
+        // and entries without a body, while the archive goes on before it.
+        var page = MAMModule.RSMBefore.lastPage
+        for _ in 0 ..< Self.maxServerHistoryPages {
+            let (archived, fin) = try await mamModule.queryMessages(
+                MAMModule.Query(to: to, with: with, end: endISO, before: page, max: limit)
+            )
+            let newMessages = try await convertAndDedup(
+                archived: archived, conversation: conversation, accountJID: accountJID
+            )
+            guard newMessages.isEmpty, !fin.complete, let first = fin.first else {
+                return (newMessages, !fin.complete)
+            }
+            page = .id(first)
+        }
+        return ([], true)
     }
+
+    /// How many archive pages one history fetch reads before it gives up finding anything to add.
+    private static let maxServerHistoryPages = 10
 
     public func fetchServerHistory(
         jidString: String,
@@ -2339,11 +2369,16 @@ public final class ChatService { // swiftlint:disable:this type_body_length
                     try await transcripts.messageExists(stanzaID: stanzaID, conversationID: conversation.id)
                 }
                 if isDup { continue }
+            } else if try await transcripts.messageExists(serverID: entry.messageID, conversationID: conversation.id) {
+                continue
             }
 
+            // An entry that carries no id of its own is known by the archive's id for it, or it would be added again
+            // each time its range is read.
+            let serverID = trustedServerID ?? (metadata.stanzaID == nil ? entry.messageID : nil)
             let entry = ArchivedEntry(
                 forwarded: forwarded, body: body, meta: meta,
-                trustedServerID: trustedServerID, metadata: metadata
+                serverID: serverID, metadata: metadata
             )
             let message = await makeArchivedMessage(entry, in: conversation, accountJID: accountJID)
             try await transcripts.appendMessage(message)
@@ -2358,7 +2393,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         let forwarded: ForwardedMessage
         let body: String
         let meta: MessageMeta
-        let trustedServerID: String?
+        let serverID: String?
         let metadata: InboundMessageMetadata
     }
 
@@ -2379,7 +2414,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             id: UUID(),
             conversationID: conversation.id,
             stanzaID: entry.metadata.stanzaID,
-            serverID: entry.trustedServerID,
+            serverID: entry.serverID,
             fromJID: entry.meta.fromJID,
             body: filtered.body,
             htmlBody: filtered.htmlBody,

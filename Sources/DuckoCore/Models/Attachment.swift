@@ -1,7 +1,7 @@
 import DuckoXMPP
 import Foundation
 
-public struct Attachment: Sendable, Identifiable, Codable {
+public struct Attachment: Sendable, Identifiable, Codable, Equatable {
     public var id: UUID
     public var url: String
     public var mimeType: String?

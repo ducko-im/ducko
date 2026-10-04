@@ -532,3 +532,222 @@ enum ChatServiceResourceLockTests {
         }
     }
 }
+
+/// A displayed marker and a read count both say the chat was looked at, so they are decided together.
+extension ChatServiceResourceLockTests {
+    struct MarkerDecision {
+        private let otherJID = BareJID(localPart: "other", domainPart: "example.com")!
+
+        /// The count the tab chip shows, which is the published conversation's.
+        @MainActor
+        private func publishedUnreadCount(_ harness: LockHarness, _ conversationID: UUID) -> Int? {
+            harness.chatService.openConversations.first { $0.id == conversationID }?.unreadCount
+        }
+
+        @MainActor
+        private func conversationID(_ harness: LockHarness, with jid: BareJID) throws -> UUID {
+            try #require(harness.chatService.openConversations.first { $0.jid == jid }?.id)
+        }
+
+        private func markers(_ transport: MockTransport, naming messageID: String) async -> Int {
+            await transport.sentBytes.count {
+                let stanza = String(decoding: $0, as: UTF8.self)
+                return stanza.contains("<displayed") && stanza.contains("id=\"\(messageID)\"")
+            }
+        }
+
+        @Test
+        @MainActor
+        func `A selection overtaken by another sends no marker of its own`() async throws {
+            let harness = try await makeConnectedHarness(modules: [ReceiptsModule()])
+            await harness.chatService.handleEvent(
+                .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "hi", id: "a-1")), accountID: harness.accountID
+            )
+            await harness.chatService.handleEvent(
+                .messageReceived(makeInbound(from: full(otherJID, "phone"), body: "hello", id: "b-1")), accountID: harness.accountID
+            )
+            let first = try conversationID(harness, with: contactJID)
+            let second = try conversationID(harness, with: otherJID)
+
+            let entered = AsyncSemaphore()
+            let release = AsyncSemaphore()
+            await harness.store.installMarkConversationReadGate(entered: entered, release: release)
+            let overtaken = Task { @MainActor in
+                await harness.chatService.selectConversation(first, accountID: harness.accountID)
+            }
+            await entered.wait()
+            await harness.chatService.selectConversation(second, accountID: harness.accountID)
+            // Armed: the later selection sent its marker.
+            try #require(await markers(harness.transport, naming: "b-1") == 1)
+            await release.signal()
+            await overtaken.value
+
+            #expect(await displayedMarkersSent(harness.transport) == 1)
+            #expect(await markers(harness.transport, naming: "a-1") == 0)
+            #expect(publishedUnreadCount(harness, second) == 0)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        @Test
+        @MainActor
+        func `A selection that finishes while a later one is still loading sends no marker for its own chat`() async throws {
+            let harness = try await makeConnectedHarness(modules: [ReceiptsModule()])
+            await harness.chatService.handleEvent(
+                .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "hi", id: "a-1")), accountID: harness.accountID
+            )
+            await harness.chatService.handleEvent(
+                .messageReceived(makeInbound(from: full(otherJID, "phone"), body: "hello", id: "b-1")), accountID: harness.accountID
+            )
+            let first = try conversationID(harness, with: contactJID)
+            let second = try conversationID(harness, with: otherJID)
+
+            let (markEntered, markRelease) = (AsyncSemaphore(), AsyncSemaphore())
+            await harness.store.installMarkConversationReadGate(entered: markEntered, release: markRelease)
+            let overtaken = Task { @MainActor in
+                await harness.chatService.selectConversation(first, accountID: harness.accountID)
+            }
+            await markEntered.wait()
+            let (loadEntered, loadRelease) = (AsyncSemaphore(), AsyncSemaphore())
+            await harness.transcripts.installFetchMessagesGate(entered: loadEntered, release: loadRelease)
+            let later = Task { @MainActor in
+                await harness.chatService.selectConversation(second, accountID: harness.accountID)
+            }
+            await loadEntered.wait()
+            // The loaded messages are still the first chat's, and the second chat is the active one.
+            await markRelease.signal()
+            await overtaken.value
+
+            #expect(await markers(harness.transport, naming: "a-1") == 0)
+            await loadRelease.signal()
+            await later.value
+            #expect(await markers(harness.transport, naming: "b-1") == 1)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        @Test
+        @MainActor
+        func `A selection that finishes while its chat is loading again names no other chat's message`() async throws {
+            let harness = try await makeConnectedHarness(modules: [ReceiptsModule()])
+            await harness.chatService.handleEvent(
+                .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "hi", id: "a-1")), accountID: harness.accountID
+            )
+            await harness.chatService.handleEvent(
+                .messageReceived(makeInbound(from: full(otherJID, "phone"), body: "hello", id: "b-1")), accountID: harness.accountID
+            )
+            let first = try conversationID(harness, with: contactJID)
+            let second = try conversationID(harness, with: otherJID)
+
+            let (markEntered, markRelease) = (AsyncSemaphore(), AsyncSemaphore())
+            await harness.store.installMarkConversationReadGate(entered: markEntered, release: markRelease)
+            let overtaken = Task { @MainActor in
+                await harness.chatService.selectConversation(first, accountID: harness.accountID)
+            }
+            await markEntered.wait()
+            await harness.chatService.selectConversation(second, accountID: harness.accountID)
+            try #require(await markers(harness.transport, naming: "b-1") == 1)
+            let (loadEntered, loadRelease) = (AsyncSemaphore(), AsyncSemaphore())
+            await harness.transcripts.installFetchMessagesGate(entered: loadEntered, release: loadRelease)
+            let again = Task { @MainActor in
+                await harness.chatService.selectConversation(first, accountID: harness.accountID)
+            }
+            await loadEntered.wait()
+            // The first chat is the active one again, and the loaded messages are still the second chat's.
+            await markRelease.signal()
+            await overtaken.value
+
+            #expect(await markers(harness.transport, naming: "b-1") == 1)
+            await loadRelease.signal()
+            await again.value
+            #expect(await markers(harness.transport, naming: "a-1") == 1)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        @Test
+        @MainActor
+        func `A message stored after its chat went out of view counts as unread and sends no marker`() async throws {
+            let harness = try await makeConnectedHarness(modules: [ReceiptsModule()])
+            await harness.chatService.handleEvent(
+                .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "hi", id: "in-1")), accountID: harness.accountID
+            )
+            let id = try conversationID(harness, with: contactJID)
+            await harness.chatService.selectConversation(id, accountID: harness.accountID)
+            try #require(publishedUnreadCount(harness, id) == 0)
+
+            let entered = AsyncSemaphore()
+            let release = AsyncSemaphore()
+            await harness.store.installConversationWriteGate(entered: entered, release: release)
+            let delivery = Task { @MainActor in
+                await harness.chatService.handleEvent(
+                    .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "more", id: "in-2")), accountID: harness.accountID
+                )
+            }
+            await entered.wait()
+            await harness.chatService.selectConversation(nil)
+            await release.signal()
+            await delivery.value
+
+            #expect(await markers(harness.transport, naming: "in-2") == 0)
+            #expect(publishedUnreadCount(harness, id) == 1)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        @Test
+        @MainActor
+        func `A message stored after its chat came into view ends read with one marker`() async throws {
+            let harness = try await makeConnectedHarness(modules: [ReceiptsModule()])
+            await harness.chatService.handleEvent(
+                .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "hi", id: "in-1")), accountID: harness.accountID
+            )
+            let id = try conversationID(harness, with: contactJID)
+            try #require(publishedUnreadCount(harness, id) == 1)
+
+            let entered = AsyncSemaphore()
+            let release = AsyncSemaphore()
+            await harness.store.installConversationWriteGate(entered: entered, release: release)
+            let delivery = Task { @MainActor in
+                await harness.chatService.handleEvent(
+                    .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "more", id: "in-2")), accountID: harness.accountID
+                )
+            }
+            await entered.wait()
+            await harness.chatService.selectConversation(id, accountID: harness.accountID)
+            await release.signal()
+            await delivery.value
+
+            #expect(await markers(harness.transport, naming: "in-2") == 1)
+            #expect(publishedUnreadCount(harness, id) == 0)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        @Test
+        @MainActor
+        func `A message whose marker went out stays read when its chat goes out of view right after`() async throws {
+            let harness = try await makeConnectedHarness(modules: [ReceiptsModule()])
+            await harness.chatService.handleEvent(
+                .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "hi", id: "in-1")), accountID: harness.accountID
+            )
+            let id = try conversationID(harness, with: contactJID)
+            await harness.chatService.selectConversation(id, accountID: harness.accountID)
+
+            let entered = AsyncSemaphore()
+            let release = AsyncSemaphore()
+            await harness.store.installMarkConversationReadGate(entered: entered, release: release)
+            let delivery = Task { @MainActor in
+                await harness.chatService.handleEvent(
+                    .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "more", id: "in-2")), accountID: harness.accountID
+                )
+            }
+            await entered.wait()
+            // The marker went out before the read count was written.
+            #expect(await markers(harness.transport, naming: "in-2") == 1)
+            await harness.chatService.selectConversation(nil)
+            await release.signal()
+            await delivery.value
+
+            #expect(publishedUnreadCount(harness, id) == 0)
+            let stored = try await harness.store.fetchConversations(for: harness.accountID).first { $0.id == id }
+            #expect(stored?.unreadCount == 0)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+    }
+}

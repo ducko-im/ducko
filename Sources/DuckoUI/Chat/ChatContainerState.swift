@@ -23,9 +23,16 @@ public final class ChatContainerState {
         }
     }
 
-    /// Whether the chat window is open. Saved with the tabs, so a relaunch knows whether to bring it back.
+    /// Whether the chat window is open. Saved with the tabs, so a relaunch knows whether to bring it back. Reading
+    /// positions last while it is open, so closing it puts every tab back at its newest message.
     public var isWindowOpen = false {
-        didSet { saveTabs() }
+        didSet {
+            saveTabs()
+            guard oldValue, !isWindowOpen else { return }
+            for state in states.values {
+                state.scroller.reset(to: .newest)
+            }
+        }
     }
 
     /// Whether the chat window is the focused window of the active app.
@@ -48,10 +55,32 @@ public final class ChatContainerState {
 
     private func inViewChanged(from wasInView: Bool) {
         guard isInView != wasInView else { return }
-        if isInView, let selectedState {
+        syncActiveConversation()
+    }
+
+    /// Whether the user is looking at the selected chat's newest messages. Scrolled up into earlier messages, what
+    /// arrives is below the fold: it stays unread, and nobody is told it was read. With no tab selected, nothing is
+    /// seen.
+    private var isSelectedChatSeen: Bool {
+        isInView && (selectedState?.isAtNewest ?? false)
+    }
+
+    /// Makes the selected tab the active conversation while it is seen, and no conversation otherwise.
+    private func syncActiveConversation() {
+        if isSelectedChatSeen, let selectedState {
             scheduleActivation(of: selectedState)
         } else {
             scheduleDeactivation()
+        }
+    }
+
+    /// Call once another tab is the selected one. Activation is what refreshes a tab, and a tab that is not seen is
+    /// not activated. Messages that arrived while it was not selected still have to show, so the tab is refreshed
+    /// here.
+    private func selectedTabChanged() {
+        syncActiveConversation()
+        if let selectedState {
+            Task { await selectedState.refreshMessages() }
         }
     }
 
@@ -106,6 +135,11 @@ public final class ChatContainerState {
 
     private func addTab(_ key: ConversationKey, selecting: Bool) {
         let state = ChatWindowState(jidString: key.jid, accountID: key.accountID, environment: environment)
+        // Arriving at the newest message is what makes a chat seen, and leaving it what ends that.
+        state.scroller.onIsAtNewestChange = { [weak self, weak state] in
+            guard let self, let state, state === selectedState else { return }
+            syncActiveConversation()
+        }
         states[key] = state
         orderedTabs.append(key)
         if selecting {
@@ -122,9 +156,9 @@ public final class ChatContainerState {
     }
 
     public func select(_ key: ConversationKey) {
-        guard let state = states[key], selectedKey != key else { return }
+        guard states[key] != nil, selectedKey != key else { return }
         selectedKey = key
-        scheduleActivation(of: state)
+        selectedTabChanged()
     }
 
     public func selectNextTab() {
@@ -147,13 +181,8 @@ public final class ChatContainerState {
 
         guard selectedKey == key else { return }
         // Pick the tab that shifted into this slot, else the new last tab.
-        let neighbor = orderedTabs.indices.contains(index) ? orderedTabs[index] : orderedTabs.last
-        selectedKey = neighbor
-        if let neighbor, let state = states[neighbor] {
-            scheduleActivation(of: state)
-        } else {
-            scheduleDeactivation()
-        }
+        selectedKey = orderedTabs.indices.contains(index) ? orderedTabs[index] : orderedTabs.last
+        selectedTabChanged()
     }
 
     public func closeAll() {
@@ -246,12 +275,12 @@ public final class ChatContainerState {
     /// user selects a newer tab finds its generation no longer current and discards itself,
     /// rather than re-pointing the active conversation (and marking it read) behind the
     /// now-visible tab.
-    private var activationGeneration = 0
+    @ObservationIgnored private var activationGeneration = 0
 
-    /// True only while `state` is the selected tab's own instance in a chat window that is in view, so a load finishing
-    /// in a background, closed, or reopened tab, or in a window nobody is looking at, can't activate it.
+    /// True only while `state` is the selected tab's own instance and that tab is seen, so a load finishing in a
+    /// background, closed, or reopened tab, or in a window nobody is looking at, can't activate it.
     private func canActivate(_ state: ChatWindowState?) -> Bool {
-        guard isInView, let state, let selectedKey else { return false }
+        guard isSelectedChatSeen, let state, let selectedKey else { return false }
         return states[selectedKey] === state
     }
 
@@ -261,10 +290,9 @@ public final class ChatContainerState {
         Task { await activate(state, generation: generation) }
     }
 
-    /// Clears `ChatService.activeConversationID` when the last tab closes or the window goes
-    /// out of view. Otherwise it keeps pointing at a conversation nobody is looking at, which
-    /// `ChatService` treats as active — auto-marking its incoming messages read and suppressing
-    /// their unread count.
+    /// Clears `ChatService.activeConversationID` while nobody is looking at a conversation. Otherwise
+    /// it keeps pointing at one, which `ChatService` treats as active — auto-marking its incoming
+    /// messages read and suppressing their unread count.
     private func scheduleDeactivation() {
         activationGeneration += 1
         let generation = activationGeneration
@@ -281,7 +309,7 @@ public final class ChatContainerState {
     /// otherwise a freshly-activated hidden tab could be marked read while showing stale
     /// messages received while it was hidden.
     private func activate(_ state: ChatWindowState, generation: Int) async {
-        guard generation == activationGeneration, isInView else { return }
+        guard generation == activationGeneration, isSelectedChatSeen else { return }
         guard let conversationID = state.conversation?.id else { return }
         let accountID = state.conversation?.accountID ?? environment.accountService.accounts.first?.id
         await environment.chatService.selectConversation(conversationID, accountID: accountID)

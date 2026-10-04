@@ -6,7 +6,27 @@ struct MessageMetadataView: View {
     let message: ChatMessage
     let isVisible: Bool
 
+    /// With grouped timestamps the line is empty until a mark arrives. An outgoing message gets its delivery mark
+    /// after it is first shown, so its line is held open and the row does not grow then.
+    private var reservesLine: Bool {
+        theme.current.timestampStyle == .grouped && message.isOutgoing
+    }
+
     var body: some View {
+        ZStack {
+            if reservesLine {
+                Text(verbatim: " ")
+                    .font(.caption2)
+                    .hidden()
+                    .accessibilityHidden(true)
+            }
+            marks
+        }
+        .opacity(isVisible ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: isVisible)
+    }
+
+    private var marks: some View {
         HStack(spacing: 4) {
             timestampText
                 .font(theme.current.timestampFont.resolved)
@@ -46,8 +66,6 @@ struct MessageMetadataView: View {
                     .foregroundStyle(.red)
             }
         }
-        .opacity(isVisible ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isVisible)
     }
 
     /// One check once the message reached the contact, two once they read it.

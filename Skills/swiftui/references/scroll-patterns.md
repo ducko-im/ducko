@@ -54,7 +54,7 @@ struct ChatView: View {
 }
 ```
 
-For a chat transcript that must follow new rows, hold its place when older rows load, or keep a position per tab, use the patterns under [Chat Transcripts](#chat-transcripts) in place of this example. A `proxy.scrollTo` aimed at a row inserted in the same update does nothing; this example scrolls to a sentinel that already exists, which was not checked.
+For a chat transcript that must follow new rows, hold its place when older rows load, or keep a position per tab, use the AppKit-backed list described under [Chat Transcripts](#chat-transcripts) in place of this example. A `proxy.scrollTo` aimed at a row inserted in the same update does nothing; this example scrolls to a sentinel that already exists, which was not checked.
 
 ### Scroll-to-Top Pattern
 
@@ -297,39 +297,42 @@ struct SnapScrollView: View {
 
 ## Chat Transcripts
 
-> **iOS 18+ / macOS 15+**: `ScrollPosition`, `onScrollGeometryChange`, and `onScrollPhaseChange`. The behaviors below were observed on macOS 27.0.1, not taken from documentation; re-check them on the deployment target's oldest OS.
+Ducko's transcripts are an AppKit table that hosts the SwiftUI rows in its cells (`Sources/DuckoUI/TranscriptList/`), not a SwiftUI scroll view. The list follows the newest row, keeps the reading position when older rows load or the window resizes, and keeps a position per tab. Use it for a new transcript-like surface, and read this section before changing it.
 
-For a chat transcript this section takes precedence over the general rules in this skill: use an eager stack where they say lazy, `ScrollPosition` where they say `ScrollViewReader`, and unanimated scrolls for following and holding. It assumes a bounded transcript, one that loads a limited window of rows and pages the rest, sized so the whole stack lays out without a visible delay; measure that with real rows.
+### Why not a SwiftUI stack
 
-### Follow the newest row
+The figures below were measured on macOS 27.0.1 with real message rows.
 
-- Scroll with `ScrollPosition`: `@State private var position = ScrollPosition(idType: Row.ID.self, edge: .bottom)`, bound via `.scrollPosition($position, anchor: .bottom)`, with `.scrollTargetLayout()` on the stack. `position.scrollTo(edge: .bottom)` works in the same update that appends a row. `ScrollViewProxy.scrollTo(id)` for a row inserted in that same update has no effect, in lazy and eager stacks alike.
-- Lay out a bounded transcript eagerly (`VStack`). With `.defaultScrollAnchor(.bottom)` a view resting at the bottom edge stays there through appends, row growth, prepends, and viewport resizes, exactly and in one geometry update, with no explicit scroll. `LazyVStack` positions by estimated heights: it reaches the bottom through intermediate positions and can settle tens of points off after a prepend.
-- Derive "is at the bottom" from `onScrollGeometryChange` only (`contentSize.height - contentOffset.y - containerSize.height`). Requesting a scroll to the bottom leaves that flag as it is; it turns true when geometry reports the arrival, so state that depends on it (read receipts, a jump button) changes on arrival. Assign it only when its value changes, and keep per-frame values such as offsets and frames out of observed state.
+- `LazyVStack` positions by estimated heights. Following the newest row goes through intermediate positions, a prepend settles tens of points off, and `ScrollViewProxy.scrollTo(id)` for a row inserted in the same update does nothing.
+- An eager `VStack` with `ScrollPosition` and `.defaultScrollAnchor(.bottom)` holds exactly, but it lays out every mounted row. Mounting a real row takes about 1 ms, and each layout pass about 0.1 ms per mounted row. With 300 rows in each of five tabs, opening a chat took 385–812 ms, an incoming message 250–270 ms, and a resize step up to 271 ms. Keeping one list per tab mounted to preserve positions multiplies that cost by the number of tabs.
+- The table measures only the rows near the screen: opening a chat takes 55–75 ms and a resize step 20–30 ms, whether 300 or 3,000 rows are loaded.
 
-### Hold the reading position across a prepend
+### How the list holds a position
 
-No anchor configuration keeps a scrolled-up reader in place when rows are inserted above: the offset stays and the content moves down. Hold it in the same update as the insert:
+- **Rows are values.** A hosted row draws only from its `TranscriptRow`, which is `Equatable`. A measured height is kept for as long as the row's value, the width, and the theme are the same, so the height cache cannot disagree with what the row shows. Anything that can change a row's height belongs in the value, not in view state or in a service the row reads on its own.
+- **Measure only what is near.** Heights are measured only for rows within one viewport of what is on screen. One reused `NSHostingController` measures them with `sizeThatFits(in:)` at the column width. Other rows keep their last known height or an estimate. Give the hosted content `.fixedSize(horizontal: false, vertical: true)`: measuring offers unlimited height, which flexible content such as a divider bar would otherwise fill.
+- **Store a position, and put it back after every change.** The position is one of three: the newest message, a row and where its top sits in the viewport, or the top edge. The History window opens each day at the top edge. After a row change, a height change, or a resize, the list measures what is in reach and scrolls back to the stored position, repeating until nothing in reach is unmeasured. Left to itself the table moves what is on screen by the height of whatever was inserted above.
+- **Do not put the view back after the reader's own scroll** unless that scroll brought unmeasured rows into reach. Re-positioning on every scroll movement cuts off the trackpad's elastic overscroll at either end and shows as a stutter.
+- **Insert above only at rest.** Older rows are fetched while the reader scrolls and inserted once scrolling has come to rest. At rest means no live scroll is in progress and nothing has scrolled for 0.1 s. A live scroll runs from `NSScrollView.willStartLiveScrollNotification` to `didEndLiveScrollNotification`, which cover the gesture, its momentum, and the bounce. A mouse wheel posts no live-scroll notifications, so for it the quiet interval alone decides.
+- **Derive "at the newest message" from where the view is,** never from where it was asked to go. State that depends on it, such as read receipts and a jump button, then changes on arrival.
+- **One list, one position owner per tab.** The list is shared by all tabs. Each tab owns a scroller that keeps its position and its height cache, and the list shows whichever tab's rows it is handed.
 
-```swift
-// The reference is a 1 pt marker view at the end of the stack with .id(endID).
-// endFrame: its frame in .scrollView space, reported by onGeometryChange.
-// viewportHeight: containerSize.height from onScrollGeometryChange.
-// Both are stored outside observed state; position is the bound ScrollPosition.
-let anchor = UnitPoint(x: 0.5, y: endFrame.minY / (viewportHeight - endFrame.height))
-rows.insert(contentsOf: olderRows, at: 0)
-position.scrollTo(id: endID, anchor: anchor)
-```
+### AppKit details that bite
 
-- Exact in an eager stack, including anchor values far outside `0...1` (a reference far below the viewport). Inexact in a lazy stack.
-- Keep the reference small: the formula divides by the viewport height minus the reference's height.
-- Insert only while the scroll phase is idle (`onScrollPhaseChange`); park the fetched rows until then.
-- Use the hold only for changes above the reader. A change that also adds rows between the reader and the end marker pushes the marker down by their height, and holding the marker then moves the reader up by that much.
-- After the insert the corrected offset is reported a few milliseconds later, sometimes in a later run-loop pass. Wait for it before re-reading scroll geometry, for example before deciding whether to load another page.
+- `noteHeightOfRows(withIndexesChanged:)` animates in a view-based table unless it runs inside an `NSAnimationContext` group of duration 0.
+- After `reloadData()` or a row insert, the table takes its new size at its next layout and moves the clip view while doing so. Run `layoutSubtreeIfNeeded()` right after the change, under the same flag that marks the list's own moves, or that move is taken for the reader's scroll and overwrites the stored position.
+- A table fills its scroll view, so its frame is no measure of how tall the rows are. Use the last row's `maxY`.
+- A cell reused for another row carries the hosted row's `@State` along unless the hosted content's identity is reset per row (`.id(row.id)`).
+- The list's first update arrives before it has a size. Whatever depends on geometry, such as asking for an older page, has to run again once the first layout has happened.
+- An assignment to an observed property reaches `updateNSView` from a run-loop observer, never inside the assignment. Code that publishes rows cannot read what the list reports on the next line.
+- A view laid over the list, such as the jump button, swallows the scroll wheel while the pointer is on it. Host it in an `NSHostingView` subclass that passes `scrollWheel(with:)` on to the scroll view. Give that host `sizingOptions = []` and fixed size constraints: a self-sizing hosting view takes part in the container's layout.
+- Space below the newest row is a bottom content inset on the scroll view, not padding in a row. The document height the position rules use includes it.
+- On a width change every height is a guess again. Measure only the rows on screen while the width keeps changing and the rest of the reach once it has held for a moment, or a resize step re-measures three viewports of rows.
+- Under `swift test`, a table in a scroll view inside an `NSWindow(…, defer: true)` that is never shown has real geometry. Row rects, clip-view notifications, `insertRows`, a window resize, and realized hosted cells all work there. Live-scroll notifications cannot be produced there. The list is 17 pt narrower where the machine shows scroll bars always. That setting can change while the tests run, so a test must not depend on where rows wrap.
 
-### Keep a position per tab
+### Row content that keeps its height
 
-Keep one list per open tab mounted in a `ZStack` and show only the selected one (`opacity`, `allowsHitTesting`, `accessibilityHidden` on the rest). Each hidden list keeps its own position through tab switches, appends, and window resizes. Rebuilding a list and restoring its position is fragile: a scroll issued in `onAppear` is overridden unless that mount uses `.defaultScrollAnchor(.top, for: .initialOffset)`, and an anchor saved against one viewport height restores to a different place in another.
+A SwiftUI stack that is handed a height shares it out among its children by how much each can give, not by what each asks for. A `VStack` inside an `HStack` is always handed one, because an `HStack` passes its own height to its children. That holds in a `LazyVStack` as much as in a hosted cell. When a child that takes any height, such as a bare shape used as a bar, sits next to a long `Text`, the text is offered half and truncates, and the shape takes the rest. The row's total height is unchanged, so no measurement shows it. Give such a stack `.fixedSize(horizontal: false, vertical: true)`, as `MessageContentView` does.
 
 ## Summary Checklist
 
@@ -341,4 +344,4 @@ Keep one list per open tab mounted in a `ZStack` and show only the selected one 
 - [ ] Use `.scrollTargetBehavior(.viewAligned)` for snap-to-item behavior
 - [ ] Gate frequent scroll position updates by thresholds
 - [ ] Use preference keys for custom scroll position tracking
-- [ ] For chat transcripts, follow Chat Transcripts where it differs from the items above: `ScrollPosition` on an eager stack, unanimated follow and hold, per-frame geometry kept out of observed state
+- [ ] For a transcript that must hold its place, use the AppKit-backed list under Chat Transcripts instead of a SwiftUI scroll view

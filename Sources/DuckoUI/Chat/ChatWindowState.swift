@@ -8,13 +8,20 @@ private let log = Logger(label: "im.ducko.ui.chatwindow")
 @MainActor @Observable
 public final class ChatWindowState {
     var conversation: Conversation?
-    var messages: [ChatMessage] = [] {
-        didSet { prefetchLinkPreviews() }
-    }
+    /// The loaded window: a run of the chat's stored messages, oldest first. Assigned only by `publish`.
+    private(set) var messages: [ChatMessage] = []
 
-    /// The timeline notes from the oldest loaded message on.
-    var notes: [TimelineNote] = []
+    /// The timeline notes from the oldest loaded message on. Assigned only by `publish`.
+    private(set) var notes: [TimelineNote] = []
     var isLoading = false
+
+    /// Where the transcript is scrolled to. Kept here so the tab has its place back when it is selected again.
+    let scroller = TranscriptScroller()
+    let remoteImageConsent = RemoteImageConsent()
+
+    var isAtNewest: Bool {
+        scroller.isAtNewest
+    }
 
     var timelineItems: [TimelineItem] {
         TimelineItem.merged(messages: messages, notes: notes)
@@ -107,10 +114,6 @@ public final class ChatWindowState {
     /// by the server that holds it, and a direct transfer by whatever its bytes pass through.
     var sendsFilesUnencryptedInEncryptedChat: Bool {
         liveConversation?.encryptionEnabled == true
-    }
-
-    var isContactTyping: Bool {
-        environment.chatService.isPartnerTyping(jidString: jidString, accountID: accountID)
     }
 
     /// The files this chat's contact is sending right now, each of which gets a row at the end of the timeline until
@@ -211,8 +214,9 @@ public final class ChatWindowState {
                 conv = try await environment.chatService.openConversation(jidString: jidString, accountID: accountID)
             }
             conversation = conv
-            messages = await environment.chatService.loadMessages(for: conv.id)
-            await loadNotes()
+            // From here on, whatever observes the conversation can ask for a refresh. The first fetch is therefore a
+            // refresh itself, so one asked for meanwhile runs after it instead of being published over.
+            await refreshMessages()
             guard shouldActivate() else { return }
             await environment.chatService.selectConversation(conv.id, accountID: accountID)
         } catch {
@@ -220,19 +224,72 @@ public final class ChatWindowState {
         }
     }
 
+    /// Reads the newest messages again and merges them into the window. A call made while one is running does not
+    /// run beside it: the running one goes round once more when it is done.
     func refreshMessages() async {
         guard let conversationID = conversation?.id else { return }
-        messages = await environment.chatService.loadMessages(for: conversationID)
-        await loadNotes()
+        guard !isRefreshing else {
+            needsAnotherRefresh = true
+            return
+        }
+        isRefreshing = true
+        defer { isRefreshing = false }
+        repeat {
+            needsAnotherRefresh = false
+            await refreshOnce(conversationID)
+        } while needsAnotherRefresh
     }
 
-    private func loadNotes() async {
-        guard let conversationID = conversation?.id else { return }
-        notes = await environment.chatService.fetchNotes(for: conversationID, since: messages.first?.timestamp)
+    @ObservationIgnored private var isRefreshing = false
+    @ObservationIgnored private var needsAnotherRefresh = false
+
+    private func refreshOnce(_ conversationID: UUID) async {
+        let chatService = environment.chatService
+        let limit = max(MessageWindow.initialCount, min(messages.count + MessageWindow.pageSize, MessageWindow.refreshDepth))
+        let reloaded = await (try? chatService.fetchMessageHistory(for: conversationID, before: nil, limit: limit)) ?? []
+        let fetchedNotes = await chatService.fetchNotes(for: conversationID, since: reloaded.first?.timestamp)
+        let loadedIDs = Set(messages.map(\.id))
+        await loadStoredPreviews(for: reloaded.filter { !loadedIDs.contains($0.id) })
+
+        // Older pages and scrolling interleave at every wait above. The window is therefore put together only now,
+        // from the state as it is, with nothing waited for until it is published.
+        let readingFrom = isAtNewest ? nil : messages.first
+        let window = MessageWindow.refreshed(loaded: messages, reloaded: reloaded, isAtNewest: isAtNewest)
+        publish(messages: window, fetchedNotes: fetchedNotes)
+        // The reloaded messages no longer overlap the window, so it started over and what was being read is gone.
+        if let readingFrom, !window.contains(where: { $0.id == readingFrom.id }) {
+            scroller.scrollToNewest()
+        }
+    }
+
+    /// The only place that assigns `messages` and `notes`, in one step, so the timeline is never seen with the
+    /// messages of one fetch and the notes of another.
+    private func publish(messages window: [ChatMessage], fetchedNotes: [TimelineNote]) {
+        let fetchedNoteIDs = Set(fetchedNotes.map(\.id))
+        var windowNotes = fetchedNotes + notes.filter { !fetchedNoteIDs.contains($0.id) }
+        if let start = window.first?.timestamp {
+            // A note older than everything loaded belongs with the older messages, which are not on screen.
+            windowNotes.removeAll { $0.timestamp < start }
+        }
+        // A window that lost its oldest message starts later than it did, so what was the end of history is no longer.
+        if let previousOldest = messages.first, !window.contains(where: { $0.id == previousOldest.id }) {
+            hasReachedEnd = false
+        }
+        let windowIDs = Set(window.map(\.id))
+        previewURLs = previewURLs.filter { windowIDs.contains($0.key) }
+
+        messages = window
+        notes = windowNotes
+        refreshSearchResults()
+        prefetchLinkPreviews()
     }
 
     func sendMessage(_ body: String) async {
         guard let accountID = resolvedAccountID else { return }
+        // A new message is read where it lands. A correction stays where its message is.
+        if editingMessage == nil {
+            scroller.scrollToNewest()
+        }
 
         do {
             if isGroupchat, let editing = editingMessage {
@@ -355,48 +412,113 @@ public final class ChatWindowState {
 
     // MARK: - Infinite Scroll
 
+    /// Loads the page before the oldest loaded message from the store, asking the server archive first when the store
+    /// has nothing older. The page is inserted once scrolling has come to rest. The call returns once the page is
+    /// waiting for that, not once it is inserted.
     func loadOlderMessages() async {
         guard let conversationID = conversation?.id else { return }
-        guard !isLoadingOlder, !hasReachedEnd else { return }
+        guard !isLoading, !isLoadingOlder, !hasReachedEnd else { return }
 
         isLoadingOlder = true
-        defer { isLoadingOlder = false }
-
         do {
-            let older = try await environment.chatService.fetchMessageHistory(
-                for: conversationID,
-                before: messages.first?.timestamp,
-                limit: 50
-            )
-
-            if older.isEmpty {
-                // Local store exhausted — try server
-                guard let accountID = resolvedAccountID else {
-                    hasReachedEnd = true
-                    return
-                }
-                let (serverMessages, hasMore) = try await environment.chatService.fetchServerHistory(
-                    jidString: jidString,
-                    accountID: accountID,
-                    before: messages.first?.timestamp,
-                    limit: 50
-                )
-                if serverMessages.isEmpty {
-                    hasReachedEnd = true
-                } else {
-                    messages = serverMessages + messages
-                    if !hasMore {
-                        hasReachedEnd = true
-                    }
-                }
-            } else {
-                messages = older + messages
+            guard let older = try await fetchOlderPage(conversationID) else {
+                // The oldest loaded message is no longer stored, so the window itself is out of date.
+                isLoadingOlder = false
+                await refreshMessages()
+                return
             }
-            await loadNotes()
+            let chatService = environment.chatService
+            let fetchedNotes = await chatService.fetchNotes(
+                for: conversationID, since: older.page.first?.timestamp ?? older.anchor?.timestamp
+            )
+            await loadStoredPreviews(for: older.page)
             lastLoadHistoryError = nil
+            scroller.performWhenAtRest { [weak self] in
+                self?.insert(older, fetchedNotes: fetchedNotes)
+            }
         } catch {
             log.warning("Failed to load older messages: \(error)")
             lastLoadHistoryError = error.localizedDescription
+            isLoadingOlder = false
+            // No refresh here, though an earlier answer of the server may have stored entries that are not shown yet:
+            // new rows would have the list ask for a page again, and an archive that answers with entries and then
+            // an error could keep that going without end. They show with the next refresh.
+        }
+    }
+
+    private struct OlderPage {
+        var page: [ChatMessage]
+        /// The message the page was taken before.
+        var anchor: ChatMessage?
+        var addedFromServer = false
+        var endsHistory = false
+    }
+
+    /// Run at rest, from the state as it is then. A page whose window was replaced meanwhile is dropped.
+    private func insert(_ older: OlderPage, fetchedNotes: [TimelineNote]) {
+        isLoadingOlder = false
+        if messages.first?.id == older.anchor?.id {
+            let loadedIDs = Set(messages.map(\.id))
+            publish(messages: older.page.filter { !loadedIDs.contains($0.id) } + messages, fetchedNotes: fetchedNotes)
+            if older.endsHistory {
+                hasReachedEnd = true
+            }
+        }
+        if older.addedFromServer {
+            Task { await refreshMessages() }
+        }
+    }
+
+    /// The cutoff of a fetch for what is older than the window: the start of the second after the oldest loaded
+    /// message's. Stored timestamps are cut to the second while archive entries carry fractions, so the cutoff takes
+    /// in the whole second. The page is then found by position.
+    private var olderCutoff: Date? {
+        messages.first.map { Date(timeIntervalSince1970: $0.timestamp.timeIntervalSince1970.rounded(.down) + 1) }
+    }
+
+    /// Returns nil when the oldest loaded message is no longer stored.
+    private func fetchOlderPage(_ conversationID: UUID) async throws -> OlderPage? {
+        guard var older = try await fetchStoredOlderPage(conversationID) else { return nil }
+        guard older.page.isEmpty else { return older }
+        guard let accountID = resolvedAccountID else {
+            older.endsHistory = true
+            return older
+        }
+        // The store has nothing older, so the server is asked. A round that adds nothing is the end, and a round that
+        // stores older entries gives a page. A round can also add only entries that share the oldest loaded message's
+        // second and sort after it. Those give no page, and the next round reads past them as duplicates. The rounds
+        // are counted, so an archive that keeps adding such entries ends paging as well.
+        for _ in 0 ..< MessageWindow.serverRounds {
+            let (additions, _) = try await environment.chatService.fetchServerHistory(
+                jidString: jidString, accountID: accountID, before: olderCutoff, limit: MessageWindow.pageSize
+            )
+            guard !additions.isEmpty else { break }
+            guard var stored = try await fetchStoredOlderPage(conversationID) else { return nil }
+            stored.addedFromServer = true
+            if !stored.page.isEmpty { return stored }
+            older = stored
+        }
+        older.endsHistory = true
+        return older
+    }
+
+    /// The page before the window as the store has it, empty when the store has nothing older, and nil when the
+    /// store no longer has the oldest loaded message.
+    private func fetchStoredOlderPage(_ conversationID: UUID) async throws -> OlderPage? {
+        var limit = 2 * MessageWindow.pageSize
+        while true {
+            let fetched = try await environment.chatService.fetchMessageHistory(for: conversationID, before: olderCutoff, limit: limit)
+            let anchor = messages.first
+            let page = MessageWindow.olderPage(before: messages, in: fetched)
+            if let page, !page.isEmpty {
+                return OlderPage(page: page, anchor: anchor)
+            }
+            // Only a fetch that came back short holds everything before the cutoff. A full one was cut off inside a
+            // run of messages sharing the oldest loaded one's second.
+            guard fetched.count == limit else {
+                return page.map { OlderPage(page: $0, anchor: anchor) }
+            }
+            limit *= 2
         }
     }
 
@@ -412,20 +534,43 @@ public final class ChatWindowState {
             return
         }
 
-        searchResults = messages
-            .filter { $0.body.localizedStandardContains(searchText) }
-            .map(\.id)
+        searchResults = searchMatches
         currentSearchIndex = searchResults.isEmpty ? 0 : searchResults.count - 1
+        revealCurrentSearchResult()
     }
 
     func nextSearchResult() {
         guard !searchResults.isEmpty else { return }
         currentSearchIndex = (currentSearchIndex + 1) % searchResults.count
+        revealCurrentSearchResult()
     }
 
     func previousSearchResult() {
         guard !searchResults.isEmpty else { return }
         currentSearchIndex = (currentSearchIndex - 1 + searchResults.count) % searchResults.count
+        revealCurrentSearchResult()
+    }
+
+    private var searchMatches: [UUID] {
+        messages
+            .filter { $0.body.localizedStandardContains(searchText) }
+            .map(\.id)
+    }
+
+    private func revealCurrentSearchResult() {
+        guard searchResults.indices.contains(currentSearchIndex) else { return }
+        scroller.reveal(searchResults[currentSearchIndex])
+    }
+
+    /// Results are ids of loaded messages, and a published window can have lost some. The current result stays
+    /// selected while its message is loaded, and nothing is scrolled to.
+    private func refreshSearchResults() {
+        guard isSearching, !searchText.isEmpty else { return }
+        let matches = searchMatches
+        guard matches != searchResults else { return }
+        let current = searchResults.indices.contains(currentSearchIndex) ? searchResults[currentSearchIndex] : nil
+        searchResults = matches
+        currentSearchIndex = current.flatMap { matches.firstIndex(of: $0) } ?? min(currentSearchIndex, max(0, matches.count - 1))
     }
 
     func dismissSearch() {
@@ -450,14 +595,21 @@ public final class ChatWindowState {
     private var prefetchedLinkPreviews: [String: LinkPreview] = [:]
 
     func linkPreview(for message: ChatMessage) -> LinkPreview? {
-        guard let url = Self.previewURL(of: message) else { return nil }
+        guard let url = previewURL(of: message) else { return nil }
         return prefetchedLinkPreviews[url] ?? environment.linkPreviewService.cachedPreview(for: url)
     }
 
+    /// The link each loaded message shows a preview for, and the body it was found in. Finding a link costs a pass
+    /// of the link detector, which building the rows would otherwise repeat for every loaded message.
+    @ObservationIgnored private var previewURLs: [UUID: (body: String, url: String?)] = [:]
+
     /// A body that only repeats an attachment's link has no preview: fetching one would request the file on sight,
     /// which is the attachment's decision to make.
-    private static func previewURL(of message: ChatMessage) -> String? {
-        message.bodyIsAttachmentLink ? nil : extractFirstURL(from: message.body)
+    private func previewURL(of message: ChatMessage) -> String? {
+        if let known = previewURLs[message.id], known.body == message.body { return known.url }
+        let url = message.bodyIsAttachmentLink ? nil : Self.extractFirstURL(from: message.body)
+        previewURLs[message.id] = (message.body, url)
+        return url
     }
 
     private static let linkDetector: NSDataDetector = {
@@ -477,7 +629,7 @@ public final class ChatWindowState {
     private func prefetchLinkPreviews() {
         let service = environment.linkPreviewService
         for message in messages {
-            guard let urlString = Self.previewURL(of: message),
+            guard let urlString = previewURL(of: message),
                   service.cachedPreview(for: urlString) == nil,
                   let url = URL(string: urlString) else { continue }
             Task { [weak self] in
@@ -485,6 +637,16 @@ public final class ChatWindowState {
                       let self, prefetchedLinkPreviews[urlString] == nil else { return }
                 prefetchedLinkPreviews[urlString] = preview
             }
+        }
+    }
+
+    /// Reads the previews the store already has for `entering` into memory before their messages are published, so
+    /// the rows are built with their previews and do not grow afterwards.
+    private func loadStoredPreviews(for entering: [ChatMessage]) async {
+        let service = environment.linkPreviewService
+        for message in entering {
+            guard let urlString = previewURL(of: message), service.cachedPreview(for: urlString) == nil else { continue }
+            _ = await service.storedPreview(for: urlString)
         }
     }
 
@@ -538,6 +700,7 @@ public final class ChatWindowState {
 
         let attachmentsToSend = pendingAttachments
         let directly = sendsAttachmentsDirectly
+        scroller.scrollToNewest()
         clearAttachments()
         lastSendError = nil
 

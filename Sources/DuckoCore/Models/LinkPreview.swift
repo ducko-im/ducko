@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LinkPreview: Sendable {
+public struct LinkPreview: Sendable, Equatable {
     public var url: String
     public var title: String?
     public var descriptionText: String?
