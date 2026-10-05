@@ -17,7 +17,7 @@ Run every Bash call in this workflow unsandboxed: the steps bind a local port, l
 Shell variables do not carry between Bash calls, so start every snippet below with these lines:
 
 ```bash
-WORK=<absolute path of this run's work folder, outside the repo>
+WORK=<absolute path of this run's work folder, outside the repo, free of + * $ | ( ) [ ] { }>
 PROFILE=demo-screenshots
 PORT=5299
 APP="${WORK:?}/DuckoDemo.app"
@@ -25,7 +25,7 @@ SCRIPTS=Skills/demo-screenshots/scripts
 STORE="$HOME/Library/Application Support/Ducko-Dev-${PROFILE:?}"
 ```
 
-The process patterns in the snippets are written out in full on purpose, so a snippet run without these lines can never match the installed app.
+The `pgrep -fl` and `pkill` patterns are written out in full on purpose, so a snippet run without these lines can never match the installed app. Keep the `^${APP:?}` anchor in every `PID=` lookup: a launch command with the path spelled out leaves a shell that has the same path in its command line, and an unanchored lookup returns that shell's PID as well. With `APP` unset, the lookup stops with an error and `PID` stays empty.
 
 Drive the demo instance only by its PID. Skip every tool that targets the app by name (System Events `process "DuckoApp"`, Peekaboo `--app`, the scripts in `Skills/ducko-ui/scripts`), because an installed Ducko that is running has the same process name. The installed app may keep running throughout.
 
@@ -110,7 +110,7 @@ Continue once it prints `signed-ok`.
 
    ```bash
    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-     PID=$(pgrep -f "DuckoDemo.app/Contents/MacOS/DuckoApp")
+     PID=$(pgrep -f "^${APP:?}/Contents/MacOS/DuckoApp")
      [ -n "$PID" ] && swift $SCRIPTS/windows.swift "$PID" | grep "onscreen true.*title: $TITLE\$" && break
      perl -e 'select(undef,undef,undef,1)'
    done
@@ -148,14 +148,14 @@ Launch the instance again as in Step 4.1, then wait as in Step 4.2 with `TITLE="
 A restored chat can ask for older messages a moment before the connection is up, which leaves a "Couldn't load older messages" banner in it. Close it first. The command prints `dismissed` and the number of banners it closed:
 
 ```bash
-PID=$(pgrep -f "DuckoDemo.app/Contents/MacOS/DuckoApp")
+PID=$(pgrep -f "^${APP:?}/Contents/MacOS/DuckoApp")
 swift $SCRIPTS/dismiss_banner.swift "$PID"
 ```
 
 A window that is not the key window shows gray traffic lights, so bring each one to the front before capturing it. Run this once with `TITLE="Contacts"` and `OUT=ducko-contacts.png`, and once with `TITLE="Lena Fischer"` and `OUT=ducko-chat.png`:
 
 ```bash
-PID=$(pgrep -f "DuckoDemo.app/Contents/MacOS/DuckoApp")
+PID=$(pgrep -f "^${APP:?}/Contents/MacOS/DuckoApp")
 swift $SCRIPTS/focus.swift "$PID" "$TITLE"
 perl -e 'select(undef,undef,undef,2)'
 WID=$(swift $SCRIPTS/windows.swift "$PID" | grep -m1 "onscreen true.*title: $TITLE\$" | cut -d' ' -f1)
@@ -217,3 +217,6 @@ Rules for the content:
 - Four single-line messages fill the default chat window. A fifth one, or a message that wraps, makes it scroll.
 - Message times in `seed_transcript.py` are UTC on the day file's date and show in local time. Keep them earlier than the current time.
 - An incoming stanza appended to `$WORK/inject.txt` reaches the running instance. `{ME}` stands for the account's full JID.
+- A room invitation shows its banner in Contacts. Append one `<message from='…' to='{ME}'>` line carrying `<x xmlns='jabber:x:conference' jid='<room address>'/>` after the last relaunch, since a pending invitation is not kept across one.
+- A transcript line takes `replyToID`, naming another line's `stanzaID`, for a reply quote. For file cards it takes `attachments`, a list of objects with `id` (a UUID string), `url`, and optionally `fileName`, `fileSize` and `mimeType`. A line that fails to decode is dropped without an error.
+- The stub has no group chat service. For a room row, add a row to `ZCONVERSATIONRECORD` in `$STORE/default.store` while the instance is stopped, after Step 5's unread update. Copy the chat's row, set `ZTYPE` to `groupchat` and `ZJID` to the room's address, give it a new `Z_PK` and a `ZID` from `randomblob(16)`, and raise `Z_MAX` for that entity in `Z_PRIMARYKEY`. `ZDISPLAYNAME` names the row, `ZROOMSUBJECT` gives it a caption and `ZUNREADCOUNT` a badge.

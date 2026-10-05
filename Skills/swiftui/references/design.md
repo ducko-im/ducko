@@ -29,4 +29,4 @@ Prefer to place standard fonts, sizes, colors, stack spacing, padding, rounding,
 - Only use `fontWeight()` for weights other than bold when there's an important reason - scattering around `fontWeight(.medium)` or `fontWeight(.semibold)` is counterproductive.
 - Avoid hard-coded values for padding and stack spacing unless specifically requested.
 - Avoid UIKit colors (`UIColor`) in SwiftUI code; use SwiftUI `Color` or asset catalog colors.
-- The font size `.caption2` is extremely small, and is generally best avoided. Even the font size `.caption` is on the small side, and should be used carefully.
+- The font size `.caption2` is extremely small, and is generally best avoided. Even the font size `.caption` is on the small side, and should be used carefully. On macOS the two are the same size and differ in weight (`.caption` is 10 pt regular, `.caption2` is 10 pt medium), so choose between them by weight, not to make text smaller.
