@@ -62,7 +62,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/destroy [reason]` — destroy current room (owner only)
 - `/voice grant|revoke <nickname>` — grant or revoke voice (moderator only)
 - `/affiliations [member|admin|owner|outcast]` — list affiliations (default: member)
-- `/config` — show room configuration fields
+- `/config [submit-default]` — show room configuration fields, or submit the defaults to unlock a new room
 - `/rooms [service]` — discover available rooms on MUC service
 - `/sendfile [jid] <path>` — send a file (uses current room if jid omitted)
 - `/senddirect <jid> <path>` — send a file straight to one of the contact's online devices (XEP-0234) instead of uploading it. The contact's devices are asked first. The command prints an error when the file is missing or is a folder, or when no device takes direct transfers. Otherwise it prints `Sending <file> to <jid> directly. Use /transfers to check progress.` and the prompt returns. A decline, or a transfer that fails once under way, is printed when it happens. A failure before that point, such as the device refusing the offer or the file's contents not being readable, prints nothing and shows only in `/transfers` and the history.
@@ -475,6 +475,8 @@ DUCKO_PROFILE=smoke-connect ducko account add USER_JID --password PASSWORD_HERE 
 ```
 
 STARTTLS passes through the relay, and the certificate is still checked against the JID's domain. Send `SIGUSR1` to the relay's Python process to close the relayed sockets while it keeps listening: the client reports the connection lost, reconnects through the relay and resumes its stream, which the file log records as `Stream resumed as <jid>`. Take that process's PID from `ps -axo pid,comm,args`: `pgrep -f tcp-relay.py` also matches every wrapper shell whose command line names the script, and a signal sent to the relay's wrapper ends the wrapper and leaves the relay running. A GUI instance started under the same profile uses that account once its status is set to Available, so the relay drops its connection the same way. Afterwards kill that PID to stop the relay, and clean up a profile the GUI ran under as Throwaway Profiles describes.
+
+To check a room across the drop, add a second account in its own throwaway profile, connected directly, and run each REPL under tmux. In the relayed REPL run `/join <new-room>@<muc-service> <nick>` and then `/config submit-default`, since a new room starts locked, and `/join` it from the second REPL. Send `SIGUSR1` and have the second account send to the room right away. The relayed account resumes a few seconds later and prints that message, which the server replays, just before its `stream resumed as <jid>` line. `/members` and `/history <room>` in the relayed REPL then show both occupants and the message, a message it sends reaches the second REPL, and the second REPL shows no leave or join of the relayed account across the drop. `/leave` in both REPLs so the server removes the room, and clean up the second profile as Throwaway Profiles describes.
 
 ## Examples
 
