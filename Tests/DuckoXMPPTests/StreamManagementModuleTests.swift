@@ -36,39 +36,6 @@ private func disconnectAndAck(_ client: XMPPClient, sm: StreamManagementModule, 
     await client.disconnect(streamCloseTimeout: .milliseconds(20))
 }
 
-/// Simulates the connect flow up to post-auth features, then expects a `<resume>` element
-/// instead of `<bind>`. Responds with the given `resumeResponse` XML.
-private func simulateResumeConnect(_ mock: MockTransport, resumeResponse: String) async {
-    await mock.waitForSent(count: 1) // stream opening sent
-    await mock.simulateReceive(testServerStreamOpen)
-    await mock.simulateReceive(testFeaturesNoTLS)
-    await mock.waitForSent(count: 2) // auth element sent
-    await mock.simulateReceive("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
-    await mock.waitForSent(count: 3) // post-auth stream opening sent
-    await mock.simulateReceive(testServerStreamOpen)
-    await mock.simulateReceive(testFeaturesBindWithSM)
-    await mock.waitForSent(count: 4) // <resume> sent (instead of bind)
-    await mock.simulateReceive(resumeResponse)
-}
-
-/// Simulates the connect flow where resume fails, then falls through to normal bind.
-private func simulateResumeFailConnect(_ mock: MockTransport) async {
-    await mock.waitForSent(count: 1) // stream opening sent
-    await mock.simulateReceive(testServerStreamOpen)
-    await mock.simulateReceive(testFeaturesNoTLS)
-    await mock.waitForSent(count: 2) // auth element sent
-    await mock.simulateReceive("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
-    await mock.waitForSent(count: 3) // post-auth stream opening sent
-    await mock.simulateReceive(testServerStreamOpen)
-    await mock.simulateReceive(testFeaturesBindWithSM)
-    await mock.waitForSent(count: 4) // <resume> sent
-    await mock.simulateReceive("<failed xmlns='urn:xmpp:sm:3'><item-not-found xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></failed>")
-    await mock.waitForSent(count: 5) // bind IQ sent (fallback)
-    await mock.simulateReceive(testBindResult)
-    await mock.waitForSent(count: 6) // SM <enable> sent after bind
-    await mock.simulateReceive("<enabled xmlns='urn:xmpp:sm:3' id='sm-resume-2' max='300'/>")
-}
-
 // MARK: - Tests
 
 enum StreamManagementModuleTests {

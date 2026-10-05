@@ -53,7 +53,7 @@ private struct RejoinHarness {
 private func makeRejoinHarness() async throws -> RejoinHarness {
     let store = MockPersistenceStore()
     let transport = MockTransport()
-    let factory = MockXMPPClientFactory(transport: transport, modules: [MUCModule()])
+    let factory = MockXMPPClientFactory(transport: transport, modules: [MUCModule(), PEPModule()])
     let accountService = makeAccountService(store: store, clientFactory: factory)
     let chatService = makeChatService(store: store)
     chatService.setAccountService(accountService)
@@ -173,17 +173,19 @@ enum RoomRejoinTests {
             await harness.store.addConversation(makeRoom(bookmarkedRoomJID, accountID: accountID, rejoinsOnConnect: true))
             await harness.store.addConversation(makeRoom(leftRoomJID, accountID: accountID, rejoinsOnConnect: false))
             harness.bookmarksService.autoJoinEnabled = autoJoinEnabled
-            // The client has no PEP module, so the bookmarks cannot be loaded and the seeded one stands.
-            harness.bookmarksService.setBookmarksForTesting(
-                [RoomBookmark(jidString: bookmarkedRoomJID.description, autojoin: true)], accountID: accountID
-            )
+            let bookmarksService = harness.bookmarksService
 
             let boundJID = try #require(FullJID.parse("\(testJIDString)/test"))
-            await harness.bookmarksService.handleEvent(.connected(boundJID), accountID: accountID)
+            let connected = Task { @MainActor in
+                await bookmarksService.handleEvent(.connected(boundJID), accountID: accountID)
+            }
+            try await answerBookmarksFetch(on: harness.transport, autoJoin: [bookmarkedRoomJID])
+            await connected.value
 
             let joined = await harness.joinPresences()
             let expectedJoins = autoJoinEnabled ? 1 : 0
-            #expect(joined.count == expectedJoins)
+            #expect(joined.count == 2 * expectedJoins)
+            #expect(joined.count { $0.contains("\(bookmarkedRoomJID)/alice") } == expectedJoins)
             #expect(joined.count { $0.contains("\(roomJID)/alice") } == expectedJoins)
 
             await harness.accountService.disconnect(accountID: accountID)

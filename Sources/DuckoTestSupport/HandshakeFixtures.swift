@@ -3,8 +3,8 @@ import Foundation
 // MARK: - Shared Handshake XML Constants
 
 // Byte-identical across DuckoCoreTests and DuckoXMPPTests, so they live here rather than being duplicated
-// per target. Target-specific fixtures (post-auth features with SM, the SASL2/ISR set, the divergent
-// `testBindResult`) stay in their own target's helpers.
+// per target. Target-specific fixtures (the SASL2/ISR set, the divergent `testBindResult`) stay in their own
+// target's helpers.
 
 /// Standard stream opening from server.
 public let testServerStreamOpen =
@@ -23,6 +23,14 @@ public let testFeaturesNoTLS = """
 public let testFeaturesBind = """
 <features xmlns='http://etherx.jabber.org/streams'>\
 <bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/>\
+</features>
+"""
+
+/// Post-auth features with bind and Stream Management.
+public let testFeaturesBindWithSM = """
+<features xmlns='http://etherx.jabber.org/streams'>\
+<bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/>\
+<sm xmlns='urn:xmpp:sm:3'/>\
 </features>
 """
 

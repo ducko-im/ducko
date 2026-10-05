@@ -901,8 +901,8 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         try await roomService.leaveRoom(jid: jid, accountID: accountID, forget: forget)
     }
 
-    func rejoinRooms(accountID: UUID, excluding autoJoined: Set<BareJID>) async {
-        await roomService.rejoinRooms(accountID: accountID, excluding: autoJoined)
+    func rejoinRooms(accountID: UUID, excluding skipped: Set<BareJID>) async {
+        await roomService.rejoinRooms(accountID: accountID, excluding: skipped)
     }
 
     public func sendGroupMessage(to room: BareJID, body: String, accountID: UUID, attachments: [Attachment] = []) async throws {
@@ -1216,12 +1216,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         case let .messageModerated(id, _, room, _): await handleMessageModerated(originalID: id, room: room, accountID: accountID)
         case let .messageError(id, from, error): await handleMessageError(messageID: id, errorText: error.displayText, from: from, accountID: accountID)
         case let .rosterUpdated(update):
-            guard update.isInitialResponse else { return }
-            let taskID = UUID()
-            pendingTasks[taskID] = Task { [weak self] in
-                defer { self?.pendingTasks[taskID] = nil }
-                await self?.syncRecentHistory(accountID: accountID)
-            }
+            if update.isInitialResponse { startRecentHistorySync(accountID: accountID) }
         case let .presenceUpdated(from, presence):
             handlePresenceForResourceLock(from: from, presence: presence, accountID: accountID)
         case let .roomJoined(room, occupancy, created): await roomService.handleRoomJoined(room: room, occupancy: occupancy, isNewlyCreated: created, accountID: accountID)
@@ -1234,8 +1229,10 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         case let .mucPrivateMessageReceived(message): await handleMUCPrivateMessageReceived(message, accountID: accountID)
         case let .roomDestroyed(room, _, _): await handleRoomDestroyed(room: room, accountID: accountID)
         case let .mucSelfPingFailed(room, reason): await roomService.handleMUCSelfPingFailed(room: room, reason: reason, accountID: accountID)
+        case .connected: roomService.clearPendingLeaves(accountID: accountID)
+        case .streamResumed: roomService.handleStreamResumed(accountID: accountID)
         case let .disconnected(reason): handleMUCDisconnect(reason: reason, accountID: accountID)
-        case .connected, .streamResumed, .authenticationFailed,
+        case .authenticationFailed,
              .presenceReceived, .iqReceived,
              .presenceSubscriptionRequest,
              .presenceSubscriptionApproved, .presenceSubscriptionRevoked,
@@ -1254,11 +1251,13 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
     /// Clears the blip-safe live state (locks/typing/rooms) on every disconnect, scoped to the disconnecting
     /// account so a global `removeAll` can't erase other still-connected accounts' rooms. Drops pending invites
-    /// only on intentional `.requested` teardown; a `streamError`/`connectionLost`/`redirect` blip preserves them.
+    /// and pending leaves only on intentional `.requested` teardown; a `streamError`/`connectionLost`/`redirect`
+    /// blip preserves them.
     private func handleMUCDisconnect(reason: DisconnectReason, accountID: UUID) {
-        clearLiveChatState(for: accountID)
         if case .requested = reason {
-            roomService.clearInvites(accountID: accountID)
+            purgeAccount(accountID)
+        } else {
+            clearLiveChatState(for: accountID)
         }
     }
 
@@ -1703,14 +1702,14 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         clearRoomState(forAccount: accountID)
     }
 
-    /// Drops one account's chat state on a lifecycle teardown that bypasses the `.disconnected` event handler
-    /// (user-initiated `AccountService.disconnect`, account delete) — the single entry point both reach via
-    /// `AppEnvironment` composition. Clears the blip-safe live state plus pending room invites: unlike
-    /// locks/typing/rooms, invites are one-shot messages the server never re-delivers on reconnect, so this
-    /// user-initiated teardown is the only one that should discard them. Persisted conversations survive offline.
+    /// Drops one account's chat state when the user ends its session, which a stream blip never does. Pending
+    /// invites are discarded only here, because the server never re-delivers them on a reconnect. Pending leaves are
+    /// discarded because they belong to the session a resume would continue, and this teardown ends it. Persisted
+    /// conversations survive offline.
     func purgeAccount(_ accountID: UUID) {
         clearLiveChatState(for: accountID)
         roomService.clearInvites(accountID: accountID)
+        roomService.clearPendingLeaves(accountID: accountID)
     }
 
     // MARK: - Private: Group OMEMO
@@ -2263,6 +2262,14 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             throw ChatServiceError.invalidJID(jidString)
         }
         return try await fetchServerHistory(jid: jid, accountID: accountID, before: before, limit: limit)
+    }
+
+    private func startRecentHistorySync(accountID: UUID) {
+        let taskID = UUID()
+        pendingTasks[taskID] = Task { [weak self] in
+            defer { self?.pendingTasks[taskID] = nil }
+            await self?.syncRecentHistory(accountID: accountID)
+        }
     }
 
     private func syncRecentHistory(accountID: UUID) async {

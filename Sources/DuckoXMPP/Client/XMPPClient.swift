@@ -212,6 +212,11 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
         do {
             let resumed = try await performHandshake(reader: reader)
+            // Runs before the reader starts. Until then the reader holds back what the server sent after the
+            // handshake, so no module sees a stanza of this session before it knows whether the session was resumed.
+            for module in modules.values {
+                module.handleSessionEstablished(resumed: resumed)
+            }
             startReader(reader: reader)
             try await runPostHandshakeModules(resumed: resumed)
             try checkActiveSession()
@@ -582,13 +587,24 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
     // MARK: - Sending
 
-    public func send(_ stanza: any XMPPStanza) async throws {
-        guard case .connected = state else {
+    /// Whether the client takes stanzas: it is connected and its teardown has not begun. A teardown that has begun
+    /// stops stream management from queuing while `state` is still `.connected`, so a stanza taken from then on would
+    /// be neither delivered nor re-sent on a resume. A requested disconnect still takes stanzas until its teardown
+    /// starts, which is where this differs from `checkActiveSession`.
+    public var acceptsStanzas: Bool {
+        guard cleanUpTask == nil, case .connected = state else { return false }
+        return true
+    }
+
+    /// `onAccepted` runs once the stanza is taken for this session, before the write. See `ModuleContext.sendStanza`.
+    public func send(_ stanza: any XMPPStanza, onAccepted: ModuleContext.StanzaAcceptanceHandler? = nil) async throws {
+        guard acceptsStanzas else {
             throw XMPPClientError.notConnected
         }
         for interceptor in interceptors {
             interceptor.processOutgoing(stanza.element)
         }
+        onAccepted?()
         try await connection.send(XMPPStreamWriter.stanza(stanza.element))
     }
 
@@ -1134,8 +1150,9 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
     private func makeModuleContext() -> ModuleContext {
         ModuleContext(
-            sendStanza: { [weak self] stanza in
-                try await self?.send(stanza)
+            sendStanza: { [weak self] stanza, onAccepted in
+                guard let self else { throw XMPPClientError.notConnected }
+                try await send(stanza, onAccepted: onAccepted)
             },
             sendIQ: { [weak self] iq, terminal in
                 guard let self else {

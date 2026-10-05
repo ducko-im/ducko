@@ -1361,65 +1361,6 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
         }
     }
 
-    struct SelfPingStarted {
-        @Test
-        func `Self-ping task is started on room join`() async throws {
-            let mock = MockTransport()
-            let client = try await makeConnectedClient(mock: mock)
-            let module = try #require(await client.module(ofType: MUCModule.self))
-
-            try await module.joinRoom(testRoomJID, nickname: "me")
-
-            // Simulate self-presence (status 110) to trigger join
-            await mock.simulateReceive("""
-            <presence from='room@conference.example.com/me'>\
-            <x xmlns='http://jabber.org/protocol/muc#user'>\
-            <item affiliation='owner' role='moderator'/>\
-            <status code='110'/>\
-            </x>\
-            </presence>
-            """)
-
-            try? await Task.sleep(for: .milliseconds(100))
-
-            // Verify we can still interact with the module (ping task running)
-            let nickname = module.nickname(in: testRoomJID)
-            #expect(nickname == "me")
-
-            await disconnectFast(client)
-        }
-    }
-
-    struct SelfPingCancelledOnLeave {
-        @Test
-        func `Self-ping task is cancelled on leave`() async throws {
-            let mock = MockTransport()
-            let client = try await makeConnectedClient(mock: mock)
-            let module = try #require(await client.module(ofType: MUCModule.self))
-
-            try await module.joinRoom(testRoomJID, nickname: "me")
-
-            await mock.simulateReceive("""
-            <presence from='room@conference.example.com/me'>\
-            <x xmlns='http://jabber.org/protocol/muc#user'>\
-            <item affiliation='owner' role='moderator'/>\
-            <status code='110'/>\
-            </x>\
-            </presence>
-            """)
-
-            try? await Task.sleep(for: .milliseconds(100))
-
-            try await module.leaveRoom(testRoomJID)
-
-            // Verify we left — nickname should be nil
-            let nickname = module.nickname(in: testRoomJID)
-            #expect(nickname == nil)
-
-            await disconnectFast(client)
-        }
-    }
-
     struct PrivateMessages {
         @Test
         func `Type chat from tracked room emits mucPrivateMessageReceived`() async throws {

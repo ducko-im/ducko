@@ -20,10 +20,12 @@ public struct MockXMPPClientFactory: XMPPClientFactory {
         self.modulesForAccount = modulesForAccount
     }
 
+    /// Passes on the stream-management part of `resuming`. The modules a test supplies are used as they are, so one
+    /// that carries state across a resume has to be seeded by a factory of the test's own.
     public func makeClient(
         account: Account,
         password: String,
-        previousSMState: SMResumeState?,
+        resuming: StreamResumeContext?,
         requireTLSOverride: Bool?,
         omemoService: OMEMOService?
     ) async -> (XMPPClient, StreamManagementModule) {
@@ -34,7 +36,7 @@ public struct MockXMPPClientFactory: XMPPClientFactory {
         )
         builder.withTransport(transportForAccount(account))
         builder.withRequireTLS(false)
-        let sm = StreamManagementModule(previousState: previousSMState)
+        let sm = StreamManagementModule(previousState: resuming?.streamManagement)
         builder.withModule(sm)
         builder.withInterceptor(sm)
         for module in modulesForAccount(account) {

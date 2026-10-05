@@ -2,8 +2,9 @@
 public struct ModuleContext: Sendable {
     public typealias IQTerminalHandler = @Sendable (Result<XMPPIQ, any Error>) -> Void
     public typealias IQSender = @Sendable (XMPPIQ, IQTerminalHandler?) async throws -> XMLElement?
-    /// Sends a stanza over the connection.
-    public let sendStanza: @Sendable (any XMPPStanza) async throws -> Void
+    public typealias StanzaAcceptanceHandler = @Sendable () -> Void
+    public typealias StanzaSender = @Sendable (any XMPPStanza, StanzaAcceptanceHandler?) async throws -> Void
+    private let sendStanzaImpl: StanzaSender
     private let sendIQImpl: IQSender
     /// Emits a domain event to the client's event stream.
     public let emitEvent: @Sendable (XMPPEvent) -> Void
@@ -22,7 +23,7 @@ public struct ModuleContext: Sendable {
     public let serverStreamFeatures: @Sendable () -> XMLElement?
 
     public init(
-        sendStanza: @Sendable @escaping (any XMPPStanza) async throws -> Void,
+        sendStanza: @escaping StanzaSender,
         sendIQ: @escaping IQSender,
         emitEvent: @Sendable @escaping (XMPPEvent) -> Void,
         generateID: @Sendable @escaping () -> String,
@@ -32,7 +33,7 @@ public struct ModuleContext: Sendable {
         sendElement: @Sendable @escaping (XMLElement) async throws -> Void = { _ in },
         serverStreamFeatures: @Sendable @escaping () -> XMLElement? = { nil }
     ) {
-        self.sendStanza = sendStanza
+        self.sendStanzaImpl = sendStanza
         self.sendIQImpl = sendIQ
         self.emitEvent = emitEvent
         self.generateID = generateID
@@ -41,6 +42,14 @@ public struct ModuleContext: Sendable {
         self.availableFeatures = availableFeatures
         self.sendElement = sendElement
         self.serverStreamFeatures = serverStreamFeatures
+    }
+
+    /// Sends a stanza over the connection. `onAccepted` runs once the client has taken the stanza for its session, before
+    /// the write and before any reply is dispatched. From then on stream management re-sends the stanza on a resume if
+    /// the write fails. It does not run when the send is refused. The `sendStanza` closure passed to `init` must uphold
+    /// this.
+    public func sendStanza(_ stanza: any XMPPStanza, onAccepted: StanzaAcceptanceHandler? = nil) async throws {
+        try await sendStanzaImpl(stanza, onAccepted)
     }
 
     /// Sends an IQ and awaits the matching result response. Returns `nil` for result IQs with no child.

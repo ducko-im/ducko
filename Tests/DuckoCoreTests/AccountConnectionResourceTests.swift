@@ -42,9 +42,9 @@ struct AccountConnectionResourceTests {
         #expect(first.resume == nil)
         await #expect(throws: AccountConnectionFactoryProbe.Failure.self) { try await service.connect(accountID: id, password: "secret") }
         let retry = try await factory.nextRequest()
-        #expect(retry.resume?.resumptionId == "saved-session")
-        #expect(retry.resume?.incomingCounter == 7)
-        #expect(retry.resume?.outgoingCounter == 9)
+        #expect(retry.resume?.streamManagement.resumptionId == "saved-session")
+        #expect(retry.resume?.streamManagement.incomingCounter == 7)
+        #expect(retry.resume?.streamManagement.outgoingCounter == 9)
         await service.disconnect(accountID: id)
         await service.savePassword(accountID: id)
         #expect(credentials.loadPassword(for: bare.description) == nil)
@@ -98,6 +98,27 @@ struct AccountConnectionResourceTests {
         try await waitForEvent(request.disconnections) { _ in true }
         #expect(service.client(for: id) == nil)
         #expect(await redirected.connectedHost == nil)
+        _ = await connection.result
+    }
+
+    @Test
+    func `a redirected session's room module is the one the account hands out`() async throws {
+        let original = MockTransport()
+        let redirected = MockTransport()
+        let factory = AccountConnectionFactoryProbe(transports: [original, redirected])
+        let service = AccountService(store: MockPersistenceStore(), credentialStore: MockCredentialStore(), clientFactory: factory)
+        let id = try await service.createAccount(jidString: "alice@example.com", requireTLS: false)
+        let (first, connection) = try await driveMockConnect(service, accountID: id, transport: original)
+
+        await original.simulateReceive("<error><see-other-host xmlns='urn:ietf:params:xml:ns:xmpp-streams'>redirect.example.com:5223</see-other-host></error>")
+        try await suspendAtStreamManagement(redirected, requiresTLS: true)
+        await redirected.simulateReceive("<enabled xmlns='urn:xmpp:sm:3' id='redirected-session' max='300'/>")
+        try await eventually { service.connectedClient(for: id).map { $0 !== first } ?? false }
+
+        let client = try #require(service.connectedClient(for: id))
+        let roomModule = try #require(service.roomModule(for: id))
+        #expect(await client.module(ofType: MUCModule.self) === roomModule)
+        await service.disconnect(accountID: id)
         _ = await connection.result
     }
 
@@ -286,8 +307,7 @@ struct AccountConnectionResourceTests {
             try await exchange(transport, matching: "<stream:stream", response: testServerStreamOpen + testFeaturesNoTLS)
         }
         try await exchange(transport, matching: "<auth", response: "<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
-        let features = testFeaturesBind.replacingOccurrences(of: "</features>", with: "<sm xmlns='urn:xmpp:sm:3'/></features>")
-        try await exchange(transport, matching: "<stream:stream", response: testServerStreamOpen + features)
+        try await exchange(transport, matching: "<stream:stream", response: testServerStreamOpen + testFeaturesBindWithSM)
         try await exchange(transport, matching: "<iq", response: testBindResult)
         try await exchange(transport, matching: "<enable", response: "")
     }
@@ -329,7 +349,7 @@ private actor AccountConnectionFactoryProbe: XMPPClientFactory {
     enum Failure: Error { case connect, timeout }
     struct Request {
         let password: String
-        let resume: SMResumeState?
+        let resume: StreamResumeContext?
         let requireTLS: Bool?
         let disconnections: AsyncStream<Void>
     }
@@ -348,19 +368,22 @@ private actor AccountConnectionFactoryProbe: XMPPClientFactory {
         self.laterRelease = laterRelease
     }
 
-    func makeClient(account: Account, password: String, previousSMState: SMResumeState?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
+    func makeClient(account: Account, password: String, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
         let index = requestCount
         requestCount += 1
         let transport = index < transports.count ? transports[index] : MockTransport(connectError: Failure.connect)
-        let sm = StreamManagementModule(previousState: previousSMState ?? (index == 0 ? initialResume : nil))
+        let sm = StreamManagementModule(previousState: resuming?.streamManagement ?? (index == 0 ? initialResume : nil))
         var builder = XMPPClientBuilder(domain: account.jid.domainPart, username: account.jid.localPart ?? "", password: password)
         let observed = AccountConnectionTransport(mock: transport)
         builder.withTransport(observed)
         builder.withRequireTLS(requireTLSOverride ?? false)
         builder.withModule(sm)
         builder.withInterceptor(sm)
+        builder.withModule(MUCModule(resuming: resuming?.rooms))
+        // A requested disconnect waits for the server to acknowledge what was sent.
+        await transport.ackSyncRequests(from: sm)
         let client = await builder.build()
-        requests.continuation.yield(Request(password: password, resume: previousSMState, requireTLS: requireTLSOverride, disconnections: observed.disconnections))
+        requests.continuation.yield(Request(password: password, resume: resuming, requireTLS: requireTLSOverride, disconnections: observed.disconnections))
         if index == 0 { await firstRelease?.wait() } else { await laterRelease?.wait() }
         return (client, sm)
     }

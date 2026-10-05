@@ -38,7 +38,7 @@ private final class PreparationProbe: Sendable {
 
     func context() -> ModuleContext {
         ModuleContext(
-            sendStanza: { _ in },
+            sendStanza: { _, onAccepted in onAccepted?() },
             sendIQ: { [self] iq, _ in
                 captured.withLock { $0.iqs.append(iq) }
                 if suspension == .discovery, iq.childElement?.namespace == XMPPNamespaces.discoItems { await pause() }

@@ -12,6 +12,9 @@ enum TestTimeout {
     /// Single XMPP event wait (e.g., message delivery, room join).
     static let event: Duration = .seconds(10)
 
+    /// A dropped connection coming back with its stream resumed (reconnect delay, handshake, resume).
+    static let streamResume: Duration = .seconds(30)
+
     /// Jingle file transfer end-to-end completion.
     static let fileTransfer: Duration = .seconds(30)
 

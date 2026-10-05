@@ -6,9 +6,8 @@ import Testing
 
 // MARK: - XML Constants
 
-// `testServerStreamOpen`, `testFeaturesNoTLS`, and `testFeaturesBind` live in
-// `DuckoTestSupport/HandshakeFixtures.swift` (shared with DuckoCoreTests). The SM/SASL2/ISR constants below
-// are XMPP-only, so they stay here.
+// The stream-open and features constants shared with DuckoCoreTests live in
+// `DuckoTestSupport/HandshakeFixtures.swift`. The SASL2/ISR constants below are XMPP-only, so they stay here.
 
 /// Features offering STARTTLS and PLAIN auth.
 let testFeaturesWithTLS = """
@@ -25,14 +24,6 @@ let testProceed = "<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>"
 
 /// A stanza a server or on-path attacker injects into the plaintext after `<proceed/>`.
 let testInjectedMessage = "<message from='attacker@example.com'><body>Injected</body></message>"
-
-/// Post-auth features with bind and Stream Management.
-let testFeaturesBindWithSM = """
-<features xmlns='http://etherx.jabber.org/streams'>\
-<bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/>\
-<sm xmlns='urn:xmpp:sm:3'/>\
-</features>
-"""
 
 /// Bind result with a full JID.
 let testBindResult = """
@@ -71,6 +62,39 @@ func simulateDirectTLSConnect(_ mock: MockTransport, postAuthFeatures: String = 
     await simulateNoTLSConnect(mock, postAuthFeatures: postAuthFeatures)
 }
 
+/// Simulates the connect flow up to post-auth features, then expects a `<resume>` element
+/// instead of `<bind>`. Responds with the given `resumeResponse` XML.
+func simulateResumeConnect(_ mock: MockTransport, resumeResponse: String) async {
+    await mock.waitForSent(count: 1) // stream opening sent
+    await mock.simulateReceive(testServerStreamOpen)
+    await mock.simulateReceive(testFeaturesNoTLS)
+    await mock.waitForSent(count: 2) // auth element sent
+    await mock.simulateReceive("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
+    await mock.waitForSent(count: 3) // post-auth stream opening sent
+    await mock.simulateReceive(testServerStreamOpen)
+    await mock.simulateReceive(testFeaturesBindWithSM)
+    await mock.waitForSent(count: 4) // <resume> sent (instead of bind)
+    await mock.simulateReceive(resumeResponse)
+}
+
+/// Simulates the connect flow where resume fails, then falls through to normal bind.
+func simulateResumeFailConnect(_ mock: MockTransport) async {
+    await mock.waitForSent(count: 1) // stream opening sent
+    await mock.simulateReceive(testServerStreamOpen)
+    await mock.simulateReceive(testFeaturesNoTLS)
+    await mock.waitForSent(count: 2) // auth element sent
+    await mock.simulateReceive("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
+    await mock.waitForSent(count: 3) // post-auth stream opening sent
+    await mock.simulateReceive(testServerStreamOpen)
+    await mock.simulateReceive(testFeaturesBindWithSM)
+    await mock.waitForSent(count: 4) // <resume> sent
+    await mock.simulateReceive("<failed xmlns='urn:xmpp:sm:3'><item-not-found xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></failed>")
+    await mock.waitForSent(count: 5) // bind IQ sent (fallback)
+    await mock.simulateReceive(testBindResult)
+    await mock.waitForSent(count: 6) // SM <enable> sent after bind
+    await mock.simulateReceive("<enabled xmlns='urn:xmpp:sm:3' id='sm-resume-2' max='300'/>")
+}
+
 // MARK: - Disconnect
 
 /// Disconnects with short sync-ack and stream-close timeouts so teardown doesn't pay the production fallbacks: no
@@ -85,13 +109,14 @@ func disconnectFast(_ client: XMPPClient) async {
 
 /// A `ModuleContext` with inert dependencies for driving a module without a client; pass only the ones a test observes.
 func makeStubModuleContext(
+    sendStanza: @escaping ModuleContext.StanzaSender = { _, onAccepted in onAccepted?() },
     sendIQ: @escaping ModuleContext.IQSender = { _, _ in nil },
     emitEvent: @Sendable @escaping (XMPPEvent) -> Void = { _ in },
     sendElement: @Sendable @escaping (XMLElement) async throws -> Void = { _ in },
     serverStreamFeatures: @Sendable @escaping () -> XMLElement? = { nil }
 ) -> ModuleContext {
     ModuleContext(
-        sendStanza: { _ in },
+        sendStanza: sendStanza,
         sendIQ: sendIQ,
         emitEvent: emitEvent,
         generateID: { "test-1" },
@@ -449,7 +474,8 @@ final class JingleInitiatorHarness: Sendable {
         module = JingleModule(timing: timing)
         let recorded = recorded
         module.setUp(ModuleContext(
-            sendStanza: { stanza in
+            sendStanza: { stanza, onAccepted in
+                onAccepted?()
                 recorded.withLock { $0.stanzas.append(stanza.element) }
                 if let action = stanza.element.child(named: "jingle")?.attribute("action"), failingActions.contains(action) {
                     throw XMPPClientError.sendFailed("The connection was closed")

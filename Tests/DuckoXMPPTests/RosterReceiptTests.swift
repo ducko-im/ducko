@@ -22,7 +22,7 @@ struct RosterReceiptTests {
         let gate = AsyncSemaphore()
         let (events, continuation) = AsyncStream.makeStream(of: RosterUpdate.self)
         module.setUp(ModuleContext(
-            sendStanza: { try await client.send($0) },
+            sendStanza: { try await client.send($0, onAccepted: $1) },
             sendIQ: { iq, terminal in
                 let result = try await client.sendIQ(iq, onTerminal: terminal)
                 await gate.wait()
@@ -130,7 +130,7 @@ extension RosterReceiptTests {
         await client.register(module)
         let events = OSAllocatedUnfairLock<[RosterUpdate]>(initialState: [])
         module.setUp(ModuleContext(
-            sendStanza: { try await client.send($0) },
+            sendStanza: { try await client.send($0, onAccepted: $1) },
             sendIQ: { iq, terminal in
                 try await client.sendIQ(iq, timeout: failure == "timeout" ? .zero : .seconds(2), onTerminal: terminal)
             },

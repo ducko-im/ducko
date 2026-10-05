@@ -232,13 +232,19 @@ final class TestHarness {
     /// fetch fan-out. The `captureOMEMOFixture` poll is paid only once per
     /// account on a brand-new dev/CI machine; subsequent runs are a 50 KB
     /// file read.
+    ///
+    /// An account whose label is in `endpoints` connects to that host and port instead of resolving its domain.
     func setUp(
         accounts labels: [String: TestCredentials.Credential],
+        endpoints: [String: (host: String, port: Int)] = [:],
         loadOMEMOFixtures: Bool = true
     ) async throws {
         // Sort by label so connect order is deterministic across runs.
         for (label, credential) in labels.sorted(by: { $0.key < $1.key }) {
-            let accountID = try await environment.accountService.createAccount(jidString: credential.jid)
+            let endpoint = endpoints[label]
+            let accountID = try await environment.accountService.createAccount(
+                jidString: credential.jid, host: endpoint?.host, port: endpoint?.port
+            )
 
             // Populate the account cache before feature services handle connection events.
             try await environment.accountService.loadAccounts()

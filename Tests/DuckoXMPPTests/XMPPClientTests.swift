@@ -454,6 +454,31 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
         }
 
         @Test
+        func `A stanza sent during a stalled handshake is refused and never written`() async throws {
+            let mock = MockTransport()
+            let client = XMPPClient(
+                domain: "example.com",
+                credentials: .init(username: "user", password: "pass"),
+                transport: mock
+            )
+
+            let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
+            await mock.waitForSent(count: 1) // stream opening
+            await mock.simulateReceive(testServerStreamOpen)
+            await mock.simulateReceive(testFeaturesWithTLS)
+            await mock.waitForSent(count: 2) // <starttls/> sent — handshake now suspended waiting for <proceed>
+
+            await #expect(throws: XMPPClientError.self) {
+                try await client.send(XMPPPresence(type: .unavailable))
+            }
+            #expect(await mock.sentBytes.count == 2)
+
+            // Tear down: drive STARTTLS to a failure so the connectTask exits.
+            await mock.simulateReceive("<failure xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
+            _ = try? await connectTask.value
+        }
+
+        @Test
         func `Disconnect cancels pending IQs`() async throws {
             let mock = MockTransport()
             let client = XMPPClient(

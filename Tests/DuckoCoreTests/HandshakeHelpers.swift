@@ -74,3 +74,34 @@ func eventually(_ predicate: @escaping @MainActor () async throws -> Bool) async
     try #require(result != nil)
     try result?.get()
 }
+
+/// Waits, within `boundedOutcome`'s deadline, for a stanza containing `fragment` to go out on `transport`.
+func sentStanza(on transport: MockTransport, containing fragment: String) async throws -> String {
+    let task = Task { await transport.waitForSent(matching: { $0.contains(fragment) }) }
+    if try await boundedOutcome(of: { _ = await task.value }) == nil {
+        task.cancel()
+    }
+    return try #require(await task.value, "Nothing sent containing \(fragment)")
+}
+
+/// Answers the sign-in pass's bookmarks fetch on `transport` with an auto-join bookmark for each of `rooms`.
+func answerBookmarksFetch(on transport: MockTransport, autoJoin rooms: [BareJID]) async throws {
+    let fetch = try await sentStanza(on: transport, containing: XMPPNamespaces.bookmarks2)
+    let id = try #require(extractIQID(from: fetch))
+    let items = rooms.map { "<item id='\($0)'><conference xmlns='urn:xmpp:bookmarks:1' autojoin='true'/></item>" }.joined()
+    await transport.simulateReceive("""
+    <iq type='result' id='\(id)'>\
+    <pubsub xmlns='http://jabber.org/protocol/pubsub'><items node='urn:xmpp:bookmarks:1'>\(items)</items></pubsub>\
+    </iq>
+    """)
+}
+
+/// Parks every resume ahead of `.streamResumed`, so a test can deliver what the server replays first.
+final class ResumeGate: XMPPModule {
+    let entered = AsyncSemaphore()
+    let release = AsyncSemaphore()
+    func setUp(_ context: ModuleContext) {}
+    func handleResume() async throws {
+        await entered.signal(); await release.wait()
+    }
+}

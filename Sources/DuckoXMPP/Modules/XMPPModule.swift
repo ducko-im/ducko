@@ -5,6 +5,9 @@ public protocol XMPPModule: AnyObject, Sendable {
     var features: [String] { get }
     /// Called once when the module is registered with a client.
     func setUp(_ context: ModuleContext)
+    /// Called once the handshake has bound or resumed a session, before any incoming stanza of that session is
+    /// dispatched and before the session is announced with `.connected` or `.streamResumed`.
+    func handleSessionEstablished(resumed: Bool)
     /// Called after the XMPP session is fully established.
     func handleConnect() async throws
     /// Called after a successful Stream Management session resume.
@@ -25,6 +28,7 @@ public extension XMPPModule {
         []
     }
 
+    func handleSessionEstablished(resumed: Bool) {}
     func handleConnect() async throws {}
     func handleResume() async throws {}
     func handleDisconnect() async {}

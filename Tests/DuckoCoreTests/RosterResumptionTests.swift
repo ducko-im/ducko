@@ -19,7 +19,7 @@ struct RosterResumptionTests {
 @MainActor
 private final class RosterResumptionFixture {
     let first = MockTransport(), second = MockTransport()
-    let resumeGate = RosterResumeGate()
+    let resumeGate = ResumeGate()
     let factory: RosterResumeFactory
     let store = MockPersistenceStore()
     let accounts: AccountService
@@ -28,7 +28,7 @@ private final class RosterResumptionFixture {
     var disconnected = false
     var resumed = false
     var id = UUID()
-    let features = testFeaturesBind.replacingOccurrences(of: "</features>", with: "<sm xmlns='urn:xmpp:sm:3'/></features>")
+    let features = testFeaturesBindWithSM
 
     init() {
         self.factory = RosterResumeFactory(transports: [first, second], gate: resumeGate)
@@ -51,7 +51,7 @@ private final class RosterResumptionFixture {
         id = try await accounts.createAccount(jidString: "alice@example.com", requireTLS: false)
         let connection = Task { try await self.accounts.connect(accountID: self.id, password: "secret") }
         try await enableSM(first, features: features)
-        let initial = try await stanza(first, matching: "jabber:iq:roster")
+        let initial = try await sentStanza(on: first, containing: "jabber:iq:roster")
         await reply(first, to: initial, version: "initial", item: "<item jid='bob@example.com'/>")
         try await connection.value
         try await eventually { self.applications["initial"] != nil }
@@ -61,7 +61,7 @@ private final class RosterResumptionFixture {
         await store.installRosterApplyGate(entered: entered, release: release)
         await first.simulateReceive("<iq type='set' id='lost'><query xmlns='jabber:iq:roster' ver='lost'><item jid='bob@example.com' subscription='remove'/></query></iq><r xmlns='urn:xmpp:sm:3'/>")
         try #require(try await boundedOutcome { await entered.wait() } != nil)
-        let ack = try await stanza(first, matching: "<a ")
+        let ack = try await sentStanza(on: first, containing: "<a ")
         #expect(ack.contains("h=\"2\""))
         #expect(try await store.fetchAccounts().first?.rosterVersion == "initial")
         await first.simulateDisconnect()
@@ -81,12 +81,12 @@ private final class RosterResumptionFixture {
         try #require(try await boundedOutcome { await self.resumeGate.entered.wait() } != nil)
         // Replay reaches the session owner before streamResumed and must stay fenced.
         await second.simulateReceive("<iq type='set' id='replay'><query xmlns='jabber:iq:roster' ver='replay'><item jid='carol@example.com'/></query></iq>")
-        _ = try await stanza(second, matching: "id=\"replay\"")
+        _ = try await sentStanza(on: second, containing: "id=\"replay\"")
         #expect(!resumed)
         #expect(try await store.fetchAccounts().first?.rosterVersion == "initial")
         await resumeGate.release.signal()
         try await reconnect.value
-        let readback = try await stanza(second, matching: "jabber:iq:roster")
+        let readback = try await sentStanza(on: second, containing: "jabber:iq:roster")
         #expect(!readback.contains("ver="))
         let queryID = try #require(extractIQID(from: readback))
         await second.clearSentBytes()
@@ -104,7 +104,7 @@ private final class RosterResumptionFixture {
             await second.simulateReceive("<iq type='set' id='before'><query xmlns='jabber:iq:roster' ver='before'><item jid='dave@example.com'/></query></iq>")
             await second.simulateReceive("<iq type='result' id='\(queryID)'><query xmlns='jabber:iq:roster' ver='reconciled'/></iq><iq type='set' id='after'><query xmlns='jabber:iq:roster' ver='after'><item jid='eve@example.com'/></query></iq>")
             if resolution != "success" {
-                let recovery = try await stanza(second, matching: "jabber:iq:roster")
+                let recovery = try await sentStanza(on: second, containing: "jabber:iq:roster")
                 #expect(!recovery.contains("ver="))
                 if resolution == "save-recovery-error" {
                     let synchronization = Task { try await self.roster.synchronizeRoster(accountID: self.id) }
@@ -155,7 +155,7 @@ private final class RosterResumptionFixture {
         if isr {
             let sasl2 = "<features xmlns='http://etherx.jabber.org/streams'><authentication xmlns='urn:xmpp:sasl:2'><mechanism>PLAIN</mechanism><inline><bind xmlns='urn:xmpp:bind:0'/><sm xmlns='urn:xmpp:sm:3'/><isr xmlns='https://xmpp.org/extensions/isr/0'/></inline></authentication></features>"
             try await exchange(second, "<stream:stream", testServerStreamOpen + sasl2)
-            let auth = try await stanza(second, matching: "<authenticate")
+            let auth = try await sentStanza(on: second, containing: "<authenticate")
             #expect(auth.contains("HT-SHA-256-ENDP"))
             #expect(auth.contains("h=\"2\""))
             await second.clearSentBytes()
@@ -164,22 +164,15 @@ private final class RosterResumptionFixture {
             try await exchange(second, "<stream:stream", testServerStreamOpen + testFeaturesNoTLS)
             try await exchange(second, "<auth", "<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
             try await exchange(second, "<stream:stream", testServerStreamOpen + features)
-            let resume = try await stanza(second, matching: "<resume")
+            let resume = try await sentStanza(on: second, containing: "<resume")
             #expect(resume.contains("h=\"2\""))
             await second.clearSentBytes()
             await second.simulateReceive("<resumed xmlns='urn:xmpp:sm:3' previd='roster-session' h='\(state.outgoingCounter)'/>")
         }
     }
 
-    private func stanza(_ transport: MockTransport, matching fragment: String) async throws -> String {
-        let task = Task { await transport.waitForSent(matching: { $0.contains(fragment) }) }
-        let result = try await boundedOutcome { _ = await task.value }
-        guard result != nil else { task.cancel(); throw RosterSynchronization.Failure.timedOut }
-        return try #require(await task.value)
-    }
-
     private func exchange(_ transport: MockTransport, _ fragment: String, _ response: String) async throws {
-        _ = try await stanza(transport, matching: fragment)
+        _ = try await sentStanza(on: transport, containing: fragment)
         await transport.clearSentBytes()
         await transport.simulateReceive(response)
     }
@@ -190,37 +183,28 @@ private final class RosterResumptionFixture {
     }
 }
 
-private final class RosterResumeGate: XMPPModule {
-    let entered = AsyncSemaphore()
-    let release = AsyncSemaphore()
-    func setUp(_ context: ModuleContext) {}
-    func handleResume() async throws {
-        await entered.signal(); await release.wait()
-    }
-}
-
 private actor RosterResumeFactory: XMPPClientFactory {
     let transports: [MockTransport]
-    let gate: RosterResumeGate
+    let gate: ResumeGate
     var index = 0
     var current: StreamManagementModule?
     let resumeStates = AsyncStream.makeStream(of: SMResumeState.self)
 
-    init(transports: [MockTransport], gate: RosterResumeGate) {
+    init(transports: [MockTransport], gate: ResumeGate) {
         self.transports = transports; self.gate = gate
     }
 
-    func makeClient(account: Account, password: String, previousSMState: SMResumeState?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
+    func makeClient(account: Account, password: String, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
         let transport = transports[index]
         index += 1
         let client = XMPPClient(domain: account.jid.domainPart, credentials: .init(username: account.jid.localPart ?? "", password: password), transport: transport, requireTLS: false)
-        let sm = StreamManagementModule(previousState: previousSMState)
+        let sm = StreamManagementModule(previousState: resuming?.streamManagement)
         current = sm
         await client.register(sm)
         await client.addInterceptor(sm)
         await client.register(RosterModule())
         await client.register(gate)
-        if let previousSMState { resumeStates.continuation.yield(previousSMState) }
+        if let resuming { resumeStates.continuation.yield(resuming.streamManagement) }
         return (client, sm)
     }
 

@@ -30,6 +30,8 @@ final class RoomService {
     private var newlyCreatedRoomKeys: Set<RoomJoinKey> = []
     private var roomFlags: [RoomJoinKey: Set<RoomFlag>] = [:]
     private(set) var roomJoinNotifiers: [RoomJoinKey: RoomJoinNotifier] = [:]
+    /// Rooms whose leave the client did not take for lack of a connection. A resumed stream is still in them.
+    private var pendingLeaves: Set<RoomJoinKey> = []
     private let store: any PersistenceStore
     private weak var accountService: AccountService?
     private let ensureConversation: (BareJID, String?, UUID) async throws -> Void
@@ -61,6 +63,10 @@ final class RoomService {
 
     func clearInvites(accountID: UUID) {
         pendingInvites.removeAll { $0.accountID == accountID }
+    }
+
+    func clearPendingLeaves(accountID: UUID) {
+        pendingLeaves = pendingLeaves.filter { $0.accountID != accountID }
     }
 
     func joinRoom(jid: BareJID, nickname: String, password: String? = nil, accountID: UUID) async throws {
@@ -157,17 +163,42 @@ final class RoomService {
         if forget {
             await setRejoinsOnConnect(false, room: jid, accountID: accountID)
         }
-        guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
+        guard let client = accountService?.connectedClient(for: accountID) else {
+            pendingLeaves.insert(RoomJoinKey(accountID: accountID, room: jid))
+            throw ChatServiceError.notConnected(accountID)
+        }
         guard let mucModule = await client.module(ofType: MUCModule.self) else { return }
-        try await mucModule.leaveRoom(jid)
+        do {
+            try await mucModule.leaveRoom(jid)
+        } catch {
+            // The client can go down ahead of the account's state. The module still tracks a room whose leave was
+            // refused, so a resumed stream would still be in it.
+            if mucModule.nickname(in: jid) != nil {
+                pendingLeaves.insert(RoomJoinKey(accountID: accountID, room: jid))
+            }
+            throw error
+        }
         clearRoomState(for: jid, accountID: accountID)
     }
 
-    /// Rejoins the rooms the user is in on a new connection, which starts out in no room. Rooms in `autoJoined` are
-    /// left to their bookmark, whose nickname and password apply.
-    func rejoinRooms(accountID: UUID, excluding autoJoined: Set<BareJID>) async {
+    /// A room whose leave fails again stays pending.
+    private func completePendingLeaves(accountID: UUID) async {
+        for key in pendingLeaves where key.accountID == accountID {
+            do {
+                try await leaveRoom(jid: key.room, accountID: accountID, forget: false)
+                pendingLeaves.remove(key)
+            } catch {
+                log.warning("Failed to complete a pending room leave: \(error)")
+                log.debug("The room that could not be left is \(key.room)")
+            }
+        }
+    }
+
+    /// Rejoins the rooms the user is in. Rooms in `skipped` are left alone: the ones a resumed stream is still in, and
+    /// the ones with an auto-join bookmark, whose nickname and password apply.
+    func rejoinRooms(accountID: UUID, excluding skipped: Set<BareJID>) async {
         let conversations = await (try? store.fetchConversations(for: accountID)) ?? []
-        for conversation in conversations where conversation.rejoinsOnConnect && !autoJoined.contains(conversation.jid) {
+        for conversation in conversations where conversation.rejoinsOnConnect && !skipped.contains(conversation.jid) {
             guard let nickname = conversation.roomNickname else { continue }
             do {
                 try await joinRoom(jid: conversation.jid, nickname: nickname, accountID: accountID)
@@ -481,28 +512,56 @@ final class RoomService {
     func handleMUCSelfPingFailed(room: BareJID, reason: MUCSelfPingFailure, accountID: UUID) async {
         switch reason {
         case .notJoined:
-            log.warning("MUC self-ping: not joined \(room), triggering rejoin")
+            log.warning("MUC self-ping: no longer joined, rejoining the room")
+            log.debug("The room being rejoined is \(room)")
             let nickname = await storedRoom(room, accountID: accountID)?.roomNickname ?? room.localPart ?? "user"
             do {
                 try await joinRoom(jid: room, nickname: nickname, accountID: accountID)
             } catch {
-                log.warning("MUC self-ping rejoin failed for \(room): \(error)")
+                log.warning("MUC self-ping rejoin failed: \(error)")
+                log.debug("The room that could not be rejoined is \(room)")
             }
         case .nickChanged:
             break
         }
     }
 
+    /// Shows a resumed account's rooms again and completes the leaves requested during the drop. It must stay
+    /// synchronous, because the services after `ChatService` get `.streamResumed` only once this returns. A suspension
+    /// here would let a later `.disconnected` be handled first, and the stale resume would then show contacts and
+    /// bookmarks while disconnected.
+    func handleStreamResumed(accountID: UUID) {
+        restoreRooms(accountID: accountID)
+        guard pendingLeaves.contains(where: { $0.accountID == accountID }) else { return }
+        let taskID = UUID()
+        pendingTasks[taskID] = Task { [weak self] in
+            defer { self?.pendingTasks[taskID] = nil }
+            await self?.completePendingLeaves(accountID: accountID)
+        }
+    }
+
+    /// Replaces the account's participants and flags with the room module's. The module carries its rooms across a
+    /// resumed stream and applies every replayed change before it announces it. Its state is therefore the complete
+    /// one, whether a replayed occupant event is handled before or after this replacement.
+    private func restoreRooms(accountID: UUID) {
+        guard let occupancies = accountService?.roomModule(for: accountID)?.roomOccupancies else { return }
+        roomParticipants = roomParticipants.filter { $0.key.accountID != accountID }
+        roomFlags = roomFlags.filter { $0.key.accountID != accountID }
+        for (room, occupancy) in occupancies {
+            setOccupancy(occupancy, for: RoomJoinKey(accountID: accountID, room: room))
+        }
+    }
+
+    private func setOccupancy(_ occupancy: RoomOccupancy, for key: RoomJoinKey) {
+        roomParticipants[key] = occupancy.occupants.map { mapOccupant($0) }
+        roomFlags[key] = occupancy.flags.isEmpty ? nil : occupancy.flags
+    }
+
     func handleRoomJoined(room: BareJID, occupancy: RoomOccupancy, isNewlyCreated: Bool, accountID: UUID) async {
         let key = RoomJoinKey(accountID: accountID, room: room)
-        roomParticipants[key] = occupancy.occupants.map { mapOccupant($0) }
+        setOccupancy(occupancy, for: key)
         if isNewlyCreated {
             newlyCreatedRoomKeys.insert(key)
-        }
-        if occupancy.flags.isEmpty {
-            roomFlags.removeValue(forKey: key)
-        } else {
-            roomFlags[key] = occupancy.flags
         }
 
         let notifierID = roomJoinNotifiers[key]?.id

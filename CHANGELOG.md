@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Fix rooms no longer showing new messages or their participants after your connection briefly drops, and show the messages sent during the drop
+- Fix room bookmarks staying empty after your connection briefly drops
+- Fix rooms not being joined when your connection drops while Ducko is signing in
+- Fix still appearing in a room to others after leaving it while your connection was down
+- Fix a room staying disconnected without notice when its server answers Ducko's periodic check with an unexpected error
+
 ## [0.6.0] - 2026-10-04
 
 ### Added

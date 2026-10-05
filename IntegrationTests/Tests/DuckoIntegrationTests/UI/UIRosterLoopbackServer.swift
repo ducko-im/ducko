@@ -23,22 +23,7 @@ actor UIRosterLoopbackServer {
         let listener = try NWListener(using: .tcp, on: .any)
         self.listener = listener
         listener.newConnectionHandler = { connection in Task { await self.accept(connection) } }
-        let states = AsyncThrowingStream<UInt16, Error>.makeStream()
-        listener.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                if let port = listener.port { states.continuation.yield(port.rawValue); states.continuation.finish() }
-            case let .failed(error): states.continuation.finish(throwing: error)
-            case .cancelled: states.continuation.finish(throwing: CancellationError())
-            case .setup, .waiting: break
-            @unknown default: break
-            }
-        }
-        listener.start(queue: queue)
-        for try await port in states.stream {
-            return port
-        }
-        throw CancellationError()
+        return try await listener.startAndAwaitPort(on: queue)
     }
 
     private func accept(_ connection: NWConnection) {

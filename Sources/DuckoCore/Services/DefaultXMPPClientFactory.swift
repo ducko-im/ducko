@@ -6,7 +6,7 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
     public func makeClient(
         account: Account,
         password: String,
-        previousSMState: SMResumeState?,
+        resuming: StreamResumeContext?,
         requireTLSOverride: Bool?,
         omemoService: OMEMOService?
     ) async -> (XMPPClient, StreamManagementModule) {
@@ -31,7 +31,7 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
         builder.withModule(CarbonsModule())
         builder.withModule(MAMModule())
         builder.withModule(PingModule())
-        builder.withModule(MUCModule())
+        builder.withModule(MUCModule(resuming: resuming?.rooms))
         builder.withModule(HTTPUploadModule())
         builder.withModule(JingleModule())
         let pepModule = PEPModule()
@@ -52,7 +52,7 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
         builder.withModule(OOBModule())
         builder.withModule(ServiceOutageModule())
         builder.withModule(CSIModule())
-        let sm = StreamManagementModule(previousState: previousSMState)
+        let sm = StreamManagementModule(previousState: resuming?.streamManagement)
         builder.withModule(sm)
         builder.withInterceptor(sm)
         return await (builder.build(), sm)
