@@ -55,8 +55,6 @@ BIN=$(swift build --show-bin-path)
 cp -R Ducko.app "$APP"
 cp "$BIN/DuckoApp" "$APP/Contents/MacOS/DuckoApp"
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/DuckoApp"
-/bin/rm -rf "$APP/Contents/Resources/Ducko_DuckoUI.bundle"
-cp -R "$BIN/Ducko_DuckoUI.bundle" "$APP/Contents/Resources/"
 cp "$BIN/DuckoCLI" "$APP/Contents/Resources/ducko"
 /usr/libexec/PlistBuddy \
   -c "Set :CFBundleIdentifier im.ducko.demo" \

@@ -3,15 +3,15 @@ import SwiftUI
 
 struct ContactRow: View {
     @Environment(AppEnvironment.self) private var environment
-    @Environment(ThemeEngine.self) private var theme
     let contact: Contact
+    let isCompact: Bool
 
     private var display: ContactPresenceDisplay {
         ContactPresenceDisplay.resolve(for: contact, accountID: contact.accountID, presenceService: environment.presenceService)
     }
 
     private var caption: ContactCaption {
-        ContactCaption.resolve(for: contact, showStatusMessages: theme.current.showStatusMessages, presenceService: environment.presenceService)
+        ContactCaption.resolve(for: contact, isCompact: isCompact, presenceService: environment.presenceService)
     }
 
     /// The disambiguation label shown when this contact's JID is on more than one account; nil otherwise.
@@ -30,9 +30,7 @@ struct ContactRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if theme.current.showPresenceIndicators {
-                PresenceIndicator(display: display)
-            }
+            PresenceIndicator(display: display)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -68,8 +66,8 @@ struct ContactRow: View {
 
             Spacer()
 
-            if theme.current.showAvatars {
-                AvatarView(contact: contact, size: theme.current.avatarSize)
+            if !isCompact {
+                AvatarView(contact: contact)
             }
         }
         .padding(.vertical, 2)

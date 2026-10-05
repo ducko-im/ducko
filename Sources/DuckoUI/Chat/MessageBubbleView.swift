@@ -2,7 +2,6 @@ import DuckoCore
 import SwiftUI
 
 struct MessageBubbleView: View {
-    @Environment(ThemeEngine.self) private var theme
     /// Everything the bubble draws apart from the avatar. `windowState` is only for the avatar and the menu.
     let row: TranscriptRow.Message
     let isHovered: Bool
@@ -20,21 +19,15 @@ struct MessageBubbleView: View {
         message.styledBodySegments?.contains(where: \.isCodeBlock) == true
     }
 
-    private var showAvatar: Bool {
-        theme.current.showAvatars && !message.isOutgoing && theme.current.avatarPosition == .leading
-    }
-
     var body: some View {
         HStack(alignment: .bottom) {
-            if message.isOutgoing { Spacer(minLength: 60) }
-
-            if showAvatar {
-                if row.position.isLastInGroup {
-                    SenderAvatarView(windowState: windowState, nickname: message.fromJID)
-                } else {
-                    Color.clear
-                        .frame(width: theme.current.avatarSize, height: theme.current.avatarSize)
-                }
+            if message.isOutgoing {
+                Spacer(minLength: 60)
+            } else if row.position.isLastInGroup {
+                SenderAvatarView(windowState: windowState, nickname: message.fromJID)
+            } else {
+                Color.clear
+                    .frame(width: AvatarView.defaultSize, height: AvatarView.defaultSize)
             }
 
             MessageContentView(
@@ -69,15 +62,14 @@ struct MessageBubbleView: View {
 
 /// The avatar beside an incoming row: the contact's in a one-to-one chat, the occupant's in a room.
 struct SenderAvatarView: View {
-    @Environment(ThemeEngine.self) private var theme
     let windowState: ChatWindowState
     let nickname: String
 
     var body: some View {
         if !windowState.isGroupchat, let contact = windowState.contact {
-            AvatarView(contact: contact, size: theme.current.avatarSize)
+            AvatarView(contact: contact)
         } else {
-            ParticipantAvatarView(nickname: nickname, size: theme.current.avatarSize)
+            ParticipantAvatarView(nickname: nickname, size: AvatarView.defaultSize)
         }
     }
 }

@@ -21,14 +21,17 @@ struct ContactListOwnersTests {
     }
 
     @Test
-    func `width measurement follows names theme bounds and manual width`() {
-        let fixture = PreferencesFixture()
-        let theme = fixture.makeThemeEngine()
+    func `width measurement follows names compact rows bounds and manual width`() {
         let measurement = ContactListMeasurement()
-        var inputs = ContactListTableInputs(environment: environment(), theme: theme)
+        var inputs = ContactListTableInputs(environment: environment())
         inputs.maxWidthPreference = 800
         inputs.incomingRows = [.room(room(name: "Short"))]
         let short = measurement.contentWidth(inputs: inputs, manualWidth: 300)
+        inputs.incomingRows = [.room(room(name: String(repeating: "W", count: 12)))]
+        let fitted = measurement.contentWidth(inputs: inputs, manualWidth: 300)
+        inputs.isCompact = true
+        #expect(measurement.contentWidth(inputs: inputs, manualWidth: 300) == fitted - AvatarView.defaultSize)
+        inputs.isCompact = false
         inputs.incomingRows = [.room(room(name: String(repeating: "W", count: 35)))]
         let wide = measurement.contentWidth(inputs: inputs, manualWidth: 300)
         #expect(wide > short)
@@ -40,17 +43,15 @@ struct ContactListOwnersTests {
     }
 
     @Test
-    func `height measurement invalidates for caption width theme and row count`() throws {
-        let fixture = PreferencesFixture()
-        let theme = fixture.makeThemeEngine()
+    func `height measurement invalidates for caption width compact rows and row count`() {
         let environment = environment()
         let measurement = ContactListMeasurement()
         var conversation = room()
-        var inputs = ContactListTableInputs(environment: environment, theme: theme, incomingRows: [.room(conversation)])
+        var inputs = ContactListTableInputs(environment: environment, incomingRows: [.room(conversation)])
         var measures = 0
         let content: (ContactListRow) -> ContactListCellContent? = { row in
             measures += 1
-            return ContactListCellContent(row: row, environment: environment, theme: theme, openChat: OpenChatAction { _, _ in }, toggle: { _ in }, showMenu: {})
+            return ContactListCellContent(row: row, environment: environment, isCompact: inputs.isCompact, openChat: OpenChatAction { _, _ in }, toggle: { _ in }, showMenu: {})
         }
         let first = measurement.heights(inputs: inputs, contentWidth: 320, maxListHeight: 600, cellContent: content)
         #expect(first.newHeights.count == 1)
@@ -64,15 +65,29 @@ struct ContactListOwnersTests {
         #expect(caption.newHeights[0] >= first.newHeights[0])
         _ = measurement.heights(inputs: inputs, contentWidth: 420, maxListHeight: 600, cellContent: content)
         #expect(measures == 3)
-        var encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(theme.current)) as? [String: Any])
-        encoded["avatarSize"] = theme.current.avatarSize + 12
-        try theme.selectTheme(JSONDecoder().decode(DuckoTheme.self, from: JSONSerialization.data(withJSONObject: encoded)))
-        _ = measurement.heights(inputs: inputs, contentWidth: 420, maxListHeight: 600, cellContent: content)
+        inputs.isCompact = true
+        let compact = measurement.heights(inputs: inputs, contentWidth: 420, maxListHeight: 600, cellContent: content)
         #expect(measures == 4)
+        #expect(compact.newHeights[0] < caption.newHeights[0])
         inputs.incomingRows.append(.room(room(name: "Second room")))
         let two = measurement.heights(inputs: inputs, contentWidth: 420, maxListHeight: 600, cellContent: content)
         #expect(measures == 6)
         #expect(two.newHeights.count == 2)
+    }
+
+    @Test
+    func `a compact room row is as tall with an unread badge as without`() {
+        let environment = environment()
+        let height = { (unreadCount: Int) -> CGFloat in
+            var conversation = room()
+            conversation.unreadCount = unreadCount
+            let inputs = ContactListTableInputs(environment: environment, incomingRows: [.room(conversation)], isCompact: true)
+            return ContactListMeasurement().heights(inputs: inputs, contentWidth: 320, maxListHeight: 600) { row in
+                ContactListCellContent(row: row, environment: environment, isCompact: true, openChat: OpenChatAction { _, _ in }, toggle: { _ in }, showMenu: {})
+            }.newHeights[0]
+        }
+
+        #expect(height(3) == height(0))
     }
 
     @Test

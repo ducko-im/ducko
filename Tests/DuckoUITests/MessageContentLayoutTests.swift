@@ -8,7 +8,6 @@ import Testing
 @MainActor
 struct MessageContentLayoutTests {
     @Test func `a reply takes the height its quote and text ask for, whatever height it is offered`() {
-        let preferences = PreferencesFixture()
         let message = ChatMessage(
             id: UUID(), conversationID: UUID(), fromJID: "bob@example.com",
             body: String(repeating: "A reply long enough to wrap onto several lines. ", count: 4),
@@ -20,7 +19,6 @@ struct MessageContentLayoutTests {
             header: { ReplyQuoteView(senderName: "alice@example.com", bodyPreview: "Two lines\nof quoted text") },
             footer: { EmptyView() }
         )
-        .environment(preferences.makeThemeEngine())
         let controller = NSHostingController(rootView: content)
 
         let offeredLittle = controller.sizeThatFits(in: CGSize(width: 400, height: 60)).height

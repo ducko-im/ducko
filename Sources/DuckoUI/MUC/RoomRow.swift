@@ -3,9 +3,8 @@ import SwiftUI
 
 struct RoomRow: View {
     @Environment(AppEnvironment.self) private var environment
-    @Environment(ThemeEngine.self) private var theme
-    @Environment(\.colorScheme) private var colorScheme
     let conversation: Conversation
+    let isCompact: Bool
 
     /// One lookup feeds both the ring and the caption, so a row cannot say it is joined in one place and not the other.
     private var participantCount: Int {
@@ -13,7 +12,7 @@ struct RoomRow: View {
     }
 
     private var caption: RoomCaption {
-        RoomCaption.resolve(roomSubject: conversation.roomSubject, participantCount: participantCount)
+        RoomCaption.resolve(roomSubject: conversation.roomSubject, participantCount: participantCount, isCompact: isCompact)
     }
 
     private var display: ContactPresenceDisplay {
@@ -22,9 +21,7 @@ struct RoomRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if theme.current.showPresenceIndicators {
-                PresenceIndicator(display: display)
-            }
+            PresenceIndicator(display: display)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(conversation.displayTitle)
@@ -55,16 +52,17 @@ struct RoomRow: View {
                     .fontWeight(.bold)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(theme.current.unreadBadgeColor.resolved(for: colorScheme), in: .capsule)
+                    // A compact row is as tall as the name's line, which the badge has to stay within.
+                    .padding(.vertical, isCompact ? 1 : 2)
+                    .background(.red, in: .capsule)
             }
 
             // Rooms have no avatar, so the icon takes the avatar's place and keeps both kinds of row aligned.
-            if theme.current.showAvatars {
+            if !isCompact {
                 Image(systemName: "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: theme.current.avatarSize * 0.45))
+                    .font(.system(size: AvatarView.defaultSize * 0.45))
                     .foregroundStyle(.secondary)
-                    .frame(width: theme.current.avatarSize, height: theme.current.avatarSize)
+                    .frame(width: AvatarView.defaultSize, height: AvatarView.defaultSize)
             }
         }
         .padding(.vertical, 2)

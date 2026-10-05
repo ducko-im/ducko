@@ -3,19 +3,20 @@ import DuckoCore
 import SwiftUI
 
 struct AvatarView: View {
-    @Environment(ThemeEngine.self) private var theme
+    static let defaultSize: CGFloat = 32
+
     private let imageData: Data?
     private let name: String
     private let size: CGFloat
     @State private var nsImage: NSImage?
 
-    init(contact: Contact, size: CGFloat = 32) {
+    init(contact: Contact, size: CGFloat = defaultSize) {
         self.imageData = contact.avatarData
         self.name = contact.displayName
         self.size = size
     }
 
-    init(imageData: Data?, name: String, size: CGFloat = 32) {
+    init(imageData: Data?, name: String, size: CGFloat = defaultSize) {
         self.imageData = imageData
         self.name = name
         self.size = size
@@ -28,7 +29,7 @@ struct AvatarView: View {
                     .resizable()
                     .scaledToFill()
                     .frame(width: size, height: size)
-                    .clipShape(avatarClipShape)
+                    .clipShape(.circle)
             } else {
                 initialsView
             }
@@ -50,12 +51,8 @@ struct AvatarView: View {
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 ),
-                in: avatarClipShape
+                in: .circle
             )
-    }
-
-    private var avatarClipShape: AnyShape {
-        theme.current.avatarShape.clipShape(size: size)
     }
 
     private var initials: String {

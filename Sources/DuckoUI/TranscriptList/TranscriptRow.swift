@@ -1,9 +1,9 @@
 import DuckoCore
 import Foundation
 
-/// One row of a transcript list, as a value. A hosted row takes what decides its height from it and from the theme.
-/// Two equal rows are therefore equally tall at one width and under one theme, which is what lets a measured height
-/// be kept for as long as the row's value does not change.
+/// One row of a transcript list, as a value. A hosted row takes what decides its height from it. Two equal rows are
+/// therefore equally tall at one width, which is what lets a measured height be kept for as long as the row's value
+/// does not change.
 struct TranscriptRow: Identifiable, Equatable {
     struct Message: Equatable {
         let message: ChatMessage

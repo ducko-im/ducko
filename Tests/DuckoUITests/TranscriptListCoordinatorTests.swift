@@ -14,8 +14,6 @@ private final class ListHarness {
         styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: true
     )
     let environment = AppEnvironment(store: MockPersistenceStore(), transcripts: MockTranscriptStore(), credentialStore: NullCredentialStore())
-    let preferences = PreferencesFixture()
-    let themeEngine: ThemeEngine
     let consent = RemoteImageConsent()
     var restsShortContentAtEnd = true
     var bottomPadding: CGFloat = 0
@@ -23,14 +21,12 @@ private final class ListHarness {
     private(set) var nearOldestCalls = 0
 
     init() {
-        self.themeEngine = preferences.makeThemeEngine()
         window.contentView = coordinator.container
     }
 
     func show(_ rows: [TranscriptRow], scroller: TranscriptScroller) {
         coordinator.update(TranscriptListInputs(
-            rows: rows, scroller: scroller, context: .history, remoteImageConsent: consent,
-            environment: environment, themeEngine: themeEngine, theme: themeEngine.current,
+            rows: rows, scroller: scroller, context: .history, remoteImageConsent: consent, environment: environment,
             accessibilityIdentifier: "message-list", restsShortContentAtEnd: restsShortContentAtEnd, bottomPadding: bottomPadding, showsJumpToNewest: showsJumpToNewest,
             onNearOldest: { [unowned self] in nearOldestCalls += 1 }
         ))
@@ -342,21 +338,6 @@ struct TranscriptListCoordinatorTests {
         #expect(scroller.isAtNewest)
         #expect(scroller.position == .newest)
         #expect(!harness.showsJumpButton)
-    }
-
-    @Test func `a theme change measures the rows again though none of them changed`() throws {
-        let harness = ListHarness()
-        let scroller = TranscriptScroller()
-        let rows = rows(10)
-        harness.show(rows, scroller: scroller)
-        let height = harness.contentHeight
-
-        let other = try #require(harness.themeEngine.availableThemes.first { $0 != harness.themeEngine.current })
-        harness.themeEngine.selectTheme(other)
-        harness.show(rows, scroller: scroller)
-
-        #expect(harness.contentHeight != height)
-        #expect(abs(harness.distanceFromNewest) < 0.5)
     }
 
     @Test func `rows that go away leave the others in place, and the row being read going away keeps the view where it is`() throws {

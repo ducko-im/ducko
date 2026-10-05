@@ -4,7 +4,6 @@ import SwiftUI
 /// Stands at the end of the timeline for a file the contact is sending right now, looking like the message that will
 /// replace it once the file is saved.
 struct ReceivingFileRow: View {
-    @Environment(ThemeEngine.self) private var theme
     /// The transfer's id.
     let id: UUID
     let file: TranscriptRow.ReceivingFile
@@ -27,9 +26,7 @@ struct ReceivingFileRow: View {
 
     var body: some View {
         HStack(alignment: .bottom) {
-            if theme.current.showAvatars, theme.current.avatarPosition == .leading {
-                SenderAvatarView(windowState: windowState, nickname: windowState.jidString)
-            }
+            SenderAvatarView(windowState: windowState, nickname: windowState.jidString)
 
             MessageContentView(
                 message: placeholder,

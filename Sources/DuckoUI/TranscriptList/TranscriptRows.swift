@@ -3,7 +3,7 @@ import Foundation
 
 /// Builds a transcript's rows from what its owner holds. Pure, so equal inputs give equal rows.
 enum TranscriptRows {
-    /// What the rows say about the conversation as a whole, and how they are drawn.
+    /// What the rows say about the conversation as a whole.
     struct Details {
         var isGroupchat = false
         /// The chat's name, which a note and a file waiting to be accepted name the contact by.
@@ -14,7 +14,6 @@ enum TranscriptRows {
         /// Whether there is history left to load, once the first load has finished.
         var showsTopSlot = false
         var isLoadingOlder = false
-        var timestampStyle = DuckoTheme.TimestampStyle.inline
     }
 
     /// The top slot, one row per timeline item, then the files being received.
@@ -42,7 +41,7 @@ enum TranscriptRows {
             rows.append(TranscriptRow(id: TranscriptRow.topSlotID, kind: .topSlot(isLoading: chat.isLoadingOlder)))
         }
         for (index, item) in items.enumerated() {
-            let isFirstOfDay = chat.timestampStyle == .grouped && startsDay(at: index, in: items)
+            let isFirstOfDay = startsDay(at: index, in: items)
             switch item {
             case let .message(message):
                 let replied = message.replyToID.flatMap { messagesByStanzaID[$0] }

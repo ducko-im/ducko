@@ -46,7 +46,7 @@ let package = Package(
         .target(name: "DuckoUI", dependencies: [
             "DuckoCore",
             .product(name: "Logging", package: "swift-log")
-        ], resources: [.copy("Resources/Themes")]),
+        ]),
         .testTarget(name: "DuckoUITests", dependencies: ["DuckoUI", "DuckoTestSupport"]),
 
         .executableTarget(

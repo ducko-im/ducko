@@ -17,9 +17,6 @@ struct TranscriptListInputs {
     var context: TranscriptRowContext
     var remoteImageConsent: RemoteImageConsent
     var environment: AppEnvironment
-    var themeEngine: ThemeEngine
-    /// The theme the rows are drawn in. Read here so a theme change reaches the list, which measures its rows again.
-    var theme: DuckoTheme
     var accessibilityIdentifier: String?
     var restsShortContentAtEnd: Bool
     /// Space kept between the newest row and the bottom edge, so the row does not sit flush against what is below.
@@ -33,7 +30,6 @@ struct TranscriptListInputs {
 /// are laid out, and the list keeps its scroller's position through every change to its rows and its size.
 struct TranscriptListView: NSViewRepresentable {
     @Environment(AppEnvironment.self) private var environment
-    @Environment(ThemeEngine.self) private var theme
 
     let rows: [TranscriptRow]
     let scroller: TranscriptScroller
@@ -60,8 +56,6 @@ struct TranscriptListView: NSViewRepresentable {
             context: self.context,
             remoteImageConsent: remoteImageConsent,
             environment: environment,
-            themeEngine: theme,
-            theme: theme.current,
             accessibilityIdentifier: accessibilityIdentifier,
             restsShortContentAtEnd: restsShortContentAtEnd,
             bottomPadding: bottomPadding,

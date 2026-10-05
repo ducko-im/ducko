@@ -16,7 +16,7 @@
 
 ---
 
-Ducko carries forward the spirit of Adium: personality-driven, deeply customizable, and unapologetically Mac-native. Where Adium unified dozens of protocols through libpurple, Ducko starts focused on XMPP and builds outward from a modern Swift foundation.
+Ducko carries forward the spirit of Adium: personality-driven and unapologetically Mac-native. Where Adium unified dozens of protocols through libpurple, Ducko starts focused on XMPP and builds outward from a modern Swift foundation.
 
 ## Getting Started
 
@@ -81,7 +81,7 @@ DuckoCLI  →  depends on DuckoCore, DuckoData, DuckoXMPP  (+ swift-argument-par
 | **DuckoXMPP** | Standalone, reusable XMPP library. Connection, stream parsing, SASL auth, stanza types, JID types, XEP modules. |
 | **DuckoCore** | Domain layer. Account/Contact/Conversation types, service objects, message filter pipeline. |
 | **DuckoData** | Persistence layer. SwiftData models, mapping to/from domain types, query helpers. |
-| **DuckoUI** | View layer. SwiftUI views, view models, theme engine, window management. |
+| **DuckoUI** | View layer. SwiftUI views, view models, window management. |
 | **DuckoApp** | GUI entry point. Dependency wiring, menu bar, Sparkle updates, lifecycle. |
 | **DuckoCLI** | CLI entry point. Subcommands, interactive REPL, terminal output formatting. |
 

@@ -91,8 +91,6 @@ if [[ -f "$ROOT/Resources/Assets.car" ]]; then
   cp "$ROOT/Resources/Assets.car" "$APP/Contents/Resources/Assets.car"
 fi
 
-# Test builds share this directory; copy only production resource bundles.
-cp -R "$BIN_DIR/Ducko_DuckoUI.bundle" "$APP/Contents/Resources/"
 cp -R "$ROOT/Resources/ThirdPartyLicenses" "$APP/Contents/Resources/"
 cp "$ROOT/LICENSE" "$APP/Contents/Resources/LICENSE.txt"
 

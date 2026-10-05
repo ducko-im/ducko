@@ -4,7 +4,6 @@ import SwiftUI
 /// Shared message bubble content used by both MessageBubbleView and TranscriptBubbleView.
 /// Renders groupchat sender label, retracted/content bubble, and metadata.
 struct MessageContentView<Header: View, Footer: View>: View {
-    @Environment(ThemeEngine.self) private var theme
     @Environment(\.colorScheme) private var colorScheme
     let message: ChatMessage
     let isGroupchatIncoming: Bool
@@ -34,7 +33,7 @@ struct MessageContentView<Header: View, Footer: View>: View {
 
     /// Derived from the text color so code stands apart on either bubble color.
     private var codeTint: Color {
-        theme.textColor(isOutgoing: message.isOutgoing, colorScheme: colorScheme).opacity(0.12)
+        Palette.bubbleText(isOutgoing: message.isOutgoing).opacity(0.12)
     }
 
     var body: some View {
@@ -77,13 +76,8 @@ struct MessageContentView<Header: View, Footer: View>: View {
 
                         footer
                     }
-                    .padding(.horizontal, theme.current.bubblePadding)
-                    .padding(.vertical, theme.current.bubblePadding * 0.67)
-                    .background(
-                        theme.bubbleColor(isOutgoing: message.isOutgoing, colorScheme: colorScheme),
-                        in: .rect(cornerRadius: theme.current.bubbleCornerRadius)
-                    )
-                    .foregroundStyle(theme.textColor(isOutgoing: message.isOutgoing, colorScheme: colorScheme))
+                    .modifier(BubbleChrome(isOutgoing: message.isOutgoing))
+                    .foregroundStyle(Palette.bubbleText(isOutgoing: message.isOutgoing))
                 }
             }
 
@@ -115,12 +109,7 @@ struct MessageContentView<Header: View, Footer: View>: View {
         Text(text)
             .italic()
             .foregroundStyle(.secondary)
-            .padding(.horizontal, theme.current.bubblePadding)
-            .padding(.vertical, theme.current.bubblePadding * 0.67)
-            .background(
-                theme.bubbleColor(isOutgoing: message.isOutgoing, colorScheme: colorScheme),
-                in: .rect(cornerRadius: theme.current.bubbleCornerRadius)
-            )
+            .modifier(BubbleChrome(isOutgoing: message.isOutgoing))
     }
 
     private func tintingCode(in text: AttributedString) -> AttributedString {
@@ -151,5 +140,18 @@ extension MessageContentView where Header == EmptyView, Footer == EmptyView {
             header: { EmptyView() },
             footer: { EmptyView() }
         )
+    }
+}
+
+/// The padding and fill that make a bubble.
+private struct BubbleChrome: ViewModifier {
+    private static let padding: CGFloat = 12
+    let isOutgoing: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, Self.padding)
+            .padding(.vertical, Self.padding * 0.67)
+            .background(Palette.bubble(isOutgoing: isOutgoing), in: .rect(cornerRadius: 12))
     }
 }

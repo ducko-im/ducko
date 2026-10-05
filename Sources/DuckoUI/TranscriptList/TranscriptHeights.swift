@@ -1,14 +1,14 @@
 import AppKit
 import SwiftUI
 
-/// The row heights a transcript list has measured. A height counts as measured only for the row value, the width, and
-/// the theme it was measured under. Otherwise it is the row's last known height, which serves as its estimate.
+/// The row heights a transcript list has measured. A height counts as measured only for the row value and the width
+/// it was measured at. Otherwise it is the row's last known height, which serves as its estimate.
 struct TranscriptHeights {
     /// What a row that was never measured is taken to be.
     static let estimate: CGFloat = 44
 
     private struct Entry {
-        /// The value the height was measured for, or nil once the width or the theme changed.
+        /// The value the height was measured for, or nil once the width changed.
         var row: TranscriptRow?
         var height: CGFloat
     }
@@ -16,13 +16,11 @@ struct TranscriptHeights {
     private var entries: [UUID: Entry] = [:]
     /// The width the measured heights are for.
     private(set) var width: CGFloat = 0
-    private var theme: DuckoTheme?
 
-    /// Called before measuring. Heights measured at another width or under another theme stay on as estimates.
-    mutating func prepare(width: CGFloat, theme: DuckoTheme) {
-        guard width != self.width || theme != self.theme else { return }
+    /// Called before measuring. Heights measured at another width stay on as estimates.
+    mutating func prepare(width: CGFloat) {
+        guard width != self.width else { return }
         self.width = width
-        self.theme = theme
         for id in entries.keys {
             entries[id]?.row = nil
         }

@@ -19,11 +19,11 @@ enum ContactCaption: Equatable {
     /// Account-scoped convenience reading the live presence service, matching the
     /// per-contact presence-key choice `ContactRow` renders against.
     @MainActor
-    static func resolve(for contact: Contact, showStatusMessages: Bool, presenceService: PresenceService) -> ContactCaption {
+    static func resolve(for contact: Contact, isCompact: Bool, presenceService: PresenceService) -> ContactCaption {
         resolve(
             statusMessage: presenceService.statusMessage(for: contact.jid, accountID: contact.accountID),
             presence: presenceService.presence(for: contact.jid, accountID: contact.accountID),
-            showStatusMessages: showStatusMessages,
+            isCompact: isCompact,
             isPendingSubscription: contact.isPendingSubscription,
             lastSeen: contact.lastSeen
         )
@@ -32,17 +32,18 @@ enum ContactCaption: Equatable {
     static func resolve(
         statusMessage: String?,
         presence: PresenceService.PresenceStatus?,
-        showStatusMessages: Bool,
+        isCompact: Bool,
         isPendingSubscription: Bool,
         lastSeen: Date?
     ) -> ContactCaption {
-        if showStatusMessages, let text = statusMessage ?? presence?.displayName {
+        guard !isCompact else { return .none }
+        if let text = statusMessage ?? presence?.displayName {
             return .status(text)
         }
         if isPendingSubscription {
             return .pendingApproval
         }
-        if presence == nil, let lastSeen {
+        if let lastSeen {
             return .lastSeen(lastSeen)
         }
         return .none

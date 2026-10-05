@@ -136,7 +136,7 @@ final class TranscriptListCoordinator: NSObject, NSTableViewDataSource, NSTableV
             changedRows = true
         } else if rows != newInputs.rows {
             changedRows = apply(newInputs.rows)
-        } else if previous?.theme == newInputs.theme {
+        } else {
             return
         }
         if changedRows {
@@ -229,10 +229,7 @@ final class TranscriptListCoordinator: NSObject, NSTableViewDataSource, NSTableV
     }
 
     private func content(for row: TranscriptRow, inputs: TranscriptListInputs) -> TranscriptRowView {
-        TranscriptRowView(
-            row: row, context: inputs.context, environment: inputs.environment,
-            theme: inputs.themeEngine, remoteImageConsent: inputs.remoteImageConsent
-        )
+        TranscriptRowView(row: row, context: inputs.context, environment: inputs.environment, remoteImageConsent: inputs.remoteImageConsent)
     }
 
     // MARK: - NSTableViewDataSource
@@ -348,7 +345,7 @@ final class TranscriptListCoordinator: NSObject, NSTableViewDataSource, NSTableV
         }
         isChanging = true
         defer { isChanging = false }
-        inputs.scroller.heights.prepare(width: tableView.bounds.width, theme: inputs.theme)
+        inputs.scroller.heights.prepare(width: tableView.bounds.width)
         var needsScroll = !afterUserScroll
         for _ in 0 ..< Self.maxMeasurePasses {
             if needsScroll { scroll(to: position) }
@@ -386,7 +383,7 @@ final class TranscriptListCoordinator: NSObject, NSTableViewDataSource, NSTableV
             settle(at: inputs?.scroller.position ?? .newest)
             return
         }
-        inputs.scroller.heights.prepare(width: tableView.bounds.width, theme: inputs.theme)
+        inputs.scroller.heights.prepare(width: tableView.bounds.width)
         let changed = measureRows(in: tableView.rect(ofRow: index), inputs: inputs)
         if !changed.isEmpty {
             isChanging = true

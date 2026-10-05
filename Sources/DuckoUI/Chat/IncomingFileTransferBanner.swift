@@ -3,8 +3,6 @@ import SwiftUI
 
 struct IncomingFileTransferBanner: View {
     @Environment(AppEnvironment.self) private var environment
-    @Environment(ThemeEngine.self) private var theme
-    @Environment(\.colorScheme) private var colorScheme
     /// Each offer's last Accept or Decline error, by offer id. Held here rather than in the row: an offer leaves the
     /// list while it is acted on and returns when that fails, and its row returns as a new view.
     @State private var errors: [String: String] = [:]
@@ -21,7 +19,7 @@ struct IncomingFileTransferBanner: View {
                 }
             }
             .padding(.vertical, 4)
-            .background(theme.current.accentColor.resolved(for: colorScheme).opacity(0.1))
+            .background(Palette.accent.opacity(0.1))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("file-transfer-banner")
         }

@@ -2,34 +2,13 @@ import DuckoCore
 import SwiftUI
 
 struct MessageMetadataView: View {
-    @Environment(ThemeEngine.self) private var theme
     let message: ChatMessage
     let isVisible: Bool
 
-    /// With grouped timestamps the line is empty until a mark arrives. An outgoing message gets its delivery mark
-    /// after it is first shown, so its line is held open and the row does not grow then.
-    private var reservesLine: Bool {
-        theme.current.timestampStyle == .grouped && message.isOutgoing
-    }
-
     var body: some View {
-        ZStack {
-            if reservesLine {
-                Text(verbatim: " ")
-                    .font(.caption2)
-                    .hidden()
-                    .accessibilityHidden(true)
-            }
-            marks
-        }
-        .opacity(isVisible ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isVisible)
-    }
-
-    private var marks: some View {
         HStack(spacing: 4) {
-            timestampText
-                .font(theme.current.timestampFont.resolved)
+            Text(message.timestamp, style: .time)
+                .font(.caption)
                 .foregroundStyle(.secondary)
 
             if message.isUndecryptable {
@@ -66,6 +45,8 @@ struct MessageMetadataView: View {
                     .foregroundStyle(.red)
             }
         }
+        .opacity(isVisible ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: isVisible)
     }
 
     /// One check once the message reached the contact, two once they read it.
@@ -83,29 +64,6 @@ struct MessageMetadataView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityIdentifier(message.isDisplayed ? "read-indicator" : "delivered-indicator")
-    }
-
-    @ViewBuilder
-    private var timestampText: some View {
-        if theme.current.timestampStyle == .grouped {
-            EmptyView()
-        } else if let format = theme.current.timestampFormat {
-            Text(formattedTimestamp(format))
-        } else {
-            Text(message.timestamp, style: .time)
-        }
-    }
-
-    private static var formatters: [String: DateFormatter] = [:]
-
-    private func formattedTimestamp(_ format: String) -> String {
-        let formatter = Self.formatters[format] ?? {
-            let f = DateFormatter()
-            f.dateFormat = format
-            Self.formatters[format] = f
-            return f
-        }()
-        return formatter.string(from: message.timestamp)
     }
 
     private var editedLabel: String {

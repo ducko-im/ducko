@@ -11,7 +11,6 @@ import SwiftUI
 @MainActor
 struct ContactListTableInputs {
     var environment: AppEnvironment?
-    var theme: ThemeEngine?
     var openChat = OpenChatAction { _, _ in }
     var openWindow: OpenWindowAction?
     var transcriptScope: TranscriptScope?
@@ -24,6 +23,7 @@ struct ContactListTableInputs {
     var autoSizeVertical = true
     var autoSizeHorizontal = true
     var maxWidthPreference = ContactListSizingDefaults.defaultMaxWidth
+    var isCompact = false
     var hasConnectedAccount = false
 }
 
@@ -33,7 +33,6 @@ struct ContactListTableInputs {
 @MainActor
 struct ContactListTableView: NSViewRepresentable {
     @Environment(AppEnvironment.self) private var environment
-    @Environment(ThemeEngine.self) private var theme
     @Environment(\.openChat) private var openChat
     @Environment(\.openWindow) private var openWindow
     @Environment(TranscriptScope.self) private var transcriptScope
@@ -44,6 +43,7 @@ struct ContactListTableView: NSViewRepresentable {
     let autoSizeVertical: Bool
     let autoSizeHorizontal: Bool
     let maxWidthPreference: Double
+    let isCompact: Bool
     let hasConnectedAccount: Bool
     let presentSheet: (ContactListRowSheet) -> Void
     let requestRemoval: (Contact) -> Void
@@ -61,7 +61,6 @@ struct ContactListTableView: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.inputs = ContactListTableInputs(
             environment: environment,
-            theme: theme,
             openChat: openChat,
             openWindow: openWindow,
             transcriptScope: transcriptScope,
@@ -74,6 +73,7 @@ struct ContactListTableView: NSViewRepresentable {
             autoSizeVertical: autoSizeVertical,
             autoSizeHorizontal: autoSizeHorizontal,
             maxWidthPreference: maxWidthPreference,
+            isCompact: isCompact,
             hasConnectedAccount: hasConnectedAccount
         )
         coordinator.reconcile()
@@ -169,7 +169,7 @@ struct ContactListTableView: NSViewRepresentable {
         // MARK: - Reconciliation
 
         func reconcile() {
-            guard inputs.theme != nil, inputs.environment != nil, inputs.preferences != nil,
+            guard inputs.environment != nil, inputs.preferences != nil,
                   let tableView, let scrollView else { return }
             defer { reportSelection() }
 
@@ -190,8 +190,8 @@ struct ContactListTableView: NSViewRepresentable {
 
             // Auto-size mode fits the window to the roster, so a scroller is only
             // needed when the roster exceeds the screen cap; keeping it off
-            // otherwise avoids the overlay scroller flashing over the trailing
-            // avatars while rows insert/remove during a resize. Manual mode lets
+            // otherwise avoids the overlay scroller flashing over the rows'
+            // trailing edge while rows insert/remove during a resize. Manual mode lets
             // the user shrink the window below the roster, so the scroller must
             // stay available there.
             scrollView.hasVerticalScroller = !inputs.autoSizeVertical || listHeight >= maxListHeight
@@ -204,11 +204,14 @@ struct ContactListTableView: NSViewRepresentable {
                 contentSize: targetContentSize,
                 scale: scale
             )
-            // A matching key means geometry is unchanged, but a value-passed
-            // field (not read reactively) like a group header's online count can
-            // still differ, so re-host the visible cells. `rowIDs` are part of the
-            // key, so they're identical on a bail and swapping rows is safe.
-            guard key != lastAppliedKey else {
+            // A matching key means the row set and the window's content size are
+            // unchanged. Row heights can still differ, because a window sized by
+            // hand or held at the screen cap does not follow them, and that needs
+            // the layout pass. Otherwise only a value-passed field (not read
+            // reactively) like a group header's online count can differ, so re-host
+            // the visible cells. `rowIDs` are part of the key, so they're identical
+            // on a bail and swapping rows is safe.
+            if key == lastAppliedKey, newHeights == rowHeights {
                 refreshPersistingCells(newRows: inputs.incomingRows)
                 rows = inputs.incomingRows
                 return
@@ -385,11 +388,11 @@ struct ContactListTableView: NSViewRepresentable {
         // MARK: - Cell content
 
         private func cellContent(for row: ContactListRow) -> ContactListCellContent? {
-            guard let environment = inputs.environment, let theme = inputs.theme else { return nil }
+            guard let environment = inputs.environment else { return nil }
             return ContactListCellContent(
                 row: row,
                 environment: environment,
-                theme: theme,
+                isCompact: inputs.isCompact,
                 openChat: inputs.openChat,
                 toggle: { [weak self] sectionKey in self?.inputs.preferences?.toggleGroupExpanded(sectionKey) },
                 showMenu: { [weak self] in self?.showAccessibilityMenu(forRowID: row.id) }
@@ -498,7 +501,7 @@ struct ContactListTableView: NSViewRepresentable {
         }
 
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-            rowHeights.indices.contains(row) ? rowHeights[row] : (inputs.theme?.current.avatarSize ?? 40) + ContactListMeasurement.estimatedRowChrome
+            rowHeights.indices.contains(row) ? rowHeights[row] : tableView.rowHeight
         }
 
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
@@ -614,7 +617,7 @@ typealias ContactListCellView = HostingTableCellView<ContactListCellContent>
 struct ContactListCellContent: View {
     let row: ContactListRow
     let environment: AppEnvironment
-    let theme: ThemeEngine
+    let isCompact: Bool
     let openChat: OpenChatAction
     let toggle: (String) -> Void
     let showMenu: () -> Void
@@ -624,7 +627,6 @@ struct ContactListCellContent: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
             .environment(environment)
-            .environment(theme)
             .environment(\.openChat, openChat)
     }
 
@@ -643,14 +645,14 @@ struct ContactListCellContent: View {
             }
             .padding(.vertical, 4)
         case let .contact(_, contact):
-            ContactRow(contact: contact)
+            ContactRow(contact: contact, isCompact: isCompact)
                 // AX-only show-menu (not `.contextMenu`, which would claim the
                 // mouse path and suppress the table's native emphasis). Bridges
                 // VoiceOver's show-menu on the row to the table-owned menu.
                 .accessibilityAction(.showMenu, showMenu)
                 .padding(.vertical, 2)
         case let .room(room):
-            RoomRow(conversation: room)
+            RoomRow(conversation: room, isCompact: isCompact)
                 .accessibilityAction(.showMenu, showMenu)
                 .padding(.vertical, 2)
         }

@@ -38,8 +38,9 @@ public enum ContactListResize {
     }
 
     /// The state an `updateNSView` pass compares against the last applied pass
-    /// to decide whether anything meaningful changed; when equal, the pass
-    /// bails without re-triggering animation.
+    /// to decide whether the row set or the window's size changed; when both
+    /// this and the row heights are equal, the pass bails without re-triggering
+    /// animation.
     ///
     /// `rowIDs` are the section-qualified, account-qualified row identities, so
     /// a same-JID peer rostered on two accounts (and a multi-group contact

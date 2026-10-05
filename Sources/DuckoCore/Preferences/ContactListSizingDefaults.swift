@@ -1,13 +1,13 @@
 import Foundation
 
-/// UserDefaults keys and bounds for the contact-list window's auto-sizing
-/// preferences (Appearance settings). Shared by the preferences UI, the window,
-/// and the app scene so all three stay in sync through `@AppStorage` on the same
-/// keys and store — Adium's "Automatic Sizing" controls.
+/// UserDefaults keys and bounds for the contact list's Appearance
+/// preferences: automatic window sizing and compact rows. Every reader binds
+/// `@AppStorage` to these keys on the same store, which keeps them in sync.
 public enum ContactListSizingDefaults {
     public static let autoSizeVerticalKey = "contactListAutoSizeVertical"
     public static let autoSizeHorizontalKey = "contactListAutoSizeHorizontal"
     public static let maxWidthKey = "contactListMaxWidth"
+    public static let compactKey = "contactListCompact"
 
     /// Default value for the user's Maximum Width preference.
     public static let defaultMaxWidth: Double = 280

@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 
 struct ProfileEditView: View {
     @Environment(AppEnvironment.self) private var environment
-    @Environment(ThemeEngine.self) private var theme
     @Environment(\.dismiss) private var dismiss
     @State private var profile = ProfileInfo()
     @State private var isLoading = true
@@ -207,14 +206,13 @@ struct ProfileEditView: View {
     @ViewBuilder
     private var avatarPreview: some View {
         let size: CGFloat = 80
-        let clipShape = theme.current.avatarShape.clipShape(size: size)
 
         if let avatarImage {
             Image(nsImage: avatarImage)
                 .resizable()
                 .scaledToFill()
                 .frame(width: size, height: size)
-                .clipShape(clipShape)
+                .clipShape(.circle)
         } else {
             Text(profileInitials)
                 .font(.system(size: size * 0.4, weight: .medium))
@@ -226,7 +224,7 @@ struct ProfileEditView: View {
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
-                    in: clipShape
+                    in: .circle
                 )
         }
     }

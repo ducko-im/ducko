@@ -8,16 +8,10 @@ import Testing
 /// Measures real hosted rows, without a window, and counts how often it is asked to.
 @MainActor
 private final class HeightsFixture {
-    let preferences = PreferencesFixture()
-    let themeEngine: ThemeEngine
     private let environment = AppEnvironment(store: MockPersistenceStore(), transcripts: MockTranscriptStore(), credentialStore: NullCredentialStore())
     private let consent = RemoteImageConsent()
     private let measurer = TranscriptRowMeasurer()
     private(set) var measureCount = 0
-
-    init() {
-        self.themeEngine = preferences.makeThemeEngine()
-    }
 
     /// Rows are drawn as the History window draws them, or as the chat does when set.
     var context = TranscriptRowContext.history
@@ -29,26 +23,13 @@ private final class HeightsFixture {
 
     /// What the list does for a row within reach at each settle.
     func settle(_ heights: inout TranscriptHeights, _ row: TranscriptRow, width: CGFloat) -> CGFloat {
-        heights.prepare(width: width, theme: themeEngine.current)
+        heights.prepare(width: width)
         if !heights.isMeasured(row) {
             measureCount += 1
-            let content = TranscriptRowView(row: row, context: context, environment: environment, theme: themeEngine, remoteImageConsent: consent)
+            let content = TranscriptRowView(row: row, context: context, environment: environment, remoteImageConsent: consent)
             _ = heights.record(measurer.height(of: content, width: width), for: row)
         }
         return heights.height(of: row.id)
-    }
-
-    /// Another theme, whose larger avatar and padding change what a row measures.
-    func selectAnotherTheme() throws {
-        let other = try #require(themeEngine.availableThemes.first { $0 != themeEngine.current })
-        themeEngine.selectTheme(other)
-    }
-
-    /// A theme that draws the date once per day and no time under a message, so a row's own line under the bubble
-    /// holds only its marks.
-    func selectGroupedTimestamps() throws {
-        let grouped = try #require(themeEngine.availableThemes.first { $0.timestampStyle == .grouped })
-        themeEngine.selectTheme(grouped)
     }
 
     /// The height of `row` at `width`, measured afresh.
@@ -91,7 +72,7 @@ struct TranscriptHeightsTests {
         #expect(fixture.measureCount == 1)
     }
 
-    @Test func `a changed value, a changed width, and a changed theme each measure again`() throws {
+    @Test func `a changed value and a changed width each measure again`() {
         let fixture = HeightsFixture()
         var heights = TranscriptHeights()
         let row = makeTranscriptRow(body: long)
@@ -104,10 +85,6 @@ struct TranscriptHeightsTests {
         let narrow = fixture.settle(&heights, row, width: 250)
         #expect(fixture.measureCount == 3)
         #expect(narrow > wide)
-
-        try fixture.selectAnotherTheme()
-        _ = fixture.settle(&heights, row, width: 250)
-        #expect(fixture.measureCount == 4)
     }
 
     @Test func `the last known height stays on as the estimate after a width change`() {
@@ -116,7 +93,7 @@ struct TranscriptHeightsTests {
         let row = makeTranscriptRow(body: long)
         let measured = fixture.settle(&heights, row, width: 400)
 
-        heights.prepare(width: 300, theme: fixture.themeEngine.current)
+        heights.prepare(width: 300)
 
         #expect(!heights.isMeasured(row))
         #expect(heights.height(of: row.id) == measured)
@@ -136,27 +113,8 @@ struct TranscriptHeightsTests {
         #expect(heights.height(of: gone.id) == TranscriptHeights.estimate)
     }
 
-    @Test func `a tab that was not showing when the theme changed measures again when it is next settled`() throws {
+    @Test func `an outgoing row is as tall before its delivery mark as after`() {
         let fixture = HeightsFixture()
-        var shown = TranscriptHeights()
-        var hidden = TranscriptHeights()
-        let row = makeTranscriptRow(body: long)
-        _ = fixture.settle(&shown, row, width: 400)
-        _ = fixture.settle(&hidden, row, width: 400)
-        #expect(fixture.measureCount == 2)
-
-        // Only the tab that is showing is settled when the theme changes.
-        try fixture.selectAnotherTheme()
-        _ = fixture.settle(&shown, row, width: 400)
-        #expect(fixture.measureCount == 3)
-
-        _ = fixture.settle(&hidden, row, width: 400)
-        #expect(fixture.measureCount == 4)
-    }
-
-    @Test func `an outgoing row is as tall before its delivery mark as after, where timestamps are grouped`() throws {
-        let fixture = HeightsFixture()
-        try fixture.selectGroupedTimestamps()
 
         #expect(fixture.height(of: row(isOutgoing: true)) == fixture.height(of: row(isOutgoing: true, isDelivered: true)))
     }

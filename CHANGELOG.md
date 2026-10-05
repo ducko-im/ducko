@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Add a Compact rows option in Settings ▸ Appearance that shows every contact and room on one line, without avatars, status lines or room subjects
+
+### Changed
+
+- Show the date above the first message of each day in a chat
+
+### Removed
+
+- Remove themes, including the theme picker, the three alternative themes and loading your own theme files, so Ducko always uses the look of the former Default theme
+
 ### Fixed
 
 - Fix rooms no longer showing new messages or their participants after your connection briefly drops, and show the messages sent during the drop

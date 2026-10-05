@@ -4,8 +4,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct AttachmentView: View {
-    @Environment(ThemeEngine.self) private var theme
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(RemoteImageConsent.self) private var remoteImageConsent
     let attachment: Attachment
     let isOutgoing: Bool
@@ -143,10 +141,10 @@ struct AttachmentView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .foregroundStyle(theme.textColor(isOutgoing: isOutgoing, colorScheme: colorScheme).opacity(0.6))
+        .foregroundStyle(Palette.bubbleText(isOutgoing: isOutgoing).opacity(0.6))
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.bubbleColor(isOutgoing: isOutgoing, colorScheme: colorScheme), in: .rect(cornerRadius: 8))
+        .background(Palette.bubble(isOutgoing: isOutgoing), in: .rect(cornerRadius: 8))
     }
 
     private var fileAttachment: some View {
@@ -180,8 +178,8 @@ struct AttachmentView: View {
         .padding(8)
         .background(
             isOutgoing
-                ? theme.current.outgoingBubbleColor.resolved(for: colorScheme).opacity(0.3)
-                : theme.current.backgroundColor.resolved(for: colorScheme),
+                ? Palette.outgoingBubble.opacity(0.3)
+                : Color(.textBackgroundColor),
             in: .rect(cornerRadius: 8)
         )
     }

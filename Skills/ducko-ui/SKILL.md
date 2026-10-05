@@ -143,6 +143,7 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `showInMenuBarToggle` | Show Ducko in Menu Bar toggle | Preferences (General) |
 | `chatStatesToggle` | Chat states (typing indicators) toggle | Preferences (Chat) |
 | `displayedMarkersToggle` | Displayed markers (read receipts) toggle | Preferences (Chat) |
+| `contacts-compact-toggle` | Compact rows toggle (contact-list rows without avatars and captions) | Preferences (Appearance) |
 | `requireTLSToggle` | Require TLS toggle | Account Edit |
 | `tlsVersion` | TLS Version label | Connection Info |
 | `cipherSuite` | Cipher Suite label | Connection Info |
@@ -301,7 +302,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-connection-info.sh` | Open Connection Info from Preferences > Accounts (best-effort), or close it with the shared PID-targeted Swift AX helper | `[open\|close]`; close requires `DUCKO_PID` |
 | `ducko-register.sh` | Register a new account via in-band registration | `SERVER USERNAME PASSWORD [EMAIL]` |
 | `ducko-change-password.sh` | Change account password via Preferences > Accounts (best-effort; needs a connected account and a `List(selection:)` that synthetic clicks may not trigger) | `NEW_PASSWORD` |
-| `ducko-toggle-preference.sh` | Toggle any preference checkbox by identifier | `IDENTIFIER` (e.g., chatStatesToggle, encryptByDefaultToggle, tofuToggle) |
+| `ducko-toggle-preference.sh` | Toggle any preference checkbox by identifier | `IDENTIFIER` (e.g., chatStatesToggle, encryptByDefaultToggle, tofuToggle, contacts-compact-toggle) |
 | `ducko-menu-bar.sh` | Toggle menu bar icon visibility in General preferences | none |
 | `ducko-edit-profile.sh` | Edit profile fields and optionally save | `[--fullname NAME] [--nickname NICK] [--email EMAIL] [--save]` |
 | `ducko-dismiss-roster-notice.sh` | Dismiss a persistent roster outcome notice using the Swift AX helper; set `DUCKO_PID` with multiple instances | `[contacts\|info]` |
@@ -532,7 +533,7 @@ $SCRIPTS/ducko-screenshot.sh "preferences-accounts.png"
 $SCRIPTS/ducko-preferences-tab.sh Chat
 $SCRIPTS/ducko-screenshot.sh "preferences-chat.png"
 
-# 6. Navigate to Appearance tab (theme grid with live preview bubbles)
+# 6. Navigate to Appearance tab (contact-list compact rows and sizing)
 $SCRIPTS/ducko-preferences-tab.sh Appearance
 $SCRIPTS/ducko-screenshot.sh "preferences-appearance.png"
 

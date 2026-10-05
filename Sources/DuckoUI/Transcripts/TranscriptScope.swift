@@ -77,7 +77,7 @@ public struct ScopeRequest: Sendable, Hashable {
 }
 
 /// App-level shared selection that scopes the singleton transcript window to a contact.
-/// Injected into every scene like `AppEnvironment`/`ThemeEngine` so the chat and contacts
+/// Shared by the scenes that show or retarget transcripts, so the chat and contacts
 /// windows can retarget the one transcript window rather than opening per-contact windows.
 @MainActor @Observable
 public final class TranscriptScope {

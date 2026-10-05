@@ -7,7 +7,6 @@ struct TranscriptRowView: View {
     let row: TranscriptRow
     let context: TranscriptRowContext
     let environment: AppEnvironment
-    let theme: ThemeEngine
     let remoteImageConsent: RemoteImageConsent
 
     var body: some View {
@@ -18,7 +17,6 @@ struct TranscriptRowView: View {
             // A reused cell must not hand one row's view state, such as an open sheet, to the next row.
             .id(row.id)
             .environment(environment)
-            .environment(theme)
             .environment(remoteImageConsent)
     }
 

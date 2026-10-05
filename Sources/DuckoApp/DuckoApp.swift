@@ -14,7 +14,6 @@ struct DuckoApp: App {
     @State private var environment: AppEnvironment
     @State private var chatContainer: ChatContainerState
     @State private var transcriptScope = TranscriptScope()
-    @State private var themeEngine = ThemeEngine()
     @State private var generalPreferences = GeneralPreferences()
     @State private var statusBarPreferences = StatusBarPreferences()
     @State private var updateManager = UpdateManager()
@@ -65,7 +64,6 @@ struct DuckoApp: App {
         Window("Welcome", id: "welcome") {
             WelcomeView()
                 .environment(environment)
-                .environment(themeEngine)
         }
         .defaultSize(width: 520, height: 620)
         .defaultLaunchBehavior(.suppressed)
@@ -74,7 +72,6 @@ struct DuckoApp: App {
         Window("Contacts", id: "contacts") {
             ContentView()
                 .environment(environment)
-                .environment(themeEngine)
                 .environment(chatContainer)
                 .environment(transcriptScope)
                 .environment(statusBarPreferences)
@@ -104,7 +101,6 @@ struct DuckoApp: App {
         Window("Chat", id: "chat") {
             ChatContainerView()
                 .environment(environment)
-                .environment(themeEngine)
                 .environment(chatContainer)
                 .environment(transcriptScope)
                 .environment(\.openChat, openChatAction)
@@ -115,14 +111,12 @@ struct DuckoApp: App {
         WindowGroup("Contact Info", id: "contact-info", for: ContactInfoRef.self) { $ref in
             ContactInfoWindow(ref: $ref)
                 .environment(environment)
-                .environment(themeEngine)
         }
         .defaultSize(width: 400, height: 520)
 
         Window("Chat Transcripts", id: "transcripts") {
             TranscriptViewerWindow()
                 .environment(environment)
-                .environment(themeEngine)
                 .environment(transcriptScope)
         }
         .defaultSize(width: 900, height: 600)
@@ -309,14 +303,12 @@ struct DuckoApp: App {
         MenuBarExtra("Ducko", systemImage: "bubble.left.and.bubble.right.fill", isInserted: $generalPreferences.showInMenuBar) {
             MenuBarStatusView()
                 .environment(environment)
-                .environment(themeEngine)
                 .environment(statusBarPreferences)
         }
 
         Settings {
             PreferencesView()
                 .environment(environment)
-                .environment(themeEngine)
                 .environment(generalPreferences)
                 .environment(statusBarPreferences)
         }

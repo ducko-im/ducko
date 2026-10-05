@@ -19,7 +19,7 @@ struct TranscriptRowsTests {
 
     private func rows(
         _ messages: [ChatMessage],
-        chat: TranscriptRows.Details = TranscriptRows.Details(timestampStyle: .grouped),
+        chat: TranscriptRows.Details = TranscriptRows.Details(),
         transfers: [FileTransferService.ActiveTransfer] = [],
         previews: [UUID: LinkPreview] = [:]
     ) -> [TranscriptRow] {
@@ -81,7 +81,7 @@ struct TranscriptRowsTests {
 
     @Test func `a search result changes exactly its message's row`() {
         let messages = (0 ..< 5).map { message(at: TimeInterval($0 * 10)) }
-        var chat = TranscriptRows.Details(timestampStyle: .grouped)
+        var chat = TranscriptRows.Details()
         chat.searchResults = [messages[1].id]
 
         #expect(changed(rows(messages), rows(messages, chat: chat)) == [1])
@@ -89,7 +89,7 @@ struct TranscriptRowsTests {
 
     @Test func `the top slot stands above the messages while there is history left to load`() {
         let messages = (0 ..< 3).map { message(at: TimeInterval($0 * 10)) }
-        var chat = TranscriptRows.Details(timestampStyle: .grouped)
+        var chat = TranscriptRows.Details()
         #expect(rows(messages, chat: chat).map(\.id) == messages.map(\.id))
 
         chat.showsTopSlot = true
@@ -105,7 +105,7 @@ struct TranscriptRowsTests {
         let items: [TimelineItem] = [.message(message(at: 0)), .note(note), .message(message(at: nextDay + 10))]
 
         let rows = TranscriptRows.chat(
-            items: items, details: TranscriptRows.Details(timestampStyle: .grouped),
+            items: items, details: TranscriptRows.Details(),
             transfers: [], receivingTransfers: [], linkPreview: { _ in nil }
         )
 

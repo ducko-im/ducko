@@ -3,7 +3,6 @@ import SwiftUI
 
 struct MessageListView: View {
     @Environment(AppEnvironment.self) private var environment
-    @Environment(ThemeEngine.self) private var theme
     let windowState: ChatWindowState
 
     var body: some View {
@@ -22,8 +21,7 @@ struct MessageListView: View {
 
     /// Built in `body`, so that observation tracks everything a row draws from.
     private var rows: [TranscriptRow] {
-        let showsLinkPreviews = theme.current.showLinkPreviews
-        return TranscriptRows.chat(
+        TranscriptRows.chat(
             items: windowState.timelineItems,
             details: TranscriptRows.Details(
                 isGroupchat: windowState.isGroupchat,
@@ -31,12 +29,11 @@ struct MessageListView: View {
                 contactName: windowState.contact?.displayName,
                 searchResults: Set(windowState.searchResults),
                 showsTopSlot: windowState.conversation != nil && !windowState.isLoading && !windowState.hasReachedEnd,
-                isLoadingOlder: windowState.isLoadingOlder,
-                timestampStyle: theme.current.timestampStyle
+                isLoadingOlder: windowState.isLoadingOlder
             ),
             transfers: environment.fileTransferService.activeTransfers,
             receivingTransfers: windowState.receivingTransfers,
-            linkPreview: { showsLinkPreviews ? windowState.linkPreview(for: $0) : nil }
+            linkPreview: { windowState.linkPreview(for: $0) }
         )
     }
 }

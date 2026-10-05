@@ -1,15 +1,13 @@
 import SwiftUI
 
 struct ReplyQuoteView: View {
-    @Environment(ThemeEngine.self) private var theme
-    @Environment(\.colorScheme) private var colorScheme
     let senderName: String
     let bodyPreview: String
 
     var body: some View {
         HStack(spacing: 6) {
             RoundedRectangle(cornerRadius: 1)
-                .fill(theme.current.accentColor.resolved(for: colorScheme))
+                .fill(Palette.accent)
                 .frame(width: 3)
 
             VStack(alignment: .leading, spacing: 2) {

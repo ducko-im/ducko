@@ -18,8 +18,8 @@ enum RoomCaption: Equatable {
     /// Convenience reading the live participant count, matching what `RoomRow`
     /// renders against (zero when the room has no bound account).
     @MainActor
-    static func resolve(for conversation: Conversation, chatService: ChatService) -> RoomCaption {
-        resolve(roomSubject: conversation.roomSubject, participantCount: participantCount(for: conversation, chatService: chatService))
+    static func resolve(for conversation: Conversation, isCompact: Bool, chatService: ChatService) -> RoomCaption {
+        resolve(roomSubject: conversation.roomSubject, participantCount: participantCount(for: conversation, chatService: chatService), isCompact: isCompact)
     }
 
     /// The one derivation of a room's occupant count, shared by the row and the contact-list height memo so they cannot
@@ -31,7 +31,8 @@ enum RoomCaption: Equatable {
         } ?? 0
     }
 
-    static func resolve(roomSubject: String?, participantCount: Int) -> RoomCaption {
+    static func resolve(roomSubject: String?, participantCount: Int, isCompact: Bool) -> RoomCaption {
+        guard !isCompact else { return .none }
         if let subject = roomSubject, !subject.isEmpty {
             return .subject(subject)
         }

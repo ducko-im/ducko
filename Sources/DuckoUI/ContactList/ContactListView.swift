@@ -16,6 +16,8 @@ struct ContactListView: View {
     private var autoSizeHorizontal = true
     @AppStorage(ContactListSizingDefaults.maxWidthKey, store: PreferencesDefaults.store)
     private var maxWidthPreference = ContactListSizingDefaults.defaultMaxWidth
+    @AppStorage(ContactListSizingDefaults.compactKey, store: PreferencesDefaults.store)
+    private var isCompact = false
 
     private var preferences: ContactListPreferences {
         windowState.preferences
@@ -71,6 +73,7 @@ struct ContactListView: View {
             autoSizeVertical: autoSizeVertical,
             autoSizeHorizontal: autoSizeHorizontal,
             maxWidthPreference: maxWidthPreference,
+            isCompact: isCompact,
             hasConnectedAccount: hasConnectedAccount,
             presentSheet: { windowState.activeRowSheet = $0 },
             requestRemoval: { windowState.requestRemoval(of: $0) },

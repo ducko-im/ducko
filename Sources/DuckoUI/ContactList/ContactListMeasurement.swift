@@ -8,10 +8,6 @@ private let maxMeasuredNames = 200
 private let maxMeasuredNameLength = 64
 private let maxMeasuredRows = 200
 
-// Flat per-row height estimate, used as `fittedHeight`'s fallback for an
-// overflowing roster (clamps up to the screen cap) and an empty one (collapses
-// to zero), and for rows past the measurement cap.
-
 /// Cheap fingerprint of everything the fitted-width measurement reads, so a
 /// reconcile whose width inputs are unchanged reuses the cached width instead
 /// of re-running the font measurement over the names. `.auto` carries the exact
@@ -33,18 +29,6 @@ private enum RowHeightSignature: Equatable {
     case room(hasSecondLine: Bool)
 }
 
-/// The theme terms that move row height: the avatar (its size, and whether it
-/// shows at all). `showStatusMessages` is folded into each row's
-/// `RowHeightSignature` second-line flag, and the 8-pt presence dot never
-/// exceeds the text/avatar height, so neither belongs here. Properties are read
-/// only via the synthesized `==`, which Periphery can't see.
-private struct RowHeightThemeSignature: Equatable {
-    // periphery:ignore
-    let avatarSize: CGFloat
-    // periphery:ignore
-    let showAvatars: Bool
-}
-
 /// Cheap fingerprint of everything the per-row height measurement reads, so a
 /// reconcile whose height inputs are unchanged reuses the cached heights instead
 /// of laying out up to `maxMeasuredRows` `NSHostingView`s. Properties are read
@@ -58,8 +42,10 @@ private struct HeightMeasurementKey: Equatable {
     let maxListHeight: CGFloat
     // periphery:ignore
     let rows: [RowHeightSignature]
+    // Not covered by `rows`: compact rows drop the avatar as well as the
+    // caption, so a row with no second line changes height too.
     // periphery:ignore
-    let theme: RowHeightThemeSignature
+    let isCompact: Bool
 }
 
 /// The memoized output of the per-row height measurement.
@@ -70,7 +56,8 @@ struct MeasuredGeometry {
 
 @MainActor
 final class ContactListMeasurement {
-    static let estimatedRowChrome: CGFloat = 12
+    private static let nameFont = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+    private static let estimatedRowChrome: CGFloat = 12
     private var measuringHost: NSHostingView<ContactListCellContent>?
     private var widthMemo: (key: WidthMeasurementKey, width: CGFloat)?
     private var heightMemo: (key: HeightMeasurementKey, geometry: MeasuredGeometry)?
@@ -81,8 +68,9 @@ final class ContactListMeasurement {
     /// scan runs each reconcile to build the key; on a match the per-name font
     /// measurement and fitted-width calc are what's skipped.
     func contentWidth(inputs: ContactListTableInputs, manualWidth: CGFloat) -> CGFloat {
+        let avatarSize: CGFloat = inputs.isCompact ? 0 : AvatarView.defaultSize
         let key: WidthMeasurementKey = inputs.autoSizeHorizontal
-            ? .auto(names: measuredNames(inputs: inputs), avatarSize: inputs.theme?.current.avatarSize ?? 0, maxWidth: CGFloat(ContactListSizing.clampMaxWidth(inputs.maxWidthPreference)))
+            ? .auto(names: measuredNames(inputs: inputs), avatarSize: avatarSize, maxWidth: CGFloat(ContactListSizing.clampMaxWidth(inputs.maxWidthPreference)))
             : .manual(width: manualWidth)
         if let widthMemo, widthMemo.key == key { return widthMemo.width }
         let width: CGFloat = switch key {
@@ -121,8 +109,7 @@ final class ContactListMeasurement {
     /// `avatarSize` and `maxWidth` come from the memo key so the cached width
     /// and the key that gates it are computed from identical inputs.
     private func fittedContentWidth(names: [String], avatarSize: CGFloat, maxWidth: CGFloat) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
-        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let attributes: [NSAttributedString.Key: Any] = [.font: Self.nameFont]
         let maxNameWidth = names.reduce(CGFloat(0)) { max($0, ($1 as NSString).size(withAttributes: attributes).width) }
         return ContactListSizing.fittedWidth(
             maxNameWidth: maxNameWidth,
@@ -147,13 +134,17 @@ final class ContactListMeasurement {
     /// match the per-row `NSHostingView` layout loop is skipped.
     func heights(inputs: ContactListTableInputs, contentWidth: CGFloat, maxListHeight: CGFloat, cellContent: (ContactListRow) -> ContactListCellContent?) -> MeasuredGeometry {
         let measureCount = min(inputs.incomingRows.count, maxMeasuredRows)
-        let flatRowHeight = (inputs.theme?.current.avatarSize ?? 40) + Self.estimatedRowChrome
+        // Flat height for a row that is not measured: its tallest fixed element,
+        // the avatar or the name's line in a compact row, plus an allowance for
+        // the padding around it.
+        let tallestElement = inputs.isCompact ? NSLayoutManager().defaultLineHeight(for: Self.nameFont) : AvatarView.defaultSize
+        let flatRowHeight = tallestElement + Self.estimatedRowChrome
         let key = HeightMeasurementKey(
             width: contentWidth,
             totalRowCount: inputs.incomingRows.count,
             maxListHeight: maxListHeight,
             rows: (0 ..< measureCount).map { rowHeightSignature(for: inputs.incomingRows[$0], inputs: inputs) },
-            theme: themeHeightSignature(inputs: inputs)
+            isCompact: inputs.isCompact
         )
         if let heightMemo, heightMemo.key == key { return heightMemo.geometry }
         let measuredHeights = (0 ..< measureCount).map { measureHeight(content: cellContent(inputs.incomingRows[$0]), width: contentWidth, fallback: flatRowHeight) }
@@ -185,25 +176,13 @@ final class ContactListMeasurement {
     }
 
     private func contactHasSecondLine(_ contact: Contact, inputs: ContactListTableInputs) -> Bool {
-        guard let environment = inputs.environment, let theme = inputs.theme else { return false }
-        return ContactCaption.resolve(
-            for: contact,
-            showStatusMessages: theme.current.showStatusMessages,
-            presenceService: environment.presenceService
-        ).hasSecondLine
+        guard let environment = inputs.environment else { return false }
+        return ContactCaption.resolve(for: contact, isCompact: inputs.isCompact, presenceService: environment.presenceService).hasSecondLine
     }
 
     private func roomHasSecondLine(_ room: Conversation, inputs: ContactListTableInputs) -> Bool {
         guard let environment = inputs.environment else { return false }
-        return RoomCaption.resolve(for: room, chatService: environment.chatService).hasSecondLine
-    }
-
-    private func themeHeightSignature(inputs: ContactListTableInputs) -> RowHeightThemeSignature {
-        let theme = inputs.theme?.current
-        return RowHeightThemeSignature(
-            avatarSize: theme?.avatarSize ?? 0,
-            showAvatars: theme?.showAvatars ?? false
-        )
+        return RoomCaption.resolve(for: room, isCompact: inputs.isCompact, chatService: environment.chatService).hasSecondLine
     }
 
     /// Self-sized height of one row at the target content width, via a
