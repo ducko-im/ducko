@@ -6,9 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-06
+
 ### Added
 
-- Add a Compact rows option in Settings ▸ Appearance that shows every contact and room on one line, without avatars, status lines or room subjects
+- Add a Compact rows option in Settings ▸ Appearance that shows every contact and room on one line, without avatars, status lines or room topics
 - Add tooltips that show the full text of a name, status message, room topic or file name that is cut off
 
 ### Changed
@@ -265,7 +267,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release.
 
-[Unreleased]: https://github.com/tobihagemann/ducko/compare/0.6.0...HEAD
+[Unreleased]: https://github.com/tobihagemann/ducko/compare/0.7.0...HEAD
+[0.7.0]: https://github.com/tobihagemann/ducko/compare/0.6.0...0.7.0
 [0.6.0]: https://github.com/tobihagemann/ducko/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/tobihagemann/ducko/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/tobihagemann/ducko/compare/0.3.0...0.4.0
