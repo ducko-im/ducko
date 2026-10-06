@@ -475,10 +475,10 @@ final class AXDriver {
         if let menu = findDescendant(in: popUp, role: kAXMenuRole, where: { _ in true }) {
             return menu
         }
-        // SwiftUI `Menu` (button style) opens its menu as a top-level `AXMenu`
-        // under the application — a sibling of the windows, not a descendant of
-        // the popup button — so the popup-scoped lookups above miss it. Fall
-        // back to the same app-root search context menus use.
+        // SwiftUI `Menu` (button style) can also open its menu as a top-level
+        // `AXMenu` under the application — a sibling of the windows — which the
+        // popup-scoped lookups above miss. Fall back to the same app-root
+        // search context menus use.
         if let pid,
            let menu = findContextMenu(in: AXUIElementCreateApplication(pid)) {
             return menu

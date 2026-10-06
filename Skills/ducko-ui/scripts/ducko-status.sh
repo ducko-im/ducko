@@ -4,11 +4,8 @@
 #   STATUS: available|away|xa|dnd|offline
 #   MESSAGE: optional status message text
 #
-# Limitation: the status control is a borderless SwiftUI `Menu` whose opened
-# menu renders as a process-level element that osascript can't reliably reach,
-# so this script's menu-item selection is best-effort and may report
-# "status menu item ... not found". The integration suite drives this control
-# via Swift AX and is authoritative (see UIPresenceTests).
+# MESSAGE is typed into the Custom Status sheet with keystrokes, which go to
+# the frontmost app, so the instance has to stay frontmost while it runs.
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
@@ -55,11 +52,16 @@ on run argv
             delay 0.3
 
             -- Find and click the target status menu item. The SwiftUI Menu
-            -- opens as a process-level menu (a sibling of the windows), not
-            -- under the button or window, so search the process-level menus.
+            -- opens under the button, and has also been seen as a
+            -- process-level menu (a sibling of the windows), so search both.
+            set openedMenus to {}
+            try
+                set openedMenus to menus of pickerBtn
+            end try
+            set openedMenus to openedMenus & menus
             set clicked to false
             -- Match by prefix because a marked row carries a trailing checkmark or dash in its title.
-            repeat with m in menus
+            repeat with m in openedMenus
                 try
                     set matches to (menu items of m whose name starts with targetLabel)
                     if (count of matches) > 0 then
@@ -79,8 +81,13 @@ on run argv
                 click pickerBtn
                 delay 0.3
 
+                set openedMenus to {}
+                try
+                    set openedMenus to menus of pickerBtn
+                end try
+                set openedMenus to openedMenus & menus
                 set customClicked to false
-                repeat with m in menus
+                repeat with m in openedMenus
                     try
                         repeat with elem in (menu items of m)
                             if (name of elem) starts with "Custom" then
