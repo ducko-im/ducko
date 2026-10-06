@@ -136,13 +136,17 @@ struct TranscriptListCoordinatorTests {
         #expect(scroller.isAtNewest)
     }
 
-    @Test func `at the newest message a viewport that changes height keeps the end in view`() {
+    /// With one row or none, the inset that rests the content at the end takes up nearly all of the viewport, which
+    /// still has to get shorter.
+    @Test(arguments: [120, 1, 0])
+    func `at the newest message a viewport that changes height keeps the end in view`(count: Int) {
         let harness = ListHarness()
         let scroller = TranscriptScroller()
-        harness.show(rows(120), scroller: scroller)
+        harness.show(rows(count), scroller: scroller)
 
         for height: CGFloat in [380, 560] {
             harness.resize(height: height)
+            #expect(harness.viewport.height == height)
             #expect(abs(harness.distanceFromNewest) < 0.5)
             #expect(scroller.isAtNewest)
         }

@@ -35,6 +35,10 @@ ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked
 
 `<true/>` on the line after the key means locked. No output means unlocked, because the key is absent then. An `ioreg` error, such as "can't open file" inside a sandbox, leaves the lock state unknown. When the screen is locked, record the GUI check as inconclusive instead of working around it.
 
+## A Glitch in an App's First Frames
+
+In the observed launch, the first accessibility answer came about half a second after the process started, so a layout glitch in an app's first frames is over before the first read. A screen recording is no substitute (see Step 4). Log the geometry from inside the app instead: put a logging probe into a scratch copy of the code and launch that. To check a fix, put the same probe into scratch copies of the unfixed and the fixed code and compare the logs.
+
 ## Workflow
 
 ### Step 1: Launch the App
@@ -71,6 +75,8 @@ Resolve the window ID first, then capture by ID:
 peekaboo window list --app AppName
 peekaboo see --window-id WID --no-elements --path /tmp/screenshot.png
 ```
+
+Capture by window ID only. A screen recording, or a capture of the whole screen or a region of it, holds everything else the user has open, and shows whatever is in front, which may not be the app. `screencapture -l WID` has captured a window correctly while it was on another Space.
 
 ### Step 5: Interact with Elements
 
@@ -166,7 +172,7 @@ SwiftUI controls bridge to accessibility in ways that defeat naive synthetic aut
 - **A `Button` at `.opacity(0)` was not found in the accessibility tree by identifier**, and a control inserted only while hovering (`if isHovering { … }`) exists only while the pointer is over it. To reach such a control's effect without a pointer, give an always-present element a named action (`.accessibilityAction(named:)`). It shows up in that element's action names (`AXUIElementCopyActionNames`) as a multi-line string that starts with `Name:<title>` (observed: `Name:Copy Code\nTarget:0x0\nSelector:(null)`); pass that exact string to `AXUIElementPerformAction`.
 - **Key presses with modifiers can be posted to one process.** Set `flags` on the `CGEvent` (`.maskShift`, `.maskAlternate`) before `postToPid`; SwiftUI `.onKeyPress` handlers receive the modifiers. Virtual key 36 is Return, and 76 is the keypad's Enter (posted with `.maskNumericPad`). In the observed run the app had been activated with `NSRunningApplication.activate()`, yet `NSApp.keyWindow` was nil while keys were posted this way, and `NSApp.sendAction(_:to:from:)` with a nil target returned false. Confirm a key window before relying on a responder-chain action.
 - **`AXScrollToVisible` scrolled an element of a `LazyVStack` into view** when performed on an element already in the tree. Confirm with a window screenshot.
-- **A tooltip appears only under a resting pointer, in a window of its own.** To verify one, record the pointer position, activate the app by PID, post `mouseMoved` events to the HID event tap at a few points ending on the target, and wait about 2.5 seconds. The tooltip is then a new on-screen window owned by that PID in `CGWindowListCopyWindowInfo` (observed at layer 103 on macOS 27). Capture that window by its ID, because a screen region also captures whatever else the user has open. Then put the pointer back at the recorded position with `CGWarpMouseCursorPosition`. This moves the user's real pointer, so tell them first, and retry once when no tooltip appears. SwiftUI `.help` text also reads back as `kAXHelpAttribute` unless the view clears its accessibility hint, so a missing attribute does not mean a missing tooltip.
+- **A tooltip appears only under a resting pointer, in a window of its own.** To verify one, record the pointer position, activate the app by PID, post `mouseMoved` events to the HID event tap at a few points ending on the target, and wait about 2.5 seconds. The tooltip is then a new on-screen window owned by that PID in `CGWindowListCopyWindowInfo` (observed at layer 103 on macOS 27). Capture that window by its ID (see Step 4). Then put the pointer back at the recorded position with `CGWarpMouseCursorPosition`. This moves the user's real pointer, so tell them first, and retry once when no tooltip appears. SwiftUI `.help` text also reads back as `kAXHelpAttribute` unless the view clears its accessibility hint, so a missing attribute does not mean a missing tooltip.
 - **A test that triggers a copy overwrites the user's clipboard.** Save every pasteboard item's types and data first (`NSPasteboard.general.pasteboardItems`) and read the result. Then call `clearContents()` and `writeObjects` with new `NSPasteboardItem`s built from the saved data.
 
 ## Additional Resources

@@ -93,6 +93,8 @@ final class TranscriptListCoordinator: NSObject, NSTableViewDataSource, NSTableV
         clipView.postsFrameChangedNotifications = true
         observe(NSView.boundsDidChangeNotification, of: clipView) { $0.didScroll() }
         observe(NSView.frameDidChangeNotification, of: clipView) { $0.viewportChanged() }
+        container.postsFrameChangedNotifications = true
+        observe(NSView.frameDidChangeNotification, of: container) { $0.containerResized() }
         observe(NSScrollView.willStartLiveScrollNotification, of: scrollView) { $0.isLiveScrolling = true }
         observe(NSScrollView.didEndLiveScrollNotification, of: scrollView) {
             $0.isLiveScrolling = false
@@ -296,9 +298,11 @@ final class TranscriptListCoordinator: NSObject, NSTableViewDataSource, NSTableV
         scrollView.reflectScrolledClipView(clipView)
     }
 
-    /// Returns whether the insets changed.
+    /// Returns whether the insets changed. The top inset is measured against the container, whose height the viewport
+    /// takes. Measured against the viewport itself, it would hold a list with few rows at the height it has: a scroll
+    /// view does not get shorter than its content insets.
     private func updateContentInsets(_ inputs: TranscriptListInputs) -> Bool {
-        let top = inputs.restsShortContentAtEnd ? max(0, clipView.bounds.height - contentHeight - inputs.bottomPadding) : 0
+        let top = inputs.restsShortContentAtEnd ? max(0, container.bounds.height - contentHeight - inputs.bottomPadding) : 0
         let insets = scrollView.contentInsets
         guard insets.top != top || insets.bottom != inputs.bottomPadding else { return false }
         scrollView.contentInsets = NSEdgeInsets(top: top, left: 0, bottom: inputs.bottomPadding, right: 0)
@@ -421,6 +425,15 @@ final class TranscriptListCoordinator: NSObject, NSTableViewDataSource, NSTableV
             guard !Task.isCancelled else { return }
             self?.reportRestIfReached()
         }
+    }
+
+    /// Makes the insets fit the container's new height, so that the viewport can follow it. The settle that puts the
+    /// view back comes once the viewport has.
+    private func containerResized() {
+        guard !isChanging, let inputs else { return }
+        isChanging = true
+        defer { isChanging = false }
+        _ = updateContentInsets(inputs)
     }
 
     private func viewportChanged() {

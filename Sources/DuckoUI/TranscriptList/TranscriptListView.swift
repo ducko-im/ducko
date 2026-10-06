@@ -49,6 +49,12 @@ struct TranscriptListView: NSViewRepresentable {
         context.coordinator.container
     }
 
+    /// The list takes the size it is offered. Sized by default, it would not go below its scroll view's content
+    /// insets, so a list with few rows could not make room for a view that appears above or below it.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
     func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.update(TranscriptListInputs(
             rows: rows,

@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Fix your status and avatar at the top of the Contacts window being pushed against the window's edges by a long status, which is now shortened to fit
 - Fix a long file name running past the edge of the placeholder for an image whose file is missing
+- Fix the chat window briefly showing its header cut off under the title bar and its tabs below the window's edge while a chat is opening
 - Fix rooms no longer showing new messages or their participants after your connection briefly drops, and show the messages sent during the drop
 - Fix room bookmarks staying empty after your connection briefly drops
 - Fix rooms not being joined when your connection drops while Ducko is signing in
