@@ -36,7 +36,7 @@ struct ContactRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(contact.displayName)
                         .fontWeight(.medium)
-                        .lineLimit(1)
+                        .singleLine()
 
                     if let accountLabel {
                         AccountLabelText(label: accountLabel)
@@ -45,20 +45,20 @@ struct ContactRow: View {
 
                 switch caption {
                 case let .status(statusText):
-                    Text(statusText)
+                    Text(joiningLines: statusText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .singleLine()
                 case .pendingApproval:
                     Text("Pending approval")
                         .font(.caption)
                         .foregroundStyle(.orange)
-                        .lineLimit(1)
+                        .singleLine()
                 case let .lastSeen(date):
                     Text("Last seen \(date, style: .relative)")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
-                        .lineLimit(1)
+                        .singleLine()
                 case .none:
                     EmptyView()
                 }

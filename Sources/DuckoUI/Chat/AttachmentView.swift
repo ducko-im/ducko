@@ -123,7 +123,7 @@ struct AttachmentView: View {
         } else {
             // The saved file was moved, deleted, or cannot be decoded.
             imagePlaceholder(systemName: "photo.badge.exclamationmark")
-                .frame(minWidth: 120, minHeight: 80)
+                .frame(minWidth: 120, maxWidth: Self.maxImageSize, minHeight: 80)
                 .fixedSize()
         }
     }
@@ -138,7 +138,7 @@ struct AttachmentView: View {
 
             Text(attachment.displayFileName)
                 .font(.caption)
-                .lineLimit(1)
+                .singleLine()
                 .truncationMode(.middle)
         }
         .foregroundStyle(Palette.bubbleText(isOutgoing: isOutgoing).opacity(0.6))
@@ -193,7 +193,7 @@ struct AttachmentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(attachment.displayFileName)
                     .font(.callout)
-                    .lineLimit(1)
+                    .singleLine()
 
                 if let oobDescription = attachment.oobDescription, !oobDescription.isEmpty {
                     Text(oobDescription)

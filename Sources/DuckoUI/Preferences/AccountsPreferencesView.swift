@@ -50,7 +50,7 @@ struct AccountsPreferencesView: View {
                 HStack {
                     connectionIndicator(for: account.id)
                     Text(account.displayName ?? account.jid.description)
-                        .lineLimit(1)
+                        .singleLine()
                     if environment.accountService.outageInfos[account.id] != nil {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)

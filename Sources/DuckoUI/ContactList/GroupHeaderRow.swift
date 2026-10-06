@@ -30,7 +30,7 @@ struct GroupHeaderRow: View {
                 Text(name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .singleLine()
 
                 Spacer()
 

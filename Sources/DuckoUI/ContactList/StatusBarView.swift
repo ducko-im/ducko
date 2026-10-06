@@ -95,13 +95,13 @@ struct StatusBarView: View {
             } title: {
                 Text(displayName)
                     .fontWeight(.semibold)
-                    .lineLimit(1)
+                    .singleLine()
             }
             .accessibilityIdentifier("identity-switcher")
         } else {
             Text(displayName)
                 .fontWeight(.semibold)
-                .lineLimit(1)
+                .singleLine()
         }
     }
 
@@ -122,10 +122,10 @@ struct StatusBarView: View {
                 windowState.customStatusPreset = CustomStatusPreset(presence: headerPresence.status, message: headerPresence.message ?? "")
             }
         } title: {
-            Text(label)
-                .lineLimit(1)
+            Text(joiningLines: label)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+                .singleLine()
         }
         .accessibilityIdentifier("status-picker")
         // The custom `Menu` label doesn't surface its text as `kAXValue`, so
@@ -214,7 +214,6 @@ private struct HeaderPullDown<Items: View, Title: View>: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .fixedSize()
         .onHover { isHovering = $0 }
     }
 }

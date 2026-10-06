@@ -30,10 +30,10 @@ struct ReplyComposeBar: View {
                     .font(.caption)
                     .bold()
 
-                Text(preview)
+                Text(joiningLines: preview)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .singleLine()
             }
 
             Spacer()

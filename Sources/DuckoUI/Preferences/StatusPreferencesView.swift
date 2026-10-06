@@ -27,8 +27,8 @@ struct StatusPreferencesView: View {
             List(savedStatuses, selection: $selection) { saved in
                 HStack(spacing: 8) {
                     PresenceIndicator(status: saved.status)
-                    Text(saved.message)
-                        .lineLimit(1)
+                    Text(joiningLines: saved.message)
+                        .singleLine()
                     Spacer()
                     Text(saved.status.displayName)
                         .foregroundStyle(.secondary)

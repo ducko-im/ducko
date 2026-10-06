@@ -54,7 +54,7 @@ private struct RoomInviteRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Room invitation: \(invite.roomJIDString)")
                         .font(.callout)
-                        .lineLimit(1)
+                        .singleLine()
 
                     if let from = invite.fromJIDString {
                         Text("From: \(from)")

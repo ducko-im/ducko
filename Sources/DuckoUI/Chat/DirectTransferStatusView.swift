@@ -59,6 +59,7 @@ struct DirectTransferStatusView: View {
                         ProgressView()
                             .controlSize(.mini)
                         Text("Waiting for \(recipient) to accept…")
+                            .singleLine()
                     }
                 case let .sending(progress):
                     HStack(spacing: 6) {

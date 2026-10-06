@@ -45,7 +45,7 @@ private struct IncomingFileTransferRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("File offer: \(offer.fileName)")
                         .font(.callout)
-                        .lineLimit(1)
+                        .singleLine()
 
                     Text("\(formattedFileSize) from \(offer.fromJIDString)")
                         .font(.caption)

@@ -85,7 +85,7 @@ struct ChatHeaderView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(conversation.displayTitle)
                 .font(.headline)
-                .lineLimit(1)
+                .singleLine()
 
             if participantCount > 0 {
                 HStack(spacing: 4) {
@@ -119,7 +119,7 @@ struct ChatHeaderView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(conversation.displayName ?? conversation.occupantNickname ?? conversation.jid.description)
                     .font(.headline)
-                    .lineLimit(1)
+                    .singleLine()
                 Text("Private message")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -150,15 +150,15 @@ struct ChatHeaderView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(contact?.displayName ?? conversation.displayName ?? conversation.jid.description)
                     .font(.headline)
-                    .lineLimit(1)
+                    .singleLine()
 
                 HStack(spacing: 4) {
                     PresenceIndicator(display: display)
 
-                    Text(statusMessage ?? display.label)
+                    Text(joiningLines: statusMessage ?? display.label)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .singleLine()
 
                     if hasOutage {
                         Text("·")

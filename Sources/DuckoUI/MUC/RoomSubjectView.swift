@@ -32,10 +32,10 @@ struct RoomSubjectView: View {
                 }
                 .controlSize(.small)
             } else {
-                Text(subject ?? "No topic set")
+                Text(joiningLines: subject ?? "No topic set")
                     .font(.callout)
                     .foregroundStyle(subject != nil ? .primary : .tertiary)
-                    .lineLimit(1)
+                    .singleLine()
 
                 Spacer()
 

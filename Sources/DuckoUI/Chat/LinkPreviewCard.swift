@@ -43,10 +43,10 @@ struct LinkPreviewCard: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 if let title = preview.title {
-                    Text(title)
+                    Text(joiningLines: title)
                         .font(.callout)
                         .bold()
-                        .lineLimit(1)
+                        .singleLine()
                 }
 
                 if let description = preview.descriptionText {

@@ -9,10 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Add a Compact rows option in Settings ▸ Appearance that shows every contact and room on one line, without avatars, status lines or room subjects
+- Add tooltips that show the full text of a name, status message, room topic or file name that is cut off
 
 ### Changed
 
 - Show the date above the first message of each day in a chat
+- Show a status message, room topic or reply preview that has several lines as one line, instead of only its first line
 
 ### Removed
 
@@ -20,6 +22,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Fix your status and avatar at the top of the Contacts window being pushed against the window's edges by a long status, which is now shortened to fit
+- Fix a long file name running past the edge of the placeholder for an image whose file is missing
 - Fix rooms no longer showing new messages or their participants after your connection briefly drops, and show the messages sent during the drop
 - Fix room bookmarks staying empty after your connection briefly drops
 - Fix rooms not being joined when your connection drops while Ducko is signing in

@@ -81,7 +81,7 @@ private struct PendingAttachmentChip: View {
 
             Text(attachment.fileName)
                 .font(.callout)
-                .lineLimit(1)
+                .singleLine()
                 .truncationMode(.middle)
                 .frame(maxWidth: 180)
 

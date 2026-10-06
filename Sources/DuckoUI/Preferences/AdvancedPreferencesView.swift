@@ -12,7 +12,7 @@ struct AdvancedPreferencesView: View {
                     HStack {
                         Text(preferences.dataLocation.path(percentEncoded: false))
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .singleLine()
                             .truncationMode(.middle)
 
                         Button("Reveal in Finder") {

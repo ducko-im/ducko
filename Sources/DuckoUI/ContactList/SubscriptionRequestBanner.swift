@@ -24,7 +24,7 @@ struct SubscriptionRequestBanner: View {
                     HStack {
                         Text("\(jid.description) wants to subscribe")
                             .font(.callout)
-                            .lineLimit(1)
+                            .singleLine()
 
                         Spacer()
 

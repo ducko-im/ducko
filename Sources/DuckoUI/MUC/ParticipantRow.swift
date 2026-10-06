@@ -47,7 +47,7 @@ struct ParticipantRow: View {
             ParticipantAvatarView(nickname: participant.nickname)
 
             Text(participant.nickname)
-                .lineLimit(1)
+                .singleLine()
 
             Spacer()
 

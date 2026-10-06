@@ -49,7 +49,7 @@ private struct TransferProgressRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(transfer.fileName)
                     .font(.callout)
-                    .lineLimit(1)
+                    .singleLine()
 
                 Text(stateLabel)
                     .font(.caption)

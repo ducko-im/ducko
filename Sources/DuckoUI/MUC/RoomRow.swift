@@ -26,19 +26,19 @@ struct RoomRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(conversation.displayTitle)
                     .fontWeight(.medium)
-                    .lineLimit(1)
+                    .singleLine()
 
                 switch caption {
                 case let .subject(subject):
-                    Text(subject)
+                    Text(joiningLines: subject)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .singleLine()
                 case let .participants(count):
                     Text("\(count) participants")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .singleLine()
                 case .none:
                     EmptyView()
                 }

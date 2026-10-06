@@ -621,6 +621,7 @@ struct ContactListCellContent: View {
     let openChat: OpenChatAction
     let toggle: (String) -> Void
     let showMenu: () -> Void
+    var measuresHeightOnly = false
 
     var body: some View {
         rowView
@@ -628,6 +629,7 @@ struct ContactListCellContent: View {
             .padding(.horizontal, 12)
             .environment(environment)
             .environment(\.openChat, openChat)
+            .environment(\.measuresHeightOnly, measuresHeightOnly)
     }
 
     @ViewBuilder

@@ -21,7 +21,7 @@ private enum WidthMeasurementKey: Equatable {
 }
 
 /// Whether a measured row shows its optional second (caption) line, the only
-/// per-row content that moves its height — every text element is `lineLimit(1)`,
+/// per-row content that moves its height — every text element is a single line,
 /// so the line's *text* doesn't matter, only its presence.
 private enum RowHeightSignature: Equatable {
     case header
@@ -188,7 +188,8 @@ final class ContactListMeasurement {
     /// Self-sized height of one row at the target content width, via a
     /// reused off-screen `NSHostingView`.
     private func measureHeight(content: ContactListCellContent?, width: CGFloat, fallback: CGFloat) -> CGFloat {
-        guard let content else { return fallback }
+        guard var content else { return fallback }
+        content.measuresHeightOnly = true
         let host: NSHostingView<ContactListCellContent>
         if let measuringHost {
             host = measuringHost

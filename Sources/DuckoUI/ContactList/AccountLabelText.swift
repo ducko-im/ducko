@@ -9,7 +9,7 @@ struct AccountLabelText: View {
         Text(label)
             .font(.caption2)
             .foregroundStyle(.secondary)
-            .lineLimit(1)
+            .singleLine()
             .layoutPriority(-1)
     }
 }
