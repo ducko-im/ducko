@@ -9,7 +9,7 @@
             <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/tobihagemann/ducko/releases/download/0.7.0/Ducko-0.7.0.zip" length="18135899" type="application/octet-stream" sparkle:edSignature="ozCTAPThkq2r3Qf41vyU7xl7kUW2wh/lOUAR3rgjyMDAHZ1HZsOfClBAaZvew3+RXL3/tVVGvjuBULTLwnr8AA=="/>
+            <enclosure url="https://github.com/ducko-im/ducko/releases/download/0.7.0/Ducko-0.7.0.zip" length="18135899" type="application/octet-stream" sparkle:edSignature="ozCTAPThkq2r3Qf41vyU7xl7kUW2wh/lOUAR3rgjyMDAHZ1HZsOfClBAaZvew3+RXL3/tVVGvjuBULTLwnr8AA=="/>
         </item>
         <item>
             <title>0.6.0</title>
@@ -18,7 +18,7 @@
             <sparkle:shortVersionString>0.6.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/tobihagemann/ducko/releases/download/0.6.0/Ducko-0.6.0.zip" length="18189393" type="application/octet-stream" sparkle:edSignature="oP5QhN5ziwotGJEt4mfsHebTlodmx+2BQa9x3Le4SbK60fQ2ZSWl3n1rskgLFozVp2i3//CNou1RKNmgRjKqBw=="/>
+            <enclosure url="https://github.com/ducko-im/ducko/releases/download/0.6.0/Ducko-0.6.0.zip" length="18189393" type="application/octet-stream" sparkle:edSignature="oP5QhN5ziwotGJEt4mfsHebTlodmx+2BQa9x3Le4SbK60fQ2ZSWl3n1rskgLFozVp2i3//CNou1RKNmgRjKqBw=="/>
         </item>
         <item>
             <title>0.5.0</title>
@@ -27,7 +27,7 @@
             <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/tobihagemann/ducko/releases/download/0.5.0/Ducko-0.5.0.zip" length="18034244" type="application/octet-stream" sparkle:edSignature="uXSwkZBWzRf+JjL+mK4ludgSrnkWXDFeIgpybsAj1mYUyMzN8D0jj0TVrWdlpOO0rZ2gBoZ/U3cf9B86YOtwCg=="/>
+            <enclosure url="https://github.com/ducko-im/ducko/releases/download/0.5.0/Ducko-0.5.0.zip" length="18034244" type="application/octet-stream" sparkle:edSignature="uXSwkZBWzRf+JjL+mK4ludgSrnkWXDFeIgpybsAj1mYUyMzN8D0jj0TVrWdlpOO0rZ2gBoZ/U3cf9B86YOtwCg=="/>
         </item>
         <item>
             <title>0.4.0</title>
@@ -36,7 +36,7 @@
             <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/tobihagemann/ducko/releases/download/0.4.0/Ducko-0.4.0.zip" length="17734116" type="application/octet-stream" sparkle:edSignature="s3CDDQbDV3USghDusgxoRKa/U1trIRlWu1B271qgMckAt/CYNGX4NexspGv6jm8fOuUUEJcYSo78nY6n7v4mBA=="/>
+            <enclosure url="https://github.com/ducko-im/ducko/releases/download/0.4.0/Ducko-0.4.0.zip" length="17734116" type="application/octet-stream" sparkle:edSignature="s3CDDQbDV3USghDusgxoRKa/U1trIRlWu1B271qgMckAt/CYNGX4NexspGv6jm8fOuUUEJcYSo78nY6n7v4mBA=="/>
         </item>
         <item>
             <title>0.3.0</title>
@@ -45,7 +45,7 @@
             <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/tobihagemann/ducko/releases/download/0.3.0/Ducko-0.3.0.zip" length="17731665" type="application/octet-stream" sparkle:edSignature="b1JuEgxHouQn4NTDHnhq2Q90Ax7cmZB2nEoy+yhSyU3JZVA1rczonjWJ9sNlbDAy6v9fOKWi00AGyGOKbh5RAw=="/>
+            <enclosure url="https://github.com/ducko-im/ducko/releases/download/0.3.0/Ducko-0.3.0.zip" length="17731665" type="application/octet-stream" sparkle:edSignature="b1JuEgxHouQn4NTDHnhq2Q90Ax7cmZB2nEoy+yhSyU3JZVA1rczonjWJ9sNlbDAy6v9fOKWi00AGyGOKbh5RAw=="/>
         </item>
         <item>
             <title>0.2.1</title>
@@ -54,7 +54,7 @@
             <sparkle:shortVersionString>0.2.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/tobihagemann/ducko/releases/download/0.2.1/Ducko-0.2.1.zip" length="17673361" type="application/octet-stream" sparkle:edSignature="RQTQkRWKFpngfCNR2UgEkuVKyCBAcfceqIT4+FoGQR8YChFcwl9a0UNYJCzhjpEEA2jK/ZTCA54s7zQlh2vACQ=="/>
+            <enclosure url="https://github.com/ducko-im/ducko/releases/download/0.2.1/Ducko-0.2.1.zip" length="17673361" type="application/octet-stream" sparkle:edSignature="RQTQkRWKFpngfCNR2UgEkuVKyCBAcfceqIT4+FoGQR8YChFcwl9a0UNYJCzhjpEEA2jK/ZTCA54s7zQlh2vACQ=="/>
         </item>
         <item>
             <title>0.2.0</title>
@@ -63,7 +63,7 @@
             <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/tobihagemann/ducko/releases/download/0.2.0/Ducko-0.2.0.zip" length="17641727" type="application/octet-stream" sparkle:edSignature="midOgcVicBLMsV3028o6loUuC0LU/nGM13SIYjAwwOOWjkLalvtgk8yKcZ7fnH+wHZlKkOHqy2BE7Bg1/yBxBw=="/>
+            <enclosure url="https://github.com/ducko-im/ducko/releases/download/0.2.0/Ducko-0.2.0.zip" length="17641727" type="application/octet-stream" sparkle:edSignature="midOgcVicBLMsV3028o6loUuC0LU/nGM13SIYjAwwOOWjkLalvtgk8yKcZ7fnH+wHZlKkOHqy2BE7Bg1/yBxBw=="/>
         </item>
         <item>
             <title>0.1.0</title>
@@ -71,7 +71,7 @@
             <sparkle:version>293</sparkle:version>
             <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/tobihagemann/ducko/releases/download/0.1.0/Ducko-0.1.0.zip" length="19619550" type="application/octet-stream" sparkle:edSignature="Cq2NbM3ANzt0y/ZEfqxh9x9f2IISvy7ijZHM0T5BJVQ4Y+boCGrLJvGG8juDYzsPIfNXC1fNjAiSPSieZ8e4Cw=="/>
+            <enclosure url="https://github.com/ducko-im/ducko/releases/download/0.1.0/Ducko-0.1.0.zip" length="19619550" type="application/octet-stream" sparkle:edSignature="Cq2NbM3ANzt0y/ZEfqxh9x9f2IISvy7ijZHM0T5BJVQ4Y+boCGrLJvGG8juDYzsPIfNXC1fNjAiSPSieZ8e4Cw=="/>
         </item>
         <item>
             <title>0.0.2</title>
@@ -79,7 +79,7 @@
             <sparkle:version>275</sparkle:version>
             <sparkle:shortVersionString>0.0.2</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/tobihagemann/ducko/releases/download/0.0.2/Ducko-0.0.2.zip" length="18871075" type="application/octet-stream" sparkle:edSignature="p2YwwYxDF7cTdN1fK6JwMyygqKvHNXoqiR0x+NEdszCVtx/og3a+3lAtdyu/oeKlTdsFLqFUBTmkVVwFEmMCAw=="/>
+            <enclosure url="https://github.com/ducko-im/ducko/releases/download/0.0.2/Ducko-0.0.2.zip" length="18871075" type="application/octet-stream" sparkle:edSignature="p2YwwYxDF7cTdN1fK6JwMyygqKvHNXoqiR0x+NEdszCVtx/og3a+3lAtdyu/oeKlTdsFLqFUBTmkVVwFEmMCAw=="/>
         </item>
         <item>
             <title>0.0.1</title>
@@ -87,7 +87,7 @@
             <sparkle:version>271</sparkle:version>
             <sparkle:shortVersionString>0.0.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/tobihagemann/ducko/releases/download/0.0.1/Ducko-0.0.1.zip" length="18848664" type="application/octet-stream" sparkle:edSignature="kFBIbwjtWnTZVAOQjPSfcUEv9luYhq6HO7EP9mccrvu28TLqjmyotSCyPjgjOSCQ6PbJqECmgJSRL0kD7dC7DA=="/>
+            <enclosure url="https://github.com/ducko-im/ducko/releases/download/0.0.1/Ducko-0.0.1.zip" length="18848664" type="application/octet-stream" sparkle:edSignature="kFBIbwjtWnTZVAOQjPSfcUEv9luYhq6HO7EP9mccrvu28TLqjmyotSCyPjgjOSCQ6PbJqECmgJSRL0kD7dC7DA=="/>
         </item>
     </channel>
 </rss>

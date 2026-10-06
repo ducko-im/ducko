@@ -48,7 +48,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconName</key><string>AppIcon</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Tobias Hagemann. All rights reserved.</string>
-    <key>SUFeedURL</key><string>https://raw.githubusercontent.com/tobihagemann/ducko/main/appcast.xml</string>
+    <key>SUFeedURL</key><string>https://raw.githubusercontent.com/ducko-im/ducko/main/appcast.xml</string>
     <key>SUPublicEDKey</key><string>SaoWoBwGAvFPeUCkM7sp8mWO3CdwWa/Yw78vZ5xGDHk=</string>
     <key>BuildTimestamp</key><string>${BUILD_TIMESTAMP}</string>
     <key>GitCommit</key><string>${GIT_COMMIT}</string>

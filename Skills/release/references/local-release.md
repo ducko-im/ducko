@@ -46,7 +46,7 @@ cp Ducko-x.y.z.zip "$RELEASE_DIR/"
 
 "$SPARKLE_BIN/generate_appcast" \
   --ed-key-file /path/to/sparkle_private.key \
-  --download-url-prefix "https://github.com/tobihagemann/ducko/releases/download/x.y.z/" \
+  --download-url-prefix "https://github.com/ducko-im/ducko/releases/download/x.y.z/" \
   -o appcast.xml \
   "$RELEASE_DIR"
 rm -rf "$RELEASE_DIR"

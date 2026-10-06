@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS_26%2B-blue" alt="macOS 26+">
   <img src="https://img.shields.io/badge/swift-6.2-orange" alt="Swift 6.2">
-  <img src="https://img.shields.io/github/license/tobihagemann/ducko" alt="License">
+  <img src="https://img.shields.io/github/license/ducko-im/ducko" alt="License">
 </p>
 
 ---

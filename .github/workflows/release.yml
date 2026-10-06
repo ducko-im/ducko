@@ -118,7 +118,7 @@ jobs:
           "$SPARKLE_BIN/generate_appcast" \
             --ed-key-file "$KEY_FILE" \
             --maximum-versions 0 \
-            --download-url-prefix "https://github.com/tobihagemann/ducko/releases/download/${MARKETING_VERSION}/" \
+            --download-url-prefix "https://github.com/ducko-im/ducko/releases/download/${MARKETING_VERSION}/" \
             -o appcast.xml \
             "$RELEASE_DIR"
           # Sparkle infers hardware requirements from the packaged Mach-O.

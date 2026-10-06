@@ -3,12 +3,12 @@
 ## Reporting a Bug
 
 - Ensure you're running the latest version of Ducko.
-- Check whether the bug is [already reported](https://github.com/tobihagemann/ducko/issues).
-- If not, [open a new issue](https://github.com/tobihagemann/ducko/issues/new) with reproduction steps.
+- Check whether the bug is [already reported](https://github.com/ducko-im/ducko/issues).
+- If not, [open a new issue](https://github.com/ducko-im/ducko/issues/new) with reproduction steps.
 
 ## Proposing a Feature
 
-[Open an issue](https://github.com/tobihagemann/ducko/issues/new) describing the change before writing code, then open a PR against `main` that references the issue.
+[Open an issue](https://github.com/ducko-im/ducko/issues/new) describing the change before writing code, then open a PR against `main` that references the issue.
 
 ## Development Setup
 

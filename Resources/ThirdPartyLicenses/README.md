@@ -13,7 +13,7 @@ These upstream licence and notice texts accompany the components linked into Duc
 | swift-nio-ssl | 2.37.5 | 322f3c2a4a21df31c84ca416bf65ee5e9059e440 |
 | swift-system | 1.8.1 | 869129b7bf4ecc57b97d0193ad29690ca2134750 |
 
-SwiftNIO SSL vendors BoringSSL revision `817ab07ebb53da35afea409ab9328f578492832d`; its aggregate licence is reproduced in `BoringSSL-LICENSE.txt`. Source: https://github.com/google/boringssl/tree/817ab07ebb53da35afea409ab9328f578492832d. Swift package source URLs and exact revisions are recorded in `Package.resolved` at the Ducko source repository: https://github.com/tobihagemann/ducko.
+SwiftNIO SSL vendors BoringSSL revision `817ab07ebb53da35afea409ab9328f578492832d`; its aggregate licence is reproduced in `BoringSSL-LICENSE.txt`. Source: https://github.com/google/boringssl/tree/817ab07ebb53da35afea409ab9328f578492832d. Swift package source URLs and exact revisions are recorded in `Package.resolved` at the Ducko source repository: https://github.com/ducko-im/ducko.
 
 SwiftNIO's CNIOAtomics target includes uSHET's `cpp_magic.h` from revision `c09e0acafd86720efe42dc15c63e0cc228244c32`. Its upstream aggregate licence is reproduced in `uSHET-LICENSE.txt`: https://github.com/18sg/uSHET/blob/c09e0acafd86720efe42dc15c63e0cc228244c32/LICENSE.
 

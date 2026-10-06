@@ -29,7 +29,7 @@ Make sure `main` is clean and current (`git checkout main && git pull origin mai
 - **Describe the experience, not the mechanism.** "Rooms remember their bookmark autojoin flag" is what a user sees; the stanza or storage detail belongs in the commit, not the release notes.
 
 1. **Complete `[Unreleased]` via `/update-changelog`.** Run it to capture anything missing, then double-check completeness against `git log <last-tag>..HEAD --oneline` — that range always includes the prior `Update appcast.xml for <last>` commit (CI pushes it to `main` after the tag) as noise, and real changes can land *after* it, so don't stop scanning there.
-2. **Promote** by inserting the version heading (`## [X.Y.Z] - YYYY-MM-DD`, today's date) under the kept-empty `## [Unreleased]` heading so the accumulated entries fall under the new version, add the `[X.Y.Z]: https://github.com/tobihagemann/ducko/compare/<last-tag>...X.Y.Z` link reference (`.../releases/tag/X.Y.Z` for the first release), and repoint `[Unreleased]` to `compare/X.Y.Z...HEAD` (mirror the previous `Prepare release X.Y.Z` commit's changelog diff). `release.yml` extracts this version section as the GitHub Release notes.
+2. **Promote** by inserting the version heading (`## [X.Y.Z] - YYYY-MM-DD`, today's date) under the kept-empty `## [Unreleased]` heading so the accumulated entries fall under the new version, add the `[X.Y.Z]: https://github.com/ducko-im/ducko/compare/<last-tag>...X.Y.Z` link reference (`.../releases/tag/X.Y.Z` for the first release), and repoint `[Unreleased]` to `compare/X.Y.Z...HEAD` (mirror the previous `Prepare release X.Y.Z` commit's changelog diff). `release.yml` extracts this version section as the GitHub Release notes.
 
 ## Step 3: Commit and push to main
 
