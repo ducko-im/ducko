@@ -276,6 +276,8 @@ CardView()
     .focused($isFocused)
 ```
 
+A macOS `List` is the exception: it does not take focus on a click, so a tap that sets its focus state is what gives it focus. See "Keyboard Focus After a Click (macOS)" in [list-patterns.md](list-patterns.md).
+
 ### Ambiguous focus bindings
 
 Binding the same enum case to multiple views is ambiguous. SwiftUI picks the first candidate and emits a runtime warning.

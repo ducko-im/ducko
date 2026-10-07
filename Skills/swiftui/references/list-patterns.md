@@ -172,7 +172,30 @@ List(selection: $selection) {
 - **Do not** attach `.onTapGesture(count:)` or `.simultaneousGesture(TapGesture())` to a row for double-click. The gesture owns the row's hit-tested content area (its `.contentShape`) and wins the gesture arena there, so `List` never sees single clicks in the content — **only the `listRowInsets` margins (no content/gesture) still select**. Symptom: "edges select, center doesn't; double-click works everywhere." `primaryAction` avoids this because it installs no row gesture.
 - A plain `Button` row selects reliably but **can't deselect** (it only ever *sets* selection) — wrong for list semantics. Use `List(selection:)`, not buttons.
 - Exclude headers/section rows from selection with `.selectionDisabled()`.
+- A `DisclosureGroup` label that carries a `.tag` is selectable in a sidebar list, also when its expansion is bound with `DisclosureGroup(isExpanded:)`.
 - Requires macOS 13+ (`forSelectionType`); `.selectionDisabled()` is macOS 14+.
+
+## Keyboard Focus After a Click (macOS)
+
+A `List(selection:)` does not take keyboard focus when a row is clicked (observed on macOS 27): the window stays first responder, so the arrow keys do nothing. A sidebar list and a list in a detail pane behave alike, with a `@State` binding or a custom one.
+
+Give the list a focus state and set it on every click:
+
+```swift
+@FocusState private var isFocused: Bool
+
+List(selection: $selection) {
+    // rows
+}
+.focused($isFocused)
+.simultaneousGesture(TapGesture().onEnded { isFocused = true })
+```
+
+- Attach the gesture to the `List`. There it fires on every click and selection keeps working; on a row it breaks selection, as described above.
+- `.onTapGesture` on the `List` never fires, and `.focusable()` alone changes nothing.
+- Setting the focus state from `onChange(of: selection)` misses a click on the already-selected row, which does not call the selection binding's setter. It also moves keyboard focus on a selection made from code.
+- This is not the redundant write that [focus-patterns.md](focus-patterns.md) warns about. That pitfall concerns a view that takes focus on a click through `.focusable()`, which a `List` does not. Repeated taps on a list that already had focus left its focus state set.
+- That the arrow keys move the selection after a tap sets the focus state is unconfirmed. They did so when the focus state was set from a selection change, and a tap sets the same state. A `primaryAction` double-click on a list that has this gesture is untried. Confirm both in the running app.
 
 ## Sizing a Window to List Content (macOS)
 

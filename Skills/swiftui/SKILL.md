@@ -354,7 +354,7 @@ End of example.
 
 ### Lists, scrolling, sheets, navigation patterns
 
-- [references/list-patterns.md](references/list-patterns.md) — `ForEach` identity, stability, unary rows (`-LogForEachSlowPath`), list best practices.
+- [references/list-patterns.md](references/list-patterns.md) — `ForEach` identity, stability, unary rows (`-LogForEachSlowPath`), list best practices, keyboard focus after a click (macOS).
 - [references/scroll-patterns.md](references/scroll-patterns.md) — `ScrollView` patterns and programmatic scrolling.
 - [references/sheet-navigation-patterns.md](references/sheet-navigation-patterns.md) — sheet presentation and navigation patterns.
 
