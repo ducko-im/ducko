@@ -106,7 +106,7 @@ struct ContentView: View {
     var body: some View {
         ScrollView {
             content
-                .background(
+                .background {
                     GeometryReader { geometry in
                         Color.clear
                             .preference(
@@ -114,9 +114,9 @@ struct ContentView: View {
                                 value: geometry.frame(in: .named("scroll")).minY
                             )
                     }
-                )
+                }
         }
-        .coordinateSpace(name: "scroll")
+        .coordinateSpace(.named("scroll"))
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
             scrollPosition = value
         }
@@ -134,7 +134,7 @@ struct ContentView: View {
     var body: some View {
         ScrollView {
             content
-                .background(
+                .background {
                     GeometryReader { geometry in
                         Color.clear
                             .preference(
@@ -142,9 +142,9 @@ struct ContentView: View {
                                 value: geometry.frame(in: .named("scroll")).minY
                             )
                     }
-                )
+                }
         }
-        .coordinateSpace(name: "scroll")
+        .coordinateSpace(.named("scroll"))
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
             if value < -100 {
                 startAnimation = true
@@ -178,7 +178,7 @@ struct ContentView: View {
             
             ScrollView {
                 content
-                    .background(
+                    .background {
                         GeometryReader { geometry in
                             Color.clear
                                 .preference(
@@ -186,9 +186,9 @@ struct ContentView: View {
                                     value: geometry.frame(in: .named("scroll")).minY
                                 )
                         }
-                    )
+                    }
             }
-            .coordinateSpace(name: "scroll")
+            .coordinateSpace(.named("scroll"))
             .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
                 if offset < -50 { // Scrolling down
                    withAnimation { showHeader = false }

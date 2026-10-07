@@ -168,10 +168,10 @@ struct IcySkyApp: App {
 
     @Environment(\.scenePhase) var scenePhase
 
-    @State var client: BSkyClient?
-    @State var auth: Auth = .init()
-    @State var currentUser: CurrentUser?
-    @State var router: AppRouter = .init(initialTab: .feed)
+    @State private var client: BSkyClient?
+    @State private var auth: Auth = .init()
+    @State private var currentUser: CurrentUser?
+    @State private var router: AppRouter = .init(initialTab: .feed)
 
     var body: some Scene {
         WindowGroup {

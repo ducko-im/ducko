@@ -7,8 +7,10 @@ Prefer to place standard fonts, sizes, colors, stack spacing, padding, rounding,
 
 ## Requirements for flexible, accessible design
 
-- Never use `UIScreen.main.bounds` to read available space; prefer alternatives such as `containerRelativeFrame()`, or `visualEffect()` as appropriate, or (if there is no alternative) `GeometryReader`.
-- Prefer to avoid fixed frames for views unless content can fit neatly inside; this can cause problems across different device sizes, different Dynamic Type settings, and more. Giving frames some flexibility is usually preferred.
+- Never rely on `UIScreen.main`. For available space, prefer `containerRelativeFrame()`, `visualEffect()`, or, when necessary, `GeometryReader`; for pixel scale, read `@Environment(\.displayScale)`. A single main screen is an invalid assumption, and the property is deprecated from iOS 26.
+- Prefer flexible frames unless a fixed size can comfortably hold the content. Where an arrangement might run out of room, use `ViewThatFits` to attempt the preferred layout and then a smaller-space alternative, such as a horizontal control row followed by a vertical arrangement. Account for longer translations, larger Dynamic Type, and narrower windows.
+- On macOS 26+, use `ConcentricRectangle()` for shapes next to a window or sheet boundary, allowing their corners to follow the container. Shapes farther from these boundaries can continue using `.rect(cornerRadius:)`.
+- Preserve access to the same features at every window size. Flag controls dropped from narrow layouts: resizing a window must not make a feature disappear. Additional width can expose more of an existing hierarchy, such as list and detail together, without changing what the app can do.
 - Apple’s minimum acceptable tap area for interactions on iOS is 44x44. Ensure this is strictly enforced.
 
 

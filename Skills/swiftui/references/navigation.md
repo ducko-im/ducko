@@ -3,7 +3,7 @@
 - Use `NavigationStack` or `NavigationSplitView` as appropriate; flag all use of the deprecated `NavigationView`.
 - Strongly prefer to use `navigationDestination(for:)` to specify destinations; flag all use of the old `NavigationLink(destination:)` pattern where it should be replaced.
 - Never mix `navigationDestination(for:)` and `NavigationLink(destination:)` in the same navigation hierarchy; it causes significant problems.
-- `navigationDestination(for:)` must be registered once per data type; flag duplicates.
+- Register `navigationDestination(for:)` once per data type within each navigation stack; flag competing registrations in the same stack. Independent stacks, including those in separate tabs, can each register the same type.
 
 
 ## Alerts, confirmation dialogs, and sheets

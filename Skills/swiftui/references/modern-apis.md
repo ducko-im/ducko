@@ -303,8 +303,8 @@ GeometryReader { geometry in
 **Avoid `AnyView` unless absolutely required.**
 
 ```swift
-// Prefer - use @ViewBuilder
-@ViewBuilder
+// Prefer - use @ContentBuilder (the Xcode 27+ name for @ViewBuilder)
+@ContentBuilder
 func content() -> some View {
     if condition {
         Text("Option A")

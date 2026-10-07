@@ -196,12 +196,10 @@ let sorted = names.sorted()
 ### Basic Attributed Text
 
 ```swift
-// Using Text concatenation
-Text("Hello ")
-    .foregroundStyle(.primary)
-+ Text("World")
-    .foregroundStyle(.blue)
-    .bold()
+// Using Text interpolation
+let hello = Text("Hello ").foregroundStyle(.primary)
+let world = Text("World").foregroundStyle(.blue).bold()
+Text("\(hello)\(world)")
 
 // Using AttributedString
 var attributedString = AttributedString("Hello World")
@@ -243,14 +241,14 @@ struct MeasuredText: View {
     
     var body: some View {
         Text(text)
-            .background(
+            .background {
                 GeometryReader { geometry in
                     Color.clear
                         .onAppear {
                             textWidth = geometry.size.height
                         }
                 }
-            )
+            }
     }
 }
 
@@ -278,7 +276,7 @@ struct MeasuredText: View {
 - [ ] Use `.dateTime` for date/time formatting
 - [ ] Use `localizedStandardContains()` for user-input search
 - [ ] Use `localizedStandardCompare()` for locale-aware sorting
-- [ ] Use Text concatenation or AttributedString for styled text
+- [ ] Use Text interpolation or AttributedString for styled text
 - [ ] Use markdown syntax for simple text formatting
 - [ ] All formatting respects user's locale and preferences
 

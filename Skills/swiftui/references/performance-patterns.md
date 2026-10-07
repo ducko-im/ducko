@@ -70,14 +70,14 @@ struct SettingsView: View {
     
     var body: some View {
         VStack {
-            ThemeSelector(config: config)  // Gets notified of ALL config changes
-            FontSizeSlider(config: config)  // Gets notified of ALL config changes
+            ThemeSelector(config: config)  // Wider interface than the view needs
+            FontSizeSlider(config: config)  // Wider interface than the view needs
         }
     }
 }
 ```
 
-**Why**: When using `ObservableObject`, any `@Published` property change triggers updates in all views observing the object. With `@Observable`, views update when properties they access change, but passing entire objects still creates unnecessary dependencies.
+**Why**: When using `ObservableObject`, any `@Published` property change triggers updates in all views observing the object, so handing the whole object down fans every change out. With `@Observable`, a view updates only for the properties its `body` reads, so passing an existing model does not by itself widen its dependencies. Prefer specific values there because they keep the view's interface small and the view reusable, not to save updates: reading the value in the parent to pass it down makes the parent depend on it instead.
 
 ### 4. Use Equatable Views
 
@@ -225,7 +225,7 @@ struct DebugView: View {
 **Narrow state scope to reduce update fan-out.**
 
 ```swift
-// Bad - broad dependency
+// Broad interface - the row takes the whole model
 @Observable
 @MainActor
 final class AppModel {
@@ -239,13 +239,14 @@ struct ItemRow: View {
     let item: Item
     
     var body: some View {
-        // Updates when ANY property of model changes
+        // With ObservableObject, updates when ANY property of model changes.
+        // With @Observable, updates only when model.theme changes.
         Text(item.name)
             .foregroundStyle(model.theme.primaryColor)
     }
 }
 
-// Good - narrow dependency
+// Narrow interface - the row takes only what it needs
 struct ItemRow: View {
     let item: Item
     let themeColor: Color  // Only depends on what it needs
@@ -257,7 +258,7 @@ struct ItemRow: View {
 }
 ```
 
-**Why**: With `ObservableObject`, any `@Published` property change triggers all observers. With `@Observable`, views update when accessed properties change, but passing entire models still creates broader dependencies than necessary.
+**Why**: With `ObservableObject`, any `@Published` property change triggers all observers, so the first form updates every row for every model change. With `@Observable`, a view depends only on the properties its `body` reads, so the first form already updates only when `model.theme` changes; the second form then buys a smaller interface, not fewer updates. Under `@Observable`, the dependencies worth eliminating are the ones described in "@Observable Dependency Granularity" in [state-management.md](state-management.md), and restructuring for them waits for an established update problem.
 
 ### 10. Common Performance Issues
 

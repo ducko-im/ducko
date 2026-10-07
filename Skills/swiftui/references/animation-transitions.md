@@ -213,6 +213,8 @@ Rectangle()
 
 Enables custom property interpolation during animations.
 
+Prefer the `@Animatable` macro, which supplies the conformance and `animatableData` for you (see [views.md](views.md)). The hand-written forms below are the manual equivalent; write them only when the setter needs behavior the macro cannot generate, such as range limiting or normalization.
+
 ### Protocol Definition
 
 ```swift
@@ -225,7 +227,7 @@ protocol Animatable {
 ### Basic Implementation
 
 ```swift
-// GOOD - explicit animatableData
+// Hand-written equivalent - explicit animatableData
 struct ShakeModifier: ViewModifier, Animatable {
     var shakeCount: Double
 
@@ -315,8 +317,8 @@ struct ThreePropertyModifier: ViewModifier, Animatable {
 ### Do
 - Place transitions outside conditional structures
 - Use `withAnimation` or `.animation` outside the `if`
-- Implement `animatableData` explicitly for custom Animatable
-- Use `AnimatablePair` for multiple animated properties
+- Use the `@Animatable` macro for custom Animatable; a hand-written conformance must implement `animatableData` explicitly
+- Use `AnimatableValues` (macOS 26+) or `AnimatablePair` for multiple animated properties in a hand-written conformance
 - Use asymmetric transitions when insert/remove need different effects
 
 ### Don't

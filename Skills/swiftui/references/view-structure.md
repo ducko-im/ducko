@@ -4,6 +4,8 @@
 
 SwiftUI's diffing algorithm compares view hierarchies to determine what needs updating. Proper view composition directly impacts performance.
 
+Examples use the Xcode 27+ name `@ContentBuilder`, which has no minimum OS version; keep `@ViewBuilder` on earlier toolchains and leave existing uses unchanged.
+
 ## Prefer Modifiers Over Conditional Views
 
 **Prefer "no-effect" modifiers over conditionally including views.** When you introduce a branch, consider whether you're representing multiple views or two states of the same view.
@@ -47,9 +49,9 @@ A `Group` passes its modifiers to its children, so an `onChange`, `task`, or `on
 
 ## Extract Subviews, Not Computed Properties
 
-### The Problem with @ViewBuilder Functions
+### The Problem with @ContentBuilder Functions
 
-When you use `@ViewBuilder` functions or computed properties for complex views, the entire function re-executes on every parent state change:
+When you use `@ContentBuilder` functions or computed properties for complex views, the entire function re-executes on every parent state change:
 
 ```swift
 // BAD - re-executes complexSection() on every tap
@@ -63,7 +65,7 @@ struct ParentView: View {
         }
     }
 
-    @ViewBuilder
+    @ContentBuilder
     func complexSection() -> some View {
         // Complex views that re-execute unnecessarily
         ForEach(0..<100) { i in
@@ -115,7 +117,7 @@ struct ComplexSection: View {
 2. Since nothing changed, SwiftUI skips calling `ComplexSection.body`
 3. The complex view code never executes unnecessarily
 
-## When @ViewBuilder Functions Are Acceptable
+## When @ContentBuilder Functions Are Acceptable
 
 Use for small, simple sections that don't affect performance:
 
@@ -132,7 +134,7 @@ struct SimpleView: View {
         }
     }
 
-    @ViewBuilder
+    @ContentBuilder
     private func headerSection() -> some View {
         HStack {
             Text("Title")
@@ -141,7 +143,7 @@ struct SimpleView: View {
         }
     }
 
-    @ViewBuilder
+    @ContentBuilder
     private func detailsSection() -> some View {
         Text("Some details here")
             .font(.caption)
@@ -183,12 +185,12 @@ MyContainer {
 }
 ```
 
-### Use @ViewBuilder Property Instead
+### Use @ContentBuilder Property Instead
 
 ```swift
 // GOOD - view can be compared
 struct MyContainer<Content: View>: View {
-    @ViewBuilder let content: Content
+    @ContentBuilder let content: Content
 
     var body: some View {
         VStack {
@@ -275,6 +277,6 @@ ZStack(alignment: .topTrailing) {
 - [ ] Prefer modifiers over conditional views for state changes
 - [ ] Complex views extracted to separate subviews
 - [ ] Views kept small for better performance
-- [ ] `@ViewBuilder` functions only for simple sections
-- [ ] Container views use `@ViewBuilder let content: Content`
+- [ ] `@ContentBuilder` functions only for simple sections
+- [ ] Container views use `@ContentBuilder let content: Content`
 - [ ] Extract views when they have multiple responsibilities or become hard to read

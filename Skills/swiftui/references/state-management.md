@@ -76,7 +76,9 @@ Observation tracks reads at the **property** level, not the field level — read
 - **A struct-typed stored property drags the whole struct.** A view reading `session.user.name` depends on `session.user`; editing any other field of `user` invalidates it.
 - **A collection read drags the whole collection.** Reading one element establishes a dependency on the entire stored collection.
 
-Cache derived values as stored properties kept in sync, rather than recomputing in a getter:
+These traps explain an update problem; they are not a reason to restructure a model up front. A cache has to be kept in sync on every update path, and an incomplete one shows stale UI, so apply the two remedies below only for an established problem such as excessive view updates.
+
+For such a problem, cache derived values as stored properties kept in sync, rather than recomputing in a getter:
 
 ```swift
 @MainActor @Observable
@@ -89,7 +91,7 @@ final class AppState {
 }
 ```
 
-For struct-typed properties, expose the individual fields views actually read as separate properties (each is then tracked separately). Reading several already-narrow properties from one model is fine and needs no splitting.
+For struct-typed properties behind such a problem, expose the individual fields views actually read as separate properties (each is then tracked separately). Reading several already-narrow properties from one model is fine and needs no splitting.
 
 ## @Binding
 
@@ -504,5 +506,5 @@ struct ChildView: View {
 6. **Never declare passed values as `@State` or `@StateObject`**
 7. With `@Observable`, nested objects work fine; with `ObservableObject`, pass nested objects directly to child views
 8. **Prefer `Equatable` types for frequently-written `@Observable` properties** so the generated setter skips redundant invalidations
-9. **Cache derived values as stored properties** instead of computed getters that read whole collections or structs
+9. **For an established update problem, cache derived values as stored properties** instead of computed getters that read whole collections or structs
 10. **Never store closures in custom environment keys; keep `@Entry` defaults stable** (no `Model()`/`Date()` expressions); remove unused `@Environment` reads

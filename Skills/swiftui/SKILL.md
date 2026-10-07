@@ -35,7 +35,9 @@ If doing a partial review, load only the relevant reference files.
 
 ## Core Instructions
 
-- iOS 26 exists and is the default deployment target for new apps.
+- iOS 27 and macOS 27 exist, and Xcode 27 is available. Do not dismiss their APIs as speculative.
+- Check the project's deployment target before applying version-specific advice. Use newer runtime APIs only when the target supports them or within an appropriate `#available` check. Keep the existing target unchanged. Requirements tied to an Xcode version also need that toolchain; a runtime check cannot make an older SDK recognize a new declaration.
+- Ducko targets macOS 26 and builds with Xcode 27. A macOS 26.1 or macOS 27 API therefore needs a matching `#available` branch that keeps the existing behavior on macOS 26.0 (and `@available` on any helper declaration that names such a type), while a rule tied to Xcode 27 alone (`@State` as a macro, `@ContentBuilder`) applies as it stands.
 - Target Swift 6.2 or later, using modern Swift concurrency.
 - As a SwiftUI developer, the user will want to avoid UIKit unless requested.
 - Do not introduce third-party frameworks without asking first.
@@ -102,7 +104,8 @@ When a SwiftUI view file grows past ~300 lines, split it using `private` extensi
 
 - **Always prefer `@Observable` over `ObservableObject`** for new code.
 - **Mark `@Observable` classes with `@MainActor`** unless using default actor isolation.
-- **Always mark `@State` and `@StateObject` as `private`.**
+- **Always mark `@State` and `@StateObject` as `private`.** With Xcode 27, a non-private `@State` runs its initial expression again whenever the parent reconstructs the view.
+- **Initialize each `@State` property in exactly one place**: at the declaration or in `init()`, never both.
 - **Never declare passed values as `@State` or `@StateObject`** — they only accept initial values.
 - Use `@State` with `@Observable` classes (not `@StateObject`).
 - `@Binding` only when a child needs to **modify** parent state.
@@ -127,7 +130,15 @@ When a SwiftUI view file grows past ~300 lines, split it using `private` extensi
 | Deprecated | Modern alternative |
 |------------|-------------------|
 | `foregroundColor()` | `foregroundStyle()` |
+| `accentColor()` | `tint()` |
 | `cornerRadius()` | `clipShape(.rect(cornerRadius:))` |
+| `colorScheme()` | `.environment(\.colorScheme, …)` (not `preferredColorScheme()`) |
+| `overlay(_:)` / `background(_:)` / `mask(_:)` with a view argument | the builder closure: `.overlay { … }` |
+| `coordinateSpace(name:)` | `coordinateSpace(.named(…))` |
+| `toolbar(_:for:)` with a visibility | `toolbarVisibility(_:for:)` |
+| `Color.cgColor` | `color.resolve(in:)` |
+| `AnimatableModifier` | `@Animatable` on a `ViewModifier` |
+| `@ViewBuilder` in new code | `@ContentBuilder` (same type; existing uses stay) |
 | `tabItem()` | `Tab` API |
 | `onTapGesture()` | `Button` (unless need location/count) |
 | `NavigationView` | `NavigationStack` |
@@ -138,13 +149,13 @@ When a SwiftUI view file grows past ~300 lines, split it using `private` extensi
 | `String(format: "%.2f", value)` | `Text(value, format: .number.precision(.fractionLength(2)))` |
 | `string.contains(search)` | `string.localizedStandardContains(search)` (for user input) |
 
-Details: [references/modern-apis.md](references/modern-apis.md).
+Details: [references/api.md](references/api.md), [references/modern-apis.md](references/modern-apis.md).
 
 
 ## Performance rules
 
-- Pass only needed values to views — avoid large "config" or "context" objects.
-- Eliminate unnecessary dependencies to reduce update fan-out.
+- Pass only needed values to views — avoid large "config" or "context" objects. Passing an existing `@Observable` model is fine: a view depends only on the properties its `body` reads.
+- Eliminate unnecessary dependencies to reduce update fan-out. Cache derived values or split a model's fields only for an established update problem.
 - Check for value changes before assigning state in hot paths.
 - Avoid redundant state updates in `onReceive`, `onChange`, scroll handlers.
 - Use `LazyVStack` / `LazyHStack` for large lists.
@@ -152,8 +163,11 @@ Details: [references/modern-apis.md](references/modern-apis.md).
 - Ensure a constant number of views per `ForEach` element.
 - Avoid inline filtering in `ForEach` — prefilter and cache.
 - Avoid `AnyView` in list rows.
+- Pass each row its element, not a store plus an index or identifier.
+- Never introduce a `View.if()` helper; keep the condition inside the modifier's value.
 - Avoid `GeometryReader` when alternatives exist (`containerRelativeFrame()`, `visualEffect()`).
 - Gate frequent geometry updates by thresholds.
+- Keep rapidly changing measurements (scroll position, geometry, drag coordinates) out of the environment.
 - Use `Self._printChanges()` to debug unexpected view updates.
 
 Details: [references/performance.md](references/performance.md), [references/performance-patterns.md](references/performance-patterns.md).
@@ -165,7 +179,7 @@ Details: [references/performance.md](references/performance.md), [references/per
 - Use `withAnimation` for event-driven animations (button taps, gestures).
 - Prefer transforms (`offset`, `scale`, `rotation`) over layout changes (`frame`) for performance.
 - Transitions require animations **outside** the conditional structure.
-- Custom `Animatable` implementations must have explicit `animatableData`.
+- Custom `Animatable` types use the `@Animatable` macro. Write `animatableData` by hand only when its setter needs behavior the macro cannot generate; a hand-written conformance without it silently does not animate.
 - Use `.phaseAnimator` for multi-step sequences (iOS 17+).
 - Use `.keyframeAnimator` for precise timing control (iOS 17+).
 - Animation completion handlers need `.transaction(value:)` for re-execution.
@@ -242,7 +256,7 @@ Full reference: [references/liquid-glass.md](references/liquid-glass.md).
 
 - Is spacing on a consistent grid (typically 4 or 8 pt)?
 - Are typography styles system text styles (`.body`, `.headline`, ...) rather than raw pixel sizes?
-- Are colors semantic (`Color(.label)`, `.accentColor`, `.tint(...)`) rather than hard-coded RGB?
+- Are colors semantic (`Color(.label)`, `Color.accentColor`, `.tint(...)`) rather than hard-coded RGB? The `accentColor()` modifier is soft-deprecated; the `Color.accentColor` value is not.
 - Do widgets follow Apple's containerBackground + padding conventions?
 - Is the layout adaptive (works at max Dynamic Type, in both light and dark mode)?
 
@@ -271,7 +285,7 @@ Text("Hello").foregroundColor(.red)
 Text("Hello").foregroundStyle(.red)
 ```
 
-**Line 24: Icon-only button is bad for VoiceOver - add a text label.**
+**Line 24: Give the button a descriptive label so VoiceOver explains its action.**
 
 ```swift
 // Before
@@ -283,7 +297,7 @@ Button(action: addUser) {
 Button("Add User", systemImage: "plus", action: addUser)
 ```
 
-**Line 31: Avoid `Binding(get:set:)` in view body - use `@State` with `onChange()` instead.**
+**Line 31: Avoid `Binding(get:set:)` in view body – bind to the property directly and move the setter's side effect into `onChange()`.**
 
 ```swift
 // Before
@@ -299,9 +313,11 @@ TextField("Username", text: $model.username)
     }
 ```
 
+Use `onChange()` when saving should follow changes to the username, including programmatic changes. Equal-value assignments will not trigger a save.
+
 ### Summary
 
-1. **Accessibility (high):** The add button on line 24 is invisible to VoiceOver.
+1. **Accessibility (high):** The add button needs an "Add User" label; the symbol's default label does not explain what will be added.
 2. **Deprecated API (medium):** `foregroundColor()` on line 12 should be `foregroundStyle()`.
 3. **Data flow (medium):** The manual binding on line 31 is fragile and harder to maintain.
 
@@ -312,8 +328,8 @@ End of example.
 
 ### Core review (Hudson base)
 
-- [references/api.md](references/api.md) — updating code for modern API, and the deprecated code it replaces.
-- [references/views.md](references/views.md) — view structure, composition, and animation.
+- [references/api.md](references/api.md) — updating code for modern API, the deprecated code it replaces, and toolbars.
+- [references/views.md](references/views.md) — view structure, composition, animation, reordering, and swipe actions.
 - [references/data.md](references/data.md) — data flow, shared state, and property wrappers.
 - [references/navigation.md](references/navigation.md) — navigation using `NavigationStack`/`NavigationSplitView`, plus alerts, confirmation dialogs, and sheets.
 - [references/design.md](references/design.md) — guidance for building accessible apps that meet Apple's Human Interface Guidelines.
