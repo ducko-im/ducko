@@ -196,6 +196,21 @@ actor REPLSession {
         }
     }
 
+    /// Polls the buffer after `cursor` for `substring` behind the first `marker` there, returning the full snapshot
+    /// when it is found. Use where the terminal's echo of an earlier command holds `substring` too and may land after
+    /// `cursor`: the echo comes before a marker that only the later command's output prints.
+    @discardableResult
+    func waitForOutput(
+        containing substring: String,
+        behind marker: String,
+        after cursor: Int,
+        timeout: Duration = TestTimeout.replOutput
+    ) async throws -> String {
+        try await pollBuffer(timeout: timeout, label: "containing \"\(substring)\" behind \"\(marker)\" after cursor \(cursor)") { buffer in
+            await buffer.snapshotIfContains(substring, behind: marker, after: cursor)
+        }
+    }
+
     /// Returns the current accumulated REPL output.
     func snapshot() async -> String {
         await buffer.snapshot()
@@ -308,13 +323,23 @@ actor OutputBuffer {
         substrings.contains(where: { contents.contains($0) }) ? contents : nil
     }
 
+    func snapshotIfContains(_ substring: String, behind marker: String, after cursor: Int) -> String? {
+        guard let tail = tail(after: cursor), let found = tail.range(of: marker) else { return nil }
+        return tail[found.upperBound...].contains(substring) ? contents : nil
+    }
+
     func snapshotIfContainsAny(_ substrings: [String], after cursor: Int) -> String? {
+        guard let tail = tail(after: cursor) else { return nil }
+        return substrings.contains(where: { tail.contains($0) }) ? contents : nil
+    }
+
+    /// The retained output behind `cursor`, or nil when there is none yet.
+    private func tail(after cursor: Int) -> Substring? {
         // Cursor is a logical Character index including the dropped prefix
         // so emoji and multi-byte sequences don't shift the index. Translate
         // back into the retained tail.
         let effective = max(cursor - droppedCount, 0)
         guard contents.count > effective else { return nil }
-        let suffix = contents.suffix(contents.count - effective)
-        return substrings.contains(where: { suffix.contains($0) }) ? contents : nil
+        return contents.suffix(contents.count - effective)
     }
 }

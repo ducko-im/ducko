@@ -19,6 +19,12 @@ struct MessageBubbleView: View {
         message.styledBodySegments?.contains(where: \.isCodeBlock) == true
     }
 
+    /// Whether the bubble is one accessibility element. Attachments, link previews and code blocks keep theirs apart,
+    /// since a combined element would hide their controls from assistive tech.
+    private var combinesAccessibility: Bool {
+        message.attachments.isEmpty && row.linkPreview == nil && !hasCodeBlock
+    }
+
     var body: some View {
         HStack(alignment: .bottom) {
             if message.isOutgoing {
@@ -37,6 +43,7 @@ struct MessageBubbleView: View {
                 actionSenderName: row.actionSenderName,
                 loadsIncomingImagesOnSight: row.loadsIncomingImagesOnSight,
                 transferStatus: row.transferStatus,
+                highlight: row.searchMatch?.query,
                 header: {
                     if let replyQuote = row.replyQuote {
                         ReplyQuoteView(senderName: replyQuote.senderName, bodyPreview: replyQuote.previewText)
@@ -51,8 +58,9 @@ struct MessageBubbleView: View {
 
             if !message.isOutgoing { Spacer(minLength: 60) }
         }
-        // Attachments, link previews and code blocks carry their own controls, which a combined element would hide from assistive tech.
-        .accessibilityElement(children: message.attachments.isEmpty && row.linkPreview == nil && !hasCodeBlock ? .combine : .contain)
+        .accessibilityElement(children: combinesAccessibility ? .combine : .contain)
+        // Selectable text is not static text to assistive tech, so the combined element says that it is.
+        .accessibilityAddTraits(combinesAccessibility ? .isStaticText : [])
         .accessibilityIdentifier("message-bubble-\(message.id)")
         .contextMenu {
             MessageContextMenu(message: message, windowState: windowState)

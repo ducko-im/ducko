@@ -14,7 +14,7 @@ func makeTranscriptRow(id: UUID = UUID(), body: String = "A line of text") -> Tr
     )
     return TranscriptRow(id: id, kind: .message(TranscriptRow.Message(
         message: message, position: MessagePosition(isFirstInGroup: true, isLastInGroup: true), isGroupchat: false, startsDay: false,
-        replyQuote: nil, linkPreview: nil, transferStatus: nil, actionSenderName: "", loadsIncomingImagesOnSight: false, isSearchResult: false
+        replyQuote: nil, linkPreview: nil, transferStatus: nil, actionSenderName: "", loadsIncomingImagesOnSight: false, searchMatch: nil
     )))
 }
 
@@ -24,6 +24,8 @@ func makeTranscriptRow(id: UUID = UUID(), body: String = "A line of text") -> Tr
 final class StandInTranscriptList: TranscriptScrollerList {
     private let scroller: TranscriptScroller
     var isAtRest = true
+    /// The rows the list holds. Without them it holds every row, so a reveal that waits for its row is taken at once.
+    var rowIDs: Set<UUID>?
     private(set) var takenRequests: [TranscriptScroller.Request] = []
     private(set) var settledPositions: [TranscriptPosition] = []
 
@@ -33,7 +35,7 @@ final class StandInTranscriptList: TranscriptScrollerList {
     }
 
     func takePendingRequest() {
-        if let request = scroller.takeRequest() {
+        if let request = scroller.takeRequest(holdsRow: { rowIDs?.contains($0) ?? true }) {
             takenRequests.append(request)
         }
     }

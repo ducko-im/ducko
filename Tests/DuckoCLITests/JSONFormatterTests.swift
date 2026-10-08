@@ -206,6 +206,16 @@ struct JSONFormatterTests {
         #expect(json["timestamp"] == "2026-02-28T12:00:00Z")
     }
 
+    // MARK: - Search
+
+    @Test func `search day carries the conversation, the day and the count`() throws {
+        let jid = try #require(BareJID.parse("bob@example.com"))
+        let output = formatter.formatSearchDay(jid: .bare(jid), day: Date(timeIntervalSince1970: 1_772_236_800), matchCount: 2)
+        let data = try #require(output.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+        #expect(json == ["type": "search_day", "jid": "bob@example.com", "day": "2026-02-28", "count": "2"])
+    }
+
     // MARK: - Message Markers
 
     @Test func `message includes delivered`() throws {

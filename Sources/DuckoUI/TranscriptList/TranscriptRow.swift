@@ -17,7 +17,14 @@ struct TranscriptRow: Identifiable, Equatable {
         /// Who a `/me` line names.
         let actionSenderName: String
         let loadsIncomingImagesOnSight: Bool
-        let isSearchResult: Bool
+        /// Set on a row a search found.
+        let searchMatch: SearchMatch?
+    }
+
+    struct SearchMatch: Equatable {
+        /// The text searched for, whose occurrences the row highlights.
+        let query: String
+        let isCurrent: Bool
     }
 
     struct ReplyQuote: Equatable {

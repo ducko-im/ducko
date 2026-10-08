@@ -85,13 +85,13 @@ private struct DaySeparator: View {
 }
 
 extension View {
-    /// The space above and beside a message row, closer to the row before it within a group, and the highlight of a
-    /// search result.
+    /// The space above and beside a message row, closer to the row before it within a group, and the tint of a search
+    /// result, stronger on the current one.
     func messageRowFrame(_ row: TranscriptRow.Message) -> some View {
         padding(.top, row.position.isFirstInGroup ? 8 : 2)
             .padding(.horizontal)
             .background(
-                row.isSearchResult ? Color.yellow.opacity(0.15) : Color.clear,
+                row.searchMatch.map { Color.yellow.opacity($0.isCurrent ? 0.4 : 0.15) } ?? Color.clear,
                 in: .rect(cornerRadius: 8)
             )
     }

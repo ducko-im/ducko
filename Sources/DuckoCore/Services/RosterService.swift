@@ -86,6 +86,12 @@ public final class RosterService {
         return result
     }
 
+    /// The account's contacts as the store has them, photos included, whether or not the account is enabled. Unlike
+    /// `loadContacts(for:)` it publishes nothing to the contact list.
+    public func storedContacts(for accountID: UUID) async -> [Contact] {
+        await (try? store.fetchContacts(for: accountID)) ?? []
+    }
+
     public func loadContacts(for accountID: UUID) async throws {
         let generationBeforeAwait = groupsLoadGeneration[accountID, default: 0]
         loadRevisions[accountID, default: 0] &+= 1

@@ -500,7 +500,6 @@ enum FileTranscriptStoreTests {
                 #expect(try await store.fetchNotes(for: testConversationID, since: nil, before: nil) == [note])
                 #expect(try await store.fetchMessages(for: testConversationID, before: nil, limit: 50).count == 1)
                 #expect(try await store.fetchMessages(for: testConversationID, on: day).count == 1)
-                #expect(try await store.messageDateCounts(for: testConversationID).map(\.count) == [1])
             }
         }
 
@@ -688,19 +687,114 @@ enum FileTranscriptStoreTests {
         }
     }
 
-    struct Search {
+    struct Days {
+        private static let calendar: Calendar = {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = .gmt
+            return calendar
+        }()
+
+        private static func date(day: Int, hour: Int = 0) throws -> Date {
+            try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: day, hour: hour)))
+        }
+
         @Test
-        func `Search finds matching messages`() async throws {
+        func `Transcript days are the days with a file, newest first, a day that holds only a note included`() async throws {
             try await withTemporaryDirectory { dir in
                 let store = FileTranscriptStore(baseDirectory: dir)
                 try await store.appendMessages([
-                    makeMessage(body: "hello world"),
-                    makeMessage(body: "goodbye world"),
-                    makeMessage(body: "hello there")
+                    makeMessage(body: "a", timestamp: Self.date(day: 10, hour: 12)),
+                    makeMessage(body: "b", timestamp: Self.date(day: 12, hour: 9)),
+                    makeMessage(body: "c", timestamp: Self.date(day: 12, hour: 15))
+                ])
+                try await store.appendNote(TimelineNote(
+                    conversationID: testConversationID, timestamp: Self.date(day: 15, hour: 8), kind: .encryptionEnabledByContact
+                ))
+
+                let days = try await store.transcriptDays(for: testConversationID)
+                #expect(try days == [Self.date(day: 15), Self.date(day: 12), Self.date(day: 10)])
+                #expect(try await store.transcriptDays(for: UUID()).isEmpty)
+            }
+        }
+
+        @Test
+        func `Matching messages are found by text and by file name, on their own day only`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                var file = try makeMessage(body: "", timestamp: Self.date(day: 12, hour: 10))
+                file.attachments = [Attachment(id: UUID(), url: "file:///tmp/hello-report.pdf", fileName: "hello-report.pdf")]
+                let text = try makeMessage(body: "Héllo world", timestamp: Self.date(day: 12, hour: 9))
+                try await store.appendMessages([
+                    text,
+                    file,
+                    makeMessage(body: "goodbye world", timestamp: Self.date(day: 12, hour: 11)),
+                    makeMessage(body: "hello on another day", timestamp: Self.date(day: 13, hour: 9))
                 ])
 
-                let results = try await store.searchMessages(query: "hello", conversationID: testConversationID, before: nil, after: nil, limit: 50)
-                #expect(results.count == 2)
+                let matches = try await store.matchingMessages("hello", in: testConversationID, on: Self.date(day: 12))
+                #expect(matches.map(\.id) == [text.id, file.id])
+                #expect(try await store.matchingMessages("hello", in: testConversationID, on: Self.date(day: 11)).isEmpty)
+            }
+        }
+
+        @Test
+        func `Matching messages use an edited message's new text and skip a retracted one`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                let day = try Self.date(day: 12, hour: 9)
+                let edited = makeMessage(stanzaID: "edited", body: "first draft", timestamp: day)
+                let retracted = makeMessage(stanzaID: "retracted", body: "final wording", timestamp: day.addingTimeInterval(60))
+                try await store.appendMessages([edited, retracted])
+                try await store.appendAmendment(
+                    TranscriptAmendment(action: .edit, targetMessageID: edited.id, timestamp: day, body: "final version"),
+                    conversationID: testConversationID
+                )
+                try await store.appendAmendment(
+                    TranscriptAmendment(action: .retract, targetMessageID: retracted.id, timestamp: day), conversationID: testConversationID
+                )
+
+                #expect(try await store.matchingMessages("final", in: testConversationID, on: day).map(\.id) == [edited.id])
+                #expect(try await store.matchingMessages("draft", in: testConversationID, on: day).isEmpty)
+            }
+        }
+
+        @Test
+        func `Matching messages keep the order a day's messages are fetched in`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                let later = try makeMessage(body: "needle later", timestamp: Self.date(day: 12, hour: 15))
+                let earlier = try makeMessage(body: "needle earlier", timestamp: Self.date(day: 12, hour: 9))
+                // Written out of timestamp order, as an archive import can.
+                try await store.appendMessages([later, earlier])
+
+                let day = try Self.date(day: 12)
+                let fetched = try await store.fetchMessages(for: testConversationID, on: day).map(\.id)
+                #expect(fetched == [later.id, earlier.id])
+                #expect(try await store.matchingMessages("needle", in: testConversationID, on: day).map(\.id) == fetched)
+            }
+        }
+
+        /// The lookup indexes keep the last entry they were given. A search reads days from the newest to the oldest,
+        /// so filling them from its reads would send an amendment that names only a stanza id to the oldest day read.
+        @Test
+        func `A match read leaves the routing of later amendments alone`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                let older = try makeMessage(stanzaID: "ducko-1", body: "needle older", timestamp: Self.date(day: 10, hour: 9))
+                let newer = try makeMessage(stanzaID: "ducko-1", body: "needle newer", timestamp: Self.date(day: 12, hour: 9))
+                try await store.appendMessage(older)
+                try await store.appendMessage(newer)
+
+                #expect(try await store.matchingMessages("needle", in: testConversationID, on: older.timestamp).map(\.id) == [older.id])
+                try await store.appendAmendment(
+                    TranscriptAmendment(action: .displayed, targetStanzaID: "ducko-1", timestamp: newer.timestamp),
+                    conversationID: testConversationID
+                )
+
+                let onNewerDay = try await store.fetchMessages(for: testConversationID, on: newer.timestamp)
+                let onOlderDay = try await store.fetchMessages(for: testConversationID, on: older.timestamp)
+                #expect(onNewerDay.map(\.isDisplayed) == [true])
+                #expect(onOlderDay.map(\.isDisplayed) == [false])
             }
         }
     }
@@ -766,47 +860,6 @@ enum FileTranscriptStoreTests {
 
                 let fetched = try await store.fetchMessages(for: testConversationID, before: nil, limit: 50)
                 #expect(fetched.isEmpty)
-            }
-        }
-    }
-
-    struct Stats {
-        @Test
-        func `Message date counts returns per-day counts sorted newest first`() async throws {
-            try await withTemporaryDirectory { dir in
-                let store = FileTranscriptStore(baseDirectory: dir)
-                var calendar = Calendar(identifier: .gregorian)
-                calendar.timeZone = .gmt
-                let day1 = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 12)))
-                let day2a = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 12, hour: 9)))
-                let day2b = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 12, hour: 15)))
-                let day3 = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 15, hour: 8)))
-
-                try await store.appendMessages([
-                    makeMessage(body: "a", timestamp: day1),
-                    makeMessage(body: "b", timestamp: day2a),
-                    makeMessage(body: "c", timestamp: day2b),
-                    makeMessage(body: "d", timestamp: day3)
-                ])
-
-                let dateCounts = try await store.messageDateCounts(for: testConversationID)
-                #expect(dateCounts.count == 3)
-                // Newest first
-                #expect(dateCounts[0].date == calendar.date(from: DateComponents(year: 2026, month: 3, day: 15))!)
-                #expect(dateCounts[0].count == 1)
-                #expect(dateCounts[1].date == calendar.date(from: DateComponents(year: 2026, month: 3, day: 12))!)
-                #expect(dateCounts[1].count == 2)
-                #expect(dateCounts[2].date == calendar.date(from: DateComponents(year: 2026, month: 3, day: 10))!)
-                #expect(dateCounts[2].count == 1)
-            }
-        }
-
-        @Test
-        func `Message date counts returns empty for nonexistent conversation`() async throws {
-            try await withTemporaryDirectory { dir in
-                let store = FileTranscriptStore(baseDirectory: dir)
-                let dateCounts = try await store.messageDateCounts(for: UUID())
-                #expect(dateCounts.isEmpty)
             }
         }
     }

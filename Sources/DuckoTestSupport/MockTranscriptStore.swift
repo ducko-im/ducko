@@ -6,6 +6,8 @@ public actor MockTranscriptStore: TranscriptStore {
     public var amendments: [(amendment: TranscriptAmendment, conversationID: UUID)] = []
     public private(set) var notes: [TimelineNote] = []
     public private(set) var deletedTranscriptConversationIDs: [UUID] = []
+    /// The days `matchingMessages` was asked for, in the order asked.
+    public private(set) var matchedDays: [TranscriptDay] = []
     private var fetchMessagesGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var fetchNotesGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
 
@@ -141,32 +143,17 @@ public actor MockTranscriptStore: TranscriptStore {
         }
     }
 
-    // MARK: - Search
+    // MARK: - Days
 
-    public func searchMessages(query: String, conversationID: UUID?, before: Date?, after: Date?, limit: Int) async throws -> [ChatMessage] {
-        var results = applyAmendments(to: messages)
-        results = results.filter { $0.body.localizedStandardContains(query) }
-        if let conversationID {
-            results = results.filter { $0.conversationID == conversationID }
-        }
-        if let before {
-            results = results.filter { $0.timestamp < before }
-        }
-        if let after {
-            results = results.filter { $0.timestamp > after }
-        }
-        return Array(results.sorted(by: { $0.timestamp > $1.timestamp }).prefix(limit))
+    public func transcriptDays(for conversationID: UUID) async throws -> [Date] {
+        let timestamps = messages.filter { $0.conversationID == conversationID }.map(\.timestamp)
+            + notes.filter { $0.conversationID == conversationID }.map(\.timestamp)
+        return Set(timestamps.map { Self.dayCalendar.startOfDay(for: $0) }).sorted(by: >)
     }
 
-    // MARK: - Stats
-
-    public func messageDateCounts(for conversationID: UUID) async throws -> [(date: Date, count: Int)] {
-        var counts: [Date: Int] = [:]
-        for message in messages where message.conversationID == conversationID {
-            let day = Self.dayCalendar.startOfDay(for: message.timestamp)
-            counts[day, default: 0] += 1
-        }
-        return counts.map { ($0.key, $0.value) }.sorted { $0.date > $1.date }
+    public func matchingMessages(_ query: String, in conversationID: UUID, on day: Date) async throws -> [ChatMessage] {
+        matchedDays.append(TranscriptDay(conversationID: conversationID, date: day))
+        return try await fetchMessages(for: conversationID, on: day).filter { $0.matchesSearch(query) }
     }
 
     // MARK: - Lifecycle

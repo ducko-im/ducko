@@ -43,6 +43,25 @@ struct ScriptValidationTests {
         #expect(result.stderr.contains("Usage:"))
     }
 
+    @Test func `ducko-history-search rejects a missing query`() throws {
+        let result = try ScriptRunner.run("ducko-history-search.sh", arguments: [])
+        #expect(result.exitCode != 0)
+        #expect(result.stderr.contains("Usage:"))
+    }
+
+    @Test func `ducko-history-search parses as valid bash`() throws {
+        let script = ScriptRunner.scriptsDirectory.appendingPathComponent("ducko-history-search.sh").path
+        let result = try ScriptRunner.bash(["-n", script])
+        #expect(result.exitCode == 0, "bash -n failed: \(result.stderr)")
+    }
+
+    @Test func `ducko-history-search compiles and hands its query to the AppleScript as an argument`() throws {
+        let captured = try ScriptRunner.capture("ducko-history-search.sh", arguments: [scriptSpecialArgument], response: "searched")
+        #expect(captured.result.exitCode == 0, "Script failed: \(captured.result.stderr)")
+        #expect(captured.compilerExitCode == 0, "AppleScript failed: \(captured.compilerErrors)")
+        #expect(captured.argumentsByCall.last == ["-", scriptSpecialArgument])
+    }
+
     @Test func `ducko-import parses as valid bash`() throws {
         // `ducko-import.sh` probes for a running app, so it has no hermetic
         // argument-validation surface like login/register. A `bash -n` parse is

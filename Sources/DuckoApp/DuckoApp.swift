@@ -20,6 +20,7 @@ struct DuckoApp: App {
     @State private var notificationManager = NotificationManager()
     @FocusedValue(\.chatWindowState) private var focusedChatWindowState
     @FocusedValue(\.contactListWindowState) private var focusedContactListWindowState
+    @FocusedValue(\.transcriptViewerState) private var focusedTranscriptViewerState
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     @State private var isShowingAdiumImport = false
@@ -114,7 +115,7 @@ struct DuckoApp: App {
         }
         .defaultSize(width: 400, height: 520)
 
-        Window("Chat Transcripts", id: "transcripts") {
+        Window("Chat History", id: "transcripts") {
             TranscriptViewerWindow()
                 .environment(environment)
                 .environment(transcriptScope)
@@ -153,7 +154,7 @@ struct DuckoApp: App {
 
                 Divider()
 
-                Button("Chat Transcripts") {
+                Button("Chat History") {
                     openWindow(id: "transcripts")
                 }
                 .keyboardShortcut("t", modifiers: [.command, .option])
@@ -254,12 +255,21 @@ struct DuckoApp: App {
                 Button("Find…") {
                     if let chat = focusedChatWindowState {
                         chat.toggleSearch()
+                    } else if let history = focusedTranscriptViewerState {
+                        history.toggleFind()
                     } else {
                         focusedContactListWindowState?.toggleSearch()
                     }
                 }
                 .keyboardShortcut("f")
-                .disabled(focusedChatWindowState == nil && focusedContactListWindowState == nil)
+                .disabled(focusedChatWindowState == nil && focusedTranscriptViewerState == nil && focusedContactListWindowState == nil)
+
+                Button("Search All Conversations") {
+                    focusedTranscriptViewerState?.focusSearchField()
+                }
+                .keyboardShortcut("f", modifiers: [.command, .option])
+                .accessibilityIdentifier("edit-menu-search-all-conversations")
+                .disabled(focusedTranscriptViewerState == nil)
             }
 
             CommandGroup(before: .windowList) {

@@ -197,6 +197,38 @@ List(selection: $selection) {
 - This is not the redundant write that [focus-patterns.md](focus-patterns.md) warns about. That pitfall concerns a view that takes focus on a click through `.focusable()`, which a `List` does not. Repeated taps on a list that already had focus left its focus state set.
 - That the arrow keys move the selection after a tap sets the focus state is unconfirmed. They did so when the focus state was set from a selection change, and a tap sets the same state. A `primaryAction` double-click on a list that has this gesture is untried. Confirm both in the running app.
 
+## Selection Painting in a Sidebar List (macOS)
+
+A `List(selection:)` in a `NavigationSplitView` sidebar paints its selection wrongly when the selected row leaves or returns to the list, and when the list is built with a row already selected (observed on macOS 27, with rows in `DisclosureGroup` sections that a filter can hide):
+
+- When the selected row is removed, the list keeps it painted where it was. The accessibility tree holds no row there, and a selection binding that reads `nil` changes nothing.
+- When the row comes back together with its section, it shows unselected although the binding still names it.
+- A list built with a row of a later section already selected keeps that row highlighted after another row is selected.
+
+Give the list a new identity whenever a change alters whether the selected row is listed, and hand a rebuilt list its selection after it is built:
+
+```swift
+@State private var selectedListGeneration = 0
+
+List(selection: Binding(
+    get: { selectedListGeneration == model.listGeneration ? model.selection : nil },
+    set: { model.select($0) }
+)) {
+    // sections and rows
+}
+.id(model.listGeneration)
+.task(id: model.listGeneration) {
+    selectedListGeneration = model.listGeneration
+}
+```
+
+- Count the generation in the model, at the change that hides or returns the selected row. A generation derived in the view also rebuilds on a click, which resets the scroll position.
+- The closure binding is deliberate. Its getter depends on view state, which no projected binding can express.
+- The first list reads the selection at once, which is right when it is built before anything is selected. Start the view's counter one behind the model's when a selection can already stand.
+- Hiding and showing the sidebar needs no rebuild.
+- Check the result in a window capture. The accessibility tree reports the right selection throughout.
+- `TranscriptSidebarView` with `TranscriptViewerState.sidebarListGeneration` is the worked example.
+
 ## Sizing a Window to List Content (macOS)
 
 `.windowResizability(.contentSize)` fits a window to its content — but a `List` is **greedy in both axes and reports no intrinsic content size**, so the window won't shrink to fit it. Drive the size explicitly:

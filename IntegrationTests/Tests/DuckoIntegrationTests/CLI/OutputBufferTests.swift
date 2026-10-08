@@ -74,5 +74,35 @@ extension CLIHelperUnitTests {
             let match = await buffer.snapshotIfContainsAny(["LATE-MARKER"], after: staleCursor)
             #expect(match?.contains("LATE-MARKER") == true)
         }
+
+        @Test
+        func `snapshotIfContains behind a marker finds only text written behind the first marker after the cursor`() async {
+            let buffer = OutputBuffer()
+            await buffer.append("MARKER early text ")
+            let cursor = await buffer.cursor()
+
+            // The text alone, as the echo of an earlier command would bring it, is no match.
+            await buffer.append("text ")
+            #expect(await buffer.snapshotIfContains("text", behind: "MARKER", after: cursor) == nil)
+
+            // Nor is the marker with the text only in front of it.
+            await buffer.append("MARKER ")
+            #expect(await buffer.snapshotIfContains("text", behind: "MARKER", after: cursor) == nil)
+
+            await buffer.append("late text")
+            #expect(await buffer.snapshotIfContains("text", behind: "MARKER", after: cursor)?.hasSuffix("late text") == true)
+        }
+
+        @Test
+        func `snapshotIfContains behind a marker after a stale cursor clamps to the retained tail`() async {
+            let buffer = OutputBuffer()
+            await buffer.append("OLD-PREFIX ")
+            let staleCursor = await buffer.cursor()
+            await buffer.append(String(repeating: "y", count: OutputBuffer.maxRetained))
+            await buffer.append("MARKER late text")
+
+            let match = await buffer.snapshotIfContains("late text", behind: "MARKER", after: staleCursor)
+            #expect(match?.hasSuffix("MARKER late text") == true)
+        }
     }
 }

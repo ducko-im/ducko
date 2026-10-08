@@ -401,4 +401,18 @@ struct TranscriptListCoordinatorTests {
         let frame = harness.table.rect(ofRow: 20)
         #expect(abs(frame.midY - harness.viewport.midY) < 1)
     }
+
+    @Test func `a reveal that waits for its row moves nothing until the rows that hold it arrive, and then centers it`() throws {
+        let list = try scrolledUp()
+        let (harness, scroller) = (list.harness, list.scroller)
+        let before = harness.viewport.minY
+        let arriving = (0 ..< 40).map { _ in makeTranscriptRow() }
+
+        scroller.revealWhenShown(arriving[20].id)
+        #expect(harness.viewport.minY == before)
+
+        harness.show(arriving, scroller: scroller)
+        let frame = harness.table.rect(ofRow: 20)
+        #expect(abs(frame.midY - harness.viewport.midY) < 1)
+    }
 }

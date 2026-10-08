@@ -7,11 +7,13 @@ enum TranscriptRead: Hashable {
     case conversations
     case dates(UUID)
     case day(UUID, Date)
-    case search(UUID?, String)
+    case matches(UUID, Date)
 }
 
 actor TranscriptReadGates {
     private var pending: [TranscriptRead: [TranscriptReadGate]] = [:]
+    /// Every read that came by, in order, gated or not.
+    private(set) var seen: [TranscriptRead] = []
 
     func suspendNext(_ read: TranscriptRead) -> TranscriptReadGate {
         let gate = TranscriptReadGate()
@@ -20,6 +22,7 @@ actor TranscriptReadGates {
     }
 
     func pause(_ read: TranscriptRead) async throws {
+        seen.append(read)
         guard var queue = pending[read], !queue.isEmpty else { return }
         let gate = queue.removeFirst()
         pending[read] = queue
@@ -125,15 +128,15 @@ struct GatedTranscriptStore: TranscriptStore {
         try await mock.messageExists(stanzaID: stanzaID, fromJID: fromJID, conversationID: conversationID)
     }
 
-    func searchMessages(query: String, conversationID: UUID?, before: Date?, after: Date?, limit: Int) async throws -> [ChatMessage] {
-        let result = try await mock.searchMessages(query: query, conversationID: conversationID, before: before, after: after, limit: limit)
-        try await gates.pause(.search(conversationID, query))
+    func transcriptDays(for conversationID: UUID) async throws -> [Date] {
+        let result = try await mock.transcriptDays(for: conversationID)
+        try await gates.pause(.dates(conversationID))
         return result
     }
 
-    func messageDateCounts(for conversationID: UUID) async throws -> [(date: Date, count: Int)] {
-        let result = try await mock.messageDateCounts(for: conversationID)
-        try await gates.pause(.dates(conversationID))
+    func matchingMessages(_ query: String, in conversationID: UUID, on day: Date) async throws -> [ChatMessage] {
+        let result = try await mock.matchingMessages(query, in: conversationID, on: day)
+        try await gates.pause(.matches(conversationID, day))
         return result
     }
 

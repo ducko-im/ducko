@@ -87,6 +87,27 @@ struct TranscriptRowsTests {
         #expect(changed(rows(messages), rows(messages, chat: chat)) == [1])
     }
 
+    @Test func `only rows a search found carry its query, and only the current one is marked current`() {
+        let messages = (0 ..< 4).map { message(at: TimeInterval($0 * 10)) }
+        var found = TranscriptRows.Details()
+        found.searchResults = [messages[1].id, messages[3].id]
+        found.searchQuery = "needle"
+        found.currentSearchResult = messages[3].id
+        var other = found
+        other.searchQuery = "haystack"
+
+        let matches = rows(messages, chat: found).map { row -> TranscriptRow.SearchMatch? in
+            guard case let .message(message) = row.kind else { return nil }
+            return message.searchMatch
+        }
+        #expect(matches == [
+            nil, TranscriptRow.SearchMatch(query: "needle", isCurrent: false),
+            nil, TranscriptRow.SearchMatch(query: "needle", isCurrent: true)
+        ])
+        // A new keyword re-measures the rows it was found in and no others.
+        #expect(changed(rows(messages, chat: found), rows(messages, chat: other)) == [1, 3])
+    }
+
     @Test func `the top slot stands above the messages while there is history left to load`() {
         let messages = (0 ..< 3).map { message(at: TimeInterval($0 * 10)) }
         var chat = TranscriptRows.Details()
@@ -186,7 +207,10 @@ struct TranscriptRowsTests {
 
         let rows = TranscriptRows.history(
             items: [.message(quoted), .message(reply)], positions: [reply.id: position],
-            details: TranscriptRows.Details(isGroupchat: true, displayName: "Bob", searchResults: [reply.id]), transfers: []
+            details: TranscriptRows.Details(
+                isGroupchat: true, displayName: "Bob", searchResults: [quoted.id, reply.id], searchQuery: "needle", currentSearchResult: reply.id
+            ),
+            transfers: []
         )
 
         guard case let .message(row) = rows[1].kind else {
@@ -197,7 +221,12 @@ struct TranscriptRowsTests {
         #expect(row.replyQuote == nil)
         #expect(!row.loadsIncomingImagesOnSight)
         #expect(row.isGroupchat)
-        #expect(row.isSearchResult)
+        #expect(row.searchMatch == TranscriptRow.SearchMatch(query: "needle", isCurrent: true))
+        guard case let .message(other) = rows[0].kind else {
+            Issue.record("Expected a message row")
+            return
+        }
+        #expect(other.searchMatch == TranscriptRow.SearchMatch(query: "needle", isCurrent: false))
         #expect(!row.startsDay)
     }
 

@@ -11,6 +11,9 @@ enum TranscriptRows {
         /// The contact's name in the contact list, for a chat with someone who is in it.
         var contactName: String?
         var searchResults: Set<UUID> = []
+        /// The text the search results were found for.
+        var searchQuery = ""
+        var currentSearchResult: UUID?
         /// Whether there is history left to load, once the first load has finished.
         var showsTopSlot = false
         var isLoadingOlder = false
@@ -57,7 +60,7 @@ enum TranscriptRows {
                     transferStatus: .resolve(for: message, transfer: transfersByID[message.id], recipientName: chat.displayName),
                     actionSenderName: actionSenderName(of: message, chat: chat),
                     loadsIncomingImagesOnSight: loadsIncomingImagesOnSight,
-                    isSearchResult: chat.searchResults.contains(message.id)
+                    searchMatch: searchMatch(of: message, details: chat)
                 ))))
             case let .note(note):
                 rows.append(TranscriptRow(id: note.id, kind: .note(note, contactName: chat.displayName, startsDay: isFirstOfDay)))
@@ -94,12 +97,18 @@ enum TranscriptRows {
                     transferStatus: .resolve(for: message, transfer: transfersByID[message.id], recipientName: details.displayName),
                     actionSenderName: message.fromJID,
                     loadsIncomingImagesOnSight: false,
-                    isSearchResult: details.searchResults.contains(message.id)
+                    searchMatch: searchMatch(of: message, details: details)
                 )))
             case let .note(note):
                 TranscriptRow(id: note.id, kind: .note(note, contactName: details.displayName, startsDay: false))
             }
         }
+    }
+
+    /// Only a row a search found carries the query, so a new keyword leaves every other row's value as it was.
+    private static func searchMatch(of message: ChatMessage, details: Details) -> TranscriptRow.SearchMatch? {
+        guard details.searchResults.contains(message.id) else { return nil }
+        return TranscriptRow.SearchMatch(query: details.searchQuery, isCurrent: message.id == details.currentSearchResult)
     }
 
     private static func startsDay(at index: Int, in items: [TimelineItem]) -> Bool {

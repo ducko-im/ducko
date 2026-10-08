@@ -28,6 +28,8 @@ struct MessageListView: View {
                 displayName: windowState.displayName,
                 contactName: windowState.contact?.displayName,
                 searchResults: Set(windowState.searchResults),
+                searchQuery: windowState.searchResultsQuery,
+                currentSearchResult: windowState.currentSearchResultID,
                 showsTopSlot: windowState.conversation != nil && !windowState.isLoading && !windowState.hasReachedEnd,
                 isLoadingOlder: windowState.isLoadingOlder
             ),

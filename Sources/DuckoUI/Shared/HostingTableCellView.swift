@@ -35,6 +35,17 @@ final class HostingTableCellView<Content: View>: NSTableCellView {
     func update(content: Content) {
         host.rootView = content
     }
+
+    /// A secondary click goes to the row, so that the row's own menu opens. Selectable text lies under a system view
+    /// whose text menu would open in its place. That view keeps the click while it holds a selection, which its
+    /// menu acts on.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        guard let hit, let event = NSApp.currentEvent else { return hit }
+        let isSecondaryClick = event.type == .rightMouseDown || (event.type == .leftMouseDown && event.modifierFlags.contains(.control))
+        guard isSecondaryClick else { return hit }
+        return hit.accessibilitySelectedTextRange().length > 0 ? hit : host
+    }
 }
 
 extension CollectionDifference {

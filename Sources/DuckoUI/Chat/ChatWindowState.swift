@@ -170,6 +170,12 @@ public final class ChatWindowState {
     var isSearching = false
     var searchResults: [UUID] = []
     var currentSearchIndex = 0
+    /// The text the results were found for. They and their highlight stay on it while the field is edited or emptied.
+    private(set) var searchResultsQuery = ""
+
+    var currentSearchResultID: UUID? {
+        searchResults.indices.contains(currentSearchIndex) ? searchResults[currentSearchIndex] : nil
+    }
 
     let jidString: String
     /// The account this tab is bound to, set at open time. Always non-nil in practice (every
@@ -529,6 +535,7 @@ public final class ChatWindowState {
     // MARK: - Search
 
     func performSearch() {
+        searchResultsQuery = searchText
         guard !searchText.isEmpty else {
             searchResults = []
             return
@@ -553,22 +560,22 @@ public final class ChatWindowState {
 
     private var searchMatches: [UUID] {
         messages
-            .filter { $0.body.localizedStandardContains(searchText) }
+            .filter { $0.matchesSearch(searchResultsQuery) }
             .map(\.id)
     }
 
     private func revealCurrentSearchResult() {
-        guard searchResults.indices.contains(currentSearchIndex) else { return }
-        scroller.reveal(searchResults[currentSearchIndex])
+        guard let currentSearchResultID else { return }
+        scroller.reveal(currentSearchResultID)
     }
 
     /// Results are ids of loaded messages, and a published window can have lost some. The current result stays
     /// selected while its message is loaded, and nothing is scrolled to.
     private func refreshSearchResults() {
-        guard isSearching, !searchText.isEmpty else { return }
+        guard !searchResultsQuery.isEmpty else { return }
         let matches = searchMatches
         guard matches != searchResults else { return }
-        let current = searchResults.indices.contains(currentSearchIndex) ? searchResults[currentSearchIndex] : nil
+        let current = currentSearchResultID
         searchResults = matches
         currentSearchIndex = current.flatMap { matches.firstIndex(of: $0) } ?? min(currentSearchIndex, max(0, matches.count - 1))
     }
@@ -576,6 +583,7 @@ public final class ChatWindowState {
     func dismissSearch() {
         isSearching = false
         searchText = ""
+        searchResultsQuery = ""
         searchResults = []
         currentSearchIndex = 0
     }

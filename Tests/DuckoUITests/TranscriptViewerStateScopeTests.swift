@@ -64,8 +64,8 @@ struct TranscriptViewerStateScopeTests {
         let request = TranscriptScope().request(ConversationRef(conversation: conv))
         await fixture.state.applyScope(request)
 
-        #expect(fixture.state.selectedConversation?.id == conv.id)
-        #expect(fixture.state.selectedDate != nil)
+        #expect(fixture.state.selection == .conversation(conv.id))
+        #expect(fixture.state.selectedDay != nil)
         #expect(fixture.state.messages.count == 1)
     }
 
@@ -82,7 +82,7 @@ struct TranscriptViewerStateScopeTests {
         let request = TranscriptScope().request(ConversationRef(conversation: conv))
         await fixture.state.applyScope(request)
 
-        #expect(fixture.state.selectedConversation?.id == conv.id)
+        #expect(fixture.state.selection == .conversation(conv.id))
         #expect(fixture.state.messages.count == 1)
     }
 
@@ -96,7 +96,7 @@ struct TranscriptViewerStateScopeTests {
         let request = TranscriptScope().request(ConversationRef(conversation: absent))
         await fixture.state.applyScope(request)
 
-        #expect(fixture.state.selectedConversation == nil)
+        #expect(fixture.state.selection == nil)
         #expect(fixture.state.messages.isEmpty)
     }
 }
@@ -134,11 +134,22 @@ extension TranscriptViewerStateScopeTests {
             }
         }
 
+        func day(_ date: Date, of conversation: Conversation) -> TranscriptDay {
+            TranscriptDay(conversationID: conversation.id, date: date)
+        }
+
+        func select(_ conversation: Conversation?) async {
+            await state.select(conversation.map { .conversation($0.id) })?.value
+        }
+
+        func selectDay(_ date: Date?, of conversation: Conversation) async {
+            await state.selectDay(date.map { day($0, of: conversation) })?.value
+        }
+
         func assertSelected(_ conversation: Conversation, on date: Date) {
-            #expect(state.selectedConversation?.id == conversation.id)
-            #expect(state.selectedDate == date)
-            #expect(state.messageDates == [latest, older])
-            #expect(state.messageDateCounts == [latest: 1, older: 1])
+            #expect(state.selection == .conversation(conversation.id))
+            #expect(state.selectedDay == day(date, of: conversation))
+            #expect(state.days == [day(latest, of: conversation), day(older, of: conversation)])
             #expect(state.messages.count == 1)
             #expect(state.messages.allSatisfy { $0.conversationID == conversation.id && $0.timestamp == date })
             #expect(Set(state.positions.keys) == Set(state.messages.map(\.id)))
@@ -152,10 +163,10 @@ extension TranscriptViewerStateScopeTests {
     @Test func `a day is shown from its first message`() async throws {
         let fixture = try RaceFixture()
         await fixture.seed()
-        await fixture.state.selectConversation(fixture.first)
+        await fixture.select(fixture.first)
         let list = StandInTranscriptList(attachedTo: fixture.state.scroller)
 
-        await fixture.state.selectDate(fixture.older)
+        await fixture.selectDay(fixture.older, of: fixture.first)
 
         // Once when the day before is taken away, and once when this day's messages are in.
         #expect(list.settledPositions == [.oldest, .oldest])
@@ -169,13 +180,13 @@ extension TranscriptViewerStateScopeTests {
         )
         try await fixture.transcripts.mock.appendNote(note)
 
-        await fixture.state.selectConversation(fixture.first)
+        await fixture.select(fixture.first)
         // Armed: the day the note was written on is the one shown.
-        #expect(fixture.state.selectedDate == fixture.latest)
+        #expect(fixture.state.selectedDay == fixture.day(fixture.latest, of: fixture.first))
         #expect(fixture.state.notes == [note])
         #expect(fixture.state.timelineItems.last?.id == note.id)
 
-        await fixture.state.selectDate(fixture.older)
+        await fixture.selectDay(fixture.older, of: fixture.first)
         #expect(fixture.state.notes.isEmpty)
     }
 
@@ -184,10 +195,10 @@ extension TranscriptViewerStateScopeTests {
         let fixture = try RaceFixture()
         await fixture.seed()
         let firstGate = await fixture.gates.suspendNext(pauseDay ? .day(fixture.first.id, fixture.latest) : .dates(fixture.first.id))
-        let first = Task { await fixture.state.selectConversation(fixture.first) }
+        let first = Task { await fixture.select(fixture.first) }
         try await firstGate.waitForArrival()
         let secondGate = await fixture.gates.suspendNext(.dates(fixture.second.id))
-        let second = Task { await fixture.state.selectConversation(fixture.second) }
+        let second = Task { await fixture.select(fixture.second) }
         try await secondGate.waitForArrival()
         if oldFinishesFirst {
             await firstGate.open()
@@ -212,9 +223,9 @@ extension TranscriptViewerStateScopeTests {
         let fixture = try RaceFixture()
         await fixture.seed()
         let gate = await fixture.gates.suspendNext(.day(fixture.first.id, fixture.latest))
-        let automatic = Task { await fixture.state.selectConversation(fixture.first) }
+        let automatic = Task { await fixture.select(fixture.first) }
         try await gate.waitForArrival()
-        await fixture.state.selectDate(fixture.older)
+        await fixture.selectDay(fixture.older, of: fixture.first)
         await gate.open()
         await automatic.value
         fixture.assertSelected(fixture.first, on: fixture.older)
@@ -226,39 +237,37 @@ extension TranscriptViewerStateScopeTests {
         let fixture = try RaceFixture()
         await fixture.seed()
         let gate = await fixture.gates.suspendNext(.day(fixture.first.id, fixture.latest))
-        let loading = Task { await fixture.state.selectConversation(fixture.first) }
+        let loading = Task { await fixture.select(fixture.first) }
         try await gate.waitForArrival()
-        if clearConversation { await fixture.state.selectConversation(nil) } else { await fixture.state.selectDate(nil) }
+        if clearConversation { await fixture.select(nil) } else { await fixture.selectDay(nil, of: fixture.first) }
         await gate.open()
         await loading.value
-        #expect(fixture.state.selectedDate == nil)
+        #expect(fixture.state.selectedDay == nil)
         #expect(fixture.state.messages.isEmpty)
         #expect(fixture.state.positions.isEmpty)
         #expect(!fixture.state.isLoading)
         if clearConversation {
-            #expect(fixture.state.selectedConversation == nil)
-            #expect(fixture.state.messageDates.isEmpty)
-            #expect(fixture.state.messageDateCounts.isEmpty)
+            #expect(fixture.state.selection == nil)
+            #expect(fixture.state.days.isEmpty)
         }
     }
 
     @Test(arguments: [false, true])
-    func `clearing a date invalidates pending date counts`(clearDate: Bool) async throws {
+    func `clearing a date invalidates the pending list of days`(clearDate: Bool) async throws {
         let fixture = try RaceFixture()
         await fixture.seed()
         let gate = await fixture.gates.suspendNext(.dates(fixture.first.id))
-        let loading = Task { await fixture.state.selectConversation(fixture.first) }
+        let loading = Task { await fixture.select(fixture.first) }
         defer { loading.cancel(); Task { await gate.open() } }
         try await gate.waitForArrival()
-        #expect(fixture.state.selectedConversation?.id == fixture.first.id)
+        #expect(fixture.state.selection == .conversation(fixture.first.id))
         #expect(fixture.state.isLoading)
-        if clearDate { await fixture.state.selectDate(nil) }
+        if clearDate { await fixture.selectDay(nil, of: fixture.first) }
         await gate.open()
         await loading.value
         if clearDate {
-            #expect(fixture.state.selectedDate == nil)
-            #expect(fixture.state.messageDates.isEmpty)
-            #expect(fixture.state.messageDateCounts.isEmpty)
+            #expect(fixture.state.selectedDay == nil)
+            #expect(fixture.state.days.isEmpty)
             #expect(fixture.state.messages.isEmpty)
             #expect(fixture.state.positions.isEmpty)
         } else {
@@ -274,7 +283,7 @@ extension TranscriptViewerStateScopeTests {
         let gate = await fixture.gates.suspendNext(.conversations)
         let scope = Task { await fixture.state.applyScope(fixture.scope(fixture.first)) }
         try await gate.waitForArrival()
-        await fixture.state.selectConversation(fixture.second)
+        await fixture.select(fixture.second)
         await gate.open()
         await scope.value
         fixture.assertSelected(fixture.second, on: fixture.latest)
@@ -285,7 +294,7 @@ extension TranscriptViewerStateScopeTests {
         let fixture = try RaceFixture()
         await fixture.seed()
         let gate = await fixture.gates.suspendNext(.dates(fixture.first.id))
-        let local = Task { await fixture.state.selectConversation(fixture.first) }
+        let local = Task { await fixture.select(fixture.first) }
         try await gate.waitForArrival()
         let target = try unmatched ? Self.conversation(accountID: UUID(), jid: "missing@example.com") : fixture.second
         await fixture.state.applyScope(fixture.scope(target))
@@ -380,7 +389,7 @@ extension TranscriptViewerStateScopeTests {
         await fixture.seed()
         let request = fixture.scope(fixture.first)
         await fixture.state.applyScope(request)
-        await fixture.state.selectConversation(fixture.second)
+        await fixture.select(fixture.second)
         await fixture.state.applyScope(request)
         fixture.assertSelected(fixture.second, on: fixture.latest)
     }
@@ -390,75 +399,211 @@ extension TranscriptViewerStateScopeTests {
         let fixture = try RaceFixture()
         await fixture.seed()
         let oldGate = await fixture.gates.suspendNext(pauseDay ? .day(fixture.first.id, fixture.latest) : .dates(fixture.first.id))
-        let old = Task { await fixture.state.selectConversation(fixture.first) }
+        let old = Task { await fixture.select(fixture.first) }
         try await oldGate.waitForArrival()
         let currentGate = await fixture.gates.suspendNext(.dates(fixture.second.id))
-        let current = Task { await fixture.state.selectConversation(fixture.second) }
+        let current = Task { await fixture.select(fixture.second) }
         try await currentGate.waitForArrival()
         await oldGate.open(failing: true)
         await old.value
         #expect(fixture.state.isLoading)
-        #expect(fixture.state.selectedConversation?.id == fixture.second.id)
+        #expect(fixture.state.selection == .conversation(fixture.second.id))
         await currentGate.open()
         await current.value
         fixture.assertSelected(fixture.second, on: fixture.latest)
         #expect(!fixture.state.isLoading)
     }
+}
 
-    @Test(arguments: [false, true])
-    func `search A B A cannot publish the first A after the newest results`(failOldRead: Bool) async throws {
-        let fixture = try RaceFixture()
-        await fixture.seed()
-        await fixture.state.selectConversation(fixture.first)
-        fixture.state.transcriptSearchText = "alpha"
-        let gate = await fixture.gates.suspendNext(.search(fixture.first.id, "alpha"))
-        let old = Task { await fixture.state.performTranscriptSearch() }
-        try await gate.waitForArrival()
-        fixture.state.transcriptSearchText = "beta"
-        await fixture.state.performTranscriptSearch()
-        #expect(fixture.state.searchMatchDates == [fixture.latest])
-        let newMatch = Self.message(conversationID: fixture.first.id, body: "new alpha", timestamp: fixture.latest)
-        await fixture.transcripts.mock.addMessage(newMatch)
-        fixture.state.transcriptSearchText = " alpha "
-        await fixture.state.performTranscriptSearch()
-        let newest = fixture.state.searchResults
-        #expect(newest.contains(newMatch.id))
-        await gate.open(failing: failOldRead)
-        await old.value
-        #expect(fixture.state.searchResults == newest)
-        #expect(fixture.state.searchMatchDates == [fixture.older, fixture.latest])
+extension TranscriptViewerStateScopeTests {
+    @Test
+    func `selecting an account lists the days of all its conversations newest first, whatever the filter hides`() async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+        await library.state.load()
+        library.state.sidebarFilter = "alice"
+        #expect(library.state.sidebarSections.map { $0.conversations.map(\.id) } == [[library.alice.id]])
+
+        await library.state.select(.account(library.home.id))?.value
+
+        #expect(library.state.days == library.homeDays)
+        #expect(library.state.selectedDay == library.day(4, of: library.bob))
+        #expect(library.state.shownConversation?.id == library.bob.id)
+        #expect(library.state.messages.map(\.body) == ["delta"])
     }
 
-    @Test(arguments: [false, true])
-    func `conversation and query changes invalidate search before replacement work starts`(changeConversation: Bool) async throws {
-        let fixture = try RaceFixture()
-        await fixture.seed()
-        await fixture.state.selectConversation(fixture.first)
-        fixture.state.transcriptSearchText = "alpha"
-        let gate = await fixture.gates.suspendNext(.search(fixture.first.id, "alpha"))
-        let old = Task { await fixture.state.performTranscriptSearch() }
-        try await gate.waitForArrival()
-        if changeConversation { await fixture.state.selectConversation(fixture.second) } else { fixture.state.transcriptSearchText = "" }
-        await gate.open()
-        await old.value
-        #expect(fixture.state.searchResults.isEmpty)
-        #expect(fixture.state.searchMatchDates.isEmpty)
+    @Test(arguments: ["zoe", "ZOE", "zoë"])
+    func `the filter finds a conversation by its name, ignoring case and diacritics`(filter: String) async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+        let zoe = try Conversation(
+            id: UUID(), accountID: library.work.id, jid: #require(BareJID.parse("z@example.com")), type: .chat,
+            displayName: "Zoë", isPinned: false, isMuted: false, unreadCount: 0, createdAt: Date()
+        )
+        await library.store.mock.addConversation(zoe)
+        await library.state.load()
+
+        library.state.sidebarFilter = filter
+
+        #expect(library.state.sidebarSections.map { $0.conversations.map(\.id) } == [[zoe.id]])
+    }
+
+    /// The list is built anew whenever an edit of the filter changes whether it has the selected row, and at no other
+    /// time: not while the row stays hidden or listed, and not when a click selects another row.
+    @Test
+    func `the left list is built anew when a filter edit hides the selected row or brings it back`() async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+        await library.state.load()
+        library.state.sidebarFilter = "alice"
+        library.state.sidebarFilter = ""
+        #expect(library.state.sidebarListGeneration == 0)
+
+        await library.state.select(.conversation(library.bob.id))?.value
+        library.state.sidebarFilter = "alice"
+        #expect(library.state.sidebarListGeneration == 1)
+        library.state.sidebarFilter = "alic"
+        #expect(library.state.sidebarListGeneration == 1)
+        library.state.sidebarFilter = "bob"
+        #expect(library.state.sidebarListGeneration == 2)
+
+        library.state.sidebarFilter = "alice"
+        #expect(library.state.sidebarListGeneration == 3)
+        await library.state.select(.conversation(library.alice.id))?.value
+        library.state.sidebarFilter = ""
+        #expect(library.state.sidebarListGeneration == 3)
+
+        // An account goes with the last of its rows.
+        await library.state.select(.account(library.home.id))?.value
+        library.state.sidebarFilter = "bob"
+        #expect(library.state.sidebarListGeneration == 3)
+        library.state.sidebarFilter = "carol"
+        #expect(library.state.sidebarListGeneration == 4)
+        #expect(library.state.selection == .account(library.home.id))
     }
 
     @Test
-    func `date selection preserves conversation wide search validity`() async throws {
-        let fixture = try RaceFixture()
-        await fixture.seed()
-        await fixture.state.selectConversation(fixture.first)
-        fixture.state.transcriptSearchText = "alpha"
-        let gate = await fixture.gates.suspendNext(.search(fixture.first.id, "alpha"))
-        let search = Task { await fixture.state.performTranscriptSearch() }
+    func `selecting an imported history lists its days, and a find within it marks them`() async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+        await library.state.load()
+
+        await library.state.select(.importSource(TranscriptLibraryFixture.importSource))?.value
+        let days = [library.day(1, of: library.dave), library.day(0, of: library.dave)]
+        #expect(library.state.days == days)
+
+        library.state.toggleFind()
+        library.state.setFindText("alpha")
+        try await library.settle()
+
+        #expect(try library.state.dayMatches == [TranscriptDayMatches(day: days[1], messageIDs: [library.id("alpha dave")])])
+        #expect(library.state.matchCounts == [days[1]: 1])
+        // A find marks the days it found matches on. It neither narrows the list nor opens a day.
+        #expect(library.state.listedDays == days)
+        #expect(library.state.selectedDay == days[0])
+    }
+
+    @Test
+    func `selecting nothing clears the detail`() async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+        await library.state.start(with: nil)
+        try #require(!library.state.messages.isEmpty)
+
+        library.state.select(nil)
+
+        #expect(library.state.selection == nil)
+        #expect(library.state.days.isEmpty)
+        #expect(library.state.selectedDay == nil)
+        #expect(library.state.messages.isEmpty)
+        #expect(!library.state.isLoading)
+    }
+
+    @Test
+    func `selecting a conversation whose day is open under its account keeps that day open`() async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+        await library.state.start(with: nil)
+        let open = library.day(1, of: library.alice)
+        await library.state.selectDay(open)?.value
+
+        await library.state.select(.conversation(library.alice.id))?.value
+
+        #expect(library.state.days == [library.day(3, of: library.alice), open])
+        #expect(library.state.selectedDay == open)
+        #expect(library.state.messages.map(\.body) == ["alpha one", "beta", "alpha two"])
+    }
+
+    /// The contact list only holds the contacts of enabled accounts whose roster it loaded, so the window reads the
+    /// store.
+    @Test
+    func `a contact's stored photo is found without its account's roster loaded, and an imported conversation has none`() async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+        let photo = Data([1, 2, 3])
+        try await library.store.mock.upsertContact(Contact(
+            id: UUID(), accountID: library.home.id, jid: library.alice.jid, subscription: .both, groups: [],
+            avatarData: photo, isBlocked: false, createdAt: Date()
+        ))
+
+        await library.state.load()
+
+        #expect(library.state.avatarData(for: library.alice) == photo)
+        #expect(library.state.avatarData(for: library.bob) == nil)
+        #expect(library.state.avatarData(for: library.dave) == nil)
+    }
+
+    @Test
+    func `starting with no request selects the first account and loads its newest day`() async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+
+        await library.state.start(with: nil)
+
+        #expect(library.state.selection == .account(library.home.id))
+        #expect(library.state.selectedDay == library.day(4, of: library.bob))
+        #expect(library.state.messages.map(\.body) == ["delta"])
+    }
+
+    @Test
+    func `starting with a request ends on its conversation and lists no other on the way`() async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+
+        await library.state.start(with: library.scope(library.carol))
+
+        #expect(library.state.selection == .conversation(library.carol.id))
+        #expect(library.state.selectedDay == library.day(2, of: library.carol))
+        #expect(await library.listedConversations == [library.carol.id])
+    }
+
+    @Test
+    func `a request applied while the start is held in its load wins, and the first account is never selected`() async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+        let gate = await library.gates.suspendNext(.conversations)
+        let start = Task { await library.state.start(with: nil) }
         try await gate.waitForArrival()
-        await fixture.state.selectDate(fixture.older)
+
+        await library.state.applyScope(library.scope(library.carol))
         await gate.open()
-        await search.value
-        #expect(fixture.state.searchResults == Set(fixture.state.messages.map(\.id)))
-        #expect(fixture.state.searchMatchDates == [fixture.older])
-        fixture.assertSelected(fixture.first, on: fixture.older)
+        await start.value
+
+        #expect(library.state.selection == .conversation(library.carol.id))
+        #expect(library.state.selectedDay == library.day(2, of: library.carol))
+        #expect(await library.listedConversations == [library.carol.id])
+    }
+
+    @Test
+    func `starting with a request that matches nothing selects nothing`() async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+        let ghost = try Self.conversation(accountID: UUID(), jid: "ghost@example.com")
+
+        await library.state.start(with: library.scope(ghost))
+
+        #expect(library.state.selection == nil)
+        #expect(library.state.selectedDay == nil)
+        #expect(await library.listedConversations.isEmpty)
     }
 }

@@ -314,54 +314,18 @@ public actor FileTranscriptStore: TranscriptStore {
         return try findMessage(in: conversationID, where: predicate) != nil
     }
 
-    // MARK: - Search
+    // MARK: - Days
 
-    public func searchMessages(
-        query: String, conversationID: UUID?,
-        before: Date?, after: Date?, limit: Int
-    ) async throws -> [ChatMessage] {
-        let conversationIDs: [UUID] = if let conversationID {
-            [conversationID]
-        } else {
-            try listConversationIDs()
-        }
-
-        var results: [ChatMessage] = []
-        for convID in conversationIDs {
-            let dateFiles = try listDateFiles(for: convID)
-            for (dateString, fileURL) in dateFiles {
-                // Skip files outside the date bounds
-                if let before, let fileDate = Self.parseDate(dateString), fileDate > before { continue }
-                if let after, let fileDate = Self.parseDate(dateString) {
-                    // File date is the start of the day; skip if the entire next day is before `after`
-                    if let nextDay = Calendar(identifier: .gregorian).date(byAdding: .day, value: 1, to: fileDate),
-                       nextDay <= after { continue }
-                }
-                let messages = try readAndMaterialize(fileURL: fileURL, conversationID: convID)
-                let filtered = messages.filter { msg in
-                    if let before, msg.timestamp >= before { return false }
-                    if let after, msg.timestamp <= after { return false }
-                    return msg.body.localizedStandardContains(query)
-                }
-                results.append(contentsOf: filtered)
-                if results.count >= limit { break }
-            }
-            if results.count >= limit { break }
-        }
-
-        results.sort { $0.timestamp > $1.timestamp }
-        return Array(results.prefix(limit))
+    public func transcriptDays(for conversationID: UUID) async throws -> [Date] {
+        try listDateFiles(for: conversationID).compactMap { Self.parseDate($0.dateString) }
     }
 
-    // MARK: - Stats
-
-    public func messageDateCounts(for conversationID: UUID) async throws -> [(date: Date, count: Int)] {
-        let dateFiles = try listDateFiles(for: conversationID)
-        return try dateFiles.compactMap { dateString, fileURL in
-            guard let date = Self.parseDate(dateString) else { return nil }
-            let messages = try readAndMaterialize(fileURL: fileURL, conversationID: conversationID)
-            return (date, messages.count)
-        }
+    public func matchingMessages(_ query: String, in conversationID: UUID, on day: Date) async throws -> [ChatMessage] {
+        let fileURL = transcriptFileURL(conversationID: conversationID, dateString: Self.dateString(for: day))
+        // The lookup indexes keep the last entry they were given. A search reads days from the newest to the oldest, so
+        // filling them from its reads would leave them pointing at the oldest day read.
+        return try readAndMaterialize(fileURL: fileURL, conversationID: conversationID, fillsIndexes: false)
+            .filter { $0.matchesSearch(query) }
     }
 
     // MARK: - Lifecycle
@@ -467,13 +431,7 @@ public actor FileTranscriptStore: TranscriptStore {
             .sorted { $0.dateString > $1.dateString } // newest first
     }
 
-    private func listConversationIDs() throws -> [UUID] {
-        guard FileManager.default.fileExists(atPath: baseDirectory.path) else { return [] }
-        let contents = try FileManager.default.contentsOfDirectory(at: baseDirectory, includingPropertiesForKeys: nil)
-        return contents.compactMap { UUID(uuidString: $0.lastPathComponent) }
-    }
-
-    private func readAndMaterialize(fileURL: URL, conversationID: UUID) throws -> [ChatMessage] {
+    private func readAndMaterialize(fileURL: URL, conversationID: UUID, fillsIndexes: Bool = true) throws -> [ChatMessage] {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
         let data = try Data(contentsOf: fileURL)
         guard !data.isEmpty else { return [] }
@@ -489,7 +447,9 @@ public actor FileTranscriptStore: TranscriptStore {
                 let record = try decoder.decode(TranscriptRecord.self, from: Data(line))
                 switch record {
                 case .message:
-                    ingestMessageRecord(record, conversationID: conversationID, dateString: dateString, into: &accumulator)
+                    ingestMessageRecord(
+                        record, conversationID: conversationID, dateString: dateString, fillsIndexes: fillsIndexes, into: &accumulator
+                    )
                 case .amendment:
                     if let amendment = record.toAmendment() {
                         amendments.append(amendment)
@@ -529,13 +489,16 @@ public actor FileTranscriptStore: TranscriptStore {
         _ record: TranscriptRecord,
         conversationID: UUID,
         dateString: String,
+        fillsIndexes: Bool,
         into accumulator: inout MaterializationAccumulator
     ) {
         guard var msg = record.toChatMessage(conversationID: conversationID) else { return }
         msg.isDelivered = !msg.isOutgoing
         accumulator.messages[msg.id] = msg
         accumulator.order.append(msg.id)
-        indexEntry(id: msg.id, stanzaID: msg.stanzaID, serverID: msg.serverID, conversationID: conversationID, dateString: dateString)
+        if fillsIndexes {
+            indexEntry(id: msg.id, stanzaID: msg.stanzaID, serverID: msg.serverID, conversationID: conversationID, dateString: dateString)
+        }
         if let sid = msg.stanzaID { accumulator.stanzaToID[sid] = msg.id }
         if let srvid = msg.serverID { accumulator.serverToID[srvid] = msg.id }
     }

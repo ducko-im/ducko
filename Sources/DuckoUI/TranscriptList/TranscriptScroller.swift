@@ -20,6 +20,8 @@ final class TranscriptScroller {
     enum Request: Equatable {
         case newest
         case reveal(UUID)
+        /// A reveal that stays pending until the list holds the row.
+        case revealWhenShown(UUID)
     }
 
     /// Whether the view is at the newest message. While a list is attached it only changes when that list reports a
@@ -59,6 +61,13 @@ final class TranscriptScroller {
         list?.takePendingRequest()
     }
 
+    /// Reveals the row once the list holds it. Rows published a moment ago may not have reached the list yet. A reset or
+    /// a newer request drops it.
+    func revealWhenShown(_ id: UUID) {
+        pendingRequest = .revealWhenShown(id)
+        list?.takePendingRequest()
+    }
+
     /// Runs `change` at once when the list is at rest or there is none, otherwise once it has come to rest. Changing
     /// the rows above what is being read while the view is moving would be seen as a jump.
     func performWhenAtRest(_ change: @escaping () -> Void) {
@@ -94,7 +103,10 @@ final class TranscriptScroller {
         runChangeAwaitingRest()
     }
 
-    func takeRequest() -> Request? {
+    /// Hands over the pending request. A reveal that waits for its row stays pending while `holdsRow` says the list
+    /// lacks it.
+    func takeRequest(holdsRow: (UUID) -> Bool = { _ in true }) -> Request? {
+        if case let .revealWhenShown(id) = pendingRequest, !holdsRow(id) { return nil }
         defer { pendingRequest = nil }
         return pendingRequest
     }

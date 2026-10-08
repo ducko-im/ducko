@@ -73,6 +73,20 @@ struct TranscriptScrollerTests {
         #expect(runs == 1)
     }
 
+    @Test func `a reveal that waits for its row stays pending until the list holds it, and a reset drops it`() {
+        let scroller = TranscriptScroller()
+        let id = UUID()
+        scroller.revealWhenShown(id)
+
+        #expect(scroller.takeRequest(holdsRow: { _ in false }) == nil)
+        #expect(scroller.takeRequest(holdsRow: { $0 == id }) == .revealWhenShown(id))
+        #expect(scroller.takeRequest() == nil)
+
+        scroller.revealWhenShown(id)
+        scroller.reset(to: .oldest)
+        #expect(scroller.takeRequest() == nil)
+    }
+
     @Test func `a reset drops a pending request and runs a waiting change`() {
         var runs = 0
         let scroller = TranscriptScroller()

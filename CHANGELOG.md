@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Add a search over all conversations to the Chat History window, which lists each day with a match as soon as it is found and opens the first one
+- Add a find bar to the Chat History window (⌘F) that steps through the matches from day to day and shows how many there are
+- Highlight the searched word inside matching messages, in Chat History and in a chat's find, and mark the match you are on
+- Allow selecting and copying part of a message's text, in chats and in Chat History
+- Add a field that filters the conversations listed in the Chat History window
+- Add `ducko history --search` without an address to search every conversation of an account, and `/searchall` in interactive mode
+
+### Changed
+
+- Rename the Chat Transcripts window to Chat History, and show the conversation's name once, as the window's title
+- Show every day of an account or an imported history when you select it in Chat History, and remember which of them you collapsed
+- Show a contact's photo, name and address for each conversation and each day in Chat History
+- Open Chat History on your first account when you open it from the File menu
+- Search a conversation's whole history with `ducko history <address> --search`, instead of its newest 500 messages
+- Find messages by the name of an attached file in a chat's find, and never find retracted messages
+
+### Removed
+
+- Remove the conversation type filter from the Chat History toolbar
+
+### Fixed
+
+- Fix the arrow keys not moving the selection after you click a row in Chat History, Settings ▸ Accounts or Settings ▸ Status
+
+### Security
+
+- Prevent a received message that stacks thousands of accents on one letter from freezing Ducko while you search
+
 ## [0.7.0] - 2026-10-06
 
 ### Added

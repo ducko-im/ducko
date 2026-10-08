@@ -188,6 +188,15 @@ struct ANSIFormatterTests {
         #expect(output.hasPrefix("\u{001B}[2m"))
     }
 
+    // MARK: - Search
+
+    @Test func `search day is bold`() throws {
+        let jid = try #require(BareJID.parse("bob@example.com"))
+        let output = formatter.formatSearchDay(jid: .bare(jid), day: Date(timeIntervalSince1970: 1_772_236_800), matchCount: 2)
+        #expect(output.contains("--- bob@example.com, 2026-02-28 (2 matches) ---"))
+        #expect(output.hasPrefix("\u{001B}[1m"))
+    }
+
     // MARK: - Message Markers
 
     @Test func `delivered shows checkmark`() {

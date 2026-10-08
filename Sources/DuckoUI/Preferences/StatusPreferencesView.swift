@@ -37,6 +37,7 @@ struct StatusPreferencesView: View {
                 .tag(saved.id)
             }
             .listStyle(.bordered)
+            .takesKeyboardOnClick()
             .overlay {
                 if savedStatuses.isEmpty {
                     Text("No saved statuses. Add one to reuse it from the status menu.")

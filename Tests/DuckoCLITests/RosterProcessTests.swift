@@ -3,7 +3,6 @@ import DuckoCore
 import DuckoData
 import Foundation
 import Network
-import SwiftData
 import Testing
 @testable import DuckoXMPP
 
@@ -13,42 +12,20 @@ struct RosterProcessTests {
     func `real CLI reports confirmed partial result and tears down`(operation: String) async throws {
         let server = RosterLoopbackServer()
         let port = try await server.start()
-        let profile = "roster-local-\(UUID().uuidString)"
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "Ducko-Dev-\(profile)")
-        defer { try? FileManager.default.removeItem(at: directory); UserDefaults.standard.removePersistentDomain(forName: "im.ducko.dev.\(profile)") }
-        try await seed(directory: directory, port: port)
-        let binary = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appending(path: ".build/debug/DuckoCLI")
-        let process = Process()
-        process.executableURL = binary
-        process.arguments = operation == "interactive" ? ["interactive", "--output", "plain"] : ["roster", operation, "bob@example.com", "--output", "json"]
-        let parent = ProcessInfo.processInfo.environment
-        process.environment = ["HOME": parent["HOME"] ?? "", "PATH": parent["PATH"] ?? "", "DUCKO_PROFILE": profile]
-        let stdout = Pipe(), stderr = Pipe(), stdin = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        process.standardInput = stdin
-        try process.run()
-        if operation == "interactive" { try stdin.fileHandleForWriting.write(contentsOf: Data("/add bob@example.com\nhelp\nquit\n".utf8)) }
-        try stdin.fileHandleForWriting.close()
-        let output = Task.detached { try stdout.fileHandleForReading.readToEnd() ?? Data() }
-        let errors = Task.detached { try stderr.fileHandleForReading.readToEnd() ?? Data() }
+        let profile = try ThrowawayProfile(named: "roster-local")
+        defer { profile.remove() }
         do {
-            let deadline = ContinuousClock.now + .seconds(15)
-            while process.isRunning, ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(10))
-            }
-            if process.isRunning { process.terminate() }
-            process.waitUntilExit()
-            let text = try await String(decoding: output.value, as: UTF8.self)
-            let errorText = try await String(decoding: errors.value, as: UTF8.self)
-            #expect(process.terminationReason == .exit, Comment(rawValue: errorText))
+            try await seed(profile, port: port)
+            let interactive = operation == "interactive"
+            let run = try await profile.run(
+                interactive ? ["interactive", "--output", "plain"] : ["roster", operation, "bob@example.com", "--output", "json"],
+                input: interactive ? "/add bob@example.com\nhelp\nquit\n" : ""
+            )
+            #expect(run.reason == .exit, Comment(rawValue: run.errors))
             #expect(await server.sawStreamClose)
-            try assertOutput(operation: operation, text: text, errorText: errorText, exitCode: process.terminationStatus)
+            try assertOutput(operation: operation, text: run.output, errorText: run.errors, exitCode: run.exitCode)
             await server.stop()
         } catch {
-            if process.isRunning { process.terminate(); process.waitUntilExit() }
-            _ = await output.result
-            _ = await errors.result
             await server.stop()
             throw error
         }
@@ -72,13 +49,11 @@ struct RosterProcessTests {
         }
     }
 
-    private func seed(directory: URL, port: UInt16) async throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let container = try ModelContainer(for: ModelContainerFactory.schema, configurations: [ModelConfiguration(url: directory.appending(path: "default.store"))])
-        let store = SwiftDataPersistenceStore(modelContainer: container)
+    private func seed(_ profile: ThrowawayProfile, port: UInt16) async throws {
+        let store = try profile.makeStore()
         let account = try Account(id: UUID(), jid: #require(BareJID.parse("alice@example.com")), isEnabled: true, connectOnLaunch: false, host: "127.0.0.1", port: Int(port), requireTLS: false, createdAt: Date())
         try await store.saveAccount(account)
-        FileCredentialStore(fileURL: directory.appending(path: "credentials.json")).savePassword("local-fixture", for: account.jid.description)
+        FileCredentialStore(fileURL: profile.directory.appending(path: "credentials.json")).savePassword("local-fixture", for: account.jid.description)
     }
 }
 

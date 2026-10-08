@@ -76,9 +76,8 @@ public struct ScopeRequest: Sendable, Hashable {
     }
 }
 
-/// App-level shared selection that scopes the singleton transcript window to a contact.
-/// Shared by the scenes that show or retarget transcripts, so the chat and contacts
-/// windows can retarget the one transcript window rather than opening per-contact windows.
+/// App-level shared selection that scopes the singleton history window to a conversation.
+/// Other windows retarget the one history window through it rather than opening a window per conversation.
 @MainActor @Observable
 public final class TranscriptScope {
     public private(set) var requested: ScopeRequest?

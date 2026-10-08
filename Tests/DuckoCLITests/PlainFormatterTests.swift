@@ -352,6 +352,15 @@ struct PlainFormatterTests {
         #expect(output == "[2026-02-28T12:00:00.000Z] -- Encryption enabled because bob@example.com sent an encrypted message")
     }
 
+    // MARK: - formatSearchDay
+
+    @Test(arguments: [(1, "1 match"), (3, "3 matches")])
+    func `format search day names the conversation, the day and the matches`(count: Int, matches: String) throws {
+        let jid = try #require(BareJID.parse("bob@example.com"))
+        let output = formatter.formatSearchDay(jid: .bare(jid), day: Date(timeIntervalSince1970: 1_772_236_800), matchCount: count)
+        #expect(output == "--- bob@example.com, 2026-02-28 (\(matches)) ---")
+    }
+
     // MARK: - formatMessage Markers
 
     @Test func `format message delivered`() {

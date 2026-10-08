@@ -59,6 +59,15 @@ struct JSONFormatter: CLIFormatter {
         ])
     }
 
+    func formatSearchDay(jid: JID, day: Date, matchCount: Int) -> String {
+        encode([
+            "type": "search_day",
+            "jid": jid.description,
+            "day": iso8601Day(day),
+            "count": "\(matchCount)"
+        ])
+    }
+
     func formatEmptyResult(_ result: CLIEmptyResult) -> String {
         switch result {
         case .accounts:

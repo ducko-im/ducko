@@ -2,70 +2,71 @@ import DuckoCore
 import SwiftUI
 
 struct TranscriptSidebarView: View {
+    private static let collapsedSectionsKey = "transcriptCollapsedSections"
+
     @Bindable var state: TranscriptViewerState
+    /// The keys of the collapsed sections, as a JSON array. A section missing from it is expanded.
+    @AppStorage(TranscriptSidebarView.collapsedSectionsKey, store: PreferencesDefaults.store) private var collapsedSectionsStorage = "[]"
+
+    /// The generation of the list that has been given its selection.
+    @State private var selectedListGeneration = 0
+
+    private var collapsedSections: Set<String> {
+        Set(jsonArray: collapsedSectionsStorage)
+    }
 
     var body: some View {
         List(selection: Binding(
-            get: { state.selectedConversation?.id },
-            set: { newID in
-                let conversation = state.allConversations.first { $0.id == newID }
-                Task { await state.selectConversation(conversation) }
-            }
+            // A list built with a row below its first section already selected keeps that row painted when another
+            // is selected. So a list built anew starts with no selection and gets it once it is there.
+            get: { selectedListGeneration == state.sidebarListGeneration ? state.sidebarSelection : nil },
+            set: { state.select($0) }
         )) {
-            ForEach(state.conversationsByAccount, id: \.account.id) { group in
-                TranscriptSidebarSection(
-                    title: group.account.displayName ?? group.account.jid.description,
-                    conversations: group.conversations
-                )
+            ForEach(state.sidebarSections) { section in
+                TranscriptSidebarSectionView(section: section, state: state, isExpanded: isExpanded(section))
             }
+        }
+        .id(state.sidebarListGeneration)
+        .task(id: state.sidebarListGeneration) {
+            selectedListGeneration = state.sidebarListGeneration
+        }
+        .takesKeyboardOnClick()
+        .searchable(text: $state.sidebarFilter, placement: .sidebar, prompt: "Filter conversations")
+    }
 
-            ForEach(state.importedConversationsBySource, id: \.sourceJID) { group in
-                TranscriptSidebarSection(
-                    title: group.sourceJID,
-                    conversations: group.conversations
-                )
-            }
-        }
-        .searchable(text: $state.searchText, placement: .sidebar, prompt: "Filter conversations")
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Picker("Type", selection: $state.typeFilter) {
-                    ForEach(ConversationTypeFilter.allCases, id: \.self) { filter in
-                        Text(filter.rawValue).tag(filter)
-                    }
+    private func isExpanded(_ section: TranscriptSidebarSection) -> Binding<Bool> {
+        Binding(
+            get: { !collapsedSections.contains(section.collapseKey) },
+            set: { isExpanded in
+                var collapsed = collapsedSections
+                if isExpanded {
+                    collapsed.remove(section.collapseKey)
+                } else {
+                    collapsed.insert(section.collapseKey)
                 }
-                .pickerStyle(.segmented)
+                collapsedSectionsStorage = collapsed.jsonArray
             }
-        }
-        .onChange(of: state.typeFilter) {
-            Task { await state.clearSelectionIfFiltered() }
-        }
+        )
     }
 }
 
 // MARK: - Section
 
-private struct TranscriptSidebarSection: View {
-    let title: String
-    let conversations: [Conversation]
+private struct TranscriptSidebarSectionView: View {
+    let section: TranscriptSidebarSection
+    let state: TranscriptViewerState
+    @Binding var isExpanded: Bool
 
     var body: some View {
-        DisclosureGroup {
-            ForEach(conversations) { conversation in
-                TranscriptSidebarRow(conversation: conversation)
-                    .tag(conversation.id)
+        DisclosureGroup(isExpanded: $isExpanded) {
+            ForEach(section.conversations) { conversation in
+                TranscriptSidebarRow(conversation: conversation, avatarData: state.avatarData(for: conversation))
+                    .tag(TranscriptSelection.conversation(conversation.id))
             }
         } label: {
-            HStack {
-                Text(title)
-                    .fontWeight(.semibold)
-
-                Spacer()
-
-                Text("\(conversations.count)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text(section.title)
+                .fontWeight(.semibold)
+                .tag(section.selection)
         }
     }
 }

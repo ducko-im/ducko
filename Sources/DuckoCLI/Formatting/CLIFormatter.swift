@@ -5,6 +5,8 @@ import Foundation
 protocol CLIFormatter: Sendable {
     func formatMessage(_ message: ChatMessage, accountJID: BareJID?) -> String
     func formatNote(_ note: TimelineNote, contactName: String) -> String
+    /// The line that introduces one day of one conversation in the results of a search over all conversations.
+    func formatSearchDay(jid: JID, day: Date, matchCount: Int) -> String
     func formatEmptyResult(_ result: CLIEmptyResult) -> String
     func formatRosterCommand(_ outcome: RosterCommandOutcome) -> String
     func formatAccount(_ account: Account) -> String
@@ -77,6 +79,15 @@ func formatByteCount(_ bytes: Int64) -> String {
 
 func nicknameFromJID(_ jid: JID) -> String {
     FullJID.parse(jid.description)?.resourcePart ?? jid.bareJID.description
+}
+
+/// A search result day as text. The day is given as its UTC date, the span one transcript file covers.
+func searchDayText(jid: JID, day: Date, matchCount: Int) -> String {
+    "--- \(jid), \(iso8601Day(day)) (\(matchCount == 1 ? "1 match" : "\(matchCount) matches")) ---"
+}
+
+func iso8601Day(_ date: Date) -> String {
+    date.formatted(Date.ISO8601FormatStyle().year().month().day())
 }
 
 func iso8601(_ date: Date) -> String {

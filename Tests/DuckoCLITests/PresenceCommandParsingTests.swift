@@ -26,44 +26,35 @@ struct PresenceCommandParsingTests {
     }
 
     @Test func `--for and --keep-alive are mutually exclusive`() {
-        expectParseError(["away", "--for", "15m", "--keep-alive"], containing: "mutually exclusive")
+        expectParseError(DuckoCLI.Presence.self, ["away", "--for", "15m", "--keep-alive"], containing: "mutually exclusive")
     }
 
     @Test func `--for without a status fails validation`() {
-        expectParseError(["--for", "5m"], containing: "require a status")
+        expectParseError(DuckoCLI.Presence.self, ["--for", "5m"], containing: "require a status")
     }
 
     @Test func `--keep-alive without a status fails validation`() {
-        expectParseError(["--keep-alive"], containing: "require a status")
+        expectParseError(DuckoCLI.Presence.self, ["--keep-alive"], containing: "require a status")
     }
 
     @Test func `invalid status with --for fails at validation`() {
-        expectParseError(["bogus", "--for", "1m"], containing: "Invalid presence status")
+        expectParseError(DuckoCLI.Presence.self, ["bogus", "--for", "1m"], containing: "Invalid presence status")
     }
 
     @Test func `offline with --for is rejected`() {
-        expectParseError(["offline", "--for", "1h"], containing: "offline cannot be held")
+        expectParseError(DuckoCLI.Presence.self, ["offline", "--for", "1h"], containing: "offline cannot be held")
     }
 
     @Test func `offline with --keep-alive is rejected`() {
-        expectParseError(["offline", "--keep-alive"], containing: "offline cannot be held")
+        expectParseError(DuckoCLI.Presence.self, ["offline", "--keep-alive"], containing: "offline cannot be held")
     }
 
     @Test func `malformed --for duration fails at validation`() {
-        expectParseError(["away", "--for", "soon"], containing: "Invalid duration")
+        expectParseError(DuckoCLI.Presence.self, ["away", "--for", "soon"], containing: "Invalid duration")
     }
 
     @Test func `--hold is an unknown flag`() {
-        expectParseError(["away", "--hold", "5m"], containing: "hold")
-    }
-
-    /// Asserts that parsing `arguments` throws and the surfaced message names the specific cause, so a
-    /// regression in the wrong validation branch (or flag spelling) doesn't slip past a broad type match.
-    private func expectParseError(_ arguments: [String], containing substring: String) {
-        let error = #expect(throws: (any Error).self) {
-            _ = try DuckoCLI.Presence.parse(arguments)
-        }
-        #expect(String(describing: error).contains(substring))
+        expectParseError(DuckoCLI.Presence.self, ["away", "--hold", "5m"], containing: "hold")
     }
 }
 

@@ -60,6 +60,7 @@ struct AccountsPreferencesView: View {
                 }
             }
             .listStyle(.bordered)
+            .takesKeyboardOnClick()
 
             HStack(spacing: 0) {
                 Button {

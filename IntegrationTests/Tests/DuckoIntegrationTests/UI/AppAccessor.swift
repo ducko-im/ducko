@@ -1378,7 +1378,7 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
 
     /// Index of the window to activate for `target`, preferring an exact title
     /// match over a substring match so a window whose title merely *contains*
-    /// `target` (e.g. "Chat Transcripts" when `target == "Chat"`) can't be
+    /// `target` (e.g. "Chat History" when `target == "Chat"`) can't be
     /// re-keyed ahead of the intended exact-title window. Returns `nil` when no
     /// title matches; order-preserving, so the index maps back to the caller's
     /// matching window handle.

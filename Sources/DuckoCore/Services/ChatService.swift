@@ -2156,22 +2156,6 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         return messages.reversed()
     }
 
-    public func searchMessages(
-        for conversationID: UUID,
-        query: String,
-        limit: Int = 100
-    ) async throws -> [ChatMessage] {
-        let messages = try await transcripts.fetchMessages(for: conversationID, before: nil, limit: 500)
-        return messages
-            .filter { message in
-                // A received file's message carries no body, so its name is reachable only through its attachment.
-                message.body.localizedStandardContains(query)
-                    || message.attachments.contains { $0.displayFileName.localizedStandardContains(query) }
-            }
-            .prefix(limit)
-            .reversed()
-    }
-
     // MARK: - Transcript Lifecycle
 
     public func deleteTranscriptsForAccount(_ accountID: UUID) async throws {
@@ -2187,18 +2171,75 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         try await store.fetchAllConversations()
     }
 
-    public func searchTranscripts(
-        query: String,
-        conversationID: UUID? = nil,
-        before: Date? = nil,
-        after: Date? = nil,
-        limit: Int = 100
-    ) async throws -> [ChatMessage] {
-        try await transcripts.searchMessages(query: query, conversationID: conversationID, before: before, after: after, limit: limit)
+    /// Every stored day of the given conversations, newest first, equal dates in the order the conversations were
+    /// given.
+    public func transcriptDays(for conversationIDs: [UUID]) async throws -> [TranscriptDay] {
+        var days: [(day: TranscriptDay, order: Int)] = []
+        for (order, conversationID) in conversationIDs.enumerated() {
+            for date in try await transcripts.transcriptDays(for: conversationID) {
+                days.append((TranscriptDay(conversationID: conversationID, date: date), order))
+            }
+        }
+        return days
+            .sorted { $0.day.date == $1.day.date ? $0.order < $1.order : $0.day.date > $1.day.date }
+            .map(\.day)
     }
 
-    public func conversationMessageDateCounts(_ conversationID: UUID) async throws -> [(date: Date, count: Int)] {
-        try await transcripts.messageDateCounts(for: conversationID)
+    /// The messages of one day that a search for `query` finds, in the order the day shows them. Each call reads one
+    /// day's file, so messages can be stored between the calls of a search over many days.
+    public func matchingMessages(_ query: String, on day: TranscriptDay) async throws -> [ChatMessage] {
+        try await transcripts.matchingMessages(query, in: day.conversationID, on: day.date)
+    }
+
+    /// The newest `limit` messages of the given conversations that a search for `query` finds. They are grouped by
+    /// conversation and day, newest day first, each day's messages in the order the day shows them. Days are read from
+    /// the newest on, and no day older than the last one needed is read.
+    public func searchTranscriptMessages(
+        query: String, in conversationIDs: [UUID], limit: Int
+    ) async throws -> [(day: TranscriptDay, messages: [ChatMessage])] {
+        let days = try await transcriptDays(for: conversationIDs)
+        var results: [(day: TranscriptDay, messages: [ChatMessage])] = []
+        var remaining = limit
+        var index = days.startIndex
+        while remaining > 0, index < days.endIndex {
+            // Conversations sharing a date are read together: which of their matches are the newest is only known
+            // once all of them are in.
+            let date = days[index].date
+            var found: [(day: TranscriptDay, messages: [ChatMessage])] = []
+            while index < days.endIndex, days[index].date == date {
+                let matches = try await matchingMessages(query, on: days[index])
+                if !matches.isEmpty {
+                    found.append((days[index], matches))
+                }
+                index += 1
+            }
+            let count = found.reduce(0) { $0 + $1.messages.count }
+            results += count > remaining ? Self.newest(remaining, of: found) : found
+            remaining -= min(count, remaining)
+        }
+        return results
+    }
+
+    /// The `count` newest messages of one date's matches, each day keeping its order. Of two messages with one
+    /// timestamp in a day, the one shown later is the newer.
+    private static func newest(
+        _ count: Int, of found: [(day: TranscriptDay, messages: [ChatMessage])]
+    ) -> [(day: TranscriptDay, messages: [ChatMessage])] {
+        let positions = found.enumerated().flatMap { dayIndex, entry in
+            entry.messages.enumerated().map { (day: dayIndex, offset: $0.offset, timestamp: $0.element.timestamp) }
+        }
+        let newestFirst = positions.sorted { lhs, rhs in
+            if lhs.timestamp != rhs.timestamp { return lhs.timestamp > rhs.timestamp }
+            return lhs.day == rhs.day ? lhs.offset > rhs.offset : lhs.day < rhs.day
+        }
+        var kept: [Int: Set<Int>] = [:]
+        for position in newestFirst.prefix(count) {
+            kept[position.day, default: []].insert(position.offset)
+        }
+        return found.enumerated().compactMap { dayIndex, entry in
+            guard let offsets = kept[dayIndex] else { return nil }
+            return (entry.day, entry.messages.enumerated().filter { offsets.contains($0.offset) }.map(\.element))
+        }
     }
 
     public func fetchMessageHistory(for conversationID: UUID, on date: Date) async throws -> [ChatMessage] {

@@ -1,7 +1,7 @@
 import DuckoCore
 import SwiftUI
 
-/// Read-only message bubble for the transcript viewer.
+/// Read-only message bubble for the history window.
 /// Simplified variant of MessageBubbleView without reply/edit/retract actions.
 struct TranscriptBubbleView: View {
     let row: TranscriptRow.Message
@@ -20,7 +20,8 @@ struct TranscriptBubbleView: View {
                 isMetadataVisible: row.position.isLastInGroup,
                 actionSenderName: row.actionSenderName,
                 loadsIncomingImagesOnSight: row.loadsIncomingImagesOnSight,
-                transferStatus: row.transferStatus
+                transferStatus: row.transferStatus,
+                highlight: row.searchMatch?.query
             )
             .contextMenu {
                 if !message.isRetracted, !message.isUndecryptable {

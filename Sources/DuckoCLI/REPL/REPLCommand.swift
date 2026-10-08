@@ -15,6 +15,7 @@ struct REPLCommand {
         case retract = "/retract"
         case edit = "/edit"
         case search = "/search"
+        case searchAll = "/searchall"
         case approve = "/approve"
         case deny = "/deny"
         case directedPresence = "/directed-presence"
@@ -60,6 +61,7 @@ struct REPLCommand {
             case .retract: ["  /retract <jid>           Retract last sent message"]
             case .edit: ["  /edit <jid> <new-body>   Edit last sent message"]
             case .search: ["  /search <jid> <query>    Search message history"]
+            case .searchAll: ["  /searchall <query>       Search all conversations"]
             case .approve: ["  /approve <jid>           Approve subscription request"]
             case .deny: ["  /deny <jid>              Deny subscription request"]
             case .directedPresence: ["  /directed-presence <jid> Send directed presence to a JID"]
@@ -95,7 +97,7 @@ struct REPLCommand {
 
         fileprivate func accepts(hasArguments: Bool) -> Bool {
             switch self {
-            case .send, .add, .remove, .reply, .retract, .edit, .search, .approve, .deny, .directedPresence, .encrypt, .pref: hasArguments
+            case .send, .add, .remove, .reply, .retract, .edit, .search, .searchAll, .approve, .deny, .directedPresence, .encrypt, .pref: hasArguments
             case .roster, .who, .profile, .unregisterAccount, .transfers, .connectionInfo, .help, .quit: !hasArguments
             case .status, .history, .checkRegistration, .submitRegistration, .join, .leave, .members, .topic, .nick, .destroy, .voice, .kick, .pm, .affiliations, .config, .moderate, .sendfile, .senddirect, .accept, .decline, .rooms, .avatar: true
             }

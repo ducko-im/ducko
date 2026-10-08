@@ -12,8 +12,8 @@ extension DuckoCLI {
 
         @OptionGroup var accountOption: AccountOption
 
-        @Argument(help: "The JID to view history for")
-        var jid: String
+        @Argument(help: "The JID to view history for. With --search it can be left out to search all conversations")
+        var jid: String?
 
         @Option(name: .long, help: "Maximum number of messages (default: 20)")
         var limit: Int = 20
@@ -21,17 +21,30 @@ extension DuckoCLI {
         @Option(name: .long, help: "Show messages before this ISO 8601 date")
         var before: String?
 
-        @Option(name: .long, help: "Filter messages by keyword (case-insensitive)")
+        @Option(name: .long, help: "Show the newest messages that contain this keyword, ignoring case and diacritics")
         var search: String?
 
         @Flag(name: .long, help: "Fetch from server when local history is empty (requires connection)")
         var server: Bool = false
 
+        func validate() throws {
+            guard jid == nil else { return }
+            guard search != nil else {
+                throw ValidationError("Missing expected argument '<jid>'. Only --search works without one.")
+            }
+            guard before == nil, !server else {
+                throw ValidationError("--before and --server need a JID.")
+            }
+        }
+
         func run() async throws {
             let formatter = global.formatter
 
-            guard let bareJID = BareJID.parse(jid) else {
-                throw CLIError.invalidJID(jid)
+            let bareJID = try jid.map { jid in
+                guard let bareJID = BareJID.parse(jid) else {
+                    throw CLIError.invalidJID(jid)
+                }
+                return bareJID
             }
 
             let context = try await MainActor.run {
@@ -42,13 +55,15 @@ extension DuckoCLI {
             let selectedAccount = try await resolveAccount(accountOption.account, environment: env)
 
             if let search {
-                let messages = try await searchHistory(
+                let days = try await searchHistory(
                     jid: bareJID, query: search, limit: limit,
                     environment: env, accountID: selectedAccount.id
                 )
-                printHistory(messages, formatter: formatter, accountJID: selectedAccount.jid)
+                printSearchResults(days, ofAllConversations: bareJID == nil, formatter: formatter, accountJID: selectedAccount.jid)
                 return
             }
+            // `validate()` lets the JID be missing only together with --search.
+            guard let bareJID else { return }
 
             let beforeDate = try parseBeforeDate(before)
             var messages = try await fetchHistory(

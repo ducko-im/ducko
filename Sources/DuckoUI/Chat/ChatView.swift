@@ -21,7 +21,15 @@ struct ChatView: View {
             IncomingFileTransferBanner()
 
             if windowState.isSearching {
-                MessageSearchBar(windowState: windowState)
+                MessageSearchBar(
+                    text: Bindable(windowState).searchText,
+                    matchTotal: windowState.searchResults.count,
+                    currentMatchNumber: windowState.currentSearchResultID.map { _ in windowState.currentSearchIndex + 1 },
+                    onSubmit: windowState.performSearch,
+                    onPrevious: windowState.previousSearchResult,
+                    onNext: windowState.nextSearchResult,
+                    onDone: windowState.dismissSearch
+                )
 
                 Divider()
             }

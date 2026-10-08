@@ -16,8 +16,10 @@ DuckoApp ships separate windows:
 - **Contact List** (`id: "contacts"`) — singleton, main window after login (roster, status picker, search).
 - **Chat** (`id: "chat"`) — singleton tabbed window holding every open conversation as a bottom tab (`chat-tab-bar`). Double-click or New Chat opens or raises it. A roster contact's message or file offer also opens it behind the window the user is in, without taking focus, and adds a tab for that chat without selecting it. A muted chat is left alone. Switching tabs preserves each conversation's draft, search, and sidebar state.
 - **Contact Info** (`id: "contact-info"`, keyed by `ContactInfoRef`) — Get Info window: identity, roster/subscription state, vCard, and Block/Remove. Opened from the chat header (i) button, a contact's "Get Info" context item, or Contact ▸ Get Info (⌘⇧I).
-- **Chat Transcripts** (`id: "transcripts"`) — singleton history window; the header clock, a contact's "History" context item, and Contact ▸ History (⌘L) retarget it to that conversation.
+- **Chat History** (`id: "transcripts"`) — singleton history window. File ▸ Chat History (⌥⌘T) opens it with the first account selected. The header clock, a contact's "History" context item, and Contact ▸ History (⌘L) retarget it to that conversation. Its title is the name of the conversation whose messages it shows, and "Chat History" while it shows none, so find it by the window's own accessibility identifier, `transcripts`.
 - **MenuBarExtra** — quick status, Show Contact List, Quit.
+
+The Chat History window has three parts. A left list holds accounts and imported histories with their conversations, under a "Filter conversations" field that narrows its rows. A day list holds the days of what is selected there, and the message pane shows the selected day. The rows of the two lists carry no identifiers. The toolbar search field searches all conversations and lists the days with matches in the day list. ⌥⌘F (Edit ▸ Search All Conversations) puts the cursor in that field. ⌘F (Edit ▸ Find…) shows and hides a find bar above the messages, which steps through the matches of the listed days.
 
 The Chat window's tabs survive a relaunch, in their order and with the same tab selected. The window itself reopens at launch only when it was open at quit. Otherwise it stays closed, and the tabs come back once a chat is next opened. `ducko-stop.sh` followed by `ducko-launch.sh` is such a relaunch. A test run can therefore start with tabs from an earlier run, and incoming messages can add tabs it did not open. A restored chat window opens in front of Contacts, which leaves the Contacts-only menu commands (Join Room…, Bookmarks…, Add Contact…) disabled, so run `ducko-focus-contacts.sh` after `ducko-launch.sh` before any Contacts step.
 
@@ -38,6 +40,8 @@ All scripts are in `scripts/` relative to this skill. Run from the repo root or 
 Scripts target SwiftUI accessibility identifiers, not positional selectors.
 
 ### Accessibility Identifiers
+
+A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item. Find such an item by its menu and title: menu-bar commands do not expose their identifiers to accessibility.
 
 | Identifier | Element | Window |
 |---|---|---|
@@ -64,7 +68,8 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `password-field` | Password field in account setup | Contacts |
 | `connect-button` | Connect button in account setup | Contacts |
 | `reply-compose-bar` | Reply/edit compose bar above input | Chat |
-| `message-search-bar` | Cmd+F search bar in chat | Chat |
+| `message-search-bar` | Cmd+F find bar above the messages. With matches it shows Previous Match and Next Match buttons and a match count. The count reads `2/7`, the current match's number and the total, or the total alone while no match is current | Chat, Chat History |
+| `edit-menu-search-all-conversations` | Edit ▸ Search All Conversations (⌥⌘F): puts the cursor in the Chat History window's toolbar search field. Enabled only while that window is focused | Menu bar |
 | `sort-mode-menu` | "Sort Contacts" picker, in the View menu bar | Contacts (menu bar) |
 | `hide-offline-menu` | "Hide Offline Contacts" toggle (⌘⇧H), in the View menu bar | Contacts (menu bar) |
 | `status-menu-{status}` | Status menu row (`available` ⌘⇧Y, `away`, `xa`, `dnd`, `offline`), applied to every enabled account. It carries a checkmark when every enabled account shows that status and a dash when only some do. With 2+ enabled accounts, the rows sit under "All Accounts", followed by the per-account submenus under "Each Account" (addressed by title) | Menu bar |
@@ -179,7 +184,7 @@ Scripts target SwiftUI accessibility identifiers, not positional selectors.
 | `undecryptable-indicator` | Warning lock on an encrypted message that could not be decrypted, shown instead of `encrypted-indicator` | Chat |
 | `delivered-indicator` | One checkmark on a sent message that reached the contact | Chat |
 | `read-indicator` | Two checkmarks on a sent message the contact has read, shown instead of `delivered-indicator` | Chat |
-| `timeline-note` | Note between messages, such as encryption having been switched on by a contact's encrypted message | Chat, Chat Transcripts |
+| `timeline-note` | Note between messages, such as encryption having been switched on by a contact's encrypted message | Chat, Chat History |
 | `encryption-menu` | Encryption menu button in chat header | Chat |
 | `device-fingerprints-sheet` | Device fingerprints sheet | Chat |
 | `device-row-{deviceID}` | Individual device row | Device Fingerprints |
@@ -227,7 +232,7 @@ Right-click a contact row in the contact list:
 
 - **Start Chat** — open a chat tab with the contact
 - **Get Info** — open the Contact Info window (identity, subscription, vCard, Block/Remove)
-- **History** — open the transcript window scoped to this contact
+- **History** — open the Chat History window on this contact
 - **Pin / Unpin** — pin or unpin the contact to the top of the list
 - **Mute / Unmute** — mute or unmute notifications
 - **Rename** — set a local alias for the contact
@@ -267,7 +272,8 @@ Right-click a participant in the chat window sidebar:
 | `ducko-add-contact.sh` | Open Add Contact sheet from contact list, fill JID, submit | `JID` |
 | `ducko-send.sh` | Type a message and send it in the active chat window | `MESSAGE` |
 | `ducko-screenshot.sh` | Capture window screenshot | `[FILENAME]` (optional, absolute path or relative to `/private/tmp/claude/`) |
-| `ducko-search.sh` | Toggle Cmd+F search bar in chat, optionally search | `[QUERY]` (optional) |
+| `ducko-search.sh` | Toggle the Cmd+F find bar of whichever Ducko window is frontmost, the chat window or Chat History, and optionally search | `[QUERY]` (optional) |
+| `ducko-history-search.sh` | Raise the open Chat History window, press ⌥⌘F and type a query into its toolbar field, which searches all conversations | `QUERY` |
 | `ducko-contact-search.sh` | Reveal the contact-list search (⌘F), optionally filter the roster | `[QUERY]` (optional) |
 | `ducko-reply.sh` | Right-click a message and select Reply | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
 | `ducko-sort.sh` | Open the View menu (Sort Contacts / Hide Offline), optionally select sort/filter (`hideOffline` is also ⌘⇧H with Contacts focused) | `[alphabetical\|byStatus\|recentConversation\|hideOffline]` (optional) |
@@ -392,7 +398,7 @@ $SCRIPTS/ducko-screenshot.sh
 
 ### Chat UI polish test (message grouping, search, reply)
 
-Tests message grouping, search bar, reply compose bar, and context menu:
+Tests message grouping, find bar, reply compose bar, and context menu:
 
 ```bash
 SCRIPTS="Skills/ducko-ui/scripts"

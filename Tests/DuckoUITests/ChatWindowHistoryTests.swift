@@ -333,6 +333,76 @@ struct ChatWindowHistoryTests {
         #expect(list.takenRequests == [.reveal(late.id), .reveal(middle.id), .newest])
     }
 
+    /// A received file's message has no text, so its name is the only thing a find can match it by.
+    @Test func `the find matches a file by its name`() async throws {
+        let fixture = try await ChatWindowFixture.make(loads: false)
+        var file = Self.message(fixture, at: 0, body: "")
+        file.attachments = [Attachment(id: UUID(), url: "file:///tmp/quarterly-report.pdf", fileName: "quarterly-report.pdf")]
+        try await fixture.transcripts.appendMessages([file, Self.message(fixture, at: 1, body: "hay")])
+        await fixture.windowState.load()
+
+        fixture.windowState.isSearching = true
+        fixture.windowState.searchText = "quarterly"
+        fixture.windowState.performSearch()
+
+        #expect(fixture.windowState.searchResults == [file.id])
+    }
+
+    @Test func `results stay on the text searched for while the field holds another`() async throws {
+        let fixture = try await ChatWindowFixture.make(loads: false)
+        let needle = Self.message(fixture, at: 0, body: "needle")
+        try await fixture.transcripts.appendMessages([needle])
+        await fixture.windowState.load()
+        fixture.windowState.isSearching = true
+        fixture.windowState.searchText = "needle"
+        fixture.windowState.performSearch()
+
+        // Typed and not submitted, then a message arrives that only the typed text matches.
+        fixture.windowState.searchText = "thread"
+        await fixture.transcripts.addMessage(Self.message(fixture, at: 1, body: "thread"))
+        await fixture.windowState.refreshMessages()
+
+        #expect(fixture.windowState.searchResults == [needle.id])
+        #expect(fixture.windowState.searchResultsQuery == "needle")
+    }
+
+    @Test func `a result goes when its message is retracted, also while the field is empty`() async throws {
+        let fixture = try await ChatWindowFixture.make(loads: false)
+        let needle = Self.message(fixture, at: 0, body: "needle")
+        try await fixture.transcripts.appendMessages([needle])
+        await fixture.windowState.load()
+        fixture.windowState.isSearching = true
+        fixture.windowState.searchText = "needle"
+        fixture.windowState.performSearch()
+        try #require(fixture.windowState.searchResults == [needle.id])
+
+        fixture.windowState.searchText = ""
+        try await fixture.transcripts.appendAmendment(
+            TranscriptAmendment(action: .retract, targetMessageID: needle.id), conversationID: fixture.conversationID
+        )
+        await fixture.windowState.refreshMessages()
+
+        #expect(fixture.windowState.searchResults.isEmpty)
+    }
+
+    @Test func `after the find is dismissed, a message that matches what was searched for is no result`() async throws {
+        let fixture = try await ChatWindowFixture.make(loads: false)
+        try await fixture.transcripts.appendMessages([Self.message(fixture, at: 0, body: "needle")])
+        await fixture.windowState.load()
+        fixture.windowState.toggleSearch()
+        fixture.windowState.searchText = "needle"
+        fixture.windowState.performSearch()
+        try #require(fixture.windowState.searchResults.count == 1)
+
+        fixture.windowState.toggleSearch()
+        await fixture.transcripts.addMessage(Self.message(fixture, at: 1, body: "another needle"))
+        await fixture.windowState.refreshMessages()
+
+        #expect(!fixture.windowState.isSearching)
+        #expect(fixture.windowState.searchResults.isEmpty)
+        #expect(fixture.windowState.searchResultsQuery.isEmpty)
+    }
+
     // MARK: - Link previews
 
     @Test func `a stored preview is there when its message is published, without a fetch`() async throws {

@@ -40,6 +40,10 @@ struct PlainFormatter: CLIFormatter {
         "[\(iso8601(note.timestamp))] -- \(note.text(contactName: contactName))"
     }
 
+    func formatSearchDay(jid: JID, day: Date, matchCount: Int) -> String {
+        searchDayText(jid: jid, day: day, matchCount: matchCount)
+    }
+
     func formatEmptyResult(_ result: CLIEmptyResult) -> String {
         result.message
     }

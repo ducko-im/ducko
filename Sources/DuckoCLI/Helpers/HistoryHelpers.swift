@@ -43,14 +43,45 @@ func fetchHistoryNotes(
     return HistoryNotes(notes: notes, contactName: jid.description)
 }
 
+/// One day of one conversation, with the messages a search found on it, oldest first.
+struct HistorySearchDay {
+    /// The conversation's address. A private chat in a room has the room's bare address, so it is named by its
+    /// occupant's.
+    let jid: JID
+    let date: Date
+    let messages: [ChatMessage]
+}
+
+/// The newest `limit` messages a search finds in the chat with `jid`, or in all the account's conversations when no
+/// `jid` is given. They come by conversation and day, newest day first.
 func searchHistory(
-    jid: BareJID, query: String, limit: Int,
+    jid: BareJID?, query: String, limit: Int,
     environment: AppEnvironment, accountID: UUID
-) async throws -> [ChatMessage] {
-    guard let conversation = try await resolveConversation(jid: jid, environment: environment, accountID: accountID) else {
-        return []
+) async throws -> [HistorySearchDay] {
+    let conversations: [Conversation] = if let jid {
+        try await [resolveConversation(jid: jid, environment: environment, accountID: accountID)].compactMap(\.self)
+    } else {
+        try await environment.chatService.fetchAllConversations().filter { $0.accountID == accountID }
     }
-    return try await environment.chatService.searchMessages(for: conversation.id, query: query, limit: limit)
+    let jids = Dictionary(conversations.map { ($0.id, searchAddress(of: $0)) }, uniquingKeysWith: { first, _ in first })
+    let found = try await environment.chatService.searchTranscriptMessages(query: query, in: conversations.map(\.id), limit: limit)
+    return found.compactMap { day, messages in
+        jids[day.conversationID].map { HistorySearchDay(jid: $0, date: day.date, messages: oldestFirst(messages)) }
+    }
+}
+
+private func searchAddress(of conversation: Conversation) -> JID {
+    conversation.occupantNickname
+        .flatMap { FullJID(bareJID: conversation.jid, resourcePart: $0) }
+        .map(JID.full) ?? .bare(conversation.jid)
+}
+
+/// A day's messages come in the order they were stored, which an archive sync can leave out of time order. Messages
+/// of one time keep the order they were stored in.
+private func oldestFirst(_ messages: [ChatMessage]) -> [ChatMessage] {
+    messages.enumerated()
+        .sorted { ($0.element.timestamp, $0.offset) < ($1.element.timestamp, $1.offset) }
+        .map(\.element)
 }
 
 private func resolveConversation(
@@ -63,6 +94,24 @@ private func resolveConversation(
     // Scope by account: `openConversations` is a cross-account union, so a bare-JID match alone could
     // resolve another account's conversation when the same peer is rostered on two accounts.
     return conversations.first(where: { $0.jid == jid && $0.accountID == accountID })
+}
+
+/// Prints a search's results. Those of all conversations name each day's conversation on a line before its messages.
+/// Those of one conversation are its matches alone, oldest first.
+func printSearchResults(
+    _ days: [HistorySearchDay], ofAllConversations: Bool,
+    formatter: any CLIFormatter, accountJID: BareJID
+) {
+    guard ofAllConversations, !days.isEmpty else {
+        printHistory(days.reversed().flatMap(\.messages), formatter: formatter, accountJID: accountJID)
+        return
+    }
+    for day in days {
+        print(formatter.formatSearchDay(jid: day.jid, day: day.date, matchCount: day.messages.count))
+        for message in day.messages {
+            print(formatter.formatMessage(message, accountJID: accountJID))
+        }
+    }
 }
 
 func printHistory(

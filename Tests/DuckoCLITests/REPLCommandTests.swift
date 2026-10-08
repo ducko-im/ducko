@@ -9,7 +9,7 @@ struct REPLCommandTests {
     }
 
     @Test(arguments: [
-        "", "send", "/send a hi", "Send a hi", "/add", "/reply", "/remove", "/approve", "/deny", "/edit", "/retract", "/search", "/encrypt", "/pref", "/directed-presence",
+        "", "send", "/send a hi", "Send a hi", "/add", "/reply", "/remove", "/approve", "/deny", "/edit", "/retract", "/search", "/searchall", "/encrypt", "/pref", "/directed-presence",
         "/roster extra", "/who extra", "/profile extra", "/transfers extra", "/connection-info extra", "/unregister-account extra", "help extra", "quit extra", "exit extra",
         "/joiner room", "/join\troom", "send\ta hi", "/pm\nAlice hi", "/unknown"
     ])
@@ -21,7 +21,7 @@ struct REPLCommandTests {
         ("send alice@example.com hello", REPLCommand.Kind.send),
         ("/add alice@example.com", .add), ("/remove alice@example.com", .remove),
         ("/reply alice@example.com hi", .reply), ("/retract alice@example.com", .retract),
-        ("/edit alice@example.com revised", .edit), ("/search alice@example.com query", .search),
+        ("/edit alice@example.com revised", .edit), ("/search alice@example.com query", .search), ("/searchall two words", .searchAll),
         ("/approve alice@example.com", .approve), ("/deny alice@example.com", .deny),
         ("/directed-presence alice@example.com", .directedPresence),
         ("/encrypt alice@example.com on", .encrypt), ("/pref chatstates off", .pref)
@@ -89,6 +89,7 @@ Commands:
   /retract <jid>           Retract last sent message
   /edit <jid> <new-body>   Edit last sent message
   /search <jid> <query>    Search message history
+  /searchall <query>       Search all conversations
   /approve <jid>           Approve subscription request
   /deny <jid>              Deny subscription request
   /directed-presence <jid> Send directed presence to a JID

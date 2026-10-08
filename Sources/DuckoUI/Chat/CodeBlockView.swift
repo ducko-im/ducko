@@ -3,11 +3,13 @@ import SwiftUI
 struct CodeBlockView: View {
     let code: String
     let tint: Color
+    /// A search's text, whose occurrences in the code are highlighted.
+    var highlight: String?
     @State private var isHovering = false
     @State private var didCopy = false
 
     var body: some View {
-        Text(code)
+        Text(code, highlighting: highlight)
             .monospaced()
             // The copy button only appears on hover, so expose copying as a named action
             // for keyboard and VoiceOver users.

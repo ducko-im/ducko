@@ -55,7 +55,7 @@ struct TranscriptHeightsTests {
         return TranscriptRow(id: message.id, kind: .message(TranscriptRow.Message(
             message: message, position: MessagePosition(isFirstInGroup: isFirstInGroup, isLastInGroup: true), isGroupchat: false,
             startsDay: startsDay, replyQuote: nil, linkPreview: nil, transferStatus: transferStatus, actionSenderName: "", loadsIncomingImagesOnSight: false,
-            isSearchResult: false
+            searchMatch: nil
         )))
     }
 

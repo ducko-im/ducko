@@ -83,7 +83,8 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/retract <jid>` — retract last sent message to JID
 - `/edit <jid> <new-body>` — edit last sent message to JID
 - `/moderate [reason]` — moderate last message in current room (MUC moderator)
-- `/search <jid> <query>` — search message history with JID
+- `/search <jid> <query>` — search the whole message history with JID. Prints the newest 20 matches, oldest first.
+- `/searchall <query>` — search all the account's conversations, as `history --search <query>` does. Prints the newest 20 matches.
 - `/directed-presence <jid>` — send directed presence to a JID
 - `/check-registration [jid]` — show server registration form
 - `/submit-registration [jid]` — submit registration to server/component
@@ -97,16 +98,16 @@ Interactive mode also prints async events as they arrive: typing indicators, del
 ducko interactive
 ```
 
-### `history <jid>`
+### `history [<jid>]`
 
-View message history from the local database. With `--server`, connects to fetch from the XMPP server.
+View message history from the local database. With `--server`, connects to fetch from the XMPP server. The JID can be left out only together with `--search`.
 
 | Option | Description |
 |---|---|
 | `--limit <n>` | Maximum number of messages (default: 20) |
-| `--before <date>` | Show messages before this ISO 8601 date (pagination) |
-| `--search <query>` | Filter messages by keyword (case-insensitive) |
-| `--server` | Fetch from server when local history is empty (requires connection) |
+| `--before <date>` | Show messages before this ISO 8601 date (pagination). Needs a JID. |
+| `--search <query>` | Show the newest messages that contain the keyword |
+| `--server` | Fetch from server when local history is empty (requires connection). Needs a JID. |
 
 ```
 ducko history alice@example.com
@@ -114,7 +115,27 @@ ducko history alice@example.com --limit 5
 ducko history alice@example.com --before 2026-03-01T00:00:00Z
 ducko history alice@example.com --output json --limit 10
 ducko history alice@example.com --server
+ducko history alice@example.com --search invoice
+ducko history --search invoice --limit 50
 ```
+
+`--search` reads the whole stored history, not only its newest messages. A message matches when its text or the name of a file attached to it contains the keyword, ignoring case and diacritics. A retracted message never matches. Timeline notes are not printed.
+
+With a JID it prints the newest matches of that conversation, up to `--limit`, oldest first.
+
+Without a JID it covers every conversation of the selected account and prints the newest matches, up to `--limit`. They are grouped by conversation and UTC day, newest day first. Each group starts with a line naming the conversation, the day and the number of matches printed for it. Its matches follow, oldest first:
+
+```
+--- alice@example.com, 2026-03-12 (2 matches) ---
+[2026-03-12T09:14:00.000Z] <- alice@example.com: The invoice is attached
+[2026-03-12T09:20:00.000Z] -> alice@example.com: Got the invoice, thanks
+--- bob@example.com, 2026-03-10 (1 match) ---
+[2026-03-10T16:02:00.000Z] <- bob@example.com: Which invoice do you mean?
+```
+
+In JSON that line is a record of its own: `{"count":"2","day":"2026-03-12","jid":"alice@example.com","type":"search_day"}`.
+
+A private chat with a room's occupant is named by the occupant's address, `room@conference.example.com/nick`, in the line and in the record's `jid`. The room itself keeps its bare address.
 
 Without `--server`, `history` reads only the local database, but it still exits with "No accounts configured" until an account exists. Imported Adium conversations stay unlinked until their Adium source account itself is added: run `account add --no-connect` with the exact JID the import stored (the plain JID for Jabber/GTalk, `<escaped UID>@<service>.adium-import` otherwise). That account must also be the one `history` selects, the first account or `--account <uuid>`. Any other account passes the check but prints "No messages found."
 
@@ -394,10 +415,10 @@ ducko import adium --path ~/Library/Application\ Support/Adium\ 2.0/Users/Defaul
 ### Plain
 
 ```
-[2026-02-27T10:00:00Z] <- alice@example.com: Hello
-[2026-02-27T10:00:05Z] -> alice@example.com: Hi there [delivered]
-[2026-02-27T10:00:10Z] <- alice@example.com: corrected text [edited]
-[2026-02-27T10:00:15Z] <- alice@example.com: Secret message [encrypted]
+[2026-02-27T10:00:00.000Z] <- alice@example.com: Hello
+[2026-02-27T10:00:05.000Z] -> alice@example.com: Hi there [delivered]
+[2026-02-27T10:00:10.000Z] <- alice@example.com: corrected text [edited]
+[2026-02-27T10:00:15.000Z] <- alice@example.com: Secret message [encrypted]
 ```
 
 `<-` = incoming, `->` = outgoing. Markers: `[delivered]` for delivery receipts, `[read]` instead once the contact has read the message, `[edited]` for corrected messages, `[encrypted]` for OMEMO-encrypted messages, `[error: ...]` for errors. An OMEMO message that could not be decrypted reads `<jid>: error: This message could not be decrypted` in place of its body.

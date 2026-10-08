@@ -2,7 +2,7 @@
 # Click a chat-header toolbar button (Profile info or History) in the active chat window.
 # Usage: ducko-chat-header.sh <info|history>
 #   info:    click the Profile-info (i) button — opens the Contact Info window
-#   history: click the History (clock) button — opens the transcript window scoped to the contact
+#   history: click the History (clock) button — opens the Chat History window on the contact
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then

@@ -104,5 +104,38 @@ extension DuckoIntegrationTests.CLILayer {
                 )
             }
         }
+
+        @Test
+        @MainActor func `REPL /searchall finds a sent message and names its conversation and day`() async throws {
+            try await CLIProcess.withProcess { aliceCLI in
+                let alice = TestCredentials.alice
+                let bob = TestCredentials.bob
+
+                // Plain output, for the form of the line that introduces a
+                // day: `--- <jid>, <day> (<n> matches) ---`.
+                let session = try await REPLSession.start(
+                    cli: aliceCLI, credentials: alice, arguments: ["--output", "plain"]
+                )
+                await aliceCLI.addCleanup { await session.terminate() }
+
+                let word = "needle\(UUID().uuidString.prefix(8).lowercased())"
+                let body = "searchall probe \(word) end"
+                try await session.send("send \(bob.jid) \(body)")
+
+                // The command is typed with part of the word only, so the
+                // terminal echoing it back holds neither the day line nor
+                // the whole text. The echo of the `send` above holds the
+                // text and may land after the cursor, so the text has to
+                // follow the day line, which only the search prints.
+                let cursorBeforeSearch = await session.cursor()
+                try await session.send("/searchall \(word.dropLast(3))")
+                _ = try await session.waitForOutput(
+                    containing: body,
+                    behind: "--- \(bob.jid), ",
+                    after: cursorBeforeSearch,
+                    timeout: TestTimeout.replOutput
+                )
+            }
+        }
     }
 }

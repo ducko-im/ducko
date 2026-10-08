@@ -54,6 +54,7 @@ private func dispatchREPLCommand(
     case .retract: await handleRetractREPLCommand(arguments, context: context)
     case .edit: await handleEditREPLCommand(arguments, context: context)
     case .search: await handleSearchREPLCommand(arguments, context: context)
+    case .searchAll: await handleSearchAllREPLCommand(arguments, context: context)
     case .approve: await handleApproveREPLCommand(arguments, context: context)
     case .deny: await handleDenyREPLCommand(arguments, context: context)
     case .directedPresence: await handleDirectedPresenceREPLCommand(arguments, context: context)

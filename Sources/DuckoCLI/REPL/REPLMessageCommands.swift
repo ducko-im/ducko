@@ -169,11 +169,23 @@ func handleSearchREPLCommand(_ arguments: String, context: REPLContext) async {
         return
     }
     do {
-        let messages = try await searchHistory(
+        let days = try await searchHistory(
             jid: bareJID, query: query, limit: 20,
             environment: context.environment, accountID: context.accountID
         )
-        printHistory(messages, formatter: context.formatter, accountJID: context.accountJID)
+        printSearchResults(days, ofAllConversations: false, formatter: context.formatter, accountJID: context.accountJID)
+    } catch {
+        print(context.formatter.formatError(error))
+    }
+}
+
+func handleSearchAllREPLCommand(_ query: String, context: REPLContext) async {
+    do {
+        let days = try await searchHistory(
+            jid: nil, query: query, limit: 20,
+            environment: context.environment, accountID: context.accountID
+        )
+        printSearchResults(days, ofAllConversations: true, formatter: context.formatter, accountJID: context.accountJID)
     } catch {
         print(context.formatter.formatError(error))
     }

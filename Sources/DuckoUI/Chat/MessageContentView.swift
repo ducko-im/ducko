@@ -12,6 +12,8 @@ struct MessageContentView<Header: View, Footer: View>: View {
     /// Whether a received remote image is fetched without the viewer asking for it.
     let loadsIncomingImagesOnSight: Bool
     let transferStatus: DirectTransferStatus?
+    /// A search's text, whose occurrences in the message's text are highlighted.
+    var highlight: String?
     @ViewBuilder let header: Header
     @ViewBuilder let footer: Footer
 
@@ -64,14 +66,17 @@ struct MessageContentView<Header: View, Footer: View>: View {
                         }
 
                         if showsBody {
-                            if isActionMessage {
-                                Text("* \(actionSenderName) \(actionText)")
-                                    .italic()
-                            } else if let segments = message.styledBodySegments {
-                                styledBody(segments)
-                            } else {
-                                Text(message.body)
+                            Group {
+                                if isActionMessage {
+                                    actionLine
+                                        .italic()
+                                } else if let segments = message.styledBodySegments {
+                                    styledBody(segments)
+                                } else {
+                                    Text(message.body, highlighting: highlight)
+                                }
                             }
+                            .textSelection(.enabled)
                         }
 
                         footer
@@ -93,13 +98,17 @@ struct MessageContentView<Header: View, Footer: View>: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    private var actionLine: Text {
+        Text("* \(actionSenderName) \(actionText)", highlighting: highlight)
+    }
+
     private func styledBody(_ segments: [MessageBodySegment]) -> some View {
         ForEach(segments.enumerated(), id: \.offset) { _, segment in
             switch segment {
             case let .text(text):
-                Text(tintingCode(in: text))
+                Text(highlighted(tintingCode(in: text)))
             case let .codeBlock(code):
-                CodeBlockView(code: code, tint: codeTint)
+                CodeBlockView(code: code, tint: codeTint, highlight: highlight)
             }
         }
     }
@@ -110,6 +119,10 @@ struct MessageContentView<Header: View, Footer: View>: View {
             .italic()
             .foregroundStyle(.secondary)
             .modifier(BubbleChrome(isOutgoing: message.isOutgoing))
+    }
+
+    private func highlighted(_ text: AttributedString) -> AttributedString {
+        highlight.map { highlightingMatches(of: $0, in: text) } ?? text
     }
 
     private func tintingCode(in text: AttributedString) -> AttributedString {
@@ -128,7 +141,8 @@ extension MessageContentView where Header == EmptyView, Footer == EmptyView {
         isMetadataVisible: Bool,
         actionSenderName: String,
         loadsIncomingImagesOnSight: Bool,
-        transferStatus: DirectTransferStatus?
+        transferStatus: DirectTransferStatus?,
+        highlight: String? = nil
     ) {
         self.init(
             message: message,
@@ -137,6 +151,7 @@ extension MessageContentView where Header == EmptyView, Footer == EmptyView {
             actionSenderName: actionSenderName,
             loadsIncomingImagesOnSight: loadsIncomingImagesOnSight,
             transferStatus: transferStatus,
+            highlight: highlight,
             header: { EmptyView() },
             footer: { EmptyView() }
         )

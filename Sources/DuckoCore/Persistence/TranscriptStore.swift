@@ -36,13 +36,13 @@ public protocol TranscriptStore: Sendable {
     /// fresh incoming message as duplicate and silently drop it.
     func messageExists(stanzaID: String, fromJID: String, conversationID: UUID) async throws -> Bool
 
-    // MARK: - Search
+    // MARK: - Days
 
-    func searchMessages(query: String, conversationID: UUID?, before: Date?, after: Date?, limit: Int) async throws -> [ChatMessage]
-
-    // MARK: - Stats
-
-    func messageDateCounts(for conversationID: UUID) async throws -> [(date: Date, count: Int)]
+    /// The days the conversation has stored history for, each as the start of its UTC day, newest first.
+    func transcriptDays(for conversationID: UUID) async throws -> [Date]
+    /// The messages of one day that `ChatMessage.matchesSearch(_:)` finds for `query`, in the order
+    /// `fetchMessages(for:on:)` returns them.
+    func matchingMessages(_ query: String, in conversationID: UUID, on day: Date) async throws -> [ChatMessage]
 
     // MARK: - Lifecycle
 

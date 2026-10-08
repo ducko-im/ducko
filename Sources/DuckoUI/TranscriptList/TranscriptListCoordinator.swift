@@ -369,14 +369,14 @@ final class TranscriptListCoordinator: NSObject, NSTableViewDataSource, NSTableV
 
     private func settleOrPerformRequest() {
         guard let scroller = inputs?.scroller else { return }
-        guard isLaidOut, let request = scroller.takeRequest() else {
+        guard isLaidOut, let request = scroller.takeRequest(holdsRow: { index(of: $0) != nil }) else {
             settle(at: scroller.position)
             return
         }
         switch request {
         case .newest:
             settle(at: .newest)
-        case let .reveal(id):
+        case let .reveal(id), let .revealWhenShown(id):
             reveal(id)
         }
     }

@@ -26,4 +26,23 @@ struct MessageContentLayoutTests {
 
         #expect(offeredLittle == offeredMuch)
     }
+
+    /// A highlight only recolors text. A row that changed height with it would shift the rows below each time a search
+    /// comes or goes.
+    @Test func `a message is as tall with a search's text highlighted as without`() {
+        let message = ChatMessage(
+            id: UUID(), conversationID: UUID(), fromJID: "bob@example.com",
+            body: String(repeating: "A message long enough to wrap onto several lines. ", count: 4),
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000), isOutgoing: false, isDelivered: true, isEdited: false, type: "chat"
+        )
+        let height = { (highlight: String?) in
+            let content = MessageContentView(
+                message: message, isGroupchatIncoming: false, isMetadataVisible: true, actionSenderName: "",
+                loadsIncomingImagesOnSight: false, transferStatus: nil, highlight: highlight
+            )
+            return NSHostingController(rootView: content).sizeThatFits(in: CGSize(width: 400, height: 2000)).height
+        }
+
+        #expect(height("wrap") == height(nil))
+    }
 }

@@ -52,17 +52,10 @@ final class ContactListPreferences {
     }
 
     private func saveCollapsedGroups() {
-        if let data = try? JSONEncoder().encode(Array(collapsedGroups)),
-           let json = String(data: data, encoding: .utf8) {
-            collapsedGroupsStorage = json
-        }
+        collapsedGroupsStorage = collapsedGroups.jsonArray
     }
 
     private static func loadCollapsedGroups() -> Set<String> {
-        let json = defaults.string(forKey: Keys.collapsedGroups) ?? "[]"
-        guard let data = json.data(using: .utf8),
-              let array = try? JSONDecoder().decode([String].self, from: data)
-        else { return [] }
-        return Set(array)
+        Set(jsonArray: defaults.string(forKey: Keys.collapsedGroups) ?? "[]")
     }
 }

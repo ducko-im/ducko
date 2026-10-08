@@ -3,14 +3,11 @@ import SwiftUI
 
 struct TranscriptSidebarRow: View {
     let conversation: Conversation
+    let avatarData: Data?
 
     var body: some View {
         HStack {
-            Image(systemName: conversation.type == .groupchat
-                ? "bubble.left.and.bubble.right"
-                : "bubble.left")
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
+            ConversationAvatarView(conversation: conversation, avatarData: avatarData)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(conversation.displayTitle)
@@ -22,14 +19,6 @@ struct TranscriptSidebarRow: View {
                         .foregroundStyle(.secondary)
                         .singleLine()
                 }
-            }
-
-            Spacer()
-
-            if let date = conversation.lastMessageDate {
-                Text(date, style: .date)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
         }
     }

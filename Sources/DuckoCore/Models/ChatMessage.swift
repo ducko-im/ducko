@@ -86,6 +86,15 @@ public struct ChatMessage: Sendable, Identifiable, Equatable {
         attachments.areLinked(by: body)
     }
 
+    /// Whether a search for `query` finds this message: in its text or in the name of a file attached to it, ignoring
+    /// case and diacritics. A received file's message carries no body, so its name is reachable only through its
+    /// attachment. A retracted message is never found.
+    public func matchesSearch(_ query: String) -> Bool {
+        guard !isRetracted else { return false }
+        return SearchableText(body).contains(query)
+            || attachments.contains { SearchableText($0.displayFileName).contains(query) }
+    }
+
     /// Creates a display-only message for CLI output formatting.
     public static func displayPlaceholder(
         fromJID: String,
