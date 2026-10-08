@@ -6,20 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-08
+
 ### Added
 
 - Add a search over all conversations to the Chat History window, which lists each day with a match as soon as it is found and opens the first one
 - Add a find bar to the Chat History window (⌘F) that steps through the matches from day to day and shows how many there are
 - Highlight the searched word inside matching messages, in Chat History and in a chat's find, and mark the match you are on
 - Allow selecting and copying part of a message's text, in chats and in Chat History
-- Add a field that filters the conversations listed in the Chat History window
 - Add `ducko history --search` without an address to search every conversation of an account, and `/searchall` in interactive mode
 
 ### Changed
 
 - Rename the Chat Transcripts window to Chat History, and show the conversation's name once, as the window's title
 - Show every day of an account or an imported history when you select it in Chat History, and remember which of them you collapsed
-- Show a contact's photo, name and address for each conversation and each day in Chat History
+- Show a contact's photo next to each conversation in Chat History, and the conversation's photo and name on each day of an account, an imported history or a search
 - Open Chat History on your first account when you open it from the File menu
 - Search a conversation's whole history with `ducko history <address> --search`, instead of its newest 500 messages
 - Find messages by the name of an attached file in a chat's find, and never find retracted messages
@@ -27,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Removed
 
 - Remove the conversation type filter from the Chat History toolbar
+- Remove the number of messages from each day and the date of the last message from each conversation in Chat History
 
 ### Fixed
 
@@ -297,7 +299,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release.
 
-[Unreleased]: https://github.com/ducko-im/ducko/compare/0.7.0...HEAD
+[Unreleased]: https://github.com/ducko-im/ducko/compare/0.8.0...HEAD
+[0.8.0]: https://github.com/ducko-im/ducko/compare/0.7.0...0.8.0
 [0.7.0]: https://github.com/ducko-im/ducko/compare/0.6.0...0.7.0
 [0.6.0]: https://github.com/ducko-im/ducko/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/ducko-im/ducko/compare/0.4.0...0.5.0
