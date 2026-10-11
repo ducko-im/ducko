@@ -17,7 +17,7 @@ Run every Bash call in this workflow unsandboxed: the steps bind a local port, l
 Shell variables do not carry between Bash calls, so start every snippet below with these lines:
 
 ```bash
-WORK=<absolute path of this run's work folder, outside the repo, free of + * $ | ( ) [ ] { }>
+WORK=<absolute path of this run's work folder, outside the repo, free of + * ? ^ \ $ | ( ) [ ] { }>
 PROFILE=demo-screenshots
 PORT=5299
 APP="${WORK:?}/DuckoDemo.app"
@@ -27,7 +27,7 @@ STORE="$HOME/Library/Application Support/Ducko-Dev-${PROFILE:?}"
 
 The `pgrep -fl` and `pkill` patterns are written out in full on purpose, so a snippet run without these lines can never match the installed app. Keep the `^${APP:?}` anchor in every `PID=` lookup: a launch command with the path spelled out leaves a shell that has the same path in its command line, and an unanchored lookup returns that shell's PID as well. The anchor matches only a launch by the absolute path, so never launch the copy by a relative one. With `APP` unset, the lookup stops with an error and `PID` stays empty.
 
-Drive the demo instance only by its PID. Skip every tool that targets the app by name (System Events `process "DuckoApp"`, Peekaboo `--app`, the scripts in `Skills/ducko-ui/scripts`), because an installed Ducko that is running has the same process name. The installed app may keep running throughout.
+Drive the demo instance only by its PID. Skip every tool that targets the app by name (System Events `process "DuckoApp"`, Peekaboo `--app`), because an installed Ducko that is running has the same process name. The scripts in `Skills/ducko-ui/scripts` drive only their own `DuckoUITest` copy, so they cannot reach the demo instance either. The installed app may keep running throughout.
 
 ## Step 1: Prepare
 

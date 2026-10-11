@@ -4,6 +4,10 @@
 # Usage: ducko-join-room.sh ROOM_JID [NICKNAME]
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 ROOM_JID="${1:?Usage: ducko-join-room.sh ROOM_JID [NICKNAME]}"
 NICKNAME="${2:-__none__}"
 
@@ -12,9 +16,9 @@ on run argv
     set roomJid to item 1 of argv
     set nick to item 2 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             -- Find the Contacts window (first window with contact list)
             set contactWin to missing value
             repeat with win in windows

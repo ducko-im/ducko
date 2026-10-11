@@ -5,6 +5,10 @@
 #   INVITEE_JID: The JID of the user to invite
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 2 ]]; then
     echo "Usage: ducko-invite-user.sh ROOM_JID INVITEE_JID" >&2
     exit 1
@@ -12,8 +16,6 @@ fi
 
 ROOM_JID="$1"
 INVITEE_JID="$2"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/ducko-helpers.sh"
 
 RESULT=$(osascript - "$ROOM_JID" "$INVITEE_JID" << APPLESCRIPT
 $(ducko_as_handlers)
@@ -22,9 +24,9 @@ on run argv
     set inviteeJID to item 2 of argv
     set targetId to "room-row-" & roomJID
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_raise_window_by_id "contact-list" "Contacts window not found" "contactWin")
             $(ducko_as_find_element_by_id 'targetId' 'contactWin' 'room row not found for " & roomJID & "' 'targetRow')
 

@@ -18,5 +18,9 @@ enum DuckoIntegrationTests {
 
     // periphery:ignore - reserved for UI integration tests
     /// UI integration tests that drive the GUI app.
+    @Suite(.enabled(
+        if: AppAccessor.mayDriveGUI,
+        "UI suites run in the Lume VM (zsh Skills/lume-vm/scripts/vm.sh itest); set DUCKO_UI_HOST=1 to run them on this Mac"
+    ))
     enum UILayer {}
 }

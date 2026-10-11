@@ -4,15 +4,19 @@
 # Usage: ducko-add-contact.sh JID
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 JID="${1:?Usage: ducko-add-contact.sh JID}"
 
 RESULT=$(osascript - "$JID" << 'APPLESCRIPT'
 on run argv
     set jid to item 1 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             -- Find the Contacts window (first window with contact list)
             set contactWin to missing value
             repeat with win in windows

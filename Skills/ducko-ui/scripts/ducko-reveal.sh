@@ -10,9 +10,11 @@
 # and that bubble is then right-clicked by its identifier.
 set -euo pipefail
 
-TEXT="${1:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
+TEXT="${1:-}"
 
 # Peekaboo does not list elements in on-screen order (buttons come before other roles), so bubbles are ordered by their
 # vertical position: a search takes the topmost match, and no search text takes the bottom-most bubble, which is the
@@ -77,9 +79,9 @@ $(ducko_as_handlers)
 on run argv
     set bubbleID to item 1 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_find_window_by_id "message-field" "no chat window found" "chatWin")
 
             set targetElem to my findByAttr(chatWin, "AXIdentifier", bubbleID, 0, 30)

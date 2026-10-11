@@ -25,7 +25,7 @@ Simulated keystrokes (`peekaboo type`, `peekaboo paste`, `peekaboo hotkey`) go t
 
 *`set value` updates the accessibility layer but **does not trigger SwiftUI `@State` bindings**. Use `keystroke` inside a single osascript block when SwiftUI binding updates are needed (see Multi-Step Interaction Sequences below).
 
-Run the procedures below in the `/lume-vm` VM by default, so the user's Mac is not disturbed: they run there through `vm.sh gui` against a pushed app bundle. Run them on the user's Mac only when the user asks for that, and even then tell the user before a step that moves the pointer, brings a window to the front or switches the system appearance.
+Run the procedures below in the `/lume-vm` VM, so the user's Mac is not disturbed: they run there through `vm.sh gui` against a pushed app bundle, and Ducko's scripts through `vm.sh ui`. Run them on the user's Mac only when the user asks for that, and even then tell the user before a step that moves the pointer, brings a window to the front or switches the system appearance.
 
 ## Check for a Locked Screen
 

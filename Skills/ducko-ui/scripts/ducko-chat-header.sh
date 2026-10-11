@@ -5,6 +5,10 @@
 #   history: click the History (clock) button — opens the Chat History window on the contact
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 1 ]]; then
     echo "Usage: ducko-chat-header.sh <info|history>" >&2
     exit 1
@@ -16,17 +20,14 @@ case "$1" in
     *)       echo "Usage: ducko-chat-header.sh <info|history>" >&2; exit 1 ;;
 esac
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/ducko-helpers.sh"
-
 RESULT=$(osascript - "$BUTTON_ID" << APPLESCRIPT
 $(ducko_as_handlers)
 on run argv
     set buttonId to item 1 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_find_window_by_id "message-field" "chat window not found" "chatWin")
             $(ducko_as_click_element_by_id 'buttonId' 'chatWin' 'header button not found')
             return "ok"

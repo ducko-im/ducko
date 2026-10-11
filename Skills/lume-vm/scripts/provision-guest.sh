@@ -16,6 +16,18 @@ if ! xcode-select -p >/dev/null 2>&1; then
     rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
 fi
 
+# Xcode, which `vm.sh provision` copies in: the Command Line Tools lack the SwiftData macro plugin Ducko needs.
+if [[ -d /Applications/Xcode.app ]]; then
+    sudo xcode-select -s /Applications/Xcode.app
+    sudo xcodebuild -license accept
+    sudo xcodebuild -runFirstLaunch
+fi
+
+# Pre-answer Sparkle's first-launch prompt for im.ducko, the bundle the integration suites launch, because the prompt
+# holds back the Welcome window.
+defaults write im.ducko SUEnableAutomaticChecks -bool false
+defaults write im.ducko SUHasLaunchedBefore -bool true
+
 # TCC charges commands run over SSH to the sshd binaries, so they hold the grants every command inherits.
 # Writing the system TCC.db needs SIP off. The user TCC.db (Automation) stays unreadable even then; `vm.sh allow` covers it.
 csrutil status | grep -q disabled || { echo "SIP is on in the VM; turn it off first (SKILL.md, Creating the VM from scratch)" >&2; exit 1; }

@@ -4,11 +4,15 @@
 # Usage: ducko-toggle-sidebar.sh
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 RESULT=$(osascript << 'APPLESCRIPT'
 tell application "System Events"
-    set frontmost of process "DuckoApp" to true
+    set frontmost of process "DuckoUITest" to true
     delay 0.5
-    tell process "DuckoApp"
+    tell process "DuckoUITest"
         -- Find the toggle button in the frontmost window
         set chatWin to window 1
         set clicked to false

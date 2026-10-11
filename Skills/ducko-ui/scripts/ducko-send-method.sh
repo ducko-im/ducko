@@ -9,6 +9,10 @@
 #            online that takes direct transfers
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 ACTION="${1:-__none__}"
 
 case "$ACTION" in
@@ -18,17 +22,14 @@ case "$ACTION" in
     *)        echo "Usage: ducko-send-method.sh [upload|direct]" >&2; exit 1 ;;
 esac
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/ducko-helpers.sh"
-
 RESULT=$(osascript << APPLESCRIPT
 $(ducko_as_handlers)
 on run
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
 
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_find_window_by_id "message-field" "chat window not found" "chatWin")
             $(ducko_as_find_element_by_id '"attachment-send-method"' 'chatWin' "attachment-send-method not found: queue a file in a one-to-one chat first" "methodElem")
             if "${LABEL}" is "" then return "value: " & (value of methodElem as text)

@@ -1,6 +1,6 @@
 ---
 name: ducko-ui
-description: "End-to-end UI testing for the Ducko macOS app using pre-built helper scripts. This skill should be used when the user asks to \"test ducko\", \"test the app\", \"run E2E tests\", \"test the app end-to-end\", \"test the UI\", \"send a test message\", or wants to verify DuckoApp works from login through messaging."
+description: "End-to-end UI testing for the Ducko macOS app using pre-built helper scripts, run in the Lume VM so the user's Mac is not disturbed. This skill should be used when the user asks to \"test ducko\", \"test the app\", \"run E2E tests\", \"test the app end-to-end\", \"test the UI\", \"send a test message\", or wants to verify DuckoApp works from login through messaging."
 ---
 
 # Ducko UI Test
@@ -29,9 +29,15 @@ The Contacts window has **no toolbar**. Its actions live in the app menu bar. Fi
 
 ## Prerequisites
 
-- Peekaboo CLI installed (`/opt/homebrew/bin/peekaboo`)
+The scripts run in the Lume VM (the `/lume-vm` skill) by default. Start it with `zsh Skills/lume-vm/scripts/vm.sh start`, then run each script from the host as `zsh Skills/lume-vm/scripts/vm.sh ui <script> [args]`. Run `vm.sh` outside the Bash sandbox. Every call first copies the working tree into the VM, so edits made mid-session take effect, and it passes `DUCKO_PROFILE` through when set. When `vm.sh` reports that the VM serves another checkout, another session holds it: wait or ask the user, and never fall back to the Mac.
+
+The scripts drive a copy of the debug app named `DuckoUITest`, which `ducko-launch.sh` builds and launches. Without a `DUCKO_PROFILE` the copy runs under the profile `uitest` (`Ducko-Dev-uitest`, `im.ducko.dev.uitest`), so it never shares a store with a debug Ducko on the default profile. Seed that profile's account with the copy's own CLI, after a first `ducko-launch.sh` has built it: `zsh Skills/lume-vm/scripts/vm.sh gui 'DUCKO_PROFILE=uitest /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko account add …'`.
+
+Run a script on the Mac only when the user asks for that, with `DUCKO_UI_HOST=1` in its environment. Without it, every script stops with an error before touching any app. On the Mac the scripts still drive only the `DuckoUITest` copy, so an installed Ducko keeps running. The copy does take the foreground, though. A Mac run needs:
+
+- Peekaboo CLI installed (`/opt/homebrew/bin/peekaboo`), for `ducko-reveal.sh`
 - Accessibility permissions granted for Terminal/Claude
-- An unlocked GUI session. Check with `ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked`, run unsandboxed: `<true/>` means locked and no output means unlocked (a sandboxed `ioreg` also prints nothing). While locked, Peekaboo capture fails and the scripts report windows as not found, so ask the user to unlock rather than polling.
+- An unlocked GUI session. Check with `ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked`, run unsandboxed: `<true/>` means locked and no output means unlocked (a sandboxed `ioreg` also prints nothing). While locked, window captures fail and the scripts report windows as not found, so ask the user to unlock rather than polling.
 
 ## Scripts
 
@@ -264,14 +270,14 @@ Right-click a participant in the chat window sidebar:
 
 | Script | Purpose | Arguments |
 |---|---|---|
-| `ducko-launch.sh` | Build and launch DuckoApp, output window ID | none |
+| `ducko-launch.sh` | Stop an earlier copy, package the debug app as `.build/ducko-ui/DuckoUITest.app` (executable `DuckoUITest`, bundle ID `im.ducko.uitest`, automatic update checks off), launch it under `DUCKO_PROFILE`, or under the profile `uitest` without one, output window ID | none |
 | `ducko-import.sh` | Switch to Import mode and click Import button | none |
 | `ducko-select-mode.sh` | Select a setup mode segment on the Welcome screen | `<Import\|Login\|Register>` |
 | `ducko-login.sh` | Fill JID + password, click Connect | `JID PASSWORD` |
 | `ducko-new-chat.sh` | Open New Chat sheet from contact list, fill JID, optionally pick the sending account, start chat | `JID [ACCOUNT]` |
 | `ducko-add-contact.sh` | Open Add Contact sheet from contact list, fill JID, submit | `JID` |
 | `ducko-send.sh` | Type a message and send it in the active chat window | `MESSAGE` |
-| `ducko-screenshot.sh` | Capture window screenshot | `[FILENAME]` (optional, absolute path or relative to `/private/tmp/claude/`) |
+| `ducko-screenshot.sh` | Capture the frontmost `DuckoUITest` window by its window ID. Through `vm.sh ui`, a relative name lands in the host's `.build/vm-exchange/ducko-ui/` | `[FILENAME]` (optional, absolute path or relative to `$DUCKO_UI_OUTPUT_DIR`, else `/private/tmp/claude/`) |
 | `ducko-search.sh` | Toggle the Cmd+F find bar of whichever Ducko window is frontmost, the chat window or Chat History, and optionally search | `[QUERY]` (optional) |
 | `ducko-history-search.sh` | Raise the open Chat History window, press ⌥⌘F and type a query into its toolbar field, which searches all conversations | `QUERY` |
 | `ducko-contact-search.sh` | Reveal the contact-list search (⌘F), optionally filter the roster | `[QUERY]` (optional) |
@@ -283,7 +289,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-room-settings.sh` | Open Room Settings sheet via context menu | `ROOM_JID` |
 | `ducko-connect.sh` | Reconnect by restarting the app | none |
 | `ducko-profile.sh` | Open My Profile sheet from the Contact menu | none |
-| `ducko-avatar.sh` | Upload an avatar image via profile sheet | `IMAGE_PATH` |
+| `ducko-avatar.sh` | Upload an avatar image via profile sheet. Fills the Open panel like `ducko-attach.sh` and fails when it stays open | `IMAGE_PATH` |
 | `ducko-avatar-remove.sh` | Remove current avatar via profile sheet | none |
 | `ducko-preferences.sh` | Open Preferences (Settings) window via Cmd+, | none |
 | `ducko-preferences-tab.sh` | Switch to a specific tab in the Preferences window | `<General\|Accounts\|Chat\|Status\|Appearance\|Advanced>` |
@@ -299,19 +305,19 @@ Right-click a participant in the chat window sidebar:
 | `ducko-reveal.sh` | Reveal a message's saved files in Finder via context menu | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
 | `ducko-encrypt.sh` | Open encryption menu, optionally toggle or open fingerprints | `[on\|off\|fingerprints]` (optional) |
 | `ducko-device-trust.sh` | Trust/untrust/verify an OMEMO device | `DEVICE_ID ACTION` (`ACTION`: trust\|untrust\|verify) |
-| `ducko-attach.sh` | Attach a file via the attachment button in chat | `FILE_PATH` |
+| `ducko-attach.sh` | Attach a file via the attachment button in chat. `ducko-file-panel.swift` fills the Open panel by posting key events to the panel's service process. The script succeeds only once the panel has closed. A panel still open after the wait is cancelled, and the script fails | `FILE_PATH` |
 | `ducko-send-method.sh` | Print or choose how the queued files are sent | `[upload\|direct]` (optional) |
 | `ducko-change-nickname.sh` | Change MUC nickname via participant sidebar context menu | `NICKNAME` |
 | `ducko-private-message.sh` | Send a MUC private message via the participant sidebar context menu | `NICKNAME` |
 | `ducko-room-topic.sh` | View or set the room topic | `[TEXT]` (optional; no args prints current topic) |
 | `ducko-channel-search.sh` | Search for channels in the Join Room dialog | `QUERY` |
-| `ducko-connection-info.sh` | Open Connection Info from Preferences > Accounts (best-effort), or close it with the shared PID-targeted Swift AX helper | `[open\|close]`; close requires `DUCKO_PID` |
+| `ducko-connection-info.sh` | Open Connection Info from Preferences > Accounts (best-effort), or close it with the shared PID-targeted Swift AX helper | `[open\|close]`; close targets `DUCKO_PID` when set, else the running `DuckoUITest` |
 | `ducko-register.sh` | Register a new account via in-band registration | `SERVER USERNAME PASSWORD [EMAIL]` |
 | `ducko-change-password.sh` | Change account password via Preferences > Accounts (best-effort; needs a connected account and a `List(selection:)` that synthetic clicks may not trigger) | `NEW_PASSWORD` |
 | `ducko-toggle-preference.sh` | Toggle any preference checkbox by identifier | `IDENTIFIER` (e.g., chatStatesToggle, encryptByDefaultToggle, tofuToggle, contacts-compact-toggle) |
 | `ducko-menu-bar.sh` | Toggle menu bar icon visibility in General preferences | none |
 | `ducko-edit-profile.sh` | Edit profile fields and optionally save | `[--fullname NAME] [--nickname NICK] [--email EMAIL] [--save]` |
-| `ducko-dismiss-roster-notice.sh` | Dismiss a persistent roster outcome notice using the Swift AX helper; set `DUCKO_PID` with multiple instances | `[contacts\|info]` |
+| `ducko-dismiss-roster-notice.sh` | Dismiss a persistent roster outcome notice using the Swift AX helper; targets `DUCKO_PID` when set, else the running `DuckoUITest` | `[contacts\|info]` |
 | `ducko-remove-contact.sh` | Remove a contact via context menu and confirm | `JID` |
 | `ducko-contact-menu.sh` | Select a contact row, then run a Contact menu-bar command on it (`remove` confirms) | `JID <get-info\|history\|send-file\|remove>` |
 | `ducko-toggle-contacts.sh` | Toggle the Contacts window via Window ▸ Hide/Show Contact List (⌘/) | none |
@@ -324,10 +330,12 @@ Right-click a participant in the chat window sidebar:
 | `ducko-room-config-save.sh` | Save room config in Room Settings sheet (best-effort; System Events cannot read the Save button's label on macOS 27) | `ROOM_JID` |
 | `ducko-room-settings-tab.sh` | Switch to a tab in the Room Settings sheet | `<General\|Members>` |
 | `ducko-add-affiliation.sh` | Add a JID to a room's affiliation list | `ROOM_JID JID` |
-| `ducko-stop.sh` | Kill the DuckoApp processes this checkout built, leaving an installed app running | none |
-| `ducko-window-id.sh` | Print window ID of DuckoApp (used by other scripts) | none |
+| `ducko-stop.sh` | Quit the `DuckoUITest` copy this checkout launched, forcing it after 10 seconds, and fail when it survives. Leaves every other Ducko running, including a `/preview` instance and the integration suites' bundle | none |
+| `ducko-window-id.sh` | Print the window ID of the frontmost `DuckoUITest` window, read from the window list by PID (`DUCKO_PID` when set). Used by other scripts | none |
 
 ## Workflow
+
+Each workflow runs its scripts in the VM through `vm ui`. Define `vm` in every Bash call that uses it, since shell functions do not carry between calls. Screenshots named without a path land in the host's `.build/vm-exchange/ducko-ui/`, where the Read tool opens them.
 
 ### Fresh install E2E test
 
@@ -338,62 +346,62 @@ For first-time setup when no account exists:
 The Welcome scripts (`ducko-login.sh`, `ducko-register.sh`, `ducko-import.sh`) walk the Welcome window via the recursive `findByAttr` handler (like `ducko-select-mode.sh`) and gate their success message on the osascript result, so a missing field reports an error instead of false success. The login screen's identifiers are covered by `UILoginTests` (which drives them through the test harness's Swift AX helpers, not this script); the register/import segments have no integration test, so for all three the script's traversal and success-gating are verified by construction.
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch
-$SCRIPTS/ducko-launch.sh
+vm ui ducko-launch.sh
 
 # 2. Select Login mode (Welcome defaults to Import)
-$SCRIPTS/ducko-select-mode.sh Login
+vm ui ducko-select-mode.sh Login
 
 # 3. Log in through Welcome (fresh install only)
-$SCRIPTS/ducko-login.sh "USER_JID" "PASSWORD_HERE"
+vm ui ducko-login.sh "USER_JID" "PASSWORD_HERE"
 
 # 4. Screenshot to verify contact list
-$SCRIPTS/ducko-screenshot.sh "after-login.png"
+vm ui ducko-screenshot.sh "after-login.png"
 
 # 5. Start a conversation (opens a chat window)
-$SCRIPTS/ducko-new-chat.sh "CHAT_PARTNER_JID"
+vm ui ducko-new-chat.sh "CHAT_PARTNER_JID"
 
 # 6. Send messages in the chat window
-$SCRIPTS/ducko-send.sh "Hello from Ducko!"
-$SCRIPTS/ducko-send.sh "Testing 1-2-3"
+vm ui ducko-send.sh "Hello from Ducko!"
+vm ui ducko-send.sh "Testing 1-2-3"
 
 # 7. Screenshot to verify
-$SCRIPTS/ducko-screenshot.sh "after-messages.png"
+vm ui ducko-screenshot.sh "after-messages.png"
 
 # 8. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Relaunch E2E test (existing account)
 
-When an account already exists, the app auto-connects on launch using Keychain credentials. No login step needed:
+When an account already exists with Connect on Launch on, as after a GUI login, the app auto-connects on launch using its stored credentials. No login step needed:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch (auto-connects, shows the contact list, plus the chat window if it was open at quit)
-$SCRIPTS/ducko-launch.sh
+vm ui ducko-launch.sh
 
 # 2. Screenshot to verify the contact list. Raise it first, since a restored chat window can be in front.
-$SCRIPTS/ducko-focus-contacts.sh
-$SCRIPTS/ducko-screenshot.sh "after-relaunch.png"
+vm ui ducko-focus-contacts.sh
+vm ui ducko-screenshot.sh "after-relaunch.png"
 
 # 3. Start a chat and send a message
-$SCRIPTS/ducko-new-chat.sh "CHAT_PARTNER_JID"
-$SCRIPTS/ducko-send.sh "Relaunch test message"
+vm ui ducko-new-chat.sh "CHAT_PARTNER_JID"
+vm ui ducko-send.sh "Relaunch test message"
 
 # 4. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Quick message test (chat window already open)
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
-$SCRIPTS/ducko-send.sh "Quick test message"
-$SCRIPTS/ducko-screenshot.sh
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
+vm ui ducko-send.sh "Quick test message"
+vm ui ducko-screenshot.sh
 ```
 
 ### Chat UI polish test (message grouping, search, reply)
@@ -401,29 +409,29 @@ $SCRIPTS/ducko-screenshot.sh
 Tests message grouping, find bar, reply compose bar, and context menu:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch and open a chat
-$SCRIPTS/ducko-launch.sh
-$SCRIPTS/ducko-new-chat.sh "CHAT_PARTNER_JID"
+vm ui ducko-launch.sh
+vm ui ducko-new-chat.sh "CHAT_PARTNER_JID"
 
 # 2. Send grouped messages (within 2-min window → single timestamp)
-$SCRIPTS/ducko-send.sh "Message one"
-$SCRIPTS/ducko-send.sh "Message two"
-$SCRIPTS/ducko-send.sh "Message three"
-$SCRIPTS/ducko-screenshot.sh "grouped-messages.png"
+vm ui ducko-send.sh "Message one"
+vm ui ducko-send.sh "Message two"
+vm ui ducko-send.sh "Message three"
+vm ui ducko-screenshot.sh "grouped-messages.png"
 
 # 3. Test Cmd+F search
-$SCRIPTS/ducko-search.sh "Message two"
-$SCRIPTS/ducko-screenshot.sh "search-results.png"
-$SCRIPTS/ducko-search.sh  # toggle search off
+vm ui ducko-search.sh "Message two"
+vm ui ducko-screenshot.sh "search-results.png"
+vm ui ducko-search.sh  # toggle search off
 
 # 4. Test reply compose bar
-$SCRIPTS/ducko-reply.sh "Message one"
-$SCRIPTS/ducko-screenshot.sh "reply-bar.png"
+vm ui ducko-reply.sh "Message one"
+vm ui ducko-screenshot.sh "reply-bar.png"
 
 # 5. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Contact list sort/filter test
@@ -431,25 +439,25 @@ $SCRIPTS/ducko-stop.sh
 Tests sort modes and hide-offline toggle:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch
-$SCRIPTS/ducko-launch.sh
+vm ui ducko-launch.sh
 
 # 2. Open sort menu (visual verification)
-$SCRIPTS/ducko-sort.sh
-$SCRIPTS/ducko-screenshot.sh "sort-menu.png"
+vm ui ducko-sort.sh
+vm ui ducko-screenshot.sh "sort-menu.png"
 
 # 3. Select a sort mode
-$SCRIPTS/ducko-sort.sh byStatus
-$SCRIPTS/ducko-screenshot.sh "sorted-by-status.png"
+vm ui ducko-sort.sh byStatus
+vm ui ducko-screenshot.sh "sorted-by-status.png"
 
 # 4. Toggle hide offline
-$SCRIPTS/ducko-sort.sh hideOffline
-$SCRIPTS/ducko-screenshot.sh "hide-offline.png"
+vm ui ducko-sort.sh hideOffline
+vm ui ducko-screenshot.sh "hide-offline.png"
 
 # 5. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### MUC (Group Chat) test
@@ -457,36 +465,36 @@ $SCRIPTS/ducko-stop.sh
 Tests MUC features — join room, send group message, toggle participant sidebar:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch
-$SCRIPTS/ducko-launch.sh
+vm ui ducko-launch.sh
 
 # 2. Join a room (opens Join Room dialog, fills fields, joins)
 # The room appears in the "Rooms" section of the contact list
 # and a chat window opens automatically.
-$SCRIPTS/ducko-join-room.sh "room@conference.example.com" "mynick"
+vm ui ducko-join-room.sh "room@conference.example.com" "mynick"
 
 # 3. Screenshot the room chat
 # Shows: room subject banner, sender nicknames (color-coded),
 # participant sidebar toggle button (person.2 icon) in header
-$SCRIPTS/ducko-screenshot.sh "muc-joined.png"
+vm ui ducko-screenshot.sh "muc-joined.png"
 
 # 4. Send a group message
-$SCRIPTS/ducko-send.sh "Hello room!"
-$SCRIPTS/ducko-screenshot.sh "muc-chat.png"
+vm ui ducko-send.sh "Hello room!"
+vm ui ducko-screenshot.sh "muc-chat.png"
 
 # 5. Toggle participant sidebar
 # Shows occupants grouped by affiliation (Owner, Admin, Member, etc.)
-$SCRIPTS/ducko-toggle-sidebar.sh
-$SCRIPTS/ducko-screenshot.sh "muc-sidebar.png"
+vm ui ducko-toggle-sidebar.sh
+vm ui ducko-screenshot.sh "muc-sidebar.png"
 
 # 6. Verify Rooms section in contact list
-$SCRIPTS/ducko-focus-contacts.sh
-$SCRIPTS/ducko-screenshot.sh "muc-rooms-section.png"
+vm ui ducko-focus-contacts.sh
+vm ui ducko-screenshot.sh "muc-rooms-section.png"
 
 # 7. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Room settings test
@@ -494,25 +502,25 @@ $SCRIPTS/ducko-stop.sh
 Tests room settings — open settings sheet from context menu, view config and affiliations:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch and join a room you own
-$SCRIPTS/ducko-launch.sh
-$SCRIPTS/ducko-join-room.sh "room@conference.example.com" "mynick"
+vm ui ducko-launch.sh
+vm ui ducko-join-room.sh "room@conference.example.com" "mynick"
 
 # 2. Focus contacts and open Room Settings via context menu
-$SCRIPTS/ducko-focus-contacts.sh
-$SCRIPTS/ducko-room-settings.sh "room@conference.example.com"
+vm ui ducko-focus-contacts.sh
+vm ui ducko-room-settings.sh "room@conference.example.com"
 
 # 3. Screenshot room settings (General tab with config form)
-$SCRIPTS/ducko-screenshot.sh "room-settings-general.png"
+vm ui ducko-screenshot.sh "room-settings-general.png"
 
 # 4. Switch to Members tab to see affiliation list
-$SCRIPTS/ducko-room-settings-tab.sh Members
-$SCRIPTS/ducko-screenshot.sh "room-settings-members.png"
+vm ui ducko-room-settings-tab.sh Members
+vm ui ducko-screenshot.sh "room-settings-members.png"
 
 # 5. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Preferences window test
@@ -520,35 +528,35 @@ $SCRIPTS/ducko-stop.sh
 Tests the Preferences window — open via Cmd+,, navigate tabs, verify account management:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch
-$SCRIPTS/ducko-launch.sh
+vm ui ducko-launch.sh
 
 # 2. Open Preferences (Cmd+,)
-$SCRIPTS/ducko-preferences.sh
+vm ui ducko-preferences.sh
 
 # 3. Screenshot to verify preferences window (opens on the last-viewed pane)
-$SCRIPTS/ducko-screenshot.sh "preferences-initial.png"
+vm ui ducko-screenshot.sh "preferences-initial.png"
 
 # 4. Navigate to Accounts tab
-$SCRIPTS/ducko-preferences-tab.sh Accounts
-$SCRIPTS/ducko-screenshot.sh "preferences-accounts.png"
+vm ui ducko-preferences-tab.sh Accounts
+vm ui ducko-screenshot.sh "preferences-accounts.png"
 
 # 5. Navigate to Chat tab (chat states toggle)
-$SCRIPTS/ducko-preferences-tab.sh Chat
-$SCRIPTS/ducko-screenshot.sh "preferences-chat.png"
+vm ui ducko-preferences-tab.sh Chat
+vm ui ducko-screenshot.sh "preferences-chat.png"
 
 # 6. Navigate to Appearance tab (contact-list compact rows and sizing)
-$SCRIPTS/ducko-preferences-tab.sh Appearance
-$SCRIPTS/ducko-screenshot.sh "preferences-appearance.png"
+vm ui ducko-preferences-tab.sh Appearance
+vm ui ducko-screenshot.sh "preferences-appearance.png"
 
 # 7. Navigate to Advanced tab
-$SCRIPTS/ducko-preferences-tab.sh Advanced
-$SCRIPTS/ducko-screenshot.sh "preferences-advanced.png"
+vm ui ducko-preferences-tab.sh Advanced
+vm ui ducko-screenshot.sh "preferences-advanced.png"
 
 # 8. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Profile editing test
@@ -556,19 +564,19 @@ $SCRIPTS/ducko-stop.sh
 Tests the vCard profile editing flow — open profile sheet, verify fields:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch (account must exist)
-$SCRIPTS/ducko-launch.sh
+vm ui ducko-launch.sh
 
 # 2. Open My Profile sheet from the Contact menu
-$SCRIPTS/ducko-profile.sh
+vm ui ducko-profile.sh
 
 # 3. Screenshot to verify profile fields loaded
-$SCRIPTS/ducko-screenshot.sh "profile-edit.png"
+vm ui ducko-screenshot.sh "profile-edit.png"
 
 # 4. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Avatar upload/remove test
@@ -576,22 +584,22 @@ $SCRIPTS/ducko-stop.sh
 Tests avatar upload and removal via the profile sheet:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch and open profile
-$SCRIPTS/ducko-launch.sh
-$SCRIPTS/ducko-profile.sh
+vm ui ducko-launch.sh
+vm ui ducko-profile.sh
 
 # 2. Upload avatar
-$SCRIPTS/ducko-avatar.sh "/path/to/test-image.png"
-$SCRIPTS/ducko-screenshot.sh "avatar-uploaded.png"
+vm ui ducko-avatar.sh "/path/to/test-image.png"
+vm ui ducko-screenshot.sh "avatar-uploaded.png"
 
 # 3. Remove avatar
-$SCRIPTS/ducko-avatar-remove.sh
-$SCRIPTS/ducko-screenshot.sh "avatar-removed.png"
+vm ui ducko-avatar-remove.sh
+vm ui ducko-screenshot.sh "avatar-removed.png"
 
 # 4. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Device trust management test
@@ -599,30 +607,30 @@ $SCRIPTS/ducko-stop.sh
 Tests OMEMO encryption UI — encryption menu, device fingerprints sheet, and trust actions:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch and open a chat
-$SCRIPTS/ducko-launch.sh
-$SCRIPTS/ducko-new-chat.sh "CHAT_PARTNER_JID"
+vm ui ducko-launch.sh
+vm ui ducko-new-chat.sh "CHAT_PARTNER_JID"
 
 # 2. Screenshot to verify encryption menu button in chat header
-$SCRIPTS/ducko-screenshot.sh "encryption-menu.png"
+vm ui ducko-screenshot.sh "encryption-menu.png"
 
 # 3. Open the device fingerprints sheet via the encryption menu
-$SCRIPTS/ducko-encrypt.sh fingerprints
-$SCRIPTS/ducko-screenshot.sh "device-fingerprints.png"
+vm ui ducko-encrypt.sh fingerprints
+vm ui ducko-screenshot.sh "device-fingerprints.png"
 
 # 4. Verify device rows show trust status
 # Each device row has trust-button-{deviceID} or untrust-button-{deviceID}
-$SCRIPTS/ducko-screenshot.sh "device-trust-status.png"
+vm ui ducko-screenshot.sh "device-trust-status.png"
 
 # 5. Test encryption preference toggles
-$SCRIPTS/ducko-preferences.sh
-$SCRIPTS/ducko-preferences-tab.sh Chat
-$SCRIPTS/ducko-screenshot.sh "encryption-preferences.png"
+vm ui ducko-preferences.sh
+vm ui ducko-preferences-tab.sh Chat
+vm ui ducko-screenshot.sh "encryption-preferences.png"
 
 # 6. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Presence/status test
@@ -630,25 +638,25 @@ $SCRIPTS/ducko-stop.sh
 Tests setting presence status and status message:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch
-$SCRIPTS/ducko-launch.sh
+vm ui ducko-launch.sh
 
 # 2. Set status to Away
-$SCRIPTS/ducko-status-menu.sh away
-$SCRIPTS/ducko-screenshot.sh "status-away.png"
+vm ui ducko-status-menu.sh away
+vm ui ducko-screenshot.sh "status-away.png"
 
 # 3. Set status with a message
-$SCRIPTS/ducko-status.sh dnd "In a meeting"
-$SCRIPTS/ducko-screenshot.sh "status-dnd-message.png"
+vm ui ducko-status.sh dnd "In a meeting"
+vm ui ducko-screenshot.sh "status-dnd-message.png"
 
 # 4. Back to Available
-$SCRIPTS/ducko-status-menu.sh available
-$SCRIPTS/ducko-screenshot.sh "status-available.png"
+vm ui ducko-status-menu.sh available
+vm ui ducko-screenshot.sh "status-available.png"
 
 # 5. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Bookmarks management test
@@ -656,25 +664,25 @@ $SCRIPTS/ducko-stop.sh
 Tests bookmark lifecycle — open bookmarks, add, verify, remove:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch
-$SCRIPTS/ducko-launch.sh
+vm ui ducko-launch.sh
 
 # 2. Open bookmarks
-$SCRIPTS/ducko-bookmarks.sh
-$SCRIPTS/ducko-screenshot.sh "bookmarks-list.png"
+vm ui ducko-bookmarks.sh
+vm ui ducko-screenshot.sh "bookmarks-list.png"
 
 # 3. Add a bookmark
-$SCRIPTS/ducko-add-bookmark.sh "room@conference.example.com" "mynick"
-$SCRIPTS/ducko-screenshot.sh "bookmark-added.png"
+vm ui ducko-add-bookmark.sh "room@conference.example.com" "mynick"
+vm ui ducko-screenshot.sh "bookmark-added.png"
 
 # 4. Remove the bookmark
-$SCRIPTS/ducko-remove-bookmark.sh "room@conference.example.com"
-$SCRIPTS/ducko-screenshot.sh "bookmark-removed.png"
+vm ui ducko-remove-bookmark.sh "room@conference.example.com"
+vm ui ducko-screenshot.sh "bookmark-removed.png"
 
 # 5. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Message retraction test
@@ -682,22 +690,22 @@ $SCRIPTS/ducko-stop.sh
 Tests sending and retracting a message:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch and open a chat
-$SCRIPTS/ducko-launch.sh
-$SCRIPTS/ducko-new-chat.sh "CHAT_PARTNER_JID"
+vm ui ducko-launch.sh
+vm ui ducko-new-chat.sh "CHAT_PARTNER_JID"
 
 # 2. Send a message
-$SCRIPTS/ducko-send.sh "This message will be retracted"
-$SCRIPTS/ducko-screenshot.sh "before-retract.png"
+vm ui ducko-send.sh "This message will be retracted"
+vm ui ducko-screenshot.sh "before-retract.png"
 
 # 3. Retract the message
-$SCRIPTS/ducko-retract.sh "This message will be retracted"
-$SCRIPTS/ducko-screenshot.sh "after-retract.png"
+vm ui ducko-retract.sh "This message will be retracted"
+vm ui ducko-screenshot.sh "after-retract.png"
 
 # 4. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### OMEMO encryption test
@@ -705,28 +713,28 @@ $SCRIPTS/ducko-stop.sh
 Tests encryption toggle, device fingerprints sheet, and device trust:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch and open a chat
-$SCRIPTS/ducko-launch.sh
-$SCRIPTS/ducko-new-chat.sh "CHAT_PARTNER_JID"
+vm ui ducko-launch.sh
+vm ui ducko-new-chat.sh "CHAT_PARTNER_JID"
 
 # 2. Enable encryption
-$SCRIPTS/ducko-encrypt.sh on
-$SCRIPTS/ducko-screenshot.sh "encryption-enabled.png"
+vm ui ducko-encrypt.sh on
+vm ui ducko-screenshot.sh "encryption-enabled.png"
 
 # 3. Open device fingerprints sheet
-$SCRIPTS/ducko-encrypt.sh fingerprints
-$SCRIPTS/ducko-screenshot.sh "device-fingerprints.png"
+vm ui ducko-encrypt.sh fingerprints
+vm ui ducko-screenshot.sh "device-fingerprints.png"
 
 # 4. Verify a device (replace DEVICE_ID with actual ID from screenshot). With Trust On First Use on, the
 #    default, a new device already shows as Trusted with Verify and Untrust. Trust appears only after Untrust,
 #    or with `tofuToggle` off.
-# $SCRIPTS/ducko-device-trust.sh 12345 verify
-# $SCRIPTS/ducko-screenshot.sh "device-verified.png"
+# vm ui ducko-device-trust.sh 12345 verify
+# vm ui ducko-screenshot.sh "device-verified.png"
 
 # 5. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Room management test
@@ -734,32 +742,32 @@ $SCRIPTS/ducko-stop.sh
 Tests full room lifecycle — join, topic, nickname, file attachment, leave:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch and join a room
-$SCRIPTS/ducko-launch.sh
-$SCRIPTS/ducko-join-room.sh "room@conference.example.com" "mynick"
+vm ui ducko-launch.sh
+vm ui ducko-join-room.sh "room@conference.example.com" "mynick"
 
 # 2. View current topic
-$SCRIPTS/ducko-room-topic.sh
-$SCRIPTS/ducko-screenshot.sh "room-topic-view.png"
+vm ui ducko-room-topic.sh
+vm ui ducko-screenshot.sh "room-topic-view.png"
 
 # 3. Set a new topic
-$SCRIPTS/ducko-room-topic.sh "Welcome to the test room!"
-$SCRIPTS/ducko-screenshot.sh "room-topic-set.png"
+vm ui ducko-room-topic.sh "Welcome to the test room!"
+vm ui ducko-screenshot.sh "room-topic-set.png"
 
 # 4. Toggle sidebar and change nickname
-$SCRIPTS/ducko-toggle-sidebar.sh
-$SCRIPTS/ducko-change-nickname.sh "newnick"
-$SCRIPTS/ducko-screenshot.sh "nickname-changed.png"
+vm ui ducko-toggle-sidebar.sh
+vm ui ducko-change-nickname.sh "newnick"
+vm ui ducko-screenshot.sh "nickname-changed.png"
 
 # 5. Leave the room
-$SCRIPTS/ducko-focus-contacts.sh
-$SCRIPTS/ducko-leave-room.sh "room@conference.example.com"
-$SCRIPTS/ducko-screenshot.sh "room-left.png"
+vm ui ducko-focus-contacts.sh
+vm ui ducko-leave-room.sh "room@conference.example.com"
+vm ui ducko-screenshot.sh "room-left.png"
 
 # 6. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Live-update (cross-driver) test
@@ -767,32 +775,30 @@ $SCRIPTS/ducko-stop.sh
 Verifies that an **open** chat/room window reflects server-pushed changes (subject, participant list, presence) **live, without reopening the tab** — by driving a second occupant from `DuckoCLI` while the GUI stays joined. This exercises the live-read path that backs the chat header, window title, and participant sidebar.
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
-# 0. One-time: configure account B in its OWN profile (a fresh DUCKO_PROFILE has no account,
+# 1. GUI joins the room as account A and stays on the tab. The launch also builds the VM's DuckoCLI.
+vm ui ducko-launch.sh
+vm ui ducko-join-room.sh "room@conference.example.com" "observer"
+vm ui ducko-screenshot.sh "live-before.png"   # header shows e.g. "1 participant"
+
+# 2. One-time: configure account B in its OWN profile in the VM (a fresh DUCKO_PROFILE has no account,
 #    and `interactive` needs one). See the ducko-cli skill for `account add` flags.
-DUCKO_PROFILE=clibot .build/debug/DuckoCLI account add ...
+vm gui 'DUCKO_PROFILE=clibot /Users/lume/work/ducko/.build/debug/DuckoCLI account add ...'
 
-# 1. GUI joins the room as account A and stays on the tab
-$SCRIPTS/ducko-launch.sh
-$SCRIPTS/ducko-join-room.sh "room@conference.example.com" "observer"
-$SCRIPTS/ducko-screenshot.sh "live-before.png"   # header shows e.g. "1 participant"
-
-# 2. Account B (a DISTINCT account, its own DUCKO_PROFILE) joins from the CLI as a second occupant.
+# 3. Account B (a DISTINCT account, its own DUCKO_PROFILE) joins from the CLI as a second occupant.
 #    The REPL supports /join <room-jid> [nick], /topic <subject>, /nick <newnick>.
-#    Needs dangerouslyDisableSandbox (raw TCP + writes under ~/Library/Application Support).
-printf '/join room@conference.example.com clibot\n' \
-  | DUCKO_PROFILE=clibot .build/debug/DuckoCLI interactive
+vm gui "printf '/join room@conference.example.com clibot\n' | DUCKO_PROFILE=clibot /Users/lume/work/ducko/.build/debug/DuckoCLI interactive"
 
-# 3. Bring DuckoApp frontmost WITHOUT relaunching (activating it sends CSI active, which flushes queued pushes), then screenshot.
+# 4. Bring the copy frontmost WITHOUT relaunching (activating it sends CSI active, which flushes queued pushes), then screenshot.
 #    Do NOT use ducko-launch.sh here. It kills and relaunches the app. The tab comes back and the room is
 #    joined again on a new connection, so the screenshot would show a fresh join instead of a live update.
-osascript -e 'tell application "System Events" to set frontmost of process "DuckoApp" to true'
-$SCRIPTS/ducko-screenshot.sh "live-after.png"
+vm gui 'osascript -e "tell application \"System Events\" to set frontmost of process \"DuckoUITest\" to true"'
+vm ui ducko-screenshot.sh "live-after.png"
 # Assert: header participant count 1 -> 2 and the sidebar lists clibot — live, no tab reopen.
 
-# 4. Cleanup
-$SCRIPTS/ducko-stop.sh
+# 5. Cleanup
+vm ui ducko-stop.sh
 ```
 
 - **A DuckoApp window must be on screen while observing.** DuckoApp sends XEP-0352 `CSI inactive` while it is not the frontmost app and none of its windows is visible (hidden, minimized, fully covered, or on another Space). The server then **queues** MUC presence and subject pushes and flushes them only on `CSI active`. An observation made with no window visible sees a stale header or subject and wrongly concludes the live read is broken. Activate the app (`set frontmost`) before screenshotting, and do not relaunch.
@@ -804,25 +810,25 @@ $SCRIPTS/ducko-stop.sh
 Tests attaching and sending a file:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch and open a chat
-$SCRIPTS/ducko-launch.sh
-$SCRIPTS/ducko-new-chat.sh "CHAT_PARTNER_JID"
+vm ui ducko-launch.sh
+vm ui ducko-new-chat.sh "CHAT_PARTNER_JID"
 
-# 2. Attach a file
-$SCRIPTS/ducko-attach.sh "/path/to/test-file.png"
-$SCRIPTS/ducko-screenshot.sh "file-attached.png"
+# 2. Attach a file, by its path inside the VM
+vm ui ducko-attach.sh "/Users/lume/work/test-file.png"
+vm ui ducko-screenshot.sh "file-attached.png"
 
 # 3. Send (the attached file appears in pending-attachments bar, send delivers it).
 #    Upload is preselected. To send the file straight to the contact's device instead, run the line below first.
 #    It fails unless the contact is online with a device that takes direct transfers.
-# $SCRIPTS/ducko-send-method.sh direct
-$SCRIPTS/ducko-send.sh "Here's a file"
-$SCRIPTS/ducko-screenshot.sh "file-sent.png"
+# vm ui ducko-send-method.sh direct
+vm ui ducko-send.sh "Here's a file"
+vm ui ducko-screenshot.sh "file-sent.png"
 
 # 4. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 For image-rendering checks, confirm a generated image fixture decodes: `sips -g pixelWidth <file>` returns a number, while `file` only reads the header. Confirm a rendering verdict against a screenshot, not against stored metadata such as the MIME type.
@@ -832,57 +838,53 @@ For image-rendering checks, confirm a generated image fixture decodes: `sips -g 
 Tests viewing TLS connection details:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 
 # 1. Launch (must be connected)
-$SCRIPTS/ducko-launch.sh
+vm ui ducko-launch.sh
 
 # 2. Open connection info
-$SCRIPTS/ducko-connection-info.sh
-$SCRIPTS/ducko-screenshot.sh "connection-info.png"
+vm ui ducko-connection-info.sh
+vm ui ducko-screenshot.sh "connection-info.png"
 
 # 3. Cleanup
-$SCRIPTS/ducko-stop.sh
+vm ui ducko-stop.sh
 ```
 
 ### Sparkle update check test
 
-Sparkle's updater starts only inside an app bundle, so `ducko-launch.sh` (`swift run`) leaves "Check for Updates…" disabled. Test updates against a packaged debug bundle.
-
-First confirm `pgrep -fl DuckoApp` prints nothing. Same-named processes defeat System Events targeting, so another running `DuckoApp` (including the installed production app) would receive these clicks and the final Quit.
+Sparkle's updater starts only inside an app bundle. The `DuckoUITest` copy is one, so test updates against it in the VM. Its automatic checks are off, which leaves the manual "Check for Updates…" working.
 
 ```bash
-# 1. Package and launch the debug bundle by full path under a throwaway profile, then wait for its process
-./Scripts/package_app.sh debug
-open -n --env DUCKO_PROFILE=update-check "$PWD/Ducko.app"
-for i in $(seq 1 20); do PID=$(pgrep -f "$PWD/Ducko.app/Contents/MacOS/DuckoApp") && break; sleep 0.5; done
-sleep 5
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
+
+# 1. Launch the copy under a throwaway profile
+DUCKO_PROFILE=update-check vm ui ducko-launch.sh
 
 # 2. Confirm the updater started: the app menu item is enabled
-osascript -e 'tell application "System Events" to tell process "DuckoApp" to get enabled of menu item "Check for Updates…" of menu 1 of menu bar item 2 of menu bar 1'
+vm gui 'osascript -e "tell application \"System Events\" to tell process \"DuckoUITest\" to get enabled of menu item \"Check for Updates…\" of menu 1 of menu bar item 2 of menu bar 1"'
 
 # 3. Run the check against the real appcast
-osascript -e 'tell application "System Events" to tell process "DuckoApp" to click menu item "Check for Updates…" of menu 1 of menu bar item 2 of menu bar 1'
+vm gui 'osascript -e "tell application \"System Events\" to tell process \"DuckoUITest\" to click menu item \"Check for Updates…\" of menu 1 of menu bar item 2 of menu bar 1"'
 
-# 4. Capture the result window: pick WINDOW_ID from the listing
-peekaboo window list --pid "$PID" --json
-screencapture -x -o -l WINDOW_ID "$TMPDIR/update-check.png"
+# 4. Capture the result window: pick WINDOW_ID from the copy's window list
+vm gui 'swift /Users/lume/work/ducko/Skills/demo-screenshots/scripts/windows.swift $(pgrep -x DuckoUITest)'
+vm gui 'screencapture -x -o -l WINDOW_ID "/Volumes/My Shared Files/vm-exchange/ducko-ui/update-check.png"'
 
-# 5. Cleanup: quit via the app menu, wait for exit, remove the throwaway profile
-osascript -e 'tell application "System Events" to tell process "DuckoApp" to click menu item "Quit Ducko" of menu 1 of menu bar item 2 of menu bar 1'
-while ps -p "$PID" >/dev/null; do sleep 0.5; done
-/bin/rm -rf "$HOME/Library/Application Support/Ducko-Dev-update-check"
+# 5. Cleanup: quit the copy, remove the throwaway profile
+vm ui ducko-stop.sh
+vm gui '/bin/rm -rf "$HOME/Library/Application Support/Ducko-Dev-update-check"'
 ```
 
-- The check first shows a "Software Update" progress window, then the result (e.g. "You're up to date!") in a separate untitled window. The fresh profile's Welcome window is listed too.
+- The check first shows a "Software Update" progress window, then the result in a separate untitled window. The VM's build folder has no `.git`, so the copy is version 0.0.0 build 1, and the check offers the latest release. The fresh profile's Welcome window is listed too.
 
 ### Reconnect (app disconnected)
 
 If the app is running but disconnected (e.g. network drop), restart it to trigger auto-connect:
 
 ```bash
-SCRIPTS="Skills/ducko-ui/scripts"
-$SCRIPTS/ducko-connect.sh
+vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
+vm ui ducko-connect.sh
 ```
 
 ## Permission Allowlisting
@@ -893,7 +895,7 @@ To allow these scripts in `settings.local.json` without prompts:
 {
   "permissions": {
     "allow": [
-      "Bash(Skills/ducko-ui/scripts/*)"
+      "Bash(zsh Skills/lume-vm/scripts/vm.sh ui *)"
     ]
   }
 }
@@ -901,14 +903,14 @@ To allow these scripts in `settings.local.json` without prompts:
 
 ## Notes
 
-- Scripts use `keystroke` (not `set value`) to trigger SwiftUI bindings. Keystrokes land in whatever app is frontmost, so while the user works on the same machine a typing script (`ducko-send.sh`, or `ducko-attach.sh` through the file-picker helper) can type into their app. Post key events to the instance's PID instead (see the `AppAccessor.postKey` note below).
-- App activation uses `set frontmost of process` (works with SwiftPM builds).
+- Scripts use `keystroke` (not `set value`) to trigger SwiftUI bindings. Keystrokes land in whatever app is frontmost, which is one reason the scripts run in the VM: on a Mac run, a typing script such as `ducko-send.sh` can type into the user's app. Post key events to the instance's PID instead (see the `AppAccessor.postKey` note below).
+- `ducko-launch.sh` starts the copy with `-ApplePersistenceIgnoreState YES`, and a copy started by hand needs the same argument. `ducko-stop.sh` ends the copy with a signal, after which macOS would restore the last run's windows at the next launch instead of opening Contacts. The app does its launch work from the Contacts window: it loads accounts there and opens Welcome or the chat window. A run that ended on Welcome would therefore start with no window at all. The chat window still reopens when it was open at quit, because the app restores it itself.
 - Verifying any **live** update (subject, participant count, presence) needs a DuckoApp window on screen first. Otherwise CSI holds the pushes back (see "A DuckoApp window must be on screen while observing" above).
 - Multi-step interactions are bundled in single osascript blocks to avoid focus loss.
 - Element targeting uses recursive UI-element-tree walks (`findByAttr` and siblings) because `entire contents` silently collapses on deeply nested SwiftUI / NSTableView accessibility trees on macOS 26. Scripts that need these handlers source `ducko-helpers.sh` and emit `$(ducko_as_handlers)` in an unquoted heredoc. Scripts targeting shallow sheets, such as New Chat, Add Contact and Join Room, still use `entire contents` where it reaches their controls. SwiftUI `Picker` segments and Room Settings tabs expose their label through `AXDescription`, so scripts match that attribute. Confirmation-dialog buttons do too, so `ducko_as_click_button_by_label` falls back to it when a button has no title.
 - On macOS 27, other SwiftUI buttons in a sheet, such as Room Settings' Save, expose neither a title nor `AXDescription` to System Events, although Swift AX reads their description. Drive those by identifier or through Swift AX.
 - System Events window references are positional, so raising a window re-points a variable that held another one. When a script uses the window after raising it, raise it with `ducko_as_raise_window_by_id`, which finds it again after `AXRaise`.
-- Scripts that confirm a removal refuse while more than one DuckoApp runs, because System Events could press the confirmation in the wrong process. They also refuse while a dialog is already open in the target window, so a leftover dialog is never the one they act on. `ducko-contact-menu.sh` applies the open-dialog check to every action.
+- Scripts that confirm a removal refuse while more than one `DuckoUITest` runs, for example copies from two checkouts, because System Events could press the confirmation in the wrong process. They also refuse while a dialog is already open in the target window, so a leftover dialog is never the one they act on. `ducko-contact-menu.sh` applies the open-dialog check to every action.
 - To verify a destructive confirm step without confirming, open the dialog and resolve its confirm button inside the dialog sheet with `findButtonByLabel(<sheetVar>, "<label>", 0, 30)` (from `$(ducko_as_handlers)`) without clicking it. Scope the lookup to the sheet, because a window can hold a same-named button outside the dialog (Contact Info does). Then dismiss the dialog with the generated `ducko_as_click_button_by_label "Cancel" <sheetVar>` snippet, which exercises the same lookup and click path end to end.
 - Keep apostrophes out of osascript heredoc bodies. `/bin/bash` 3.2, which the scripts' shebang selects, rejects a `$(… << EOF …)` body with an odd apostrophe count, while Homebrew bash 5 accepts it, so check with `/bin/bash -n` rather than a bare `bash -n`.
 - Limit `ducko-helpers.sh` and the wrapper scripts to bash builtins and the commands DuckoScriptTests stubs. Its capture fixture runs them with a PATH holding only stubs plus `cat` and `dirname`, and rejects absolute command paths.
@@ -917,24 +919,22 @@ To allow these scripts in `settings.local.json` without prompts:
 - The contact list and chat windows are both singletons (`Window`). The chat window holds all open conversations as bottom tabs (`chat-tab-bar`); `ducko-send.sh` targets the active tab in the frontmost chat window. Contact Info is a `WindowGroup` keyed by `ContactInfoRef`.
 - Pass runtime values as arguments to `osascript -` and read them with `on run argv`. Keep them out of the generated AppleScript source.
 - Credentials are arguments, never hardcoded.
-- When the user drives the GUI on a profile, pause these scripts: `ducko-launch.sh`, `ducko-stop.sh` and `ducko-connect.sh` kill every DuckoApp this checkout built, regardless of profile. Run CLI or integration tests meanwhile on other `DUCKO_PROFILE`s and accounts, so their offers and messages stay out of the user's window. Hand the GUI over by running `swift build` and launching `DUCKO_PROFILE=<name> .build/debug/DuckoApp` (a packaged bundle can be stale).
-- The installed production app's executable is also named `DuckoApp`, and `swift run` launches the build product by a path relative to the checkout (`.build/out/Products/Debug/DuckoApp`). Anchor any process match for the dev app to this checkout's paths and accept the relative form, as `ducko-stop.sh` does.
-- While the production app runs, System Events `process "DuckoApp"` can resolve to it, so the helper scripts, which target the app by that name, can act on production. Drive the dev instance through PID-targeted AX (`AXUIElementCreateApplication(pid)`, as `ducko-dismiss.swift` does). AX actions need no focus: `AXShowMenu` on a `contact-row-*` followed by pressing its "Start Chat" menu item opens a chat, and `AXPress` works on `status-picker` and on picker radios. Open a menu with whichever action the element advertises — `AXShowMenu` returns success without opening the menu on a control that does not advertise it, such as `account-actions-menu`, a `Menu` inside a grouped `Form`, which advertises only `AXPress`. `AppAccessor.pressMenuItem` and `ducko_as_click_context_menu_item` both branch on the advertised action list. Prefer these to synthesized mouse clicks, which land on whatever window is frontmost.
+- When the user drives the GUI on a profile, run CLI or integration tests meanwhile on other `DUCKO_PROFILE`s and accounts, so their offers and messages stay out of the user's window. Hand the GUI over by running `swift build` and launching `DUCKO_PROFILE=<name> .build/debug/DuckoApp` (a packaged bundle can be stale).
+- PID-targeted AX (`AXUIElementCreateApplication(pid)`, as `ducko-dismiss.swift` does) reaches one instance whatever its name. AX actions need no focus: `AXShowMenu` on a `contact-row-*` followed by pressing its "Start Chat" menu item opens a chat, and `AXPress` works on `status-picker` and on picker radios. Prefer these to synthesized mouse clicks, which land on whatever window is frontmost.
+- Open a menu with whichever action the element advertises — `AXShowMenu` returns success without opening the menu on a control that does not advertise it, such as `account-actions-menu`, a `Menu` inside a grouped `Form`, which advertises only `AXPress`. `AppAccessor.pressMenuItem` and `ducko_as_click_context_menu_item` both branch on the advertised action list.
 - A throwaway `DUCKO_PROFILE` gets a persisted account from the CLI (`DuckoCLI account add --no-connect`), after which the GUI opens on Contacts with no Welcome screen. That account has Connect on Launch off, so it starts Offline: `AXPress` `status-picker`, then press its Available item. Once a session has been online, a relaunch starts Offline again but lists the contacts stored from that session. With Hide Offline Contacts on, it lists only those with unread messages. `AXShowMenu` on a row and its "Start Chat" item open the chat there without connecting.
 - For a run that needs contacts with presence, avatars and a chat but no live account, follow Steps 1 to 5 of the `/demo-screenshots` skill and clean up with its Step 7. Give the run a profile, port, app name and bundle ID of its own, replacing `DuckoDemo.app` and `im.ducko.demo` wherever the snippets spell them out. The "Changing the Content" section of that skill covers a room row, a room invitation (`room-invite-banner`), reply quotes and file cards.
 - A throwaway profile folder (`~/Library/Application Support/Ducko-Dev-<profile>/`) holds file-based credentials and OMEMO keys. `rm` may be aliased to `trash` in the shell profile, so remove the folder with `/bin/rm -rf` to keep it out of the Trash.
 - A packaged bundle's app menu is "Ducko" (Ducko ▸ Quit Ducko); a bare debug binary's is "DuckoApp" (DuckoApp ▸ Quit DuckoApp). A script that quits or opens app-menu items by title must use the title matching how the instance was launched.
-- `ducko-attach.sh` reports success even when its Open panel stays open. Confirm the panel closed before checking the attachment. To attach without System Events keystrokes, open the panel with `attachment-button` and fill it through PID-targeted AX or key events posted to the PID, then press Open.
-- A leftover Open or Save panel, or a context menu left open, blocks the instance: AX walks and AppleScript calls then hang. Check for a leftover panel with `peekaboo window list --pid <pid>`, which reads the window list without AX, and cancel it. Close a context menu as soon as its items are read, with `AXCancel` on the menu or Escape posted to the PID. Run probes and scripts under a timeout (for example `perl -e 'alarm 30; exec @ARGV' <command>`) so a stuck step fails fast.
+- A leftover Open or Save panel, or a context menu left open, blocks the instance: AX walks and AppleScript calls then hang. Check for a leftover panel in the window list, which needs no AX: `Skills/demo-screenshots/scripts/windows.swift <pid>` lists every window of the instance. Cancel any panel it shows. Close a context menu as soon as its items are read, with `AXCancel` on the menu or Escape posted to the PID. Run probes and scripts under a timeout (for example `perl -e 'alarm 30; exec @ARGV' <command>`) so a stuck step fails fast.
 - To get an outgoing bubble without typing into the GUI, send from a second session of the same account while the GUI is connected, such as the CLI under another profile. It arrives as a carbon.
 - A `message-bubble-{id}` is one combined accessibility element whose value contains the message's text, unless the message has attachments, a link preview or a code block. Then the bubble is a container that reports no value, and its `attachment-view`, `link-preview` and `code-block` children are separate elements.
 - To type into the dev instance alone, activate it by PID (`NSRunningApplication(processIdentifier:)`, not `set frontmost of process`) and post Unicode key events to that PID, as `AppAccessor.postKey` does. When `activate()` called from a background process leaves the instance behind, set the `AXFrontmost` attribute of its application element (`AXUIElementCreateApplication(pid)`) instead. This fills `new-chat-jid-field` after File ▸ New Chat; pressing `start-chat-button` then opens a chat with a JID that has no contact row.
 - Neither the `-AppleInterfaceStyle Dark` launch argument nor `defaults write DuckoApp AppleInterfaceStyle Dark` switches the debug binary to dark appearance, so a dark-appearance check needs the system setting. Ask the user to switch it, or run the check in the `/lume-vm` VM and switch it there with `vm.sh appearance dark`.
 - To pin how one instance looks, run a re-signed copy of the packaged debug bundle. `NSRequiresAquaSystemAppearance` as `true` in its `Info.plist` forces light appearance on a system set to Dark. A `CFBundleIdentifier` of its own that no earlier run used leaves it with no saved window frames, so the chat window opens at its default size. Step 2 of the `/demo-screenshots` skill holds the commands for the copy, and its Step 7 removes the preferences the copy leaves behind. The launch argument pair `-AppleShowScrollBars WhenScrolling` switches one instance to overlay scroll bars.
 - AX titles render the status rows' checkmark and dash marks as the object replacement character `￼` (U+FFFC), so a title read shows which rows are marked but not how. Each account shows exactly one status, so among the five global status rows (Available through Offline), read a single marked row as a checkmark and two or more as dashes. A per-account submenu only ever checks one row. Saved-status rows can't be read this way, so screenshot the open menu for those, or whenever the distinction must be confirmed.
-- Another agent session working in this repo can have its own DuckoApp up, including one built from a git worktree, and `process "DuckoApp"` resolves to whichever instance the system picks. Its clicks then land in that app and its failures read as script flakes. List the peer sessions, ask before driving the GUI, and say when you are done. Only the close paths take a `DUCKO_PID` (`ducko-connection-info.sh close`, `ducko-dismiss-roster-notice.sh`); every open path matches by name. System Events cannot scope them by PID: `first application process whose unix id is <pid>` resolved to the other same-named instance. Run them in the `/lume-vm` VM, where only one DuckoApp runs, or drive the instance through PID-targeted AX (`AXUIElementCreateApplication(pid)`). The integration harness is unaffected, since `AppAccessor` targets by PID.
 - Quit a PID-targeted instance with `NSRunningApplication(processIdentifier:).terminate()`, which takes the app's own quit path. Pressing Quit through accessibility in the app menu or the menu-bar extra works only for the frontmost instance: on a background instance the press returns success and does nothing. Tabs and the chat window's open state are saved on every change, so they survive a kill as well. Use the real quit when the quit path itself is under test, since the windows close on the way out and that must not count as the user closing the chat window.
 - Allow about ten seconds for a quit, since the app disconnects first, and confirm the process has exited before launching the next instance on the same profile. An instance can ignore the quit request, and a launch then runs beside it. Stop a stuck one by PID.
 - To let the user try relaunch behavior, run the debug binary in a loop that starts it again whenever it exits, such as `while [ ! -f "$STOP_FILE" ]; do DUCKO_PROFILE=<name> .build/debug/DuckoApp; sleep 1; done`, so ⌘Q shows the relaunch without a terminal. To end it, create the stop file, then quit the instance by PID.
-- The chat window's saved tabs are the `chatSavedTabs` key in the debug defaults domain (`im.ducko.dev`, or `im.ducko.dev.<profile>` under a `DUCKO_PROFILE`). To return a profile to no saved tabs, delete the key while no instance of that profile runs, since a running one writes it again on its next tab change.
+- The chat window's saved tabs are the `chatSavedTabs` key in the profile's debug defaults domain: `im.ducko.dev.uitest` for the copy launched without a `DUCKO_PROFILE`, `im.ducko.dev.<profile>` under one, and `im.ducko.dev` only for a debug Ducko run outside these scripts. To return a profile to no saved tabs, delete the key while no instance of that profile runs, since a running one writes it again on its next tab change.
 - A sheet that fetches on appear needs an identifier on its settled (non-loading) content, not only on the sheet container: the container mounts while the request is in flight, so a wait on it passes before the fetch resolves and cannot fail when the fetch breaks. `server-info-content` and `registration-form-content` follow this; give new loading sheets the same pair.

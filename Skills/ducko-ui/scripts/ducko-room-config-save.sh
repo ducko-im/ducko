@@ -10,13 +10,16 @@
 #   ROOM_JID: The JID of the room (must be visible in the Rooms section)
 set -euo pipefail
 
+SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPTS/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 1 ]]; then
     echo "Usage: ducko-room-config-save.sh ROOM_JID" >&2
     exit 1
 fi
 
 ROOM_JID="$1"
-SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
 
 # Open Room Settings sheet
 "$SCRIPTS/ducko-room-settings.sh" "$ROOM_JID" > /dev/null 2>&1
@@ -24,9 +27,9 @@ sleep 0.5
 
 RESULT=$(osascript << 'APPLESCRIPT'
 tell application "System Events"
-    set frontmost of process "DuckoApp" to true
+    set frontmost of process "DuckoUITest" to true
     delay 0.3
-    tell process "DuckoApp"
+    tell process "DuckoUITest"
         -- Find the Save button inside the topmost sheet by matching its
         -- visible label against AXDescription / AXTitle. SwiftUI
         -- `Button("Save") { ... }` publishes the label through

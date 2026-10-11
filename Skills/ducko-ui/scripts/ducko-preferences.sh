@@ -5,11 +5,15 @@
 # Usage: ducko-preferences.sh
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 RESULT=$(osascript << 'APPLESCRIPT'
 tell application "System Events"
-    set frontmost of process "DuckoApp" to true
+    set frontmost of process "DuckoUITest" to true
     delay 0.3
-    tell process "DuckoApp"
+    tell process "DuckoUITest"
         -- The Settings window title matches the active tab name.
         set tabNames to {"General", "Accounts", "Chat", "Status", "Appearance", "Advanced"}
         set settingsOpen to false

@@ -23,7 +23,7 @@ Define `vm` in every Bash call that uses it, since shell functions do not carry 
 | Name, storage | `ducko-ui` in lume's `home` storage (`~/.lume`); baseline clone `ducko-ui-base` |
 | System | macOS 27.0.1 (26A434); 6 CPUs, 12 GB; user `lume`, password `lume`, auto-login |
 | Display | 2880×1800 pixels, 1440×900 points, backing scale 2.0 |
-| Tools | Command Line Tools (Swift 6.4, Python 3.9.6). The Peekaboo CLI and Peekaboo.app, copied from the host's installs. The CLI gives the same results whether or not the app runs |
+| Tools | Xcode at `/Applications/Xcode.app`, copied from the host and selected with `xcode-select`, and the Command Line Tools (Swift 6.4, Python 3.9.6). The Peekaboo CLI and Peekaboo.app, copied from the host's installs. The CLI gives the same results whether or not the app runs |
 | Desktop | Light appearance, solid `Stone` wallpaper, no hot corners, no desktop widgets, click-wallpaper-to-show-desktop off, host time zone, no screen saver or sleep, update checks and Spotlight indexing off |
 | Security | SIP off, so `provision` can write TCC grants; passwordless `sudo`. The published `lume` login and the whole-checkout share are accepted for this local VM |
 
@@ -38,6 +38,9 @@ Python in the VM is 3.9: keep scripts meant to run there free of `match` and of 
 | `status`, `view` | Show the lume state; open a viewer window to watch (the user can run it with `!`) |
 | `sh '<cmd>'` | Run in an SSH shell, in a Background session |
 | `gui '<cmd>'` | Run in the GUI session as `lume`, in a login `zsh` started in the home folder |
+| `sync` | Copy the working tree into `/Users/lume/work/ducko`, the VM's build folder, keeping its `.build` folders. Refuses when the VM was started from another checkout |
+| `ui <script> [args]` | `sync`, then run a `Skills/ducko-ui/scripts` script from the build folder in the GUI session, passing `DUCKO_PROFILE` through |
+| `itest [swift test args]` | `sync`, package the debug app, then run `swift test --package-path IntegrationTests` in the build folder; `--filter UILayer` unless the arguments name a filter |
 | `push <host> <guest>`, `pull <guest> <host>` | Copy a file or bundle in or out through the exchange folder |
 | `screenshot <host png>` | Capture the whole VM screen |
 | `appearance light\|dark` | Switch the system appearance |
@@ -53,28 +56,32 @@ Inside the VM, the shares are at:
 - `/Volumes/My Shared Files/<checkout folder name>/`: the repo, read-only, so scripts run straight from it.
 - `/Volumes/My Shared Files/vm-exchange/`: the host's `.build/vm-exchange/`.
 
-Shares are fixed when the VM boots, so start it from the checkout whose files you need. Only one session can use the VM at a time.
+Shares are fixed when the VM boots, so start it from the checkout whose files you need. Only one session can use the VM at a time. `start` records the checkout it booted from, and `sync` refuses to copy from any other. That refusal most likely means the VM serves another session, so wait for it or ask the user. Restart it from this checkout (`vm stop && vm start`) only once the user confirms it is free.
 
 ## Running work in the GUI session
 
 - **Permissions.** TCC charges every `sh` and `gui` command to the sshd binaries, which hold Screen Recording, Accessibility and event posting. A freshly rebuilt tool needs no new grant.
 - **`gui` versus `sh`.** On this build, capture, AX reads, posted events and `open` work from both. A process executed directly from `sh`, though, lives in the Background session, so launch apps and anything they spawn through `gui`.
 - **Swift tools.** Compile on the host with `swiftc -O -o .build/vm-exchange/bin/<tool> <source>`, then run `/Volumes/My Shared Files/vm-exchange/bin/<tool>` through `gui`. The VM's `swiftc` works too.
+- **ducko-ui scripts.** `vm ui ducko-launch.sh` builds and launches the `DuckoUITest` copy inside the VM, and every other script then runs as `vm ui <script> [args]` (see the `/ducko-ui` skill). The scripts run only in the VM, or on the host with `DUCKO_UI_HOST=1`, which is only for when the user asks for a run on their Mac. `ui` sets `DUCKO_UI_OUTPUT_DIR` to the exchange folder's `ducko-ui/`, so `ducko-screenshot.sh <name>.png` lands in the host's `.build/vm-exchange/ducko-ui/`.
+- **Integration tests.** The `UILayer` suites that `vm itest` runs by default skip on the host without `DUCKO_UI_HOST=1`. `sync` copies `IntegrationTests/.env.test` into the build folder with the rest of the tree. In a linked worktree that file is a symlink into the main checkout, which the VM cannot resolve, so `sync` pushes the file it points to instead. A VM run and a host run of the integration suites must not overlap, since both use the same live accounts.
 - **The app.** Copy a host build onto the VM's disk, for example `vm push "$WORK/DuckoDemo.app" /Users/lume/work/DuckoDemo.app`, and keep work folders on the VM's disk rather than on a share. Launch it through `gui` with the usual environment, such as `DUCKO_PROFILE=… /Users/lume/work/DuckoDemo.app/Contents/MacOS/DuckoApp`.
-- **Sparkle's prompt.** From the second launch under a defaults domain where nobody answered it (after `vm reset`, or with a new bundle ID), a packaged Ducko opens with Sparkle's "Check for updates automatically?" prompt, which holds back the Welcome window. Answer it beforehand with `vm sh 'defaults write <bundle id> SUEnableAutomaticChecks -bool false'`, or set `SUEnableAutomaticChecks` to false in the copy's `Info.plist`, as the demo copy does.
+- **Sparkle's prompt.** From its second launch under a bundle ID whose defaults hold no answer, a packaged Ducko opens with Sparkle's "Check for updates automatically?" prompt, which holds back the Welcome window. `provision` answers it for `im.ducko`, the integration suites' bundle. Answer it for another bundle ID with `vm sh 'defaults write <bundle id> SUEnableAutomaticChecks -bool false'`, or set `SUEnableAutomaticChecks` to false in the copy's `Info.plist`, as the demo and `DuckoUITest` copies do.
 - **Where a script runs.** `sysctl -n kern.hv_vmm_present` prints `1` in the VM and `0` on the host.
 - **Long-running processes.** A background job such as the stub server or the app keeps the SSH call open as long as it holds the call's output. Detach it with `nohup <cmd> >/path/log 2>&1 &`, or launch apps with `open`.
 - **Automation consent.** The first Apple Event to each target app raises an Allow alert, which stalls `osascript` until answered. Run `vm allow` from a second shell while the call waits, and the call goes on. A call bounded by `DUCKO_VM_TIMEOUT` that timed out is still waiting in the VM, so `vm allow` lets it finish; don't repeat it. The answer persists, and System Events and Finder are already allowed. The user TCC database stays unreadable even with SIP off, so these grants cannot be written in advance.
 
 ## Reset and baseline
 
-`vm stop && vm reset` throws away everything since the baseline: app data, defaults, appearance and consent answers. The instant APFS clone costs no disk space until the two VMs diverge. To move the baseline forward after deliberate setup changes:
+`vm stop && vm reset` throws away everything since the baseline: app data, defaults, appearance and consent answers. The baseline carries Xcode, the Sparkle answers for `im.ducko`, Peekaboo.app and the demo copy's notification permission. The instant APFS clone costs no disk space until the two VMs diverge. To move the baseline forward after deliberate setup changes:
 
 ```sh
 vm stop
 lume delete ducko-ui-base --storage home --force
 lume clone ducko-ui ducko-ui-base --source-storage home --dest-storage home
 ```
+
+`provision` copies Xcode in only when the VM has none, since any Xcode that builds Ducko will do. To move the VM to the host's newer Xcode, run `vm sh 'sudo rm -rf /Applications/Xcode.app'`, then `vm provision`, then move the baseline forward.
 
 ## Creating the VM from scratch
 
@@ -91,7 +98,8 @@ Only needed when both VMs are gone or a new macOS build is wanted.
 
 - `lume run --shared-dir path:ro` mangles the path (`…/ducko:ro` becomes `…/duckoo`). `vm.sh` passes `path/:ro`.
 - The guest cannot resolve relative symlinks read straight off a share (`Too many levels of symbolic links` on a framework's `Versions/Current`). Copy bundles with `push`, which sends folders as one `ditto` archive, rather than running them from the share.
+- After the host replaces a file, as editors do on save, the share can answer the next lookup of it with the old file. That lookup refreshes it, so the one after sees the new file. `sync` walks the tree once with a dry run before copying. Read a just-edited file twice when reading it off the share some other way.
 - `lume stop` ends the VM process without a guest shutdown. `vm.sh stop` shuts the guest down first.
 - `lume ssh` defaults to a 60 s timeout. `vm.sh` turns it off.
-- The Command Line Tools cannot build Ducko: SwiftData's `@Model` fails with "plugin for module 'SwiftDataMacros' not found". Copy the host's Xcode in with `vm push /Applications/Xcode.app /Applications/Xcode.app` (3.9 GB, about a minute), then in the guest `sudo xcode-select -s /Applications/Xcode.app`, `sudo xcodebuild -license accept` and `sudo xcodebuild -runFirstLaunch`. Build from a writable copy of the repository share, for example `rsync -a --exclude .build --exclude .git "/Volumes/My Shared Files/<checkout folder name>/" /Users/lume/work/<copy>/`.
+- The Command Line Tools cannot build Ducko: SwiftData's `@Model` fails with "plugin for module 'SwiftDataMacros' not found", which is why `provision` copies Xcode in (3.9 GB, about a minute). Build in the writable copy `sync` keeps, never on the read-only share. Without `.git` there, `package_app.sh` versions the build 0.0.0 build 1, so Sparkle offers the latest release.
 - Quitting Setup Assistant, or anything else that ends the login session, leaves the VM at the login window until it reboots: `vm sh 'sudo shutdown -r now'`, then `vm start`.

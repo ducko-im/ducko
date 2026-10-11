@@ -10,6 +10,8 @@ EXCHANGE=$REPO/.build/vm-exchange
 SHARES="/Volumes/My Shared Files"
 GUEST_EXCHANGE="$SHARES/vm-exchange"
 GUEST_REPO="$SHARES/${REPO:t}"
+# The VM's writable copy of the checkout, where builds and test runs happen.
+GUEST_WORK=/Users/lume/work/ducko
 
 usage() {
     cat >&2 <<'EOF'
@@ -18,6 +20,9 @@ usage: vm.sh <command>
   reset                              replace the stopped VM with a fresh clone of <vm>-base
   sh <command>                       run in an SSH shell (no GUI session)
   gui <command>                      run in the logged-in GUI session (AX, screencapture, CGEvents, open)
+  sync                               copy the working tree into the VM's build folder
+  ui <script> [args]                 sync, then run a ducko-ui script in the GUI session
+  itest [swift test args]            sync, package, then run the integration tests (default: --filter UILayer)
   push <host path> <guest path>      copy a file or bundle into the VM
   pull <guest path> <host path>      copy a file or bundle out of the VM
   screenshot <host png>              capture the whole VM screen
@@ -61,6 +66,29 @@ allow() {
 
 running() { lume ls --storage "$STORAGE" 2>/dev/null | awk -v vm="$VM" '$1 == vm' | grep -q running; }
 
+# Shares are fixed at boot, so a VM started from another checkout serves that checkout's files, usually to another
+# session. `start` records the full path of the checkout it booted from in the exchange folder. sync compares that path,
+# because the share's folder name can match another checkout's.
+sync() {
+    running || { echo "the VM is not running; run vm.sh start" >&2; exit 1; }
+    local serving=$(guest "cat ${(qq)GUEST_EXCHANGE}/vm-checkout 2>/dev/null" || true)
+    serving=${serving//$'\r'/}
+    if [[ $serving != "$REPO" ]]; then
+        echo "the VM is serving ${serving:-another checkout}, probably for another session; wait for it or ask the user, and restart it from this checkout (vm.sh stop && vm.sh start) only once the user confirms it is free" >&2
+        exit 1
+    fi
+    # The share answers the first lookup of a replaced file (editors save by replacing) with the old file, and that
+    # lookup refreshes it. So a dry run walks the tree once before the copy.
+    local tree="--delete --exclude /.build --exclude /IntegrationTests/.build --exclude /Ducko.app --exclude /.git ${(qq)GUEST_REPO}/ ${(qq)GUEST_WORK}/"
+    guest "mkdir -p ${(qq)GUEST_WORK} && rsync -an $tree >/dev/null && rsync -a $tree"
+    # A linked worktree's credentials file is a symlink into the main checkout, which the VM cannot resolve.
+    local credentials=$REPO/IntegrationTests/.env.test
+    if [[ -L $credentials ]]; then
+        guest "rm -f ${(qq)GUEST_WORK}/IntegrationTests/.env.test"
+        push "${credentials:A}" "$GUEST_WORK/IntegrationTests/.env.test"
+    fi
+}
+
 (( $# )) || usage
 command=$1
 shift
@@ -70,6 +98,7 @@ start)
         mkdir -p "$EXCHANGE"
         # lume mangles `path:ro` (".../ducko:ro" becomes ".../duckoo"); the trailing slash avoids that.
         lume run "$VM" --storage "$STORAGE" --detach --display none --shared-dir "$REPO/:ro" --shared-dir "$EXCHANGE"
+        print -r -- "$REPO" >"$EXCHANGE/vm-checkout"
     fi
     # Ready once the auto-login session's Dock runs.
     for _ in {1..60}; do
@@ -95,6 +124,25 @@ status) lume ls --storage "$STORAGE" | awk -v vm="$VM" 'NR == 1 || $1 == vm' ;;
 view) lume attach "$VM" --storage "$STORAGE" ;;
 sh) (( $# == 1 )) || usage; guest "$1" ;;
 gui) (( $# == 1 )) || usage; gui "$1" ;;
+sync) (( $# == 0 )) || usage; sync ;;
+ui)
+    (( $# >= 1 )) || usage
+    sync
+    script=$GUEST_WORK/Skills/ducko-ui/scripts/$1
+    shift
+    environment="DUCKO_UI_OUTPUT_DIR=${(qq)GUEST_EXCHANGE}/ducko-ui"
+    [[ -n ${DUCKO_PROFILE-} ]] && environment+=" DUCKO_PROFILE=${(qq)DUCKO_PROFILE}"
+    gui "$environment ${(qq)script} ${(j: :)${(@qq)@}}"
+    ;;
+itest)
+    sync
+    arguments=("$@")
+    # SwiftPM combines several --filter flags with OR, so the default applies only when the caller names none.
+    (( ${arguments[(I)--filter(|=*)]} )) || arguments+=(--filter UILayer)
+    # Packaging produces the Ducko.app the UI suites launch, and builds every product, including the DuckoCLI the CLI
+    # suites spawn.
+    gui "cd ${(qq)GUEST_WORK} && SIGNING_MODE=adhoc ./Scripts/package_app.sh debug && swift test --package-path IntegrationTests ${(j: :)${(@qq)arguments}}"
+    ;;
 push) (( $# == 2 )) || usage; push "$1" "$2" ;;
 pull)
     (( $# == 2 )) || usage
@@ -129,6 +177,10 @@ ax)
 provision)
     # Peekaboo.app, copied from the host before the guest script grants it.
     [[ -d /Applications/Peekaboo.app ]] && push /Applications/Peekaboo.app /Applications/Peekaboo.app
+    # Xcode, since the Command Line Tools cannot build Ducko. Any Xcode that builds it will do, so an existing one stays.
+    if ! guest '[ -d /Applications/Xcode.app ]'; then
+        push /Applications/Xcode.app /Applications/Xcode.app
+    fi
     guest "zsh ${(qq)GUEST_REPO}/Skills/lume-vm/scripts/provision-guest.sh ${(qq)$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')}"
     # The peekaboo CLI and its folder, copied from the host's install when present.
     if peekaboo=$(readlink -f "$(command -v peekaboo)" 2>/dev/null); then

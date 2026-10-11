@@ -3,7 +3,7 @@
 # Source this file: source "$SCRIPT_DIR/ducko-helpers.sh"
 #
 # AppleScript snippet generators output code for use inside a
-# `tell process "DuckoApp"` block. The calling script uses an unquoted
+# `tell process "DuckoUITest"` block. The calling script uses an unquoted
 # heredoc (<< APPLESCRIPT) so that $() expansions are evaluated by the shell.
 #
 # The element-finding snippets call recursive `my findByAttr` /
@@ -214,7 +214,7 @@ EOF
 # The transient SwiftUI menu may render at process level (a sibling of the
 # windows) or under the window, so search the process's menus first, then fall
 # back to walking the window subtree. A missing or greyed-out item keys Escape
-# while DuckoApp is still frontmost, so the open menu can't swallow later
+# while the app is still frontmost, so the open menu can't swallow later
 # scripts' input.
 # Args: menu_item_name source_var [window_var] [error_msg] [on_success]
 ducko_as_click_context_menu_item() {
@@ -290,36 +290,66 @@ ducko_as_click_button_by_label() {
 EOF
 }
 
-# Navigate a file picker via Cmd+Shift+G.
-# The path_var is an AppleScript variable name holding the file path.
-# Args: path_var
-ducko_as_navigate_file_picker() {
-    local path_var="$1"
-    cat << EOF
-            delay 1.5
-            keystroke "g" using {command down, shift down}
-            delay 1
-            keystroke ${path_var}
-            delay 0.5
-            keystroke return
-            delay 1
-            keystroke return
-            delay 2
-EOF
-}
-
 # --- Bash utility functions ---
 
-# Refuse destructive automation while more than one DuckoApp runs: `process "DuckoApp"` resolves to an arbitrary
-# instance, which may be an installed production app.
-ducko_require_single_app() {
-    local pids
-    pids=$(pgrep -x DuckoApp || true)
-    # pgrep prints one PID per line, so a newline means more than one instance.
-    if [[ "$pids" == *$'\n'* ]]; then
-        echo "ERROR: more than one DuckoApp process is running; quit all but the one to drive" >&2
+# Stop unless this runs in a VM (the Lume VM) or DUCKO_UI_HOST=1 says the user asked for a run on this Mac.
+# On the Mac the scripts bring windows to the front and type into whatever app is frontmost.
+ducko_require_vm_or_host_opt_in() {
+    if [[ "${DUCKO_UI_HOST:-}" == 1 || "$(sysctl -n kern.hv_vmm_present 2>/dev/null)" == 1 ]]; then
+        return
+    fi
+    echo "ERROR: ducko-ui scripts run in the Lume VM (zsh Skills/lume-vm/scripts/vm.sh ui <script>). Set DUCKO_UI_HOST=1 only when the user asked for a run on this Mac." >&2
+    exit 1
+}
+
+# Print this checkout's root, with symlinks resolved so it matches a running copy's command line.
+ducko_repo_root() {
+    (cd "$(dirname "${BASH_SOURCE[0]}")" && cd "$(pwd -P)/../../.." && pwd)
+}
+
+# Print the bundle path of this checkout's DuckoUITest copy.
+ducko_copy_path() {
+    echo "$(ducko_repo_root)/.build/ducko-ui/DuckoUITest.app"
+}
+
+# Print the PID of the test copy: DUCKO_PID when set, else the single running DuckoUITest.
+ducko_app_pid() {
+    local pid="${DUCKO_PID:-}"
+    if [[ -z "$pid" ]]; then
+        pid=$(pgrep -x DuckoUITest || true)
+    fi
+    if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: expected one DuckoUITest process; set DUCKO_PID to the instance to drive" >&2
         exit 1
     fi
+    echo "$pid"
+}
+
+# Refuse destructive automation while more than one DuckoUITest runs, for example copies from two checkouts:
+# `process "DuckoUITest"` resolves to an arbitrary one of them.
+ducko_require_single_app() {
+    local pids
+    pids=$(pgrep -x DuckoUITest || true)
+    # pgrep prints one PID per line, so a newline means more than one instance.
+    if [[ "$pids" == *$'\n'* ]]; then
+        echo "ERROR: more than one DuckoUITest process is running; quit all but the one to drive" >&2
+        exit 1
+    fi
+}
+
+# Fill the Open panel a script just opened with a path and wait for it to close. Stops with the AppleScript result
+# when opening the panel failed, and with the panel helper's error otherwise.
+# Args: result path
+ducko_fill_open_panel() {
+    local result="$1"
+    local path="$2"
+    local pid
+    if [[ "$result" != ok ]]; then
+        echo "$result" >&2
+        exit 1
+    fi
+    pid=$(ducko_app_pid) || exit 1
+    swift "$(dirname "${BASH_SOURCE[0]}")/ducko-file-panel.swift" "$pid" "$path" || exit 1
 }
 
 # Standard result handler. Prints success message or error and exits.

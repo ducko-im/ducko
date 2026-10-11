@@ -5,18 +5,20 @@
 # Usage: ducko-change-nickname.sh NICKNAME
 set -euo pipefail
 
-NICKNAME="${1:?Usage: ducko-change-nickname.sh NICKNAME}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
+NICKNAME="${1:?Usage: ducko-change-nickname.sh NICKNAME}"
 
 RESULT=$(osascript - "$NICKNAME" << APPLESCRIPT
 $(ducko_as_handlers)
 on run argv
     set newNick to item 1 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_find_window_by_id "message-field" "chat window not found" "chatWin")
 
             -- Reveal the participant sidebar if it is not already shown.

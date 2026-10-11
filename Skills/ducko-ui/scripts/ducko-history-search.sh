@@ -5,15 +5,19 @@
 # Usage: ducko-history-search.sh QUERY
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 QUERY="${1:?Usage: ducko-history-search.sh QUERY}"
 
 RESULT=$(osascript - "$QUERY" << 'APPLESCRIPT'
 on run argv
     set query to item 1 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             -- Found by its own identifier: its title is the name of the conversation it shows.
             set historyWin to missing value
             repeat with win in windows

@@ -9,6 +9,10 @@
 #   JID:      The JID to add to the affiliation list
 set -euo pipefail
 
+SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPTS/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 2 ]]; then
     echo "Usage: ducko-add-affiliation.sh ROOM_JID JID" >&2
     exit 1
@@ -16,8 +20,6 @@ fi
 
 ROOM_JID="$1"
 AFF_JID="$2"
-SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPTS/ducko-helpers.sh"
 
 # Open Room Settings sheet and switch to Members tab
 "$SCRIPTS/ducko-room-settings.sh" "$ROOM_JID" > /dev/null 2>&1
@@ -29,12 +31,12 @@ $(ducko_as_handlers)
 on run argv
     set affJID to item 1 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
         -- Find the window/sheet containing the affiliation field.
         set affField to missing value
         set affWin to missing value
-        repeat with win in (windows of process "DuckoApp")
+        repeat with win in (windows of process "DuckoUITest")
             set affField to my findByAttr(win, "AXIdentifier", "affiliation-jid-field", 0, 30)
             if affField is not missing value then
                 set affWin to win

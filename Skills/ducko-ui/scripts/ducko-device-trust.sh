@@ -9,6 +9,10 @@
 #   ACTION: trust|untrust|verify
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 2 ]]; then
     echo "Usage: ducko-device-trust.sh DEVICE_ID ACTION" >&2
     exit 1
@@ -16,9 +20,6 @@ fi
 
 DEVICE_ID="$1"
 ACTION="$2"
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/ducko-helpers.sh"
 
 RESULT=$(osascript - "$DEVICE_ID" "$ACTION" << APPLESCRIPT
 $(ducko_as_handlers)
@@ -40,9 +41,9 @@ on run argv
     set targetId to btnPrefix & deviceID
 
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
-        repeat with win in (windows of process "DuckoApp")
+        repeat with win in (windows of process "DuckoUITest")
             set btn to my findByAttr(win, "AXIdentifier", targetId, 0, 30)
             if btn is not missing value then
                 click btn

@@ -8,11 +8,13 @@
 # Usage: ducko-remove-bookmark.sh ROOM_JID
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 ROOM_JID="${1:?Usage: ducko-remove-bookmark.sh ROOM_JID}"
 
 # Ensure Bookmarks sheet is open
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/ducko-helpers.sh"
 "$SCRIPT_DIR/ducko-bookmarks.sh" > /dev/null 2>&1 || true
 
 RESULT=$(osascript - "$ROOM_JID" << APPLESCRIPT
@@ -21,11 +23,11 @@ on run argv
     set roomJID to item 1 of argv
     set targetRowId to "bookmark-row-" & roomJID
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
         -- Find the bookmark row, then the remove button nested within it.
         set bookmarkRow to missing value
-        repeat with win in (windows of process "DuckoApp")
+        repeat with win in (windows of process "DuckoUITest")
             set bookmarkRow to my findByAttr(win, "AXIdentifier", targetRowId, 0, 30)
             if bookmarkRow is not missing value then exit repeat
         end repeat

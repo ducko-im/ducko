@@ -12,6 +12,10 @@
 #   EMAIL:    Optional email address
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 3 ]]; then
     echo "Usage: ducko-register.sh SERVER USERNAME PASSWORD [EMAIL]" >&2
     exit 1
@@ -21,9 +25,6 @@ SERVER="$1"
 USERNAME="$2"
 PASSWORD="$3"
 EMAIL="${4:-__none__}"
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/ducko-helpers.sh"
 
 RESULT=$(osascript - "$SERVER" "$USERNAME" "$PASSWORD" "$EMAIL" << APPLESCRIPT
 $(ducko_as_handlers)
@@ -46,8 +47,8 @@ on run argv
     set passwordArg to item 3 of argv
     set emailArg to item 4 of argv
     tell application "System Events"
-        if not (exists process "DuckoApp") then return "ERROR: DuckoApp is not running"
-        set proc to process "DuckoApp"
+        if not (exists process "DuckoUITest") then return "ERROR: DuckoUITest is not running"
+        set proc to process "DuckoUITest"
         set frontmost of proc to true
         delay 1
         if not (exists window "Welcome" of proc) then return "ERROR: Welcome window not found"

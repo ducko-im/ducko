@@ -98,6 +98,12 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
             .appendingPathComponent("Ducko.app")
     }
 
+    /// The ducko-ui automation scripts, beside the packaged bundle at the
+    /// repo root.
+    static var scriptsDirectory: URL {
+        appBundleURL.deletingLastPathComponent().appending(path: "Skills/ducko-ui/scripts")
+    }
+
     /// Path to the inner executable inside `appBundleURL`. Used only for the
     /// existence-on-disk skip predicate; `NSWorkspace.openApplication` takes
     /// the bundle URL directly.
@@ -118,17 +124,25 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
         AXIsProcessTrusted()
     }
 
+    /// Layer gate for the UI suites, which take the foreground: they run in a
+    /// VM (the Lume VM), or on this Mac only when `DUCKO_UI_HOST=1` says the
+    /// user asked for that.
+    static var mayDriveGUI: Bool {
+        if ProcessInfo.processInfo.environment["DUCKO_UI_HOST"] == "1" { return true }
+        var hypervisor: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        return sysctlbyname("kern.hv_vmm_present", &hypervisor, &size, nil, 0) == 0 && hypervisor == 1
+    }
+
     /// Per-test skip predicate for the `ducko-import.sh` "app not running"
-    /// assertion: true only when no DuckoApp of any provenance (installed,
-    /// `swift run DuckoApp`, or a test bundle) is present. The script guards on
-    /// `exists process "DuckoApp"`, so the assertion is valid only when none is
-    /// running; rather than terminate a developer's instance, the test skips.
-    /// Matches by process name and bundle identifier to cover bundleless
-    /// `swift run` instances (no `im.ducko` identifier) as well as installed
-    /// builds.
-    static var noDuckoAppRunning: Bool {
+    /// assertion: true only when no `DuckoUITest` copy from the ducko-ui
+    /// scripts is present. The script guards on `exists process "DuckoUITest"`,
+    /// so the assertion is valid only when none is running; rather than
+    /// terminate a running copy, the test skips. Matches by executable name,
+    /// which is the process name the script checks, and by bundle identifier.
+    static var noTestCopyRunning: Bool {
         NSWorkspace.shared.runningApplications.allSatisfy { app in
-            app.localizedName != "DuckoApp" && app.bundleIdentifier != "im.ducko"
+            app.executableURL?.lastPathComponent != "DuckoUITest" && app.bundleIdentifier != "im.ducko.uitest"
         }
     }
 
@@ -995,11 +1009,12 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
 
     func runRosterNoticeScript(target: String) async throws -> Int32 {
         guard let pid = process?.processIdentifier else { throw TestHarnessError.elementNotFound(identifier: "app") }
-        let script = Self.appBundleURL.deletingLastPathComponent().appending(path: "Skills/ducko-ui/scripts/ducko-dismiss-roster-notice.sh")
+        let script = Self.scriptsDirectory.appending(path: "ducko-dismiss-roster-notice.sh")
         let command = Process()
         command.executableURL = URL(fileURLWithPath: "/bin/bash")
         command.arguments = [script.path, target]
-        command.environment = environment.merging(["DUCKO_PID": String(pid)]) { _, value in value }
+        // The layer gate already let this run drive the GUI here, so the script's own gate is told the same.
+        command.environment = environment.merging(["DUCKO_PID": String(pid), "DUCKO_UI_HOST": "1"]) { _, value in value }
         try command.run()
         let deadline = ContinuousClock.now + .seconds(10)
         while command.isRunning, ContinuousClock.now < deadline {

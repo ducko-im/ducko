@@ -7,6 +7,10 @@
 #   remove:    Contact > Remove Contact… (⌘⌫), then confirm
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 2 ]]; then
     echo "Usage: ducko-contact-menu.sh <JID> <get-info|history|send-file|remove>" >&2
     exit 1
@@ -14,8 +18,6 @@ fi
 
 JID="$1"
 ACTION="$2"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/ducko-helpers.sh"
 
 case "$ACTION" in
     get-info)  ITEM="Get Info" ;;
@@ -37,9 +39,9 @@ on run argv
     set itemName to item 3 of argv
     set targetId to "contact-row-" & contactJID
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_raise_window_by_id "contact-list" "Contacts window not found" "contactWin")
             -- Refuse to run over a leftover dialog, which would block or intercept the menu command.
             if (count of sheets of contactWin) > 0 then return "ERROR: a dialog is already open in the Contacts window"

@@ -9,10 +9,11 @@
 #   TEXT: set the room topic to TEXT
 set -euo pipefail
 
-TEXT="${1:-__none__}"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
+TEXT="${1:-__none__}"
 
 RESULT=$(osascript - "$TEXT" << APPLESCRIPT
 $(ducko_as_handlers)
@@ -32,15 +33,14 @@ on findByRole(el, roleWanted, depth, maxDepth)
     return missing value
 end findByRole
 
-
 on run argv
     set topicText to item 1 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
         -- Find the chat window (window containing message-field).
         set chatWin to missing value
-        repeat with win in (windows of process "DuckoApp")
+        repeat with win in (windows of process "DuckoUITest")
             if (my findByAttr(win, "AXIdentifier", "message-field", 0, 30)) is not missing value then
                 set chatWin to win
                 exit repeat

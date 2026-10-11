@@ -8,6 +8,10 @@
 # the frontmost app, so the instance has to stay frontmost while it runs.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 1 ]]; then
     echo "Usage: ducko-status.sh STATUS [MESSAGE]" >&2
     exit 1
@@ -16,18 +20,15 @@ fi
 STATUS="$1"
 MESSAGE="${2:-__none__}"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/ducko-helpers.sh"
-
 RESULT=$(osascript - "$STATUS" "$MESSAGE" << APPLESCRIPT
 $(ducko_as_handlers)
 on run argv
     set statusArg to item 1 of argv
     set messageArg to item 2 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_raise_window_by_id "contact-list" "Contacts window not found" "contactWin")
 
             -- Map status arg to display name

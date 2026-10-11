@@ -39,6 +39,8 @@ swift test --package-path IntegrationTests                          # All suites
 swift test --package-path IntegrationTests --filter AvatarTests     # One suite
 ```
 
+The UI suites launch the app and take the foreground, so outside a VM they skip unless `DUCKO_UI_HOST=1` is set.
+
 `IntegrationTests/.env.test` is loaded automatically on first use; sourcing it in the shell is optional and still overrides.
 
 ## Code Style

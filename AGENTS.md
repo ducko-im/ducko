@@ -51,6 +51,8 @@ Note: `swift build` only compiles executable and library targets. Use `swift bui
 
 After `swift build`, binaries are directly runnable from `.build/debug/` (e.g., `.build/debug/DuckoCLI`).
 
+GUI automation (smoke tests, the ducko-ui scripts, the `UILayer` integration suites) runs in the Lume VM, so the user's Mac is not disturbed. Run a ducko-ui script with `zsh Skills/lume-vm/scripts/vm.sh ui <script> [args]` and the integration suites with `vm.sh itest [swift test args]`. Both first copy the working tree into the VM. Run them on the Mac only when the user asks for that, with `DUCKO_UI_HOST=1`. `/preview` runs on the Mac. When another session holds the VM, wait or ask the user; never fall back to the Mac.
+
 `Sources/DuckoTestSupport/` is a regular library target that hosts shared test mocks and helpers (`MockPersistenceStore`, `MockTranscriptStore`, `NullCredentialStore`, `boundedOutcome`). Multiple test targets (`DuckoCoreTests`, `DuckoUITests`) depend on it via plain `import DuckoTestSupport`. Add new shared fakes here when more than one test target needs them — single-target fakes stay in the target's own folder.
 
 ### TLS integration fixtures
@@ -80,6 +82,8 @@ swift test --package-path IntegrationTests --filter "Alice connects to server"
 ```
 
 Sourcing the file in the shell still works and overrides any value from the file.
+
+The `UILayer` suites launch the app and take the foreground, so on the Mac they skip unless `DUCKO_UI_HOST=1` is set. Run them in the Lume VM with `zsh Skills/lume-vm/scripts/vm.sh itest`, which runs only `UILayer` unless given a `--filter`. A VM run and a Mac run of the integration suites must not overlap: both use the same live accounts, and each runs the bootstrap reset.
 
 The CLI suites spawn the root package's `.build/debug/DuckoCLI`, which `swift test --package-path IntegrationTests` does not rebuild. Run `swift build --product DuckoCLI` after changing CLI code, or the suites drive a stale binary.
 

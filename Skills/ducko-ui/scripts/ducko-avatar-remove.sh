@@ -7,20 +7,22 @@
 # Usage: ducko-avatar-remove.sh
 set -euo pipefail
 
-# Ensure profile sheet is open
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
+# Ensure profile sheet is open
 "$SCRIPT_DIR/ducko-profile.sh" > /dev/null 2>&1 || true
 
 RESULT=$(osascript << APPLESCRIPT
 $(ducko_as_handlers)
 on run
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
         -- Find the window containing the profile sheet.
         set profileWin to missing value
-        repeat with win in (windows of process "DuckoApp")
+        repeat with win in (windows of process "DuckoUITest")
             if (my findByAttr(win, "AXIdentifier", "profile-edit-view", 0, 30)) is not missing value then
                 set profileWin to win
                 exit repeat

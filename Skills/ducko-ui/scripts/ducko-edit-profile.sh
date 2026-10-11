@@ -7,6 +7,10 @@
 # Usage: ducko-edit-profile.sh [--fullname NAME] [--nickname NICK] [--email EMAIL] [--save]
 set -euo pipefail
 
+SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPTS/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 FULLNAME="__none__"
 NICKNAME="__none__"
 EMAIL="__none__"
@@ -24,9 +28,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPTS/ducko-helpers.sh"
 
 # Open profile sheet
 "$SCRIPTS/ducko-profile.sh" > /dev/null 2>&1
@@ -53,11 +54,11 @@ on run argv
     set emailArg to item 3 of argv
     set saveArg to item 4 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
         -- Find the window containing the profile edit view.
         set profileWin to missing value
-        repeat with win in (windows of process "DuckoApp")
+        repeat with win in (windows of process "DuckoUITest")
             if (my findByAttr(win, "AXIdentifier", "profile-edit-view", 0, 30)) is not missing value then
                 set profileWin to win
                 exit repeat

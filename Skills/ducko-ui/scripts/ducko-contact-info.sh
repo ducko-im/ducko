@@ -6,6 +6,10 @@
 #   remove:    click Remove Contact and confirm
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 1 ]]; then
     echo "Usage: ducko-contact-info.sh <JID> [block|remove]" >&2
     exit 1
@@ -13,8 +17,6 @@ fi
 
 JID="$1"
 ACTION="${2:-__none__}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/ducko-helpers.sh"
 
 if [[ "$ACTION" == "remove" ]]; then
     ducko_require_single_app
@@ -27,9 +29,9 @@ on run argv
     set infoAction to item 2 of argv
     set targetId to "contact-row-" & contactJID
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_raise_window_by_id "contact-list" "Contacts window not found" "contactWin")
             $(ducko_as_find_element_by_id 'targetId' 'contactWin' 'contact row not found for " & contactJID & "' 'targetRow')
             $(ducko_as_click_context_menu_item "Get Info" 'targetRow' 'contactWin')
@@ -61,9 +63,9 @@ on run argv
     set buttonId to item 1 of argv
     set infoAction to item 2 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_find_window_by_id "contact-info-window" "Contact Info window not found" "infoWin")
             -- A leftover confirmation would otherwise be the one the remove step confirms.
             if infoAction is "remove" and (count of sheets of infoWin) > 0 then return "ERROR: a dialog is already open in the Contact Info window"

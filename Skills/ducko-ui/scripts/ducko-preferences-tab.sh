@@ -5,10 +5,11 @@
 # Usage: ducko-preferences-tab.sh <General|Accounts|Chat|Status|Appearance|Advanced>
 set -euo pipefail
 
-TAB="${1:?Usage: ducko-preferences-tab.sh <General|Accounts|Chat|Status|Appearance|Advanced>}"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
+TAB="${1:?Usage: ducko-preferences-tab.sh <General|Accounts|Chat|Status|Appearance|Advanced>}"
 
 RESULT=$(osascript - "$TAB" << APPLESCRIPT
 $(ducko_as_handlers)
@@ -17,9 +18,9 @@ on run argv
     set tabNames to {"General", "Accounts", "Chat", "Status", "Appearance", "Advanced"}
     if tabName is not in tabNames then return "ERROR: unknown tab: " & tabName
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_raise_window_by_id "preferences-window" "Settings window not found (open it with ducko-preferences.sh first)" "settingsWin")
 
             -- Click the tab button in the toolbar

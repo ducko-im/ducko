@@ -9,6 +9,10 @@
 #   custom:             "Custom…", opening the Custom Status sheet on Contacts
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 1 ]]; then
     echo "Usage: ducko-status-menu.sh <available|away|xa|dnd|offline|toggle|custom>" >&2
     exit 1
@@ -29,9 +33,9 @@ on run argv
     set statusAction to item 1 of argv
     set statusLabel to item 2 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             try
                 set statusMenu to menu 1 of menu bar item "Status" of menu bar 1
             on error

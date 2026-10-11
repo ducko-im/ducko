@@ -11,13 +11,15 @@
 #   NEW_PASSWORD: The new password to set
 set -euo pipefail
 
+SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPTS/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 1 ]]; then
     echo "Usage: ducko-change-password.sh NEW_PASSWORD" >&2
     exit 1
 fi
 
-SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPTS/ducko-helpers.sh"
 NEW_PASSWORD="$1"
 
 # Open Preferences > Accounts
@@ -47,10 +49,10 @@ end findAccountRow
 on run argv
     set newPw to item 1 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
         set prefsWin to missing value
-        repeat with win in (windows of process "DuckoApp")
+        repeat with win in (windows of process "DuckoUITest")
             set acctRow to my findAccountRow(win, 0, 30)
             if acctRow is not missing value then
                 set prefsWin to win
@@ -66,7 +68,7 @@ on run argv
         -- A SwiftUI Menu bridges as a menu/pop-up button, not AXButton, so match by identifier alone.
         set actionsMenu to my findByAttr(prefsWin, "AXIdentifier", "account-actions-menu", 0, 30)
         if actionsMenu is missing value then return "ERROR: Actions menu not found (is an account row selected and connected?)"
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
 $(ducko_as_click_context_menu_item "Change Password…" 'actionsMenu' 'prefsWin' "" continue)
         end tell
         delay 0.5

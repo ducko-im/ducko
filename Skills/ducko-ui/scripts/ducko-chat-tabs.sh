@@ -22,6 +22,10 @@
 # AXUIElement and is authoritative.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 if [[ $# -lt 1 ]]; then
     echo "Usage: ducko-chat-tabs.sh <list|select|close|next|previous|close-all> [JID]" >&2
     exit 1
@@ -29,8 +33,6 @@ fi
 
 ACTION="$1"
 JID="${2:-}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/ducko-helpers.sh"
 
 if [[ "$ACTION" == "select" || "$ACTION" == "close" ]] && [[ -z "$JID" ]]; then
     echo "Usage: ducko-chat-tabs.sh $ACTION <JID>" >&2
@@ -43,9 +45,9 @@ on run argv
     set tabAction to item 1 of argv
     set tabJID to item 2 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_find_window_by_id "chat-tab-bar" "chat window with tab bar not found" "chatWin")
             if tabAction is "list" then
                 set tabList to ""

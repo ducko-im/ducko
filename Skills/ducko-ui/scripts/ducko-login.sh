@@ -9,11 +9,12 @@
 # Usage: ducko-login.sh JID PASSWORD
 set -euo pipefail
 
-JID="${1:?Usage: ducko-login.sh JID PASSWORD}"
-PASSWORD="${2:?Usage: ducko-login.sh JID PASSWORD}"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
+JID="${1:?Usage: ducko-login.sh JID PASSWORD}"
+PASSWORD="${2:?Usage: ducko-login.sh JID PASSWORD}"
 
 RESULT=$(osascript - "$JID" "$PASSWORD" << APPLESCRIPT
 $(ducko_as_handlers)
@@ -21,8 +22,8 @@ on run argv
     set jid to item 1 of argv
     set pw to item 2 of argv
     tell application "System Events"
-        if not (exists process "DuckoApp") then return "ERROR: DuckoApp is not running"
-        set proc to process "DuckoApp"
+        if not (exists process "DuckoUITest") then return "ERROR: DuckoUITest is not running"
+        set proc to process "DuckoUITest"
         set frontmost of proc to true
         delay 1
         if not (exists window "Welcome" of proc) then return "ERROR: Welcome window not found"

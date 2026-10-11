@@ -120,6 +120,60 @@ struct ScriptValidationTests {
         #expect(source.components(separatedBy: "return \"ok\"").count - 1 == 1)
     }
 
+    @Test(arguments: zip([("0", nil), ("1", nil), ("0", "1"), ("0", "0")] as [(String, String?)], [false, true, true, false]))
+    func `location gate passes only in the VM or with the host opt-in`(_ environment: (hypervisor: String, hostOptIn: String?), _ passes: Bool) throws {
+        let (hypervisor, hostOptIn) = environment
+        let helpers = ScriptRunner.scriptsDirectory.appendingPathComponent("ducko-helpers.sh").path
+        let result = try ScriptRunner.withStubs(["sysctl": "#!/bin/bash\necho \(hypervisor)\n"]) { stubs in
+            var environment = ["PATH": stubs.path]
+            environment["DUCKO_UI_HOST"] = hostOptIn
+            return try ScriptRunner.bash(
+                ["-c", "source \"$1\"; ducko_require_vm_or_host_opt_in", "bash", helpers],
+                environment: environment
+            )
+        }
+
+        #expect((result.exitCode == 0) == passes)
+        if !passes {
+            #expect(result.stderr.contains("vm.sh ui"))
+            #expect(result.stderr.contains("DUCKO_UI_HOST"))
+        }
+    }
+
+    @Test func `no script targets the DuckoApp process by name`() throws {
+        for script in try automationScripts() {
+            let source = try String(contentsOf: ScriptRunner.scriptsDirectory.appendingPathComponent(script), encoding: .utf8)
+            #expect(!source.contains("process \"DuckoApp\""), "\(script) can reach an installed Ducko")
+        }
+    }
+
+    @Test(arguments: try automationScripts())
+    func `every script stops at the location gate before running anything`(_ script: String) throws {
+        let captured = try ScriptRunner.capture(script, arguments: [], hostOptIn: false)
+        #expect(captured.result.exitCode != 0)
+        #expect(captured.result.stderr.contains("vm.sh ui"))
+        #expect(captured.invocations.isEmpty)
+    }
+
+    @Test func `ducko-attach leaves the panel helper alone when opening the panel failed`() throws {
+        let captured = try ScriptRunner.capture(
+            "ducko-attach.sh", arguments: ["/etc/hosts"], response: "ERROR: attachment-button not found", environment: ["DUCKO_PID": "4242"]
+        )
+        #expect(captured.result.exitCode == 1)
+        #expect(captured.result.stderr.contains("attachment-button not found"))
+        #expect(!captured.result.stdout.contains("File attached"))
+        #expect(captured.invocations == ["osascript"])
+    }
+
+    @Test func `ducko-attach reports no success when the panel stayed open`() throws {
+        let captured = try ScriptRunner.capture(
+            "ducko-attach.sh", arguments: ["/etc/hosts"], environment: ["DUCKO_PID": "4242", "CAPTURE_FAILING": "swift"]
+        )
+        #expect(captured.result.exitCode == 1)
+        #expect(!captured.result.stdout.contains("File attached"))
+        #expect(captured.invocations == ["osascript", "swift"])
+    }
+
     private func emitContextMenuSnippet(mode: String) throws -> String {
         let helpers = ScriptRunner.scriptsDirectory.appendingPathComponent("ducko-helpers.sh").path
         let result = try ScriptRunner.bash([
@@ -134,7 +188,9 @@ struct ScriptValidationTests {
 private extension ScriptValidationTests {
     @Test(arguments: handlerScriptCases)
     func `shared handler wrappers compile and preserve argv without running the app`(_ fixture: HandlerScriptCase) throws {
-        let result = try ScriptRunner.capture(fixture.script, arguments: fixture.arguments, response: fixture.response)
+        let result = try ScriptRunner.capture(
+            fixture.script, arguments: fixture.arguments, response: fixture.response, environment: fixture.environment
+        )
         #expect(result.result.exitCode == 0, "Wrapper failed: \(result.result.stderr)")
         #expect(result.compilerExitCode == 0, "AppleScript failed: \(result.compilerErrors)")
         #expect(result.argumentsByCall == fixture.earlierCallArguments + [fixture.appleScriptArguments])
@@ -166,12 +222,22 @@ private struct HandlerScriptCase {
     var invocations = ["osascript"]
     /// Arguments of the osascript calls before the last, for scripts that call it more than once.
     var earlierCallArguments: [[String]] = []
+    var environment: [String: String] = [:]
+}
+
+/// Every `ducko-*.sh` the skill runs, leaving out the sourced helper library.
+private func automationScripts() throws -> [String] {
+    try FileManager.default.contentsOfDirectory(atPath: ScriptRunner.scriptsDirectory.path)
+        .filter { $0.hasPrefix("ducko-") && $0.hasSuffix(".sh") && $0 != "ducko-helpers.sh" }
+        .sorted()
 }
 
 private let scriptSpecialArgument = "quote\" and ' newline\n dollar$ backtick` backslash\\ $(not-a-command)"
 
 private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-add-affiliation.sh", arguments: ["room@example.com", scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument], invocations: ["ducko-room-settings.sh", "ducko-room-settings-tab.sh", "sleep", "osascript"]),
+    HandlerScriptCase(script: "ducko-attach.sh", arguments: ["/etc/hosts"], appleScriptArguments: [], invocations: ["osascript", "swift"], environment: ["DUCKO_PID": "4242"]),
+    HandlerScriptCase(script: "ducko-avatar.sh", arguments: ["/etc/hosts"], appleScriptArguments: [], invocations: ["ducko-profile.sh", "osascript", "swift"], environment: ["DUCKO_PID": "4242"]),
     HandlerScriptCase(script: "ducko-avatar-remove.sh", arguments: [], appleScriptArguments: [], invocations: ["ducko-profile.sh", "osascript"]),
     HandlerScriptCase(script: "ducko-chat-tabs.sh", arguments: ["close-all"], appleScriptArguments: ["-", "close-all", ""]),
     HandlerScriptCase(script: "ducko-change-password.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument], invocations: ["ducko-preferences.sh", "ducko-preferences-tab.sh", "sleep", "osascript"]),

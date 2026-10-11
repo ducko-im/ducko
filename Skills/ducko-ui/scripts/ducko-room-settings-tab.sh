@@ -10,10 +10,11 @@
 # Usage: ducko-room-settings-tab.sh <General|Members>
 set -euo pipefail
 
-TAB="${1:?Usage: ducko-room-settings-tab.sh <General|Members>}"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
+TAB="${1:?Usage: ducko-room-settings-tab.sh <General|Members>}"
 
 RESULT=$(osascript - "$TAB" << APPLESCRIPT
 $(ducko_as_handlers)
@@ -22,7 +23,7 @@ on run argv
     set tabNames to {"General", "Members"}
     if tabName is not in tabNames then return "ERROR: unknown tab: " & tabName
     tell application "System Events"
-        set proc to process "DuckoApp"
+        set proc to process "DuckoUITest"
         set frontmost of proc to true
         delay 0.3
         -- Find the window/sheet containing the room settings view.

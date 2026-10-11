@@ -9,19 +9,20 @@
 #   QUERY:    reveals the field and types QUERY to filter the roster
 set -euo pipefail
 
-QUERY="${1:-}"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
+QUERY="${1:-}"
 
 RESULT=$(osascript - "$QUERY" << APPLESCRIPT
 $(ducko_as_handlers)
 on run argv
     set query to item 1 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_raise_window_by_id "contact-list" "Contacts window not found" "contactWin" 0.2)
 
             if query is "" then

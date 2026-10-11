@@ -1,9 +1,13 @@
 #!/bin/bash
 # Upload an avatar image via the profile sheet.
 # Opens the profile sheet if not already open, clicks "Change Photo",
-# and navigates the file importer to the specified image.
+# fills the file importer through ducko-file-panel.swift, and checks that it closed.
 # Usage: ducko-avatar.sh IMAGE_PATH
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
 
 IMAGE_PATH="${1:?Usage: ducko-avatar.sh IMAGE_PATH}"
 
@@ -18,23 +22,18 @@ if [[ ! -f "$IMAGE_PATH" ]]; then
 fi
 
 # Ensure profile sheet is open
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/ducko-helpers.sh"
 "$SCRIPT_DIR/ducko-profile.sh" > /dev/null 2>&1 || true
 
-RESULT=$(osascript - "$IMAGE_PATH" << APPLESCRIPT
+RESULT=$(osascript << APPLESCRIPT
 $(ducko_as_handlers)
-on run argv
-    set imagePath to item 1 of argv
-
+on run
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.5
 
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             $(ducko_as_find_window_by_id "profile-edit-view" "Profile sheet not found" "profileWin")
             $(ducko_as_click_element_by_id '"profile-change-photo-button"' 'profileWin' "Change Photo button not found")
-            $(ducko_as_navigate_file_picker 'imagePath')
             return "ok"
         end tell
     end tell
@@ -42,4 +41,5 @@ end run
 APPLESCRIPT
 )
 
-ducko_check_result "$RESULT" "Avatar uploaded"
+ducko_fill_open_panel "$RESULT" "$IMAGE_PATH"
+echo "Avatar uploaded"

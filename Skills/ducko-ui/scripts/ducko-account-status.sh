@@ -7,6 +7,10 @@
 #   offline disconnects just that account; any other status connects it if needed
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 usage() {
     echo "Usage: ducko-account-status.sh ACCOUNT <available|away|xa|dnd|offline>" >&2
     exit 1
@@ -28,7 +32,7 @@ on run argv
     set accountLabel to item 1 of argv
     set statusLabel to item 2 of argv
     tell application "System Events"
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             try
                 set extraItem to menu bar item 1 of menu bar 2
                 click extraItem

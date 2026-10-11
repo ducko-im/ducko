@@ -9,15 +9,19 @@
 #   hideOffline:     toggle "Hide Offline"
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/ducko-helpers.sh"
+ducko_require_vm_or_host_opt_in
+
 ACTION="${1:-__none__}"
 
 RESULT=$(osascript - "$ACTION" << 'APPLESCRIPT'
 on run argv
     set sortAction to item 1 of argv
     tell application "System Events"
-        set frontmost of process "DuckoApp" to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
-        tell process "DuckoApp"
+        tell process "DuckoUITest"
             -- Map sortAction to its View-menu label.
             set targetLabel to ""
             if sortAction is not "__none__" then

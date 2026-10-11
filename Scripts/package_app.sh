@@ -25,7 +25,7 @@ fi
 swift build -c "$CONF" --arch arm64
 BIN_DIR=$(swift build -c "$CONF" --arch arm64 --show-bin-path)
 
-APP="$ROOT/${APP_NAME}.app"
+APP=${APP_BUNDLE:-"$ROOT/${APP_NAME}.app"}
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 
