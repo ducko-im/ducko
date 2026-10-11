@@ -34,6 +34,7 @@ DuckoApp (GUI) and DuckoCLI (CLI) are independent consumers of DuckoCore. When a
 - **CLI formatters**: Update `ANSIFormatter`, `PlainFormatter`, and `JSONFormatter` for any new `XMPPEvent` cases or changed event semantics.
 - **REPL commands**: Add corresponding REPL commands (e.g., `/pm`, `/moderate`) when the GUI gets new interactive features. Add the case to `REPLCommand` in `Sources/DuckoCLI/REPL/`, then the handler in the matching `REPL*Commands.swift` file there, which `REPL.swift` dispatches to.
 - **ducko-ui scripts**: Add automation scripts in `Skills/ducko-ui/scripts/` for new UI elements (buttons, context menu items, sheets). Update the ducko-ui skill's script inventory and accessibility identifier list.
+- **Website reference states**: When a change alters how a state in the website's reference manifest looks, run the demo-screenshots reference mode after the change lands, and update the website's recreation of that window in `ducko-im/ducko-im.github.io` to match.
 
 ## Build & Test
 

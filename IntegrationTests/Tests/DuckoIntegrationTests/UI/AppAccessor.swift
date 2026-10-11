@@ -747,6 +747,13 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
         }
     }
 
+    /// Resolves `identifier` and reads its label (see `AXDriver.readLabel`). Retries like `value(identifier:)`.
+    func label(identifier: String) async throws -> String? {
+        try await retryOnStaleElement(identifier: identifier) {
+            try self.axDriver.readLabel(identifier: identifier)
+        }
+    }
+
     /// Walks `identifier`'s subtree for an element of `role` whose value or
     /// title contains `substring`. Returns `true` on first match.
     func containsDescendant(

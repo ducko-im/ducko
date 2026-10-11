@@ -161,10 +161,15 @@ extension DuckoIntegrationTests.UILayer {
                         timeout: TestTimeout.event
                     )
 
+                    // The search text hides the contact's row. Once it is cleared, the row shows the same count as the tab.
+                    try await app.replaceText("", intoIdentifier: "contact-search-field")
+                    try await app.waitForValue("2 unread messages", identifier: "contact-row-\(bob.jid)")
+
                     // Going to the chat is what makes it read: the count clears and the contact is told. This is
                     // also what shows the check for no read marker above could have failed.
                     try await app.raiseWindow(containing: "message-field")
                     try await app.waitForValue("", identifier: "chat-tab-\(bob.jid)")
+                    try await app.waitForValue("", identifier: "contact-row-\(bob.jid)")
                     _ = try await bobREPL.waitForOutput(containing: "read marker", timeout: TestTimeout.event)
                 }
             }
@@ -174,7 +179,7 @@ extension DuckoIntegrationTests.UILayer {
             if: AppAccessor.appBundleExists && AppAccessor.isAccessibilityTrusted && CLIProcess.binaryExists,
             "Ducko.app missing, AX trust not granted, or DuckoCLI binary missing"
         ))
-        @MainActor func `bob composing notification shows as typing on the chat's tab`() async throws {
+        @MainActor func `bob composing notification shows as typing on the chat's tab and contact row`() async throws {
             try await UISeededApp.withSeededApp { app in
                 let bob = TestCredentials.bob
                 let alice = TestCredentials.alice
@@ -223,11 +228,13 @@ extension DuckoIntegrationTests.UILayer {
                 try await chatStates.sendChatState(.composing, to: aliceTarget)
 
                 try await app.waitForValue("Typing", identifier: "chat-tab-\(bob.jid)", timeout: TestTimeout.event)
+                try await app.waitForValue("Typing", identifier: "contact-row-\(bob.jid)", timeout: TestTimeout.event)
 
                 try await chatStates.sendChatState(.active, to: aliceTarget)
 
                 // An empty value is the tab saying nothing: the contact is not typing and nothing is unread.
                 try await app.waitForValue("", identifier: "chat-tab-\(bob.jid)", timeout: TestTimeout.event)
+                try await app.waitForValue("", identifier: "contact-row-\(bob.jid)", timeout: TestTimeout.event)
             }
         }
 

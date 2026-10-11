@@ -293,7 +293,7 @@ After a rebuild of the copy from changed sources, or a change of `content.json`,
 
 ### R4: Check the Captures
 
-Copy `out` to the host (`zsh Skills/lume-vm/scripts/vm.sh pull /Users/lume/work/out <host folder>`) and read every PNG. Accessibility asserts your own status, the tab badges and typing, the tab overflow control, the input text, the editing bar, the selected row, collapsed groups, the empty chat, the key window, the first tab's last message, the last outgoing message's delivery mark and the Dock badge. Only the PNGs show the rest:
+Copy `out` to the host (`zsh Skills/lume-vm/scripts/vm.sh pull /Users/lume/work/out <host folder>`) and read every PNG. Accessibility asserts your own status, the badges and typing on tabs and on contact and room rows, the tab overflow control, the input text, the editing bar, the selected row, collapsed groups, the empty chat, the key window, the first tab's last message, the last outgoing message's delivery mark and the Dock badge. Only the PNGs show the rest:
 
 - hover effects: the status picker's fill, Marco's tab close button, the first grouped bubble's metadata
 - the accent selection in `contacts-selected-key` and the unemphasized one in `contacts-selected-inactive`
@@ -322,7 +322,7 @@ Move `out` into the website's `reference/captures/`. Then stop the stub (`pkill 
 
 A state's fields: `key` (the window that is key, by default the manifest's window), `tabs` (conversation variants, the first selected; default `["lena"]`), `overflow` (true when the tabs don't all fit the bar), `lastOutgoingStatus`, `closeAllTabs`, `rooms` (room keys to keep), `unread` (unread counts by conversation variant, such as `{"marco": 3}`), `collapsedGroups`, `selectedContact`, `ownStatus` (`available`, `away`, `xa`, `dnd`, `offline`), `typing` (contacts), `input` (draft text), `editing` (a message id), `hover` (`{"statusPicker": true}`, `{"tab": <variant>}` or `{"message": <id>}`) and `menu` (`"status"` or `{"message": <id>}`). A manifest id without an entry is skipped as "no content entry".
 
-Tabs past the bar's width go into its overflow menu, which shows no badge or typing, so give `unread` and `typing` only to tabs that fit.
+Tabs past the bar's width go into its overflow menu, which shows no badge or typing, so give no `unread` or `typing` to a conversation whose tab overflows. Contact and room rows show them too, with or without a tab, and are checked as well unless the contact's group is collapsed.
 
 ### capture.json
 

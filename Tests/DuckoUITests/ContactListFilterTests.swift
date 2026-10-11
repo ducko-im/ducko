@@ -28,6 +28,7 @@ struct ContactListFilterTests {
         hideOffline: Bool = false,
         sortMode: ContactListSortMode = .alphabetical,
         online: Set<String> = [],
+        unread: Set<String> = [],
         priority: [String: Int] = [:],
         dates: [String: Date] = [:]
     ) -> [ContactGroup] {
@@ -38,6 +39,7 @@ struct ContactListFilterTests {
             sortMode: sortMode,
             context: ContactListFilter.PresenceContext(
                 isOnline: { online.contains($0.jid.localPart ?? "") },
+                hasUnread: { unread.contains($0.jid.localPart ?? "") },
                 statusPriority: { priority[$0.jid.localPart ?? ""] ?? 4 },
                 lastMessageDate: { dates[$0.jid.localPart ?? ""] }
             )
@@ -76,6 +78,17 @@ struct ContactListFilterTests {
         #expect(result.count == 1)
         #expect(result[0].id == "g1")
         #expect(result[0].contacts.map(\.jid.localPart) == ["alice"])
+    }
+
+    @Test func `hideOffline keeps an offline contact with unread messages`() {
+        let groups = [
+            Self.group([Self.contact("alice"), Self.contact("bob")], id: "g1", name: "G1"),
+            Self.group([Self.contact("carol")], id: "g2", name: "G2")
+        ]
+        let result = Self.run(groups, hideOffline: true, unread: ["bob"])
+        #expect(result.count == 1)
+        #expect(result[0].id == "g1")
+        #expect(result[0].contacts.map(\.jid.localPart) == ["bob"])
     }
 
     @Test func `hideOffline disabled retains offline contacts`() {

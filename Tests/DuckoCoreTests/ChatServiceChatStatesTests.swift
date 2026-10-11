@@ -50,5 +50,28 @@ enum ChatServiceChatStatesTests {
             )
             #expect(service.typingStates[testAccountID]?[contactJID] == .active)
         }
+
+        @Test
+        @MainActor
+        func `typing ends once the contact's last session goes offline, not before`() async throws {
+            let environment = AppEnvironment(store: MockPersistenceStore(), transcripts: MockTranscriptStore(), credentialStore: NullCredentialStore())
+            // Each event reaches both services, in the order the environment's dispatch hands it to them.
+            func deliver(_ event: XMPPEvent) async {
+                await environment.chatService.handleEvent(event, accountID: testAccountID)
+                await environment.presenceService.handleEvent(event, accountID: testAccountID)
+            }
+            let laptop = try JID.full(#require(FullJID(bareJID: contactJID, resourcePart: "laptop")))
+            let phone = try JID.full(#require(FullJID(bareJID: contactJID, resourcePart: "phone")))
+            await deliver(.presenceUpdated(from: laptop, presence: XMPPPresence()))
+            await deliver(.presenceUpdated(from: phone, presence: XMPPPresence()))
+            await deliver(.chatStateChanged(from: contactJID, state: .composing))
+
+            // The phone going away leaves the laptop, which may be the one typing and would not say so again.
+            await deliver(.presenceUpdated(from: phone, presence: XMPPPresence(type: .unavailable)))
+            #expect(environment.chatService.isPartnerTyping(jidString: contactJID.description, accountID: testAccountID))
+
+            await deliver(.presenceUpdated(from: laptop, presence: XMPPPresence(type: .unavailable)))
+            #expect(!environment.chatService.isPartnerTyping(jidString: contactJID.description, accountID: testAccountID))
+        }
     }
 }

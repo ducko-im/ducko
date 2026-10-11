@@ -6,8 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Show unread messages and typing on contacts in the Contacts window, where their status dot sits and as on chat tabs, so you can see who wrote or is writing without opening the chat window
+
+### Changed
+
+- Show a room's unread count in the Contacts window where its status dot sits, matching contacts and chat tabs
+- Keep a contact with unread messages in the Contacts window while Hide Offline Contacts is on, until you read them
+
 ### Fixed
 
+- Fix a contact's typing indicator staying on after they go offline
 - Fix interactive mode and `ducko room join` printing each room message, each private message from a room and the "Joined" line twice
 - Fix a room that refused your join (wrong password, banned, nickname taken) counting as joined, with you listed as its only occupant
 - Fix Ducko rejoining a room you had just left when a check of your presence in the room was answered at the same moment

@@ -64,6 +64,28 @@ final class AXDriver {
         throw TestHarnessError.elementNotFound(identifier: identifier)
     }
 
+    /// Reads `kAXTitleAttribute`, falling back to `kAXDescriptionAttribute`, where SwiftUI publishes the label of an
+    /// element that combines its children. Nil or empty when the element has no label. Other failures throw like
+    /// `readValue(identifier:)`, so a caller's `retryOnStaleElement` retries a stale element.
+    func readLabel(identifier: String) throws -> String? {
+        let element = try resolveElement(identifier: identifier)
+        var value: AnyObject?
+        var err = AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &value)
+        if err != .success || (value as? String)?.isEmpty ?? true {
+            err = AXUIElementCopyAttributeValue(element, kAXDescriptionAttribute as CFString, &value)
+        }
+        if err == .success {
+            return value as? String
+        }
+        if err == .noValue || err == .attributeUnsupported {
+            return nil
+        }
+        if err == .apiDisabled {
+            throw TestHarnessError.axTrustMissing
+        }
+        throw TestHarnessError.elementNotFound(identifier: identifier)
+    }
+
     func collectLastIdentifier(matchingPrefix prefix: String, under identifier: String) throws -> String? {
         let container = try resolveElement(identifier: identifier)
         var matches: [String] = []

@@ -10,7 +10,8 @@ private func makeChatService(store: MockPersistenceStore, transcripts: MockTrans
 }
 
 private func makeConversation(
-    accountID: UUID, jid: BareJID, type: Conversation.ConversationType = .chat, lastMessageDate: Date? = nil
+    accountID: UUID, jid: BareJID, type: Conversation.ConversationType = .chat, lastMessageDate: Date? = nil,
+    unreadCount: Int = 0, occupantNickname: String? = nil
 ) -> Conversation {
     Conversation(
         id: UUID(),
@@ -20,7 +21,8 @@ private func makeConversation(
         isPinned: false,
         isMuted: false,
         lastMessageDate: lastMessageDate,
-        unreadCount: 0,
+        unreadCount: unreadCount,
+        occupantNickname: occupantNickname,
         createdAt: Date()
     )
 }
@@ -200,6 +202,29 @@ enum ChatServiceAccountScopingTests {
 
             #expect(service.isPartnerTyping(jidString: peer.description, accountID: accountA))
             #expect(!service.isPartnerTyping(jidString: peer.description, accountID: accountB))
+        }
+    }
+
+    struct UnreadScoping {
+        @Test
+        @MainActor
+        func `unreadCount reads only the account's 1-1 chat, not another account's, a private chat or a room`() async throws {
+            let store = MockPersistenceStore()
+            let service = makeChatService(store: store, transcripts: MockTranscriptStore())
+            let accountA = UUID()
+            let accountB = UUID()
+            let peer = try #require(BareJID.parse("peer@example.com"))
+            let room = try #require(BareJID.parse("room@conference.example.com"))
+            await store.addConversation(makeConversation(accountID: accountA, jid: peer, unreadCount: 2))
+            await store.addConversation(makeConversation(accountID: accountB, jid: room, unreadCount: 3, occupantNickname: "peer"))
+            await store.addConversation(makeConversation(accountID: accountA, jid: room, type: .groupchat, unreadCount: 4))
+            try await service.loadConversations(for: accountA)
+            try await service.loadConversations(for: accountB)
+
+            #expect(service.unreadCount(jidString: peer.description, accountID: accountA) == 2)
+            #expect(service.unreadCount(jidString: peer.description, accountID: accountB) == 0)
+            #expect(service.unreadCount(jidString: room.description, accountID: accountB) == 0)
+            #expect(service.unreadCount(jidString: room.description, accountID: accountA) == 0)
         }
     }
 

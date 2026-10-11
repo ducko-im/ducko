@@ -224,6 +224,10 @@ def peer_jid(content, conversation):
     return contact_jid(content, conversation["peer"])
 
 
+def unread_value(count):
+    return "1 unread message" if count == 1 else "%d unread messages" % count
+
+
 def build_info(work):
     version = subprocess.run(["git", "-C", REPO, "describe", "--tags", "--abbrev=0"], capture_output=True, text=True).stdout.strip()
     info = {
@@ -717,8 +721,7 @@ class Run:
                            lambda: self.quiet(pid, "exists", "chat-tab-overflow") == overflow, 5))
             for variant, jid in zip(spec["tabs"], tab_jids):
                 count = spec["unread"].get(variant, 0)
-                expected = ("1 unread message" if count == 1 else "%d unread messages" % count) if count else (
-                    "Typing" if conversations[variant]["peer"] in spec["typing"] else "")
+                expected = unread_value(count) if count else ("Typing" if conversations[variant]["peer"] in spec["typing"] else "")
                 spills = spec["overflow"] and not expected
 
                 # The bar makes chips only for the tabs that fit and lists the rest in the overflow menu. The menu shows no
@@ -730,6 +733,21 @@ class Run:
                     return spills and self.quiet(pid, "exists", chip) == "false"
                 checks.append(("chat-tab-%s reads %r%s" % (jid, expected, " or has no chip" if spills else ""),
                                tab, 10 if expected == "Typing" else 5))
+        # Contact and room rows read the same as a tab, whether or not the conversation has one. A collapsed group
+        # shows no rows.
+        collapsed = {c["localpart"] for c in content["contacts"] if c["group"] in spec["collapsedGroups"]}
+        rows = {}
+        for variant, count in spec["unread"].items():
+            conversation = conversations[variant]
+            if conversation["peer"] not in collapsed:
+                kind = "room" if conversation["kind"] == "room" else "contact"
+                rows["%s-row-%s" % (kind, peer_jid(content, conversation))] = unread_value(count)
+        for localpart in spec["typing"]:
+            if localpart not in collapsed:
+                rows.setdefault("contact-row-%s" % contact_jid(content, localpart), "Typing")
+        for row, expected in rows.items():
+            checks.append(("%s reads %r" % (row, expected), lambda row=row, expected=expected: self.quiet(pid, "value", row) == expected,
+                           10 if expected == "Typing" else 5))
         messages = conversations[spec["tabs"][0]]["messages"]
         outgoing = [m for m in messages if m["from"] == "me"]
         if not outgoing and not spec["closeAllTabs"]:

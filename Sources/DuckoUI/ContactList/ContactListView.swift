@@ -109,9 +109,14 @@ struct ContactListView: View {
         // Key the last-message map by account+JID: two accounts' conversations with the same peer
         // JID would otherwise collide and the "recent conversation" sort would read the wrong date.
         var lastMessageDates: [ConversationKey: Date] = [:]
+        var unreadChats: Set<ConversationKey> = []
         for conversation in environment.chatService.openConversations {
+            let key = ConversationKey(accountID: conversation.accountID, jid: conversation.jid.description)
             if let date = conversation.lastMessageDate {
-                lastMessageDates[ConversationKey(accountID: conversation.accountID, jid: conversation.jid.description)] = date
+                lastMessageDates[key] = date
+            }
+            if conversation.isDirectChat, conversation.unreadCount > 0 {
+                unreadChats.insert(key)
             }
         }
         let presenceService = environment.presenceService
@@ -123,6 +128,7 @@ struct ContactListView: View {
             sortMode: preferences.sortMode,
             context: ContactListFilter.PresenceContext(
                 isOnline: { presenceService.presence(for: $0.jid, accountID: $0.accountID) != nil },
+                hasUnread: { unreadChats.contains(ConversationKey(accountID: $0.accountID, jid: $0.jid.description)) },
                 statusPriority: { statusPriority(of: presenceService.presence(for: $0.jid, accountID: $0.accountID)) },
                 lastMessageDate: { lastMessageDates[ConversationKey(accountID: $0.accountID, jid: $0.jid.description)] }
             )

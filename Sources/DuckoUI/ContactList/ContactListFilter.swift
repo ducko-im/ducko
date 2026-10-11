@@ -3,13 +3,15 @@ import Foundation
 
 /// Pure search → hide-offline → sort pipeline for the contact list, extracted
 /// from `ContactListView` so the ordering and filtering rules are unit-testable.
-/// Presence and recency are injected as closures so the type stays in DuckoUI
+/// Presence, unread messages and recency are injected as closures so the type stays in DuckoUI
 /// without naming `BareJID`, which DuckoCore does not re-export.
 enum ContactListFilter {
     /// Per-contact data the pipeline can't derive from a `Contact` alone:
-    /// presence (for hide-offline and by-status) and conversation recency.
+    /// presence (for hide-offline and by-status), unread messages (which
+    /// hide-offline keeps) and conversation recency.
     struct PresenceContext {
         let isOnline: (Contact) -> Bool
+        let hasUnread: (Contact) -> Bool
         let statusPriority: (Contact) -> Int
         let lastMessageDate: (Contact) -> Date?
     }
@@ -30,10 +32,11 @@ enum ContactListFilter {
             return ContactGroup(id: group.id, name: group.name, contacts: filtered)
         }
 
+        // An offline contact with unread messages stays until the messages are read, so the list still shows who wrote.
         let filtered: [ContactGroup] = hideOffline ? searched.compactMap { group in
-            let online = group.contacts.filter(context.isOnline)
-            guard !online.isEmpty else { return nil }
-            return ContactGroup(id: group.id, name: group.name, contacts: online)
+            let shown = group.contacts.filter { context.isOnline($0) || context.hasUnread($0) }
+            guard !shown.isEmpty else { return nil }
+            return ContactGroup(id: group.id, name: group.name, contacts: shown)
         } : searched
 
         return filtered.map { group in

@@ -19,9 +19,16 @@ struct RoomRow: View {
         ContactPresenceDisplay.resolve(isJoined: participantCount > 0)
     }
 
+    private var activity: ConversationActivitySlot {
+        ConversationActivitySlot(unreadCount: conversation.unreadCount, isTyping: false, resting: .presence(display))
+    }
+
     var body: some View {
+        let activity = activity
         HStack(spacing: 8) {
-            PresenceIndicator(display: display)
+            // Laid out as wide as the dot, so the dot and name line up with the "me" header's bare dot.
+            activity
+                .padding(.horizontal, -ConversationActivitySlot.dotOverhang)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(conversation.displayTitle)
@@ -46,17 +53,6 @@ struct RoomRow: View {
 
             Spacer()
 
-            if conversation.unreadCount > 0 {
-                Text("\(conversation.unreadCount)")
-                    .font(.caption2)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    // A compact row is as tall as the name's line, which the badge has to stay within.
-                    .padding(.vertical, isCompact ? 1 : 2)
-                    .background(.red, in: .capsule)
-            }
-
             // Rooms have no avatar, so the icon takes the avatar's place and keeps both kinds of row aligned.
             if !isCompact {
                 Image(systemName: "bubble.left.and.bubble.right.fill")
@@ -68,6 +64,7 @@ struct RoomRow: View {
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+        .accessibilityValue(activity.accessibilityDescription)
         .accessibilityIdentifier("room-row-\(conversation.jid)")
     }
 }

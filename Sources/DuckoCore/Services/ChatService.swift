@@ -449,9 +449,25 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         await userIsTyping(in: jid, accountID: accountID)
     }
 
+    /// A contact who goes offline while typing sends no further chat state, so their typing indicator would stay on
+    /// until this account disconnects. Called only once the contact's last session has gone. Chat-state events carry
+    /// only the bare JID, so clearing when an earlier session leaves could hide a session that is still typing and
+    /// will not send `composing` again.
+    func contactWentOffline(_ jid: BareJID, accountID: UUID) {
+        typingStates[accountID]?[jid] = nil
+    }
+
     public func isPartnerTyping(jidString: String, accountID: UUID?) -> Bool {
         guard let accountID, let jid = BareJID.parse(jidString) else { return false }
         return typingStates[accountID]?[jid] == .composing
+    }
+
+    /// Unread messages in the account's 1:1 chat with `jidString`. A private chat with a room occupant is its own
+    /// conversation and does not count.
+    public func unreadCount(jidString: String, accountID: UUID?) -> Int {
+        guard let accountID, let jid = BareJID.parse(jidString) else { return 0 }
+        let chat = openConversations.first { $0.jid == jid && $0.accountID == accountID && $0.isDirectChat }
+        return chat?.unreadCount ?? 0
     }
 
     // MARK: - Corrections

@@ -2,6 +2,8 @@ import DuckoCore
 import SwiftUI
 
 struct PresenceIndicator: View {
+    static let size: CGFloat = 8
+
     let display: ContactPresenceDisplay
 
     init(display: ContactPresenceDisplay) {
@@ -19,16 +21,16 @@ struct PresenceIndicator: View {
             Circle()
                 .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [2, 2]))
                 .foregroundStyle(.orange)
-                .frame(width: 8, height: 8)
+                .frame(width: Self.size, height: Self.size)
         case .unknown:
             Circle()
                 .stroke(lineWidth: 1.5)
                 .foregroundStyle(.gray)
-                .frame(width: 8, height: 8)
+                .frame(width: Self.size, height: Self.size)
         case .available, .away, .dnd, .offline:
             Circle()
                 .fill(color)
-                .frame(width: 8, height: 8)
+                .frame(width: Self.size, height: Self.size)
         }
     }
 

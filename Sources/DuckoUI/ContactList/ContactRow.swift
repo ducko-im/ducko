@@ -10,6 +10,15 @@ struct ContactRow: View {
         ContactPresenceDisplay.resolve(for: contact, accountID: contact.accountID, presenceService: environment.presenceService)
     }
 
+    private var activity: ConversationActivitySlot {
+        let jid = contact.jid.description
+        return ConversationActivitySlot(
+            unreadCount: environment.chatService.unreadCount(jidString: jid, accountID: contact.accountID),
+            isTyping: environment.chatService.isPartnerTyping(jidString: jid, accountID: contact.accountID),
+            resting: .presence(display)
+        )
+    }
+
     private var caption: ContactCaption {
         ContactCaption.resolve(for: contact, isCompact: isCompact, presenceService: environment.presenceService)
     }
@@ -29,8 +38,11 @@ struct ContactRow: View {
     }
 
     var body: some View {
+        let activity = activity
         HStack(spacing: 8) {
-            PresenceIndicator(display: display)
+            // Laid out as wide as the dot, so the dot and name line up with the "me" header's bare dot.
+            activity
+                .padding(.horizontal, -ConversationActivitySlot.dotOverhang)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -73,6 +85,7 @@ struct ContactRow: View {
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+        .accessibilityValue(activity.accessibilityDescription)
         .accessibilityIdentifier("contact-row-\(accessibilityKey)")
     }
 }

@@ -197,15 +197,13 @@ struct ChatTabBarView: View {
 }
 
 private struct ChatTabChip: View {
-    /// The leading slot is one fixed square whatever it shows, so a count or a typing bubble coming and going never
-    /// moves the label or resizes the chip.
-    private static let leadingSlotSize: CGFloat = 16
-    /// With the dot centered in its slot, this puts the label as far from the dot as the dot is from the chip's edge.
-    private static let slotSpacing: CGFloat = 4
+    private static let leadingSlotSize = ConversationActivitySlot.size
+    private static let trailingPadding: CGFloat = 8
     /// The presence dot sits centered in a wider leading slot. Less leading padding puts it as far from the chip's
     /// leading edge as the label is from the trailing edge.
-    private static let leadingPadding: CGFloat = 4
-    private static let trailingPadding: CGFloat = 8
+    private static let leadingPadding = trailingPadding - ConversationActivitySlot.dotOverhang
+    /// With the dot centered in its slot, this puts the label as far from the dot as the dot is from the chip's edge.
+    private static let slotSpacing = leadingPadding
     /// Fixed width around the label.
     static let chrome = leadingSlotSize + slotSpacing + leadingPadding + trailingPadding
 
@@ -238,20 +236,23 @@ private struct ChatTabChip: View {
         state?.displayName ?? key.jid
     }
 
-    private var unreadCount: Int {
-        state?.unreadCount ?? 0
+    private var activity: ConversationActivitySlot {
+        ConversationActivitySlot(
+            unreadCount: state?.unreadCount ?? 0,
+            isTyping: kind == .direct && environment.chatService.isPartnerTyping(jidString: key.jid, accountID: key.accountID),
+            resting: resting
+        )
     }
 
-    private var isContactTyping: Bool {
-        kind == .direct && environment.chatService.isPartnerTyping(jidString: key.jid, accountID: key.accountID)
-    }
-
-    /// What the leading slot says beyond presence, for VoiceOver and automation.
-    private var activityDescription: String {
-        if unreadCount > 0 {
-            return unreadCount == 1 ? "1 unread message" : "\(unreadCount) unread messages"
+    private var resting: ConversationActivitySlot.Resting {
+        switch kind {
+        case .room:
+            .symbol("number")
+        case .privateMessage:
+            .symbol("person.crop.circle")
+        case .direct:
+            .presence(presenceDisplay)
         }
-        return isContactTyping ? "Typing" : ""
     }
 
     private var presenceDisplay: ContactPresenceDisplay {
@@ -277,8 +278,9 @@ private struct ChatTabChip: View {
     }
 
     var body: some View {
+        let activity = activity
         HStack(spacing: Self.slotSpacing) {
-            leadingSlot
+            leadingSlot(activity)
                 .frame(width: Self.leadingSlotSize, height: Self.leadingSlotSize)
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -307,7 +309,7 @@ private struct ChatTabChip: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(displayName)
-        .accessibilityValue(activityDescription)
+        .accessibilityValue(activity.accessibilityDescription)
         .accessibilityAction { onSelect() }
         // The close button only appears on hover, so expose closing as a named action
         // for keyboard and VoiceOver users.
@@ -315,11 +317,8 @@ private struct ChatTabChip: View {
         .accessibilityIdentifier("chat-tab-\(accessibilityKey)")
     }
 
-    /// The leading slot shows one thing: the close button while pointed at, else an unread count, else a typing bubble
-    /// while the contact types, else the conversation's icon. A count outranks the bubble, since a waiting message says
-    /// more than the next one being written.
     @ViewBuilder
-    private var leadingSlot: some View {
+    private func leadingSlot(_ activity: ConversationActivitySlot) -> some View {
         if isHovered {
             Button {
                 onClose()
@@ -329,34 +328,8 @@ private struct ChatTabChip: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("chat-tab-close-\(accessibilityKey)")
-        } else if unreadCount > 0 {
-            Text(unreadCount > 9 ? "9+" : "\(unreadCount)")
-                .font(.caption2.weight(.semibold))
-                .minimumScaleFactor(0.7)
-                .lineLimit(1)
-                .foregroundStyle(.white)
-                .frame(width: Self.leadingSlotSize, height: Self.leadingSlotSize)
-                .background(Circle().fill(.red))
-        } else if isContactTyping {
-            Image(systemName: "ellipsis.bubble.fill")
-                .font(.callout)
-                .foregroundStyle(.secondary)
         } else {
-            tabIcon
-        }
-    }
-
-    @ViewBuilder
-    private var tabIcon: some View {
-        switch kind {
-        case .room:
-            Image(systemName: "number")
-                .foregroundStyle(.secondary)
-        case .privateMessage:
-            Image(systemName: "person.crop.circle")
-                .foregroundStyle(.secondary)
-        case .direct:
-            PresenceIndicator(display: presenceDisplay)
+            activity
         }
     }
 }
