@@ -23,6 +23,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix Ducko rejoining a room you had just left when a check of your presence in the room was answered at the same moment
 - Fix your own `/me` messages reading "* You waves" in a chat and showing the other person's address in Chat History: they now name you, by your nickname in a room and in a private chat within one
 - Fix an open chat losing the contact's name and photo, and the Contacts window losing your own photo, when you go offline
+- Fix room nicknames all showing in gray: each occupant's name and picture now has its own color, and the participant list colors names to match
+- Fix Chat History naming contacts by their address: conversations, days and `/me` lines now use the names your contact list shows
+- Fix a reply to a contact's message quoting their address instead of their name
+- Fix Chat History listing a message that arrived late out of time order
+- Fix a private chat within a room showing "Couldn't load older messages: Invalid JID" when scrolled to its start
 
 ## [0.8.0] - 2026-10-08
 

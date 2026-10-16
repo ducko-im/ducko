@@ -100,6 +100,7 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `invite-user-button` | Invite button in the Invite User sheet | Contacts |
 | `room-subject-view` | Room topic banner (editable) | Chat |
 | `participant-sidebar` | Participant sidebar list | Chat |
+| `participant-row-{nickname}` | Participant row in the participant sidebar. Right-clicking it opens the participant's context menu. Its nickname text is a separate element inside it. | Chat (sidebar) |
 | `toggle-participant-sidebar` | Sidebar toggle button (person.2 icon) | Chat |
 | `send-pm-menu-item` | "Send Private Message" context menu item on a MUC participant | Chat (sidebar) |
 | `send-directed-presence-menu-item` | "Send Directed Presence" context menu item on a contact | Contacts |

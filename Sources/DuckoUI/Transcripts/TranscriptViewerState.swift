@@ -76,8 +76,8 @@ public final class TranscriptViewerState {
     private var searchRevision = 0
     /// Counts the reader's own choices of a row or a day, which a scope request that was waiting gives way to.
     private var choiceRevision = 0
-    /// Contact photos by account and address.
-    private var avatars: [UUID: [String: Data]] = [:]
+    /// Stored contacts by account and address.
+    private var contacts: [UUID: [String: Contact]] = [:]
     /// The search waiting out `searchDelay` or reading.
     @ObservationIgnored private(set) var pendingSearch: Task<Void, Never>?
 
@@ -99,7 +99,7 @@ public final class TranscriptViewerState {
 
     private func sections(filteredBy filter: String) -> [TranscriptSidebarSection] {
         let shown = filter.isEmpty ? allConversations : allConversations.filter { conversation in
-            conversation.displayTitle.localizedStandardContains(filter)
+            title(for: conversation).localizedStandardContains(filter)
                 || conversation.jid.description.localizedStandardContains(filter)
         }
         var sections = accounts.map { account in
@@ -119,6 +119,10 @@ public final class TranscriptViewerState {
 
     var shownConversation: Conversation? {
         selectedDay.flatMap { conversation(withID: $0.conversationID) }
+    }
+
+    var shownTitle: String? {
+        shownConversation.map(title(for:))
     }
 
     var isFindBarVisible: Bool {
@@ -183,7 +187,23 @@ public final class TranscriptViewerState {
 
     /// The stored photo of the contact a conversation is with, or nil for one without an account or a stored contact.
     func avatarData(for conversation: Conversation) -> Data? {
-        conversation.accountID.flatMap { avatars[$0]?[conversation.jid.description] }
+        storedContact(for: conversation)?.avatarData
+    }
+
+    /// What the contact list calls the contact a conversation is with, or nil for one without a stored contact.
+    func contactName(for conversation: Conversation) -> String? {
+        storedContact(for: conversation)?.displayName
+    }
+
+    /// The name a conversation goes by: its contact's alias or roster name, else the conversation's own title.
+    func title(for conversation: Conversation) -> String {
+        storedContact(for: conversation).flatMap { $0.localAlias ?? $0.name } ?? conversation.displayTitle
+    }
+
+    /// A room and a private chat within one have no contact.
+    private func storedContact(for conversation: Conversation) -> Contact? {
+        guard conversation.isDirectChat, let accountID = conversation.accountID else { return nil }
+        return contacts[accountID]?[conversation.jid.description]
     }
 
     private static func importSource(of conversation: Conversation) -> String {
@@ -226,10 +246,10 @@ public final class TranscriptViewerState {
             try await environment.accountService.loadAccounts()
             guard bootstrap == bootstrapRevision else { return }
             accounts = environment.accountService.accounts
-            // Before the rows that show them, so that no row starts out with initials.
-            let photos = await storedAvatars()
+            // Before the rows that show them, so that no row starts out with an address or initials.
+            let stored = await storedContacts()
             guard bootstrap == bootstrapRevision else { return }
-            avatars = photos
+            contacts = stored
             guard list == listRevision else { return }
             let conversations = try await environment.chatService.fetchAllConversations()
             guard bootstrap == bootstrapRevision, list == listRevision else { return }
@@ -241,14 +261,14 @@ public final class TranscriptViewerState {
     }
 
     /// Read from the store, since the contact list only holds the contacts of enabled accounts.
-    private func storedAvatars() async -> [UUID: [String: Data]] {
-        var photos: [UUID: [String: Data]] = [:]
+    private func storedContacts() async -> [UUID: [String: Contact]] {
+        var stored: [UUID: [String: Contact]] = [:]
         for account in accounts {
             for contact in await environment.rosterService.storedContacts(for: account.id) {
-                photos[account.id, default: [:]][contact.jid.description] = contact.avatarData
+                stored[account.id, default: [:]][contact.jid.description] = contact
             }
         }
-        return photos
+        return stored
     }
 
     /// A scope request that was taken up shows its own conversation or leaves the selection alone, so the default is

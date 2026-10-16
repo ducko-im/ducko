@@ -112,13 +112,12 @@ enum HSLuvColor {
         return minLength
     }
 
-    private static func lengthOfRayUntilIntersect(theta: Double, line: (Double, Double)) -> Double {
-        let (intercept, slope) = line
-        return intercept / (sin(theta) - slope * cos(theta))
+    private static func lengthOfRayUntilIntersect(theta: Double, line: (slope: Double, intercept: Double)) -> Double {
+        line.intercept / (sin(theta) - line.slope * cos(theta))
     }
 
-    private static func getBounds(lightness: Double) -> [(Double, Double)] {
-        var bounds: [(Double, Double)] = []
+    private static func getBounds(lightness: Double) -> [(slope: Double, intercept: Double)] {
+        var bounds: [(slope: Double, intercept: Double)] = []
         bounds.reserveCapacity(6)
 
         let sub1 = ((lightness + 16.0) / 116.0)
@@ -134,7 +133,7 @@ enum HSLuvColor {
                 let top1 = (284_517.0 * m1 - 94839.0 * m3) * sub2
                 let top2 = (838_422.0 * m3 + 769_860.0 * m2 + 731_718.0 * m1) * lightness * sub2 - 769_860.0 * t * lightness
                 let bottom = (632_260.0 * m3 - 126_452.0 * m2) * sub2 + 126_452.0 * t
-                bounds.append((top1 / bottom, top2 / bottom))
+                bounds.append((slope: top1 / bottom, intercept: top2 / bottom))
             }
         }
 

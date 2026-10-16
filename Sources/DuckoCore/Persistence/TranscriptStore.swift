@@ -11,6 +11,8 @@ public protocol TranscriptStore: Sendable {
     // MARK: - Read
 
     func fetchMessages(for conversationID: UUID, before: Date?, limit: Int) async throws -> [ChatMessage]
+    /// The messages of the UTC day `date` falls in, oldest first. Messages with the same timestamp keep the order they
+    /// were stored in.
     func fetchMessages(for conversationID: UUID, on date: Date) async throws -> [ChatMessage]
     /// The notes stamped at or after `since` and before `before`, oldest first. A nil bound is open.
     func fetchNotes(for conversationID: UUID, since: Date?, before: Date?) async throws -> [TimelineNote]

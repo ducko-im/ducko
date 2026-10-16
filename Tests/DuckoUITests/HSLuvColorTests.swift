@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import DuckoUI
 
@@ -35,6 +36,14 @@ struct HSLuvColorTests {
         let c2 = HSLuvColor.toRGB(hue: 120, saturation: 100, lightness: 50)
         let isDifferent = c1.r != c2.r || c1.g != c2.g
         #expect(isDifferent)
+    }
+
+    @Test(arguments: [(hue: 0.0, hex: "#EA0064"), (hue: 200.0, hex: "#00848B"), (hue: 300.0, hex: "#CD00E2")])
+    func `full saturation matches the reference HSLuv color`(hue: Double, hex: String) {
+        let rg = HSLuvColor.toRGB(hue: hue, saturation: 100, lightness: 50)
+        let b = HSLuvColor.toBlue(hue: hue, saturation: 100, lightness: 50)
+        let channels = [rg.r, rg.g, b].map { Int(($0 * 255).rounded()) }
+        #expect("#" + channels.map { String(format: "%02X", $0) }.joined() == hex)
     }
 
     @Test

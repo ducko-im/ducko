@@ -201,18 +201,14 @@ public actor FileTranscriptStore: TranscriptStore {
             if result.count >= limit { break }
         }
 
-        // Newest first. Timestamps are stored to the second, so messages written within one second tie, and among
-        // those the one written later is the newer.
-        let newestFirst = result.enumerated().sorted { lhs, rhs in
-            lhs.element.timestamp == rhs.element.timestamp ? lhs.offset > rhs.offset : lhs.element.timestamp > rhs.element.timestamp
-        }
-        return newestFirst.prefix(limit).map(\.element)
+        // Among messages of the same second, the one written later is the newer.
+        return Array(Self.oldestFirst(result).reversed().prefix(limit))
     }
 
     public func fetchMessages(for conversationID: UUID, on date: Date) async throws -> [ChatMessage] {
         let dateStr = Self.dateString(for: date)
         let fileURL = transcriptFileURL(conversationID: conversationID, dateString: dateStr)
-        return try readAndMaterialize(fileURL: fileURL, conversationID: conversationID)
+        return try Self.oldestFirst(readAndMaterialize(fileURL: fileURL, conversationID: conversationID))
     }
 
     public func fetchNotes(for conversationID: UUID, since: Date?, before: Date?) async throws -> [TimelineNote] {
@@ -324,8 +320,9 @@ public actor FileTranscriptStore: TranscriptStore {
         let fileURL = transcriptFileURL(conversationID: conversationID, dateString: Self.dateString(for: day))
         // The lookup indexes keep the last entry they were given. A search reads days from the newest to the oldest, so
         // filling them from its reads would leave them pointing at the oldest day read.
-        return try readAndMaterialize(fileURL: fileURL, conversationID: conversationID, fillsIndexes: false)
-            .filter { $0.matchesSearch(query) }
+        return try Self.oldestFirst(
+            readAndMaterialize(fileURL: fileURL, conversationID: conversationID, fillsIndexes: false).filter { $0.matchesSearch(query) }
+        )
     }
 
     // MARK: - Lifecycle
@@ -373,6 +370,13 @@ public actor FileTranscriptStore: TranscriptStore {
               let day = Int(parts[2])
         else { return nil }
         return calendar.date(from: DateComponents(year: year, month: month, day: day))
+    }
+
+    /// A day's file holds messages in the order they were written, so one that arrived late, such as from the server
+    /// archive or an import, follows newer ones. Timestamps are stored to the second, and the stable sort keeps messages
+    /// of the same second in the order they were written.
+    private static func oldestFirst(_ messages: [ChatMessage]) -> [ChatMessage] {
+        messages.sorted { $0.timestamp < $1.timestamp }
     }
 
     private func ensureDirectoryExists(for conversationID: UUID) throws {

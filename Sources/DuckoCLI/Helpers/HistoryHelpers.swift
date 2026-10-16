@@ -66,7 +66,7 @@ func searchHistory(
     let jids = Dictionary(conversations.map { ($0.id, searchAddress(of: $0)) }, uniquingKeysWith: { first, _ in first })
     let found = try await environment.chatService.searchTranscriptMessages(query: query, in: conversations.map(\.id), limit: limit)
     return found.compactMap { day, messages in
-        jids[day.conversationID].map { HistorySearchDay(jid: $0, date: day.date, messages: oldestFirst(messages)) }
+        jids[day.conversationID].map { HistorySearchDay(jid: $0, date: day.date, messages: messages) }
     }
 }
 
@@ -74,14 +74,6 @@ private func searchAddress(of conversation: Conversation) -> JID {
     conversation.occupantNickname
         .flatMap { FullJID(bareJID: conversation.jid, resourcePart: $0) }
         .map(JID.full) ?? .bare(conversation.jid)
-}
-
-/// A day's messages come in the order they were stored, which an archive sync can leave out of time order. Messages
-/// of one time keep the order they were stored in.
-private func oldestFirst(_ messages: [ChatMessage]) -> [ChatMessage] {
-    messages.enumerated()
-        .sorted { ($0.element.timestamp, $0.offset) < ($1.element.timestamp, $1.offset) }
-        .map(\.element)
 }
 
 private func resolveConversation(

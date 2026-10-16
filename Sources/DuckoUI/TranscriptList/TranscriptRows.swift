@@ -56,7 +56,10 @@ enum TranscriptRows {
                     isGroupchat: chat.isGroupchat,
                     startsDay: isFirstOfDay,
                     replyQuote: replied.map {
-                        TranscriptRow.ReplyQuote(senderName: $0.isOutgoing ? "You" : $0.fromJID, previewText: $0.previewText)
+                        TranscriptRow.ReplyQuote(
+                            senderName: $0.isOutgoing ? "You" : incomingSenderName(of: $0, chat: chat),
+                            previewText: $0.previewText
+                        )
                     },
                     linkPreview: linkPreview(message),
                     transferStatus: .resolve(for: message, transfer: transfersByID[message.id], recipientName: chat.displayName),
@@ -123,6 +126,10 @@ enum TranscriptRows {
         if message.isOutgoing {
             return chat.ownName
         }
+        return incomingSenderName(of: message, chat: chat)
+    }
+
+    private static func incomingSenderName(of message: ChatMessage, chat: Details) -> String {
         if message.type == "groupchat" {
             return message.fromJID
         }

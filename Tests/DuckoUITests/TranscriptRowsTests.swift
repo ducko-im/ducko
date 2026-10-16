@@ -190,13 +190,16 @@ struct TranscriptRowsTests {
 
         let withQuoted = rows([quoted, reply])
         let withoutQuoted = rows([reply])
+        let withContact = rows([quoted, reply], chat: TranscriptRows.Details(contactName: "Bob"))
 
-        guard case let .message(loaded) = withQuoted[1].kind, case let .message(alone) = withoutQuoted[0].kind else {
+        guard case let .message(loaded) = withQuoted[1].kind, case let .message(alone) = withoutQuoted[0].kind,
+              case let .message(named) = withContact[1].kind else {
             Issue.record("Expected message rows")
             return
         }
         #expect(loaded.replyQuote == TranscriptRow.ReplyQuote(senderName: "bob@example.com", previewText: "the original"))
         #expect(alone.replyQuote == nil)
+        #expect(named.replyQuote == TranscriptRow.ReplyQuote(senderName: "Bob", previewText: "the original"))
     }
 
     @Test func `a /me line names you by your own name in the chat and in History`() {

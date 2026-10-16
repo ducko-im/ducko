@@ -2189,14 +2189,14 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             .map(\.day)
     }
 
-    /// The messages of one day that a search for `query` finds, in the order the day shows them. Each call reads one
+    /// The messages of one day that a search for `query` finds, oldest first. Each call reads one
     /// day's file, so messages can be stored between the calls of a search over many days.
     public func matchingMessages(_ query: String, on day: TranscriptDay) async throws -> [ChatMessage] {
         try await transcripts.matchingMessages(query, in: day.conversationID, on: day.date)
     }
 
     /// The newest `limit` messages of the given conversations that a search for `query` finds. They are grouped by
-    /// conversation and day, newest day first, each day's messages in the order the day shows them. Days are read from
+    /// conversation and day, newest day first, each day's messages oldest first. Days are read from
     /// the newest on, and no day older than the last one needed is read.
     public func searchTranscriptMessages(
         query: String, in conversationIDs: [UUID], limit: Int

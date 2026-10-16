@@ -5,6 +5,7 @@ import SwiftUI
 struct ParticipantRow: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openChat) private var openChat
+    @Environment(\.colorScheme) private var colorScheme
     let participant: RoomParticipant
     let myParticipant: RoomParticipant?
     let roomJIDString: String
@@ -47,6 +48,7 @@ struct ParticipantRow: View {
             ParticipantAvatarView(nickname: participant.nickname)
 
             Text(participant.nickname)
+                .foregroundStyle(Color.forNickname(participant.nickname, colorScheme: colorScheme))
                 .singleLine()
 
             Spacer()
@@ -61,6 +63,8 @@ struct ParticipantRow: View {
             }
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("participant-row-\(participant.nickname)")
         .contextMenu {
             if isOtherParticipant {
                 Button("Send Private Message") {

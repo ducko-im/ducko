@@ -19,7 +19,7 @@ struct TranscriptDetailView: View {
             dayList
             messagePane
         }
-        .navigationTitle(state.shownConversation?.displayTitle ?? "Chat History")
+        .navigationTitle(state.shownTitle ?? "Chat History")
         .navigationSubtitle(state.shownConversation?.jid.description ?? "")
     }
 
@@ -35,8 +35,11 @@ struct TranscriptDetailView: View {
             let conversation = namesConversation ? state.conversation(withID: day.conversationID) : nil
             TranscriptDayRow(
                 date: day.date,
-                conversation: conversation,
-                avatarData: conversation.flatMap { state.avatarData(for: $0) },
+                owner: conversation.map { conversation in
+                    TranscriptDayRow.Owner(
+                        conversation: conversation, title: state.title(for: conversation), avatarData: state.avatarData(for: conversation)
+                    )
+                },
                 matchCount: matchCounts[day]
             )
         }
@@ -52,7 +55,8 @@ struct TranscriptDetailView: View {
             positions: state.positions,
             details: TranscriptRows.Details(
                 isGroupchat: state.shownConversation?.type == .groupchat,
-                displayName: state.shownConversation?.displayTitle ?? "",
+                displayName: state.shownTitle ?? "",
+                contactName: state.shownConversation.flatMap { state.contactName(for: $0) },
                 ownName: state.shownConversation.map { environment.ownName(in: $0) } ?? "",
                 searchResults: state.shownMatchIDs,
                 searchQuery: state.trimmedKeyword,
@@ -135,10 +139,16 @@ struct TranscriptDetailView: View {
 // MARK: - Day Row
 
 private struct TranscriptDayRow: View {
+    /// The conversation a day belongs to, as its row names it.
+    struct Owner {
+        let conversation: Conversation
+        let title: String
+        let avatarData: Data?
+    }
+
     let date: Date
     /// Set where the listed days belong to several conversations.
-    let conversation: Conversation?
-    let avatarData: Data?
+    let owner: Owner?
     let matchCount: Int?
 
     private var dateText: String {
@@ -151,12 +161,12 @@ private struct TranscriptDayRow: View {
 
     var body: some View {
         HStack {
-            if let conversation {
-                ConversationAvatarView(conversation: conversation, avatarData: avatarData)
+            if let owner {
+                ConversationAvatarView(conversation: owner.conversation, title: owner.title, avatarData: owner.avatarData)
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(conversation?.displayTitle ?? dateText)
+                Text(owner?.title ?? dateText)
                     .singleLine()
 
                 if let caption {
@@ -171,7 +181,7 @@ private struct TranscriptDayRow: View {
 
     /// Below a conversation's name, the date and the matches. Below a date, the matches.
     private var caption: String? {
-        guard conversation != nil else { return matchText }
+        guard owner != nil else { return matchText }
         return [dateText, matchText].compactMap(\.self).joined(separator: " · ")
     }
 }

@@ -7,12 +7,13 @@ struct ConversationAvatarView: View {
     static let size: CGFloat = 24
 
     let conversation: Conversation
+    let title: String
     let avatarData: Data?
 
     var body: some View {
         switch conversation.type {
         case .chat:
-            AvatarView(imageData: avatarData, name: conversation.displayTitle, size: Self.size)
+            AvatarView(imageData: avatarData, name: title, size: Self.size)
         case .groupchat:
             Image(systemName: "bubble.left.and.bubble.right")
                 .foregroundStyle(.secondary)

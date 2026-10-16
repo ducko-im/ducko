@@ -76,6 +76,21 @@ struct ChatWindowStateTests {
         #expect(fixture.windowState.lastLoadHistoryError != nil)
     }
 
+    @Test func `loadOlderMessages in a private chat within a room asks no archive`() async throws {
+        let environment = AppEnvironment(store: MockPersistenceStore(), transcripts: MockTranscriptStore(), credentialStore: NullCredentialStore())
+        let accountID = UUID()
+        let windowState = ChatWindowState(jidString: "room@conference.example.com/nick", accountID: accountID, environment: environment)
+        windowState.conversation = try Conversation(
+            id: UUID(), accountID: accountID, jid: #require(BareJID.parse("room@conference.example.com")), type: .chat,
+            isPinned: false, isMuted: false, unreadCount: 0, occupantNickname: "nick", createdAt: Date()
+        )
+
+        // Asking would fail: the address is no bare JID, and no client is connected.
+        await windowState.loadOlderMessages()
+
+        #expect(windowState.lastLoadHistoryError == nil)
+    }
+
     @Test func `clearLoadHistoryError resets the error state`() async throws {
         let fixture = try await ChatWindowFixture.make()
         await fixture.windowState.loadOlderMessages()

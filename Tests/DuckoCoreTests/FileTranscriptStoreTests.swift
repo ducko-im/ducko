@@ -769,7 +769,6 @@ enum FileTranscriptStoreTests {
 
                 let day = try Self.date(day: 12)
                 let fetched = try await store.fetchMessages(for: testConversationID, on: day).map(\.id)
-                #expect(fetched == [later.id, earlier.id])
                 #expect(try await store.matchingMessages("needle", in: testConversationID, on: day).map(\.id) == fetched)
             }
         }
@@ -887,6 +886,27 @@ enum FileTranscriptStoreTests {
                 // Chronological order
                 #expect(fetched[0].body == "morning")
                 #expect(fetched[1].body == "evening")
+            }
+        }
+
+        @Test
+        func `Fetch messages on date returns them in time order whatever order they were written in`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                var calendar = Calendar(identifier: .gregorian)
+                calendar.timeZone = .gmt
+                let ten = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 10)))
+                let nine = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 9)))
+                let eleven = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 11)))
+                let atTen = makeMessage(body: "ten", timestamp: ten)
+                let firstAtNine = makeMessage(body: "nine", timestamp: nine)
+                let secondAtNine = makeMessage(body: "also nine", timestamp: nine)
+                let atEleven = makeMessage(body: "eleven", timestamp: eleven)
+                // A message that arrived late, from the archive or an import, is written after newer ones.
+                try await store.appendMessages([atTen, firstAtNine, secondAtNine, atEleven])
+
+                let fetched = try await store.fetchMessages(for: testConversationID, on: ten)
+                #expect(fetched.map(\.id) == [firstAtNine.id, secondAtNine.id, atTen.id, atEleven.id])
             }
         }
 

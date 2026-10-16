@@ -554,6 +554,31 @@ extension TranscriptViewerStateScopeTests {
     }
 
     @Test
+    func `a conversation goes by its stored contact's name, and the filter finds it by that name`() async throws {
+        let library = try TranscriptLibraryFixture()
+        await library.seed()
+        try await library.store.mock.upsertContact(Contact(
+            id: UUID(), accountID: library.home.id, jid: library.alice.jid, name: "Alice Liddell", subscription: .both, groups: [],
+            isBlocked: false, createdAt: Date()
+        ))
+
+        await library.state.load()
+        library.state.sidebarFilter = "Liddell"
+
+        #expect(library.state.title(for: library.alice) == "Alice Liddell")
+        #expect(library.state.contactName(for: library.alice) == "Alice Liddell")
+        #expect(library.state.title(for: library.bob) == library.bob.displayTitle)
+        #expect(library.state.contactName(for: library.bob) == nil)
+        #expect(library.state.sidebarSections.map { $0.conversations.map(\.id) } == [[library.alice.id]])
+        // A private chat within a room has the room's address and no contact, whatever the roster holds for it.
+        var privateChat = library.alice
+        privateChat.occupantNickname = "nick"
+        privateChat.displayName = "nick"
+        #expect(library.state.title(for: privateChat) == "nick")
+        #expect(library.state.contactName(for: privateChat) == nil)
+    }
+
+    @Test
     func `starting with no request selects the first account and loads its newest day`() async throws {
         let library = try TranscriptLibraryFixture()
         await library.seed()

@@ -495,7 +495,8 @@ public final class ChatWindowState {
     private func fetchOlderPage(_ conversationID: UUID) async throws -> OlderPage? {
         guard var older = try await fetchStoredOlderPage(conversationID) else { return nil }
         guard older.page.isEmpty else { return older }
-        guard let accountID = resolvedAccountID else {
+        // A history fetch names a bare address, which cannot single out one occupant of a room.
+        guard let accountID = resolvedAccountID, conversation?.occupantNickname == nil else {
             older.endsHistory = true
             return older
         }

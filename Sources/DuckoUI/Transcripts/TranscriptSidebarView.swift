@@ -60,8 +60,12 @@ private struct TranscriptSidebarSectionView: View {
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             ForEach(section.conversations) { conversation in
-                TranscriptSidebarRow(conversation: conversation, avatarData: state.avatarData(for: conversation))
-                    .tag(TranscriptSelection.conversation(conversation.id))
+                TranscriptSidebarRow(
+                    conversation: conversation,
+                    title: state.title(for: conversation),
+                    avatarData: state.avatarData(for: conversation)
+                )
+                .tag(TranscriptSelection.conversation(conversation.id))
             }
         } label: {
             Text(section.title)
