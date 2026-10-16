@@ -16,8 +16,8 @@ import AppKit
 //   drive <pid> pick <title>                   press the open menu's item with that title, ignoring its checkmark
 //   drive <pid> action <identifier> <name>     perform the element's named action, e.g. "Close Tab"
 //   drive <pid> type <text>                    type into the focused message field
-//   drive <pid> select-text <identifier> <start> <end>   drag across those UTF-16 offsets of an incoming one-to-one
-//                                              message's first line, copy, and print what the pasteboard got
+//   drive <pid> select-text <identifier> <incoming|outgoing> <body> <start> <end>   drag across those UTF-16 offsets of
+//                                              a one-to-one message's body, copy, and print what the pasteboard got
 //   drive hover <x> <y>                        move the real pointer there with posted mouse events
 //   drive pointer | pointer-restore <x> <y> | parking | scale | appearance
 //   drive dock <title>                         a Dock item's frame in points and its badge: x y w h badge
@@ -336,20 +336,28 @@ case "type":
     }
     print("typed", text.count)
 case "select-text":
-    guard arguments.count == 3, let start = Int(arguments[1]), let end = Int(arguments[2]), start < end else { fail(usage, code: 2) }
+    guard arguments.count == 5, ["incoming", "outgoing"].contains(arguments[1]), let start = Int(arguments[3]),
+          let end = Int(arguments[4]), start < end else { fail(usage, code: 2) }
     let element = require(arguments[0])
-    // The bubble's character bounds all answer with its whole frame, so the drag is placed from the layout:
-    // MessageBubbleView's avatar (AvatarView.defaultSize) and HStack spacing, then BubbleChrome's padding, and the
-    // body's default 13-point system font.
-    let textLeft = 32.0 + 8 + 12
-    let textTop = 12 * 0.67
-    let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    let body = arguments[2] as NSString
+    guard end <= body.length else { fail("range past the body: \(body.length)") }
     guard let rect = frame(element) else { fail("no frame: \(arguments[0])") }
     guard let value = attribute(element, kAXValueAttribute) as? String else { fail("no value: \(arguments[0])") }
-    let body = value as NSString
-    guard end <= body.length else { fail("range past the text: \(body.length)") }
+    // The combined element's value is "<body>, <time>…".
+    guard value.hasPrefix(arguments[2]) else { fail("\(arguments[0]) does not show that body") }
+    // The bubble's character bounds all answer with its whole frame, so the drag is placed from the layout and the
+    // body's default 13-point system font. An incoming element starts at MessageBubbleView's avatar
+    // (AvatarView.defaultSize) and HStack spacing, then BubbleChrome's padding. An outgoing one ends at its bubble,
+    // since MessageContentView aligns it trailing, so a body that fits on one line starts its own width plus the
+    // 12-point padding left of the element's right edge.
+    let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    func width(_ text: String) -> Double {
+        NSAttributedString(string: text, attributes: [.font: font]).size().width
+    }
+    let textLeft = arguments[1] == "incoming" ? rect.minX + 32 + 8 + 12 : rect.maxX - 12 - width(arguments[2])
+    let textTop = 12 * 0.67
     func x(_ offset: Int) -> Double {
-        rect.minX + textLeft + NSAttributedString(string: body.substring(to: offset), attributes: [.font: font]).size().width
+        textLeft + width(body.substring(to: offset))
     }
     let y = rect.minY + textTop + (font.ascender - font.descender + font.leading) / 2
     activate()

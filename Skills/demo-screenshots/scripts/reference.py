@@ -565,9 +565,10 @@ class Run:
             work.drive(pid, "pick", "Edit")
         if spec["select"]:
             selection = spec["select"]
-            message = next((m for m in conversations[spec["tabs"][0]]["messages"] if m["id"] == selection["message"]), None)
-            if not message or message["from"] != "peer":
-                raise Skip("select: only an incoming one-to-one message in the first tab")
+            conversation = conversations[spec["tabs"][0]]
+            message = next((m for m in conversation["messages"] if m["id"] == selection["message"]), None)
+            if not message or conversation["kind"] != "chat":
+                raise Skip("select: only a message of the first tab's one-to-one chat")
             start, end = selection["range"]
             if not (isinstance(start, int) and isinstance(end, int) and 0 <= start < end):
                 raise Skip("select: range %r is not two increasing offsets" % (selection["range"],))
@@ -577,7 +578,8 @@ class Run:
             if expected != expected.strip():
                 raise Skip("select: %r starts or ends with a space" % expected)
             work.drive(pid, "focus", "chat")
-            copied = work.drive(pid, "select-text", "message-bubble-%s" % message["id"], start, end)
+            side = "outgoing" if message["from"] == "me" else "incoming"
+            copied = work.drive(pid, "select-text", "message-bubble-%s" % message["id"], side, message["body"], start, end)
             if copied != expected:
                 raise Skip("select copied %r, expected %r" % (copied, expected))
             work.drive("hover", *self.parking)

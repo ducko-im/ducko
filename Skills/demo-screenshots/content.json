@@ -143,6 +143,7 @@
     "chat-bubble-hover": { "tabs": ["lena-grouped"], "hover": { "message": "10DD83D1-413E-4917-8385-2EABF1A48EE5" } },
     "chat-text-selected-key": { "select": { "message": "7C78F528-F7B7-4097-B39D-41037DC4679E", "range": [11, 19] } },
     "chat-text-selected-inactive": { "key": "contacts", "select": { "message": "7C78F528-F7B7-4097-B39D-41037DC4679E", "range": [11, 19] } },
+    "chat-text-selected-outgoing": { "select": { "message": "507D1303-3020-44E8-ADCB-23F97C550EAD", "range": [24, 30] } },
     "chat-me": { "tabs": ["lena-me"] },
     "chat-edited": { "tabs": ["lena-edited"] },
     "chat-room": { "tabs": ["pondclub"], "rooms": ["pondclub"] },
