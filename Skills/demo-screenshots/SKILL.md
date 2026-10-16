@@ -235,11 +235,11 @@ Rules for the content:
 
 The ducko.im website recreates the Contacts window, the chat window and the Dock badge, and overlays reference PNGs of the real app on them until they match. The website owns which states exist (`reference/states.json` in `ducko-im/ducko-im.github.io`). This skill owns how to reach each one and capture it, and `content.json` owns what each state shows. The website builds its fixtures from the `content.json` states, so a change of content belongs here.
 
-`scripts/reference.py` runs the whole manifest unattended. It switches the system appearance, empties the Dock while capturing it, brings windows to the front and moves the pointer, so run it in the Lume VM (the `/lume-vm` skill), never on a Mac someone is using. Run every `vm.sh` call below outside the sandbox. The snippets assume a checkout folder named `ducko`; in another checkout, replace `ducko` in `/Volumes/My Shared Files/ducko` with that folder's name.
+`scripts/reference.py` runs the whole manifest unattended. It switches the system appearance, empties the Dock while capturing it, brings windows to the front, moves the pointer and replaces the clipboard, so run it in the Lume VM (the `/lume-vm` skill), never on a Mac someone is using. Run every `vm.sh` call below outside the sandbox. The snippets assume a checkout folder named `ducko`; in another checkout, replace `ducko` in `/Volumes/My Shared Files/ducko` with that folder's name.
 
 ### R1: Tell the User
 
-Tell the user that the run needs the VM to itself for about three minutes, measured with 28 states in two appearances.
+Tell the user that the run needs the VM to itself for about three and a half minutes, measured with 34 states in two appearances.
 
 ### R2: Set Up the Work Folder
 
@@ -295,8 +295,8 @@ After a rebuild of the copy from changed sources, or a change of `content.json`,
 
 Copy `out` to the host (`zsh Skills/lume-vm/scripts/vm.sh pull /Users/lume/work/out <host folder>`) and read every PNG. Accessibility asserts your own status, the badges and typing on tabs and on contact and room rows, the tab overflow control, the input text, the editing bar, the selected row, collapsed groups, the empty chat, the key window, the first tab's last message, the last outgoing message's delivery mark and the Dock badge. Only the PNGs show the rest:
 
-- hover effects: the status picker's fill, Marco's tab close button, the first grouped bubble's metadata
-- the accent selection in `contacts-selected-key` and the unemphasized one in `contacts-selected-inactive`
+- hover effects: the status picker's fill, the traffic lights' glyphs, Marco's tab close button, the first grouped bubble's metadata
+- the accent selection in `contacts-selected-key` and `chat-text-selected-key`, and the unemphasized one in `contacts-selected-inactive` and `chat-text-selected-inactive`
 - the "(edited 2 minutes ago)" label
 - no hover effect in any state that names none
 
@@ -320,7 +320,7 @@ Move `out` into the website's `reference/captures/`. Then stop the stub (`pkill 
 | `conversations` | Variants keyed by name: `peer` (a contact's local part or a room's key), `kind` (`chat` or `room`), `messages` with a fixed uppercase `id`, `stanzaID`, `from` (`me`, `peer` or a nickname), `time`, `body`, outgoing `status` (`sent`, `delivered`, `read`) and optional `editedSecondsAgo` |
 | `states` | One entry per manifest id; unset fields take their defaults |
 
-A state's fields: `key` (the window that is key, by default the manifest's window), `tabs` (conversation variants, the first selected; default `["lena"]`), `overflow` (true when the tabs don't all fit the bar), `lastOutgoingStatus`, `closeAllTabs`, `rooms` (room keys to keep), `unread` (unread counts by conversation variant, such as `{"marco": 3}`), `collapsedGroups`, `selectedContact`, `ownStatus` (`available`, `away`, `xa`, `dnd`, `offline`), `typing` (contacts), `input` (draft text), `editing` (a message id), `hover` (`{"statusPicker": true}`, `{"tab": <variant>}` or `{"message": <id>}`) and `menu` (`"status"` or `{"message": <id>}`). A manifest id without an entry is skipped as "no content entry".
+A state's fields: `key` (the window that is key, by default the manifest's window), `tabs` (conversation variants, the first selected; default `["lena"]`), `overflow` (true when the tabs don't all fit the bar), `lastOutgoingStatus`, `closeAllTabs`, `rooms` (room keys to keep), `unread` (unread counts by conversation variant, such as `{"marco": 3}`), `collapsedGroups`, `selectedContact`, `ownStatus` (`available`, `away`, `xa`, `dnd`, `offline`), `typing` (contacts), `input` (draft text), `editing` (a message id), `hover` (`{"statusPicker": true}`, `{"trafficLights": true}` for the minimize button of the manifest's window, `{"tab": <variant>}` or `{"message": <id>}`), `menu` (`"status"` or `{"message": <id>}`) and `select` (`{"message": <id>, "range": [start, end]}`, UTF-16 offsets with `end` exclusive into the first line of an incoming one-to-one message in the first tab, starting and ending on a non-space character, dragged with the pointer and checked by copying it). A manifest id without an entry is skipped as "no content entry".
 
 Tabs past the bar's width go into its overflow menu, which shows no badge or typing, so give no `unread` or `typing` to a conversation whose tab overflows. Contact and room rows show them too, with or without a tab, and are checked as well unless the contact's group is collapsed.
 
@@ -340,7 +340,7 @@ Run `swift scripts/compare.swift <a.png> <b.png> [diff.png]` to compare two runs
 
 ### Adding a State
 
-Add the id to the website's manifest and an entry to `content.json`'s `states`, built from the fields above. When the state needs a mechanism the run lacks, add a `drive.swift` command for it, a live step and an Accessibility check in `reference.py`, and the PNG-only signal to R4.
+Add the id to the website's manifest and an entry to `content.json`'s `states`, built from the fields above. When the state needs a mechanism the run lacks, add a `drive.swift` command for it, a live step and a check in `reference.py` (through Accessibility, or a readback such as `select`'s copy where Accessibility can't see the result), and the PNG-only signal to R4.
 
 ### Driving a State by Hand
 

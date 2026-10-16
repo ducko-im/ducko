@@ -1,7 +1,8 @@
 import AppKit
 
 // Drives the demo instance through accessibility and posted events. A PID command touches only that process's
-// elements, and refuses a PID whose executable lies under /Applications/.
+// elements, apart from select-text's mouse events, which go to whatever lies under them, and refuses a PID whose
+// executable lies under /Applications/.
 // Compile once: swiftc -O drive.swift -o "$WORK/bin/drive"
 // Usage:
 //   drive <pid> focus <contacts|chat>          make that window key; fails unless it reads back as focused
@@ -9,11 +10,14 @@ import AppKit
 //   drive <pid> dismiss-banners                press every "Dismiss error" button, print how many
 //   drive <pid> value|exists <identifier>
 //   drive <pid> frame <identifier>             screen frame in points as x y w h, where a scene id names a window
+//   drive <pid> window-button <scene> <close|minimize|zoom>   that traffic light's frame; fails while something covers it
 //   drive <pid> select-row|selected <identifier>
 //   drive <pid> press|show-menu <identifier>   perform AXPress or AXShowMenu on the element, e.g. to open its menu
 //   drive <pid> pick <title>                   press the open menu's item with that title, ignoring its checkmark
 //   drive <pid> action <identifier> <name>     perform the element's named action, e.g. "Close Tab"
 //   drive <pid> type <text>                    type into the focused message field
+//   drive <pid> select-text <identifier> <start> <end>   drag across those UTF-16 offsets of an incoming one-to-one
+//                                              message's first line, copy, and print what the pasteboard got
 //   drive hover <x> <y>                        move the real pointer there with posted mouse events
 //   drive pointer | pointer-restore <x> <y> | parking | scale | appearance
 //   drive dock <title>                         a Dock item's frame in points and its badge: x y w h badge
@@ -246,6 +250,18 @@ case "exists":
 case "frame":
     guard let rect = frame(require(argument())) else { fail("no frame: \(arguments[0])") }
     print(rect.minX, rect.minY, rect.width, rect.height)
+case "window-button":
+    guard arguments.count == 2 else { fail(usage, code: 2) }
+    let names = ["close": kAXCloseButtonAttribute, "minimize": kAXMinimizeButtonAttribute, "zoom": kAXZoomButtonAttribute]
+    guard let name = names[arguments[1]] else { fail(usage, code: 2) }
+    guard let window = windows().first(where: { identifier($0) == arguments[0] }) else { fail("window not found: \(arguments[0])") }
+    guard let button = elementAttribute(window, name), let rect = frame(button) else { fail("no \(arguments[1]) button") }
+    // Another window over the button would take the hover instead.
+    var hit: AXUIElement?
+    let error = AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(rect.midX), Float(rect.midY), &hit)
+    guard error == .success else { fail("hit test failed: \(error.rawValue)") }
+    guard let hit, CFEqual(hit, button) else { fail("the \(arguments[1]) button is covered") }
+    print(rect.minX, rect.minY, rect.width, rect.height)
 case "select-row":
     guard let target = row(containing: require(argument())) else { fail("no row around \(arguments[0])") }
     let error = AXUIElementSetAttributeValue(target, kAXSelectedAttribute as CFString, kCFBooleanTrue)
@@ -319,6 +335,48 @@ case "type":
         usleep(10000)
     }
     print("typed", text.count)
+case "select-text":
+    guard arguments.count == 3, let start = Int(arguments[1]), let end = Int(arguments[2]), start < end else { fail(usage, code: 2) }
+    let element = require(arguments[0])
+    // The bubble's character bounds all answer with its whole frame, so the drag is placed from the layout:
+    // MessageBubbleView's avatar (AvatarView.defaultSize) and HStack spacing, then BubbleChrome's padding, and the
+    // body's default 13-point system font.
+    let textLeft = 32.0 + 8 + 12
+    let textTop = 12 * 0.67
+    let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    guard let rect = frame(element) else { fail("no frame: \(arguments[0])") }
+    guard let value = attribute(element, kAXValueAttribute) as? String else { fail("no value: \(arguments[0])") }
+    let body = value as NSString
+    guard end <= body.length else { fail("range past the text: \(body.length)") }
+    func x(_ offset: Int) -> Double {
+        rect.minX + textLeft + NSAttributedString(string: body.substring(to: offset), attributes: [.font: font]).size().width
+    }
+    let y = rect.minY + textTop + (font.ascender - font.descender + font.leading) / 2
+    activate()
+    let from = CGPoint(x: x(start), y: y), to = CGPoint(x: x(end), y: y)
+    postMouseMoved(to: from)
+    usleep(50000)
+    CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: from, mouseButton: .left)?.post(tap: .cghidEventTap)
+    for step in 1 ... 10 {
+        let point = CGPoint(x: from.x + (to.x - from.x) * Double(step) / 10, y: y)
+        CGEvent(mouseEventSource: nil, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+        usleep(20000)
+    }
+    CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: to, mouseButton: .left)?.post(tap: .cghidEventTap)
+    usleep(200_000)
+    // Copying reads the selection back: kVK_ANSI_C with Command.
+    NSPasteboard.general.clearContents()
+    for isDown in [true, false] {
+        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: 8, keyDown: isDown) else { fail("no keyboard event") }
+        event.flags = .maskCommand
+        event.postToPid(pid)
+    }
+    var copied: String?
+    _ = waitUntil {
+        copied = NSPasteboard.general.string(forType: .string)
+        return copied != nil
+    }
+    print(copied ?? "")
 default:
     fail(usage, code: 2)
 }

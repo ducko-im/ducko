@@ -12,8 +12,8 @@ Usage: python3 reference.py build-info <work>
                for it, into <out>/<id>.<appearance>.png (+ .menu.png), <out>/capture.json and <out>/content.json
 
 The stub must be running on <work>/content.json. The run switches the system appearance, empties the Dock while
-capturing it, moves the real pointer and brings the demo windows to the front, so it belongs in the Lume VM. The
-appearance, the Dock and the pointer go back to how they were when the run ends.
+capturing it, moves the real pointer, brings the demo windows to the front and replaces the clipboard, so it belongs in
+the Lume VM. The appearance, the Dock and the pointer go back to how they were when the run ends.
 """
 import argparse
 import datetime
@@ -47,6 +47,7 @@ STATUS_TITLES = {"available": "Available", "away": "Away", "xa": "Extended Away"
 DEFAULTS = {
     "tabs": ["lena"], "overflow": False, "lastOutgoingStatus": None, "closeAllTabs": False, "rooms": [], "unread": {}, "collapsedGroups": [],
     "selectedContact": None, "ownStatus": "available", "typing": [], "input": None, "editing": None, "hover": None, "menu": None,
+    "select": None,
 }
 MENU_LAYER = 101
 DOCK_TILE_SIZE = 128
@@ -562,16 +563,37 @@ class Run:
         if spec["editing"]:
             work.drive(pid, "show-menu", "message-bubble-%s" % spec["editing"])
             work.drive(pid, "pick", "Edit")
+        if spec["select"]:
+            selection = spec["select"]
+            message = next((m for m in conversations[spec["tabs"][0]]["messages"] if m["id"] == selection["message"]), None)
+            if not message or message["from"] != "peer":
+                raise Skip("select: only an incoming one-to-one message in the first tab")
+            start, end = selection["range"]
+            if not (isinstance(start, int) and isinstance(end, int) and 0 <= start < end):
+                raise Skip("select: range %r is not two increasing offsets" % (selection["range"],))
+            # The range counts UTF-16 code units, as the website's strings do.
+            expected = message["body"].encode("utf-16-le")[2 * start:2 * end].decode("utf-16-le")
+            # `drive` strips its output, so a selection with an edge space would never match.
+            if expected != expected.strip():
+                raise Skip("select: %r starts or ends with a space" % expected)
+            work.drive(pid, "focus", "chat")
+            copied = work.drive(pid, "select-text", "message-bubble-%s" % message["id"], start, end)
+            if copied != expected:
+                raise Skip("select copied %r, expected %r" % (copied, expected))
+            work.drive("hover", *self.parking)
         work.drive(pid, "focus", spec["key"])
         hover = spec["hover"] or {}
         if hover:
-            if hover.get("statusPicker"):
-                target = "status-picker"
+            if hover.get("trafficLights"):
+                # Over the minimize button, which changes nothing without a click.
+                target = ["window-button", state["window"], "minimize"]
+            elif hover.get("statusPicker"):
+                target = ["frame", "status-picker"]
             elif "tab" in hover:
-                target = "chat-tab-%s" % peer_jid(content, conversations[hover["tab"]])
+                target = ["frame", "chat-tab-%s" % peer_jid(content, conversations[hover["tab"]])]
             else:
-                target = "message-bubble-%s" % hover["message"]
-            x, y, w, h = map(float, work.drive(pid, "frame", target).split())
+                target = ["frame", "message-bubble-%s" % hover["message"]]
+            x, y, w, h = map(float, work.drive(pid, *target).split())
             work.drive("hover", x + w / 2, y + h / 2)
 
         self.step = "assert"
