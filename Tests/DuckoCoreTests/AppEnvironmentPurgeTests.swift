@@ -4,13 +4,11 @@ import Testing
 @testable import DuckoCore
 @testable import DuckoXMPP
 
-/// Covers the lifecycle-purge wiring that lives at the `AppEnvironment` seam: the per-account event-dispatch
-/// cancellation a user-initiated disconnect performs (so a queued stale event can't repopulate purged state),
-/// and the per-account avatar isolation the global→per-account refactor introduced.
+/// Covers the lifecycle-purge wiring that lives at the `AppEnvironment` seam.
 enum AppEnvironmentPurgeTests {
     @MainActor
     private static func makeEnvironment(store: MockPersistenceStore) -> AppEnvironment {
-        AppEnvironment(store: store, transcripts: MockTranscriptStore(), credentialStore: NullCredentialStore())
+        AppEnvironment(store: store, transcripts: MockTranscriptStore(), credentialStore: NullCredentialStore(), omemoStore: MockOMEMOStore())
     }
 
     struct DispatchCancellation {
@@ -87,11 +85,11 @@ extension AppEnvironmentPurgeTests {
         let env = makeEnvironment(store: store)
         let first = try await seedCaches(env, store: store, name: "first")
         let second = try await seedCaches(env, store: store, name: "second")
-        assertCaches(env, account: first, present: true, shown: true)
-        assertCaches(env, account: second, present: true, shown: true)
+        await assertCaches(env, account: first, present: true, shown: true)
+        await assertCaches(env, account: second, present: true, shown: true)
         if delete { try await env.accountService.deleteAccount(first.id) } else { await env.accountService.disconnect(accountID: first.id) }
-        assertCaches(env, account: first, present: false, shown: !delete)
-        assertCaches(env, account: second, present: true, shown: true)
+        await assertCaches(env, account: first, present: false, shown: !delete)
+        await assertCaches(env, account: second, present: true, shown: true)
         await env.shutdown(within: .seconds(2))
     }
 
@@ -135,13 +133,18 @@ extension AppEnvironmentPurgeTests {
         env.bookmarksService.setBookmarksForTesting([RoomBookmark(jidString: peer.description)], accountID: id)
         env.avatarService.setOwnAvatarHashForTesting(name, accountID: id)
         env.profileService.setOwnProfileForTesting(ProfileInfo(), accountID: id)
+        await env.omemoService.installAccountJIDForTesting("\(name)@example.com", accountID: id.uuidString)
+        await env.omemoService.mergeSeenDevices(
+            [42: SeenDeviceRecord(deviceID: 42, lastClassification: .healthy, staleStreak: 0, hasObservedHealthy: true)],
+            accountID: id.uuidString
+        )
         return (id, peer)
     }
 
-    /// `shown` is whether open chats and the Contacts header still show the account's contact and your profile, which a
-    /// disconnect keeps and a delete drops.
+    /// `shown` covers what a disconnect keeps and a delete drops: the account's contact and your profile as open chats and
+    /// the Contacts header still show them, and the OMEMO seen-device classifications.
     @MainActor
-    private static func assertCaches(_ env: AppEnvironment, account: (id: UUID, peer: BareJID), present: Bool, shown: Bool) {
+    private static func assertCaches(_ env: AppEnvironment, account: (id: UUID, peer: BareJID), present: Bool, shown: Bool) async {
         #expect((env.rosterService.contact(jidString: account.peer.description, accountID: account.id) != nil) == present)
         #expect((env.rosterService.knownContact(jidString: account.peer.description, accountID: account.id) != nil) == shown)
         #expect(env.presenceService.pendingSubscriptionRequests.contains(account.peer) == present)
@@ -149,5 +152,6 @@ extension AppEnvironmentPurgeTests {
         #expect(env.bookmarksService.bookmarks.contains { $0.jidString == account.peer.description } == present)
         #expect((env.avatarService.ownAvatarHash(for: account.id) != nil) == present)
         #expect((env.profileService.ownProfile(for: account.id) != nil) == shown)
+        #expect(await env.omemoService.loadSeenDevices(accountID: account.id.uuidString).isEmpty == !shown)
     }
 }

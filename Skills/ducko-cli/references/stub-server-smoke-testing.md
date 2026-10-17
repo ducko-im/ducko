@@ -55,6 +55,8 @@ sqlite3 "$HOME/Library/Application Support/Ducko-Dev-<unique>/default.store" "UP
 
 CLI commands on that profile then connect through the stub. A GUI instance on the same profile does so once its status is set to Available.
 
+The stub serves no bookmarks: it answers PEP item requests with `item-not-found`. To exercise joining rooms on connect, seed a remembered room instead. Pipe `/join pondclub@conference.pond.example <nick>` and then `quit` into `interactive`, which stores the room for rejoining (`sqlite3 "$HOME/Library/Application Support/Ducko-Dev-<unique>/default.store" "SELECT ZJID, ZREJOINSONCONNECT FROM ZCONVERSATIONRECORD;"` prints `1` for it). Then run each command to compare, the rejoin check being a second `interactive` that is piped just `quit`. `stub.log` keeps growing across connections, and the seeding join is already in it, so note its line count before each run and read only the lines that run added. A join shows there as an `RX` presence carrying `to="pondclub@conference.pond.example/<nick>"` and the MUC `<x/>`. Only `interactive` rejoins, while a one-shot command such as `presence available` sends none.
+
 Beyond Stub Requirements 1 to 5, a stub written from scratch has to:
 
 1. Offer only `PLAIN` in `<mechanisms>`, without `<starttls>`, and answer `<auth>` with `<success/>`.

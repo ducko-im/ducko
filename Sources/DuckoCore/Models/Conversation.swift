@@ -75,6 +75,12 @@ public struct Conversation: Sendable, Identifiable {
         type == .chat && occupantNickname == nil
     }
 
+    /// Whether the server archive can be asked for this conversation's history. An archive query names a bare address,
+    /// which cannot single out one occupant of a room.
+    public var hasArchivedHistory: Bool {
+        occupantNickname == nil
+    }
+
     /// Non-empty title: the set name, else the JID's local part, else the full JID.
     public var displayTitle: String {
         displayName ?? jid.localPart ?? jid.description

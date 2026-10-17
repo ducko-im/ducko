@@ -28,6 +28,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix a reply to a contact's message quoting their address instead of their name
 - Fix Chat History listing a message that arrived late out of time order
 - Fix a private chat within a room showing "Couldn't load older messages: Invalid JID" when scrolled to its start
+- Fix messages you sent or received on another device going missing when the server sends their copies without a sender address
+- Fix messages in an encrypted chat that were fetched from the server's archive showing the sender's "This message is OMEMO encrypted" fallback as if they had written it: they now read "This message could not be decrypted"
+- Fix one-off CLI commands such as `ducko send` joining your bookmarked and remembered rooms, so everyone there saw you join and leave. Only `ducko interactive` joins them
+- Fix `ducko history <address> --search` accepting `--before` and `--server` and then ignoring them: both are now refused with `--search`
+- Stop Ducko asking the server's archive about a private chat within a room when you sign in, which could fill it with messages from the room's other private chats
+
+### Security
+
+- Ignore copies of your messages that claim to come from another of your devices instead of from your server, so nothing but your server can add them to your chats
+- Keep room addresses, nicknames and the senders of room invitations out of the log file at the default log level
 
 ## [0.8.0] - 2026-10-08
 

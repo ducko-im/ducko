@@ -67,11 +67,9 @@ public final class CarbonsModule: XMPPModule, Sendable {
         let context = state.withLock { $0.context }
         guard let context else { return }
 
-        // Security: verify the carbon comes from own bare JID
-        guard let from = message.from,
-              let connectedJID = context.connectedJID(),
-              from.bareJID == connectedJID.bareJID else {
-            log.warning("Rejected carbon with missing or foreign from: \(message.from?.description ?? "nil")")
+        guard message.isFromOwnAccount(context.connectedJID()?.bareJID) else {
+            log.warning("Rejected carbon not sent by the own account")
+            log.debug("The rejected carbon came from \(message.element.attribute("from") ?? "nil")")
             return
         }
 

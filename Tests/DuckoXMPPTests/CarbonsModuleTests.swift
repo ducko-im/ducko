@@ -25,6 +25,23 @@ private func makeConnectedClient(mock: MockTransport) async throws -> XMPPClient
     return client
 }
 
+private func receivedCarbon(from: String?, body: String, stamp: String? = nil) -> String {
+    let fromAttribute = from.map { " from='\($0)'" } ?? ""
+    let delay = stamp.map { "<delay xmlns='urn:xmpp:delay' stamp='\($0)'/>" } ?? ""
+    return """
+    <message\(fromAttribute) to='user@example.com/ducko' type='chat'>\
+    <received xmlns='urn:xmpp:carbons:2'>\
+    <forwarded xmlns='urn:xmpp:forward:0'>\
+    \(delay)\
+    <message from='contact@example.com/res' to='user@example.com/other' type='chat'>\
+    <body>\(body)</body>\
+    </message>\
+    </forwarded>\
+    </received>\
+    </message>
+    """
+}
+
 // MARK: - Tests
 
 enum CarbonsModuleTests {
@@ -74,18 +91,9 @@ enum CarbonsModuleTests {
                 }
             }
 
-            await mock.simulateReceive("""
-            <message from='user@example.com' to='user@example.com/ducko' type='chat'>\
-            <received xmlns='urn:xmpp:carbons:2'>\
-            <forwarded xmlns='urn:xmpp:forward:0'>\
-            <delay xmlns='urn:xmpp:delay' stamp='2026-03-01T12:00:00Z'/>\
-            <message from='contact@example.com/res' to='user@example.com/other' type='chat'>\
-            <body>Hello from other resource</body>\
-            </message>\
-            </forwarded>\
-            </received>\
-            </message>
-            """)
+            await mock.simulateReceive(receivedCarbon(
+                from: "user@example.com", body: "Hello from other resource", stamp: "2026-03-01T12:00:00Z"
+            ))
 
             let events = try await eventsTask.value
             guard case let .messageCarbonReceived(forwarded) = events.last else {
@@ -135,39 +143,31 @@ enum CarbonsModuleTests {
     }
 
     struct Security {
-        @Test
-        func `Ignores carbons from foreign JIDs`() async throws {
+        @Test(arguments: [
+            (from: "evil@attacker.com", accepted: false),
+            (from: "user@example.com/other", accepted: false),
+            (from: "@example.com", accepted: false),
+            (from: nil, accepted: true)
+        ] as [(from: String?, accepted: Bool)])
+        func `Accepts carbons only from the own account`(from: String?, accepted: Bool) async throws {
             let mock = MockTransport()
             let client = try await makeConnectedClient(mock: mock)
 
             let eventsTask = Task {
-                try await collectEvents(from: client, timeout: .seconds(1)) { event in
-                    if case .messageCarbonReceived = event { return true }
-                    if case .messageCarbonSent = event { return true }
+                try await collectEvents(from: client) { event in
+                    if case let .messageCarbonReceived(forwarded) = event { return forwarded.message.body == "Sentinel" }
                     return false
                 }
             }
 
-            // Carbon from a foreign JID should be ignored
-            await mock.simulateReceive("""
-            <message from='evil@attacker.com' to='user@example.com/ducko' type='chat'>\
-            <received xmlns='urn:xmpp:carbons:2'>\
-            <forwarded xmlns='urn:xmpp:forward:0'>\
-            <message from='contact@example.com/res' to='evil@attacker.com' type='chat'>\
-            <body>Spoofed</body>\
-            </message>\
-            </forwarded>\
-            </received>\
-            </message>
-            """)
+            await mock.simulateReceive(receivedCarbon(from: from, body: "Probe"))
+            await mock.simulateReceive(receivedCarbon(from: "user@example.com", body: "Sentinel"))
 
-            // Verify no carbon event was emitted by waiting for timeout
-            do {
-                _ = try await eventsTask.value
-                throw XMPPClientError.unexpectedStreamState("Should have timed out")
-            } catch is XMPPClientError {
-                // Expected: timeout means no carbon event was emitted
+            let bodies = try await eventsTask.value.compactMap { event -> String? in
+                guard case let .messageCarbonReceived(forwarded) = event else { return nil }
+                return forwarded.message.body
             }
+            #expect(bodies == (accepted ? ["Probe", "Sentinel"] : ["Sentinel"]))
 
             await disconnectFast(client)
         }

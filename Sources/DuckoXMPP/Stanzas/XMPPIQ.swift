@@ -76,16 +76,6 @@ public struct XMPPIQ: XMPPStanza {
         return reply
     }
 
-    // MARK: - Sender
-
-    /// Whether the IQ comes from the account itself: no `from`, or exactly the own bare JID (RFC 6121 §2.1.6).
-    /// Reads the raw attribute, so an unparseable `from` is rejected instead of passing as absent.
-    func isFromOwnAccount(_ ownJID: BareJID?) -> Bool {
-        guard let rawFrom = element.attribute("from") else { return true }
-        guard let ownJID, let from = JID.parse(rawFrom), case let .bare(bare) = from else { return false }
-        return bare == ownJID
-    }
-
     // MARK: - Convenience
 
     public var isGet: Bool {

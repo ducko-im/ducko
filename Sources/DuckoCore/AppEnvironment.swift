@@ -117,6 +117,8 @@ public final class AppEnvironment {
             guard let self else { return }
             rosterService.forgetAccount(accountID)
             profileService.forgetAccount(accountID)
+            // The OMEMO seen-device cache outlives a disconnect, so only a delete drops it.
+            omemoService.purgeSeenDeviceClassifications(accountID: accountID)
         }
     }
 

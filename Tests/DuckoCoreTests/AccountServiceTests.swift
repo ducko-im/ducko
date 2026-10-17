@@ -339,45 +339,6 @@ enum AccountServiceTests {
             #expect(storedAccounts.isEmpty)
             #expect(credentials.loadPassword(for: account.jid.description) == nil)
         }
-
-        /// Locks the wiring from `AccountService.deleteAccount` to
-        /// `OMEMOService.purgeSeenDeviceClassifications`. A regression that
-        /// drops the purge call would silently leak the per-account
-        /// classification cache across recreated accounts.
-        @Test
-        @MainActor
-        func `deleteAccount purges OMEMOService seen-device classifications`() async throws {
-            let store = makeStore()
-            let credentials = makeCredentials()
-            let account = makeAccount()
-            await store.addAccount(account)
-            credentials.savePassword("secret", for: account.jid.description)
-
-            let omemoStore = MockOMEMOStore()
-            let omemoService = OMEMOService(omemoStore: omemoStore)
-            let accountService = makeAccountService(store: store, credentials: credentials)
-            accountService.setOMEMOService(omemoService)
-            try await accountService.loadAccounts()
-
-            // Seed the per-account classification cache, then delete the account.
-            await omemoService.installAccountJIDForTesting(account.jid.description, accountID: account.id.uuidString)
-            await omemoService.mergeSeenDevices(
-                [42: SeenDeviceRecord(
-                    deviceID: 42, lastClassification: .healthy,
-                    staleStreak: 0, hasObservedHealthy: true
-                )],
-                accountID: account.id.uuidString
-            )
-            #expect(await omemoService.loadSeenDevices(accountID: account.id.uuidString).count == 1)
-
-            try await accountService.deleteAccount(account.id)
-
-            // Purge wiring must drop the entry. Re-install the JID mapping
-            // (the purge clears it) so the cache read returns the empty
-            // post-purge state rather than bailing on the missing mapping.
-            await omemoService.installAccountJIDForTesting(account.jid.description, accountID: account.id.uuidString)
-            #expect(await omemoService.loadSeenDevices(accountID: account.id.uuidString).isEmpty)
-        }
     }
 
     struct CredentialManagement {

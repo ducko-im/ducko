@@ -105,9 +105,9 @@ View message history from the local database. With `--server`, connects to fetch
 | Option | Description |
 |---|---|
 | `--limit <n>` | Maximum number of messages (default: 20) |
-| `--before <date>` | Show messages before this ISO 8601 date (pagination). Needs a JID. |
+| `--before <date>` | Show messages before this ISO 8601 date (pagination). Does not work with `--search`. |
 | `--search <query>` | Show the newest messages that contain the keyword |
-| `--server` | Fetch from server when local history is empty (requires connection). Needs a JID. |
+| `--server` | Fetch from server when local history is empty (requires connection). Does not work with `--search`. |
 
 ```
 ducko history alice@example.com

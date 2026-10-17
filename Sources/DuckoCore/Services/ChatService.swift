@@ -1407,20 +1407,23 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         if original.type == "groupchat" {
             // MUC: verify sender nickname matches
             guard case let .full(fullJID) = from else {
-                log.warning("Rejected MUC \(action) without full JID: \(from)")
+                log.warning("Rejected MUC \(action) without full JID")
+                log.debug("The rejected MUC \(action) came from \(from)")
                 return false
             }
             let senderNickname = fullJID.resourcePart
             if original.isOutgoing {
                 // Echo of our own message — verify it's from our nickname
                 guard await isOwnRoomMessage(nickname: senderNickname, room: from.bareJID, accountID: accountID) else {
-                    log.warning("Rejected MUC \(action) for own message from wrong sender: \(senderNickname)")
+                    log.warning("Rejected MUC \(action) for own message from wrong sender")
+                    log.debug("The rejected MUC \(action) came from \(senderNickname)")
                     return false
                 }
             } else {
                 // Incoming — sender nickname must match original
                 guard senderNickname == original.fromJID else {
-                    log.warning("Rejected MUC \(action): nickname \(senderNickname) != original \(original.fromJID)")
+                    log.warning("Rejected MUC \(action) from a nickname other than the original sender's")
+                    log.debug("The rejected MUC \(action) came from \(senderNickname), not \(original.fromJID)")
                     return false
                 }
             }
@@ -1434,7 +1437,8 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             }
             let senderJID = from.bareJID.description
             guard senderJID == original.fromJID else {
-                log.warning("Rejected \(action): sender \(senderJID) doesn't match original \(original.fromJID)")
+                log.warning("Rejected \(action) from a sender other than the original one")
+                log.debug("The rejected \(action) came from \(senderJID), not \(original.fromJID)")
                 return false
             }
         }
@@ -1544,7 +1548,8 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         do {
             conversation = try await findOrCreateMUCPMConversation(for: roomJID, nickname: nickname, accountID: accountID)
         } catch {
-            log.warning("Failed to create MUC PM conversation for \(roomJID)/\(nickname): \(error)")
+            log.warning("Failed to create MUC PM conversation: \(error)")
+            log.debug("The MUC PM conversation that failed is with \(roomJID)/\(nickname)")
             return
         }
 
@@ -2325,7 +2330,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
         do {
             let conversations = try await store.fetchConversations(for: accountID)
-            for conversation in conversations {
+            for conversation in conversations where conversation.hasArchivedHistory {
                 if Task.isCancelled { return }
                 let lastMessages = try await transcripts.fetchMessages(for: conversation.id, before: nil, limit: 1)
                 let startISO = lastMessages.first.map { $0.timestamp.formatted(.iso8601) }
@@ -2380,7 +2385,8 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         for entry in archived {
             let forwarded = entry.forwarded
             let metadata = InboundMessageMetadata(forwarded.message)
-            let body = forwarded.message.body ?? metadata.attachments.first?.url
+            let isOMEMO = Self.isOMEMOArchive(forwarded.message)
+            let body = forwarded.message.body ?? metadata.attachments.first?.url ?? (isOMEMO ? "" : nil)
             guard let body else { continue }
 
             let meta = resolveMessageMeta(forwarded: forwarded, conversation: conversation, accountJID: accountJID)
@@ -2400,7 +2406,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
                 // stanzaID so the replay dedups against it.
                 if conversation.type == .groupchat, meta.isOutgoing, let stanzaID = metadata.stanzaID,
                    try await ownOptimisticGroupRowExists(
-                       stanzaID: stanzaID, archived: forwarded.message, body: body, conversation: conversation
+                       stanzaID: stanzaID, isOMEMOArchive: isOMEMO, body: body, conversation: conversation
                    ) {
                     continue
                 }
@@ -2429,7 +2435,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             // each time its range is read.
             let serverID = trustedServerID ?? (metadata.stanzaID == nil ? entry.messageID : nil)
             let entry = ArchivedEntry(
-                forwarded: forwarded, body: body, meta: meta,
+                forwarded: forwarded, body: body, isOMEMO: isOMEMO, meta: meta,
                 serverID: serverID, metadata: metadata
             )
             let message = await makeArchivedMessage(entry, in: conversation, accountJID: accountJID)
@@ -2444,23 +2450,29 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     private struct ArchivedEntry {
         let forwarded: ForwardedMessage
         let body: String
+        let isOMEMO: Bool
         let meta: MessageMeta
         let serverID: String?
         let metadata: InboundMessageMetadata
     }
 
-    /// Builds the persisted `ChatMessage` for an archived entry, deriving display-only `htmlBody` through the same
-    /// styling/mention filters as the live paths so a MAM-backfilled message renders identically to its
-    /// live-received counterpart. The archive-path flags keep `filtered.body == body`, which matters because this
-    /// runs after `convertAndDedup`'s dedup checks (they compare the raw archived `body`), so the derived
-    /// `htmlBody` can't perturb dedup.
+    /// Builds the persisted `ChatMessage` for an archived entry. A plaintext entry's display-only `htmlBody` goes
+    /// through the live paths' styling and mention filters, so a backfilled message renders like a live one. The
+    /// archive-path flags leave its body as the raw archived `body` that `convertAndDedup`'s checks compared.
+    ///
+    /// An archived OMEMO entry is stored as undecryptable with an empty body, since the archive path does not decrypt
+    /// and the entry's body is at most the sender's fallback sentence.
     private func makeArchivedMessage(_ entry: ArchivedEntry, in conversation: Conversation, accountJID: BareJID) async -> ChatMessage {
         let filterDirection: FilterDirection = entry.meta.isOutgoing ? .outgoing : .incoming
-        let filtered = await filterBody(
-            entry.body, direction: filterDirection, accountJID: accountJID,
-            isUnstyled: entry.forwarded.message.isUnstyled,
-            allowLinkPreviewFetches: false, allowBodyMutation: false
-        )
+        let filtered: MessageContent? = if entry.isOMEMO {
+            nil
+        } else {
+            await filterBody(
+                entry.body, direction: filterDirection, accountJID: accountJID,
+                isUnstyled: entry.forwarded.message.isUnstyled,
+                allowLinkPreviewFetches: false, allowBodyMutation: false
+            )
+        }
 
         return ChatMessage(
             id: UUID(),
@@ -2468,16 +2480,23 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             stanzaID: entry.metadata.stanzaID,
             serverID: entry.serverID,
             fromJID: entry.meta.fromJID,
-            body: filtered.body,
-            htmlBody: filtered.htmlBody,
+            body: filtered?.body ?? "",
+            htmlBody: filtered?.htmlBody,
             timestamp: parseISO8601Timestamp(entry.forwarded.timestamp),
             isOutgoing: entry.meta.isOutgoing,
             isDelivered: false,
             isEdited: false,
             type: entry.meta.messageType,
             replyToID: entry.metadata.replyToID,
+            isEncrypted: entry.isOMEMO,
+            isUndecryptable: entry.isOMEMO,
             attachments: entry.metadata.attachments
         )
+    }
+
+    private static func isOMEMOArchive(_ archived: DuckoXMPP.XMPPMessage) -> Bool {
+        archived.element.child(named: "encrypted", namespace: XMPPNamespaces.omemo) != nil
+            || archived.body == omemoFallbackBody
     }
 
     /// Returns true when an un-reconciled optimistic own-MUC row (`serverID == nil`) matches the archived
@@ -2487,10 +2506,8 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// the archive carries the undecryptable fallback body. Uses the all-candidates `findMessages` query so a
     /// `ducko-N` collision can't make `findMessage`'s first-match return an older, wrong row.
     private func ownOptimisticGroupRowExists(
-        stanzaID: String, archived: DuckoXMPP.XMPPMessage, body: String, conversation: Conversation
+        stanzaID: String, isOMEMOArchive: Bool, body: String, conversation: Conversation
     ) async throws -> Bool {
-        let isOMEMOArchive = archived.element.child(named: "encrypted", namespace: XMPPNamespaces.omemo) != nil
-            || archived.body == omemoFallbackBody
         let candidates = try await transcripts.findMessages(stanzaID: stanzaID, conversationID: conversation.id)
         return candidates.contains { candidate in
             guard candidate.isOutgoing, candidate.serverID == nil else { return false }

@@ -58,7 +58,7 @@ public final class OMEMOService {
         chatService = service
     }
 
-    /// Drops the seen-device classification entry + persisted rows for `accountID`. Called by `AccountService.deleteAccount`.
+    /// Drops the seen-device classification entry + persisted rows for `accountID`.
     func purgeSeenDeviceClassifications(accountID: UUID) {
         let key = accountID.uuidString
         let accountJID = accountJIDsByAccountID[key]

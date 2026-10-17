@@ -264,9 +264,6 @@ public final class AccountService {
         await disconnect(accountID: id)
         try await store.deleteAccount(id)
         deletePassword(accountID: id)
-        // The OMEMO seen-device cache is delete-only — it deliberately survives reconnects, so `disconnect`
-        // leaves it intact; drop it here now that the account row is gone.
-        omemoService?.purgeSeenDeviceClassifications(accountID: id)
         onAccountDeleted?(id)
         try await loadAccounts()
     }

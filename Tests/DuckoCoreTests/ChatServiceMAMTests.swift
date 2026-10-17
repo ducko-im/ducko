@@ -114,6 +114,7 @@ private struct GroupArchiveSpec {
     let stanzaID: String
     let body: String
     var encrypted = false
+    var omitsBody = false
     var metadataXML = ""
 }
 
@@ -126,7 +127,7 @@ private func groupArchive(queryID: String, archiveID: String, _ spec: GroupArchi
         + "<forwarded xmlns='urn:xmpp:forward:0'>"
         + "<delay xmlns='urn:xmpp:delay' stamp='2026-02-28T10:00:00Z'/>"
         + "<message from='\(roomJID.description)/\(spec.fromNick)' type='groupchat' id='\(spec.stanzaID)'>"
-        + "<body>\(spec.body)</body>"
+        + (spec.omitsBody ? "" : "<body>\(spec.body)</body>")
         + encryptedElement
         + spec.metadataXML
         + "<stanza-id xmlns='urn:xmpp:sid:0' id='\(spec.serverID)' by='\(roomJID.description)'/>"
@@ -583,6 +584,58 @@ enum ChatServiceMAMTests {
                 await Task.yield()
             }
             #expect(await fetcher.invocationCount == 0)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+    }
+
+    struct EncryptedArchive {
+        @Test(arguments: [
+            (encrypted: true, omitsBody: false),
+            (encrypted: false, omitsBody: false),
+            (encrypted: true, omitsBody: true)
+        ])
+        @MainActor
+        func `an archived OMEMO message is stored as undecryptable, not as its fallback text`(encrypted: Bool, omitsBody: Bool) async throws {
+            let harness = try await makeGroupMAMHarness()
+
+            let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
+                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                    fromNick: "bob", serverID: "R", stanzaID: "S",
+                    body: omemoFallbackBody, encrypted: encrypted, omitsBody: omitsBody
+                ))]
+            }
+
+            let message = try #require(imported.first)
+            #expect(message.isEncrypted)
+            #expect(message.isUndecryptable)
+            #expect(message.body.isEmpty)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+    }
+
+    struct RecentHistorySync {
+        @Test
+        @MainActor
+        func `the sync does not ask the archive about a room private chat`() async throws {
+            let harness = try await makeGroupMAMHarness()
+            try await harness.store.updateConversation(harness.conversation.id) {
+                $0.type = .chat
+                $0.roomNickname = nil
+                $0.occupantNickname = "bob"
+            }
+
+            await harness.chatService.handleEvent(.rosterUpdated(RosterUpdate(receipt: 1, origin: .initial, contents: .snapshot([]), version: nil)), accountID: harness.accountID)
+            let tasks = harness.chatService.takePendingTasks()
+            try #require(!tasks.isEmpty)
+            let drained = try await boundedOutcome {
+                for task in tasks {
+                    await task.value
+                }
+            }
+            try #require(drained != nil)
+
+            let sent = await harness.transport.sentBytes.map { String(decoding: $0, as: UTF8.self) }
+            #expect(!sent.contains { $0.contains("urn:xmpp:mam:2") })
             await harness.accountService.disconnect(accountID: harness.accountID)
         }
     }

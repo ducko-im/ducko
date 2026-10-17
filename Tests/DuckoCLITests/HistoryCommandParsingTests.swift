@@ -27,8 +27,8 @@ struct HistoryCommandParsingTests {
         expectParseError(DuckoCLI.History.self, arguments, containing: "Only --search works without one")
     }
 
-    @Test(arguments: [["--search", "needle", "--server"], ["--search", "needle", "--before", "2026-03-01T00:00:00Z"]])
-    func `a search of all conversations takes neither a date nor the server`(arguments: [String]) {
-        expectParseError(DuckoCLI.History.self, arguments, containing: "need a JID")
+    @Test(arguments: [[], ["alice@example.com"]], [["--server"], ["--before", "2026-03-01T00:00:00Z"]])
+    func `a search takes neither a date nor the server`(address: [String], flag: [String]) {
+        expectParseError(DuckoCLI.History.self, address + ["--search", "needle"] + flag, containing: "do not work with --search")
     }
 }

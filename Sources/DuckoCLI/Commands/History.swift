@@ -28,12 +28,12 @@ extension DuckoCLI {
         var server: Bool = false
 
         func validate() throws {
-            guard jid == nil else { return }
-            guard search != nil else {
+            if search != nil {
+                guard before == nil, !server else {
+                    throw ValidationError("--before and --server do not work with --search.")
+                }
+            } else if jid == nil {
                 throw ValidationError("Missing expected argument '<jid>'. Only --search works without one.")
-            }
-            guard before == nil, !server else {
-                throw ValidationError("--before and --server need a JID.")
             }
         }
 

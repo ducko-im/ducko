@@ -34,6 +34,8 @@ enum CLIBootstrap {
                 }
             }
         )
+        // A short-lived command that joined the account's rooms would show everyone in them a join and a leave.
+        environment.bookmarksService.autoJoinEnabled = false
 
         return CLIContext(environment: environment)
     }

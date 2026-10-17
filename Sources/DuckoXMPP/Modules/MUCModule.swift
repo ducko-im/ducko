@@ -186,7 +186,8 @@ public final class MUCModule: XMPPModule, Sendable {
             let alternateVenue = destroy.attribute("jid").flatMap { BareJID.parse($0) }
             let pingTask = state.withLock { $0.removeRoom(info.roomJID) }
             pingTask?.cancel()
-            log.info("Room \(info.roomJID) was destroyed")
+            log.info("A joined room was destroyed")
+            log.debug("The destroyed room is \(info.roomJID)")
             context?.emitEvent(.roomDestroyed(room: info.roomJID, reason: reason, alternateVenue: alternateVenue))
             return
         }
@@ -223,7 +224,7 @@ public final class MUCModule: XMPPModule, Sendable {
                     state.rooms[info.roomJID]?.nickname = info.nickname
                 }
             }
-            log.info("Occupant \(oldNickname) changed nick to \(info.nickname) in \(info.roomJID)")
+            log.debug("Occupant \(oldNickname) changed nick to \(info.nickname) in \(info.roomJID)")
             context?.emitEvent(.roomOccupantNickChanged(room: info.roomJID, oldNickname: oldNickname, occupant: info.occupant))
         } else if info.isSelfPresence {
             handleSelfJoined(roomJID: info.roomJID, nickname: info.nickname, occupant: info.occupant, statusCodes: info.statusCodes, context: context)
@@ -261,7 +262,8 @@ public final class MUCModule: XMPPModule, Sendable {
             )
         }
         let isNewlyCreated = statusCodes.contains(201)
-        log.info("Joined room \(roomJID) as \(nickname)\(isNewlyCreated ? " [new room]" : "")")
+        log.info("Joined a room\(isNewlyCreated ? " [new room]" : "")")
+        log.debug("The joined room is \(roomJID), as \(nickname)")
         context?.emitEvent(.roomJoined(room: roomJID, occupancy: occupancy, isNewlyCreated: isNewlyCreated))
         startSelfPing(for: roomJID)
     }
@@ -271,7 +273,7 @@ public final class MUCModule: XMPPModule, Sendable {
             $0.rooms[roomJID]?.occupants[nickname] = occupant
             $0.rooms[roomJID]?.lastActivity = .now
         }
-        log.info("Occupant \(nickname) joined \(roomJID)")
+        log.debug("Occupant \(nickname) joined \(roomJID)")
         context?.emitEvent(.roomOccupantJoined(room: roomJID, occupant: occupant))
     }
 
@@ -290,9 +292,10 @@ public final class MUCModule: XMPPModule, Sendable {
         pingTask?.cancel()
 
         if isSelf {
-            log.info("Left room \(roomJID)")
+            log.info("Left a room")
+            log.debug("The room left is \(roomJID)")
         } else {
-            log.info("Occupant \(nickname) left \(roomJID)")
+            log.debug("Occupant \(nickname) left \(roomJID)")
         }
 
         context?.emitEvent(.roomOccupantLeft(room: roomJID, occupant: occupant, reason: leaveReason))
@@ -376,7 +379,8 @@ public final class MUCModule: XMPPModule, Sendable {
         let roomInvite = RoomInvite(room: roomJID, from: from, reason: reason, password: password)
 
         let context = state.withLock { $0.context }
-        log.info("Received mediated invite to \(roomJID) from \(from)")
+        log.info("Received a mediated room invite")
+        log.debug("The mediated invite is to \(roomJID) from \(from)")
         context?.emitEvent(.roomInviteReceived(roomInvite))
     }
 
@@ -392,7 +396,8 @@ public final class MUCModule: XMPPModule, Sendable {
         let roomInvite = RoomInvite(room: roomJID, from: from, reason: reason, password: password, isDirect: true, isContinuation: isContinuation, thread: thread)
 
         let context = state.withLock { $0.context }
-        log.info("Received direct invite to \(roomJID) from \(from)")
+        log.info("Received a direct room invite")
+        log.debug("The direct invite is to \(roomJID) from \(from)")
         context?.emitEvent(.roomInviteReceived(roomInvite))
     }
 
@@ -417,7 +422,8 @@ public final class MUCModule: XMPPModule, Sendable {
            let originalID = retract.attribute("id") {
             // XEP-0425: moderation messages come from bare room JID only
             guard case .bare = from else {
-                log.warning("Rejected moderation from non-bare JID: \(from)")
+                log.warning("Rejected moderation from a non-bare JID")
+                log.debug("The rejected moderation came from \(from)")
                 return
             }
             let moderator = moderated.attribute("by") ?? from.description
@@ -448,7 +454,8 @@ public final class MUCModule: XMPPModule, Sendable {
             }
             existingPingTask?.cancel()
         }
-        log.info("Joining room \(room) as \(nickname)")
+        log.info("Joining a room")
+        log.debug("The room being joined is \(room), as \(nickname)")
     }
 
     /// Leaves a MUC room.
@@ -463,7 +470,8 @@ public final class MUCModule: XMPPModule, Sendable {
             let pingTask = state.withLock { $0.removeRoom(room) }
             pingTask?.cancel()
         }
-        log.info("Leaving room \(room)")
+        log.info("Leaving a room")
+        log.debug("The room being left is \(room)")
     }
 
     /// Sends a groupchat message to a room.

@@ -16,6 +16,7 @@ extension DuckoCLI {
 
             let prepared = try await ConnectedOperation.prepare(formatter: formatter, account: accountOption.account, isInteractive: true)
             let env = prepared.environment
+            await MainActor.run { env.bookmarksService.autoJoinEnabled = true }
             let selectedAccount = prepared.account
             let password = prepared.password
 
