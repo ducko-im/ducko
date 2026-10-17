@@ -149,46 +149,44 @@ struct AttachmentView: View {
 
     private var fileAttachment: some View {
         HStack(spacing: 8) {
-            Button {
-                openPreview()
-            } label: {
-                fileSummary
-            }
-            .buttonStyle(.plain)
-            .disabled(localFileURL == nil)
-            .accessibilityIdentifier("attachment-preview-button")
-
             if let localFileURL {
+                Button {
+                    openPreview()
+                } label: {
+                    fileSummary
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("attachment-preview-button")
+
                 // Shown by presence rather than by opacity: an invisible button still takes clicks and still answers
                 // to VoiceOver.
                 if isHovering {
                     revealButton(localFileURL)
                 }
-            } else if let remoteURL = attachment.remoteURL {
-                Button {
-                    NSWorkspace.shared.open(remoteURL)
-                } label: {
-                    Image(systemName: "arrow.down.circle")
-                        .font(.title3)
+            } else {
+                fileSummary
+
+                if let remoteURL = attachment.remoteURL {
+                    Button {
+                        NSWorkspace.shared.open(remoteURL)
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.title3)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("attachment-open-button")
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("attachment-open-button")
             }
         }
         .padding(8)
-        .background(
-            isOutgoing
-                ? Palette.outgoingBubble.opacity(0.3)
-                : Color(.textBackgroundColor),
-            in: .rect(cornerRadius: 8)
-        )
+        .background(Palette.fileCard(isOutgoing: isOutgoing), in: .rect(cornerRadius: 8))
     }
 
     private var fileSummary: some View {
         HStack(spacing: 8) {
             Image(systemName: fileIcon)
                 .font(.title2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Palette.bubbleSecondaryText(isOutgoing: isOutgoing))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(attachment.displayFileName)
@@ -198,14 +196,14 @@ struct AttachmentView: View {
                 if let oobDescription = attachment.oobDescription, !oobDescription.isEmpty {
                     Text(oobDescription)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Palette.bubbleSecondaryText(isOutgoing: isOutgoing))
                         .lineLimit(2)
                 }
 
                 if let size = attachment.formattedFileSize {
                     Text(size)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Palette.bubbleSecondaryText(isOutgoing: isOutgoing))
                 }
             }
 

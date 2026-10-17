@@ -117,7 +117,7 @@ struct MessageContentView<Header: View, Footer: View>: View {
     private func noticeBubble(_ text: String) -> some View {
         Text(text)
             .italic()
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Palette.bubbleSecondaryText(isOutgoing: message.isOutgoing))
             .modifier(BubbleChrome(isOutgoing: message.isOutgoing))
     }
 

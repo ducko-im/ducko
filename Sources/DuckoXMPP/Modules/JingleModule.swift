@@ -2388,7 +2388,8 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
 
             if let proxy = try? await queryStreamhost(jid: item, context: context) {
                 state.withLock { $0.cachedProxy65 = proxy }
-                log.info("Discovered Proxy65: \(proxy.jid) at \(proxy.host):\(proxy.port)")
+                log.info("Discovered a Proxy65 streamhost")
+                log.debug("The Proxy65 streamhost is \(proxy.jid) at \(proxy.host):\(proxy.port)")
                 return proxy
             }
         }

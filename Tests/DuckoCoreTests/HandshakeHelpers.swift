@@ -77,11 +77,20 @@ func eventually(_ predicate: @escaping @MainActor () async throws -> Bool) async
 
 /// Waits, within `boundedOutcome`'s deadline, for a stanza containing `fragment` to go out on `transport`.
 func sentStanza(on transport: MockTransport, containing fragment: String) async throws -> String {
-    let task = Task { await transport.waitForSent(matching: { $0.contains(fragment) }) }
+    try await sentStanza(on: transport, matching: { $0.contains(fragment) }, "Nothing sent containing \(fragment)")
+}
+
+/// Waits, within `boundedOutcome`'s deadline, for a stanza matching `predicate` to go out on `transport`.
+func sentStanza(
+    on transport: MockTransport,
+    matching predicate: @escaping @Sendable (String) -> Bool,
+    _ comment: Comment = "Nothing sent matching the predicate"
+) async throws -> String {
+    let task = Task { await transport.waitForSent(matching: predicate) }
     if try await boundedOutcome(of: { _ = await task.value }) == nil {
         task.cancel()
     }
-    return try #require(await task.value, "Nothing sent containing \(fragment)")
+    return try #require(await task.value, comment)
 }
 
 /// Answers the sign-in pass's bookmarks fetch on `transport` with an auto-join bookmark for each of `rooms`.

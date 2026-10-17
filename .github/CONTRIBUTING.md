@@ -15,7 +15,7 @@
 See the [README](../README.md) for prerequisites, building, running, testing, and code style setup. Full conventions live in [`AGENTS.md`](../AGENTS.md) (Module Boundaries, Code Conventions). At a glance:
 
 - Module boundaries are strict and enforced at build time.
-- Pure Swift — no `@objc`, no NSObject subclasses.
+- Pure Swift — no `@objc`, no NSObject subclasses, except where AppKit or Foundation leaves no other hook (`AGENTS.md` lists the cases).
 - Swift Testing (`@Test`, `#expect`, `#require`), not XCTest.
 - All types must be `Sendable`; use actors for mutable shared state.
 - Never use `default:` on project-defined enums.

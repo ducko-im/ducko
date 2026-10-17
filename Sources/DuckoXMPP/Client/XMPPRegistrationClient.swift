@@ -79,7 +79,8 @@ public enum XMPPRegistrationClient {
                 throw RegistrationClientError.unexpectedResponse
             }
 
-            log.info("Registration successful for \(username)@\(domain)")
+            log.info("Registration successful")
+            log.debug("The registered account is \(username)@\(domain)")
         }
     }
 

@@ -821,7 +821,8 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
             }
             if let knownDevices = $0.deviceLists[sessionKey.jid],
                !knownDevices.contains(header.sid) {
-                log.warning("KEX from unannounced device \(header.sid) for \(sessionKey.jid)")
+                log.warning("KEX from unannounced device \(header.sid)")
+                log.debug("The unannounced device belongs to \(sessionKey.jid)")
             }
             return $0.context
         }

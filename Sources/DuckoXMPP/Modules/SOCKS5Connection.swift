@@ -161,7 +161,8 @@ actor SOCKS5Connection {
             throw SOCKS5Error.notConnected
         }
         fd = socketFD
-        log.info("SOCKS5 connected to \(host):\(port)")
+        log.info("SOCKS5 connected")
+        log.debug("The SOCKS5 peer is \(host):\(port)")
     }
 
     /// Sends data over the established SOCKS5 connection. Given `stallTimeout`, it fails once the peer has taken no bytes

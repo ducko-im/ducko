@@ -155,22 +155,18 @@ final class TranscriptListCoordinator: NSObject, NSTableViewDataSource, NSTableV
     /// transcript. It is centered: at the trailing edge it would sit on the scroll bar. Each settle shows or hides it.
     private func bindJumpButton() {
         guard let inputs, inputs.showsJumpToNewest else { return }
-        let content = JumpToNewestButton(scroller: inputs.scroller)
         if let jumpButton {
-            jumpButton.rootView = content
+            if jumpButton.rootView.scroller !== inputs.scroller {
+                jumpButton.rootView = JumpToNewestButton(scroller: inputs.scroller)
+            }
             return
         }
-        let host = JumpButtonHost(rootView: content)
+        let host = JumpButtonHost(rootView: JumpToNewestButton(scroller: inputs.scroller))
         host.scrollView = scrollView
         host.isHidden = true
-        // The button has one size. Left to size itself, the hosting view would have a say in the container's.
-        let size = host.fittingSize
-        host.sizingOptions = []
         host.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(host)
         NSLayoutConstraint.activate([
-            host.widthAnchor.constraint(equalToConstant: size.width),
-            host.heightAnchor.constraint(equalToConstant: size.height),
             host.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             host.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12)
         ])

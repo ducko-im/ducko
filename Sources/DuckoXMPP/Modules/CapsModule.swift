@@ -159,7 +159,8 @@ public final class CapsModule: XMPPModule, Sendable {
                 let count = features.count
                 log.info("Cached \(count) features for ver=\(ver)")
             } catch {
-                log.warning("Disco#info query failed for \(jid): \(error)")
+                log.warning("Disco#info query failed: \(error)")
+                log.debug("The failed disco#info query was to \(jid)")
             }
         }
     }

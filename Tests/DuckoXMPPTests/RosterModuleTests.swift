@@ -15,6 +15,12 @@ private let testFeaturesBindWithPreApproval = """
 </features>
 """
 
+@Sendable
+private func deltaJID(of event: XMPPEvent) -> String? {
+    guard case let .rosterUpdated(update) = event, case let .delta(item) = update.contents else { return nil }
+    return item.jid.description
+}
+
 /// Creates a connected client with RosterModule registered.
 /// A roster response must always be provided since RosterModule blocks on connect waiting for it.
 private func makeConnectedClient(
@@ -144,23 +150,18 @@ enum RosterModuleTests {
             let client = try await makeConnectedClient(mock: mock)
 
             let eventsTask = Task {
-                try await collectEvents(from: client, timeout: .seconds(1)) { event in
-                    if case let .rosterUpdated(update) = event, case .delta = update.contents { return true }
-                    return false
-                }
+                try await collectEvents(from: client) { deltaJID(of: $0) == "sentinel@example.com" }
             }
 
             await mock.simulateReceive(
                 "<iq type='set' from='evil@attacker.com' id='push-3'><query xmlns='jabber:iq:roster'><item jid='injected@evil.com' subscription='both'/></query></iq>"
             )
+            await mock.simulateReceive(
+                "<iq type='set' id='push-4'><query xmlns='jabber:iq:roster'><item jid='sentinel@example.com' subscription='both'/></query></iq>"
+            )
 
-            // Verify no rosterItemChanged event was emitted by waiting for timeout
-            do {
-                _ = try await eventsTask.value
-                throw XMPPClientError.unexpectedStreamState("Should have timed out")
-            } catch is XMPPClientError {
-                // Expected: timeout means foreign push was rejected
-            }
+            // The sentinel push arrives after the foreign one, so the foreign one was already dropped by then.
+            #expect(try await eventsTask.value.compactMap(deltaJID(of:)) == ["sentinel@example.com"])
 
             await disconnectFast(client)
         }

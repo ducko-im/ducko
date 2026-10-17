@@ -83,7 +83,8 @@ public final class RegistrationModule: XMPPModule, Sendable {
             throw RegistrationError.registrationNotSupported
         }
 
-        log.info("Retrieved registration form from \(jid?.description ?? "server")")
+        log.info("Retrieved a registration form")
+        log.debug("The registration form came from \(jid?.description ?? "the server")")
         return Self.parseForm(result)
     }
 
@@ -103,7 +104,8 @@ public final class RegistrationModule: XMPPModule, Sendable {
         let query = Self.buildRegistrationQuery(username: username, password: password, email: email)
         iq.element.addChild(query)
         _ = try await context.sendIQ(iq)
-        log.info("Submitted legacy registration to \(jid?.description ?? "server")")
+        log.info("Submitted a legacy registration")
+        log.debug("The legacy registration went to \(jid?.description ?? "the server")")
     }
 
     /// Submits a data form registration.
@@ -121,7 +123,8 @@ public final class RegistrationModule: XMPPModule, Sendable {
 
         iq.element.addChild(query)
         _ = try await context.sendIQ(iq)
-        log.info("Submitted data form registration to \(jid?.description ?? "server")")
+        log.info("Submitted a data form registration")
+        log.debug("The data form registration went to \(jid?.description ?? "the server")")
     }
 
     /// Changes the password for the currently authenticated account.

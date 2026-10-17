@@ -83,7 +83,8 @@ public final class HTTPUploadModule: XMPPModule, Sendable {
                 let maxFileSize = parseMaxFileSize(from: info.extensions)
                 let result = (jid: item, maxFileSize: maxFileSize)
                 state.withLock { $0.cachedService = result }
-                log.info("Discovered upload service: \(item), maxFileSize: \(maxFileSize.map(String.init) ?? "unlimited")")
+                log.info("Discovered an upload service, maxFileSize: \(maxFileSize.map(String.init) ?? "unlimited")")
+                log.debug("The upload service is \(item)")
                 return result
             }
         }

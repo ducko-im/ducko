@@ -98,7 +98,8 @@ public final class BlockingModule: XMPPModule, Sendable {
                 return all
             }
             for jid in previouslyBlocked {
-                log.info("Contact unblocked: \(jid)")
+                log.info("Contact unblocked")
+                log.debug("The unblocked contact is \(jid)")
                 context.emitEvent(.contactUnblocked(jid))
             }
             return
@@ -116,10 +117,12 @@ public final class BlockingModule: XMPPModule, Sendable {
 
         for jid in jids {
             if isBlock {
-                log.info("Contact blocked: \(jid)")
+                log.info("Contact blocked")
+                log.debug("The blocked contact is \(jid)")
                 context.emitEvent(.contactBlocked(jid))
             } else {
-                log.info("Contact unblocked: \(jid)")
+                log.info("Contact unblocked")
+                log.debug("The unblocked contact is \(jid)")
                 context.emitEvent(.contactUnblocked(jid))
             }
         }

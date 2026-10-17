@@ -149,7 +149,7 @@ private enum AvatarPayloads {
     static let innerOverCapBase64 = Data(count: AvatarLimits.maxBytes + 1).base64EncodedString()
 }
 
-// MARK: - Publish Teardown-Race Harness
+// MARK: - PresenceModule Harness
 
 /// Vends a fresh transport per connect so a same-account reconnect lands on a new transport while the first
 /// stays alive to answer an in-flight IQ. `@Sendable` because the factory closure may run off the main actor.
@@ -166,7 +166,7 @@ private final class TransportVendor: Sendable {
 }
 
 @MainActor
-private struct TeardownRaceFixture {
+private struct PresenceModuleFixture {
     let service: AvatarService
     let accountService: AccountService
     let transport1: MockTransport
@@ -179,11 +179,11 @@ private struct TeardownRaceFixture {
     let presenceService: PresenceService
 }
 
-/// Connects an `AvatarService` whose client also carries a `PresenceModule` — `publishAvatar`/`removeAvatar`
-/// both early-return without it, so it is required to reach the vCard publish path the race guard protects.
+/// Connects an `AvatarService` whose client also carries a `PresenceModule`, without which `publishAvatar`,
+/// `removeAvatar` and the own-vCard reload on sign-in or resume return early.
 /// Returns the first transport/client plus a second transport the reconnect will land on.
 @MainActor
-private func connectForTeardownRace() async throws -> TeardownRaceFixture {
+private func connectWithPresenceModule() async throws -> PresenceModuleFixture {
     let store = MockPersistenceStore()
     let transport1 = MockTransport()
     let transport2 = MockTransport()
@@ -213,7 +213,7 @@ private func connectForTeardownRace() async throws -> TeardownRaceFixture {
     let accountID = try await connectTask.value
     let client1 = try #require(accountService.connectedClient(for: accountID))
 
-    return TeardownRaceFixture(
+    return PresenceModuleFixture(
         service: service, accountService: accountService,
         transport1: transport1, transport2: transport2,
         accountID: accountID, client1: client1,
@@ -260,6 +260,32 @@ private func isOwnVCardGet(_ stanza: String) -> Bool {
 // MARK: - Tests
 
 enum AvatarServiceTests {
+    struct OwnAvatarReload {
+        @Test(arguments: [false, true])
+        @MainActor
+        func `signing in or resuming loads the own avatar hash and advertises it in presence`(resumed: Bool) async throws {
+            let fixture = try await connectWithPresenceModule()
+            let fullJID = try #require(FullJID.parse("\(testJIDString)/ducko"))
+            let event: XMPPEvent = resumed ? .streamResumed(fullJID) : .connected(fullJID)
+
+            let task = Task { @MainActor in
+                await fixture.service.handleEvent(event, accountID: fixture.accountID)
+            }
+            let getStanza = try await sentStanza(on: fixture.transport1, matching: isOwnVCardGet)
+            let getID = try #require(extractIQID(from: getStanza))
+            await fixture.transport1.simulateReceive(
+                "<iq type='result' id='\(getID)'>\(vcardBody(binval: AvatarPayloads.validPNGBase64))</iq>"
+            )
+            await task.value
+
+            let hash = try #require(fixture.service.ownAvatarHash(for: fixture.accountID))
+            let sent = await fixture.transport1.sentBytes.map { String(decoding: $0, as: UTF8.self) }
+            #expect(sent.contains { $0.contains("<presence") && $0.contains("<photo>\(hash)</photo>") })
+
+            await fixture.accountService.disconnect(accountID: fixture.accountID)
+        }
+    }
+
     struct VCardHashIngestion {
         @Test
         @MainActor
@@ -827,7 +853,7 @@ enum AvatarServiceTests {
         @Test
         @MainActor
         func `publishAvatar skips the vCard publish when the client is swapped mid-fetch`() async throws {
-            let fixture = try await connectForTeardownRace()
+            let fixture = try await connectWithPresenceModule()
             fixture.service.setOwnAvatarHashForTesting("preexisting-hash", accountID: fixture.accountID)
 
             let publishTask = Task { @MainActor in
@@ -863,7 +889,7 @@ enum AvatarServiceTests {
         @Test
         @MainActor
         func `removeAvatar skips the vCard clear when the client is swapped mid-fetch`() async throws {
-            let fixture = try await connectForTeardownRace()
+            let fixture = try await connectWithPresenceModule()
             fixture.service.setOwnAvatarHashForTesting("preexisting-hash", accountID: fixture.accountID)
 
             let removeTask = Task { @MainActor in

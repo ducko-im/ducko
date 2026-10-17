@@ -57,7 +57,7 @@ enum TranscriptRows {
                     startsDay: isFirstOfDay,
                     replyQuote: replied.map {
                         TranscriptRow.ReplyQuote(
-                            senderName: $0.isOutgoing ? "You" : incomingSenderName(of: $0, chat: chat),
+                            senderName: $0.isOutgoing ? "You" : $0.incomingSenderName(contactName: chat.contactName),
                             previewText: $0.previewText
                         )
                     },
@@ -126,13 +126,6 @@ enum TranscriptRows {
         if message.isOutgoing {
             return chat.ownName
         }
-        return incomingSenderName(of: message, chat: chat)
-    }
-
-    private static func incomingSenderName(of message: ChatMessage, chat: Details) -> String {
-        if message.type == "groupchat" {
-            return message.fromJID
-        }
-        return chat.contactName ?? message.fromJID
+        return message.incomingSenderName(contactName: chat.contactName)
     }
 }

@@ -338,6 +338,37 @@ struct ChatContainerStateTests {
         #expect(chatService.activeConversationID == nil)
     }
 
+    @Test(arguments: [false, true])
+    func `the chat shown before stops being active while the selected tab loads`(openedInBackground: Bool) async throws {
+        let fixture = try await Self.makeFixture()
+        let container = fixture.container
+        let chatService = fixture.environment.chatService
+        let id = fixture.accountID
+        await openAndAwaitLoad(container, "a@example.com", id)
+        let conversationA = try #require(container.state(for: key("a@example.com", id))?.conversation)
+        try await waitUntil { chatService.activeConversationID == conversationA.id }
+
+        // Hold B's load in its conversation upsert.
+        let entered = AsyncSemaphore()
+        let release = AsyncSemaphore()
+        await fixture.store.installConversationWriteGate(entered: entered, release: release)
+        if openedInBackground {
+            container.openInBackground("b@example.com", accountID: id)
+            container.select(key("b@example.com", id))
+        } else {
+            container.open("b@example.com", accountID: id)
+        }
+        let stateB = try #require(container.state(for: key("b@example.com", id)))
+        await entered.wait()
+
+        try await waitUntil { chatService.activeConversationID == nil }
+
+        await release.signal()
+        try await waitUntil { stateB.conversation != nil && !stateB.isLoading }
+
+        #expect(chatService.activeConversationID == stateB.conversation?.id)
+    }
+
     @Test func `the selected tab is the active conversation only while the chat window is focused`() async throws {
         let fixture = try await Self.makeFixture()
         let container = fixture.container

@@ -129,15 +129,18 @@ public final class PresenceModule: XMPPModule, Sendable {
     private func handleSubscriptionPresence(from: JID, type: XMPPPresence.PresenceType?, context: ModuleContext?) -> Bool? {
         switch type {
         case .subscribe:
-            log.info("Subscription request from \(from)")
+            log.info("Received a subscription request")
+            log.debug("The subscription request is from \(from)")
             context?.emitEvent(.presenceSubscriptionRequest(from: from.bareJID))
             return true
         case .subscribed:
-            log.info("Subscription approved by \(from)")
+            log.info("A subscription was approved")
+            log.debug("The subscription was approved by \(from)")
             context?.emitEvent(.presenceSubscriptionApproved(from: from.bareJID))
             return true
         case .unsubscribed:
-            log.info("Subscription revoked by \(from)")
+            log.info("A subscription was revoked")
+            log.debug("The subscription was revoked by \(from)")
             context?.emitEvent(.presenceSubscriptionRevoked(from: from.bareJID))
             return true
         case .unsubscribe, .probe, .error:

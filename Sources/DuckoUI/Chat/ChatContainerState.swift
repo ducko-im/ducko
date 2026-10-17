@@ -144,13 +144,7 @@ public final class ChatContainerState {
         orderedTabs.append(key)
         if selecting {
             selectedKey = key
-            // While the window is in view, `load()` ends by calling `chatService.selectConversation`,
-            // so the freshly opened tab becomes the active conversation without a separate
-            // activation. Otherwise it is activated when the window comes into view.
-            // Bump the generation so any in-flight select/close activation finds itself
-            // stale and bails instead of re-pointing the active conversation behind this
-            // newly opened, now-selected tab.
-            activationGeneration += 1
+            syncActiveConversation()
         }
         Task { await state.load { [weak self, weak state] in self?.canActivate(state) ?? false } }
     }
@@ -310,7 +304,12 @@ public final class ChatContainerState {
     /// messages received while it was hidden.
     private func activate(_ state: ChatWindowState, generation: Int) async {
         guard generation == activationGeneration, isSelectedChatSeen else { return }
-        guard let conversationID = state.conversation?.id else { return }
+        guard let conversationID = state.conversation?.id else {
+            // A tab still loading is activated by its own `load()`. Until then the chat shown before must not stay
+            // active, or its incoming messages are marked read behind this tab, and for good if the load fails.
+            await environment.chatService.selectConversation(nil)
+            return
+        }
         let accountID = state.conversation?.accountID ?? environment.accountService.accounts.first?.id
         await environment.chatService.selectConversation(conversationID, accountID: accountID)
         guard generation == activationGeneration else { return }

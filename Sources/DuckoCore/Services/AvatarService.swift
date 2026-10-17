@@ -333,7 +333,8 @@ public final class AvatarService {
             if data == nil { log.warning("Dropping oversized avatar (\(photoData.count) bytes)") }
             await storeContactAvatar(data, hash: hash, for: contact, accountID: accountID, rosterGeneration: rosterGeneration)
         } catch {
-            log.warning("Failed to fetch vCard avatar for \(from): \(error.localizedDescription)")
+            log.warning("Failed to fetch vCard avatar: \(error.localizedDescription)")
+            log.debug("The failed vCard avatar fetch was for \(from)")
         }
     }
 
@@ -356,7 +357,8 @@ public final class AvatarService {
                 : nil
             await storeContactAvatar(data, hash: hash, for: contact, accountID: accountID, rosterGeneration: rosterGeneration)
         } catch {
-            log.warning("Failed to fetch PEP avatar data for \(contact.jid): \(error.localizedDescription)")
+            log.warning("Failed to fetch PEP avatar data: \(error.localizedDescription)")
+            log.debug("The failed PEP avatar fetch was for \(contact.jid)")
         }
     }
 

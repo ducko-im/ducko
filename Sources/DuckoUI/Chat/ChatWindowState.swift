@@ -348,10 +348,12 @@ public final class ChatWindowState {
             // Typed failures surface to the composer and let it restore the body.
             lastSendError = error.localizedDescription
             lastFailedSendBody = body
-            log.warning("Send failed: \(error.localizedDescription)")
+            log.warning("Send failed")
+            log.debug("The send failed with: \(error.localizedDescription)")
         } catch {
             // Untyped send failures (network, etc.) leave messages as-is.
-            log.warning("Send failed: \(error)")
+            log.warning("Send failed")
+            log.debug("The send failed with: \(error)")
         }
 
         cancelReplyOrEdit()

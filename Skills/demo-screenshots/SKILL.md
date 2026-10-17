@@ -224,7 +224,7 @@ Rules for the content:
 - Message times are on `presentation.date` in `presentation.timeZone`, and Steps 4–6 show them in local time. Keep the date in the past.
 - An incoming stanza appended to `$WORK/inject.txt` reaches the running instance. `{ME}` stands for the account's full JID.
 - A room invitation shows its banner in Contacts. Append one `<message from='…' to='{ME}'>` line carrying `<x xmlns='jabber:x:conference' jid='<room address>'/>` after the last relaunch, since a pending invitation is not kept across one.
-- A transcript line takes `replyToID`, naming another line's `stanzaID`, for a reply quote. For file cards it takes `attachments`, a list of objects with `id` (a UUID string), `url`, and optionally `fileName`, `fileSize` and `mimeType`. A line that fails to decode is dropped without an error.
+- A message takes `replyTo`, naming another message's `id`, for a reply quote, and `retracted: true` for the retraction notice. For file cards it takes `attachments`, a list of objects with `id` (a UUID string), `url`, and optionally `fileName`, `fileSize` and `mimeType`. The seeder writes them into the transcript, where a line that fails to decode is dropped without an error.
 - An attachment object with `"savedOrigin":"locallySaved"` and a `file:` address as its `url` is shown as a file saved on this Mac. When its `mimeType` starts with `image/` and no file exists at that address, the chat shows the missing-image placeholder with the file's name.
 - A contact's `status` may hold `\n` for a status message with line breaks.
 - A second account added after Step 3.3's `UPDATE`, with that step's `DUCKO_PROFILE=$PROFILE "$BIN/DuckoCLI" account add` line and `<jid> --password demo --host 127.0.0.1 --port <unused port> --no-connect`, keeps Connect on Launch off and stays offline. The Contacts header then shows the identity switcher and a status such as `Available · 1 Offline`.
@@ -317,7 +317,7 @@ Move `out` into the website's `reference/captures/`. Then stop the stub (`pkill 
 | `account` | `jid`, `name`, `password` |
 | `contacts` | `localpart`, `name`, `group`, `resource`, `show` (null for available, `away`, `xa`, `dnd`, `offline`), `status` |
 | `rooms` | `key`, `jid`, `name`, `subject`, own `nickname`, `occupants` with `nick`, `affiliation`, `role` |
-| `conversations` | Variants keyed by name: `peer` (a contact's local part or a room's key), `kind` (`chat` or `room`), `messages` with a fixed uppercase `id`, `stanzaID`, `from` (`me`, `peer` or a nickname), `time`, `body`, outgoing `status` (`sent`, `delivered`, `read`) and optional `editedSecondsAgo` |
+| `conversations` | Variants keyed by name: `peer` (a contact's local part or a room's key), `kind` (`chat` or `room`), `messages` with a fixed uppercase `id`, `stanzaID`, `from` (`me`, `peer` or a nickname), `time`, `body`, outgoing `status` (`sent`, `delivered`, `read`), and optional `editedSecondsAgo`, `replyTo`, `retracted` and `attachments` |
 | `states` | One entry per manifest id; unset fields take their defaults |
 
 A state's fields: `key` (the window that is key, by default the manifest's window), `tabs` (conversation variants, the first selected; default `["lena"]`), `overflow` (true when the tabs don't all fit the bar), `lastOutgoingStatus`, `closeAllTabs`, `rooms` (room keys to keep), `unread` (unread counts by conversation variant, such as `{"marco": 3}`), `collapsedGroups`, `selectedContact`, `ownStatus` (`available`, `away`, `xa`, `dnd`, `offline`), `typing` (contacts), `input` (draft text), `editing` (a message id), `hover` (`{"statusPicker": true}`, `{"trafficLights": true}` for the minimize button of the manifest's window, `{"tab": <variant>}` or `{"message": <id>}`), `menu` (`"status"` or `{"message": <id>}`) and `select` (`{"message": <id>, "range": [start, end]}`, UTF-16 offsets with `end` exclusive into a plain message (no `/me` line or reply quote) of the first tab's one-to-one chat, within the first line of an incoming body or an outgoing body that fits on one line without wrapping, starting and ending on a non-space character, dragged with the pointer and checked by copying it). A manifest id without an entry is skipped as "no content entry".
@@ -340,7 +340,7 @@ Run `swift scripts/compare.swift <a.png> <b.png> [diff.png]` to compare two runs
 
 ### Adding a State
 
-Add the id to the website's manifest and an entry to `content.json`'s `states`, built from the fields above. When the state needs a mechanism the run lacks, add a `drive.swift` command for it, a live step and a check in `reference.py` (through Accessibility, or a readback such as `select`'s copy where Accessibility can't see the result), and the PNG-only signal to R4.
+Add the id to the website's manifest and an entry to `content.json`'s `states`, built from the fields above. When the state needs a mechanism the run lacks, add a `drive.swift` command for it, a live step and a check in `reference.py` (through Accessibility, or a readback such as `select`'s copy where Accessibility can't see the result), and the PNG-only signal to R4. The website's fixtures read only a message's `id`, `from`, `time`, `body`, `status` and `editedSecondsAgo`, so a state that uses `replyTo`, `retracted` or `attachments` also needs the website to draw them.
 
 ### Driving a State by Hand
 

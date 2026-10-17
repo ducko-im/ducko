@@ -118,7 +118,8 @@ public final class ChannelSearchModule: XMPPModule, Sendable {
         let match = await findSearchService(items: items, context: context)
         if let match {
             state.withLock { $0.cachedSearchService = match }
-            log.info("Discovered channel search service: \(match)")
+            log.info("Discovered a channel search service")
+            log.debug("The channel search service is \(match)")
         }
         return match
     }

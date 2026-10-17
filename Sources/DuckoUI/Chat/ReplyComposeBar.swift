@@ -8,7 +8,7 @@ struct ReplyComposeBar: View {
         if let replyingTo = windowState.replyingTo {
             composeRow(
                 icon: "arrowshape.turn.up.left",
-                label: "Replying to \(replyingTo.fromJID)",
+                label: replyLabel(for: replyingTo),
                 preview: replyingTo.previewText
             )
         } else if let editing = windowState.editingMessage {
@@ -20,15 +20,24 @@ struct ReplyComposeBar: View {
         }
     }
 
+    private func replyLabel(for message: ChatMessage) -> String {
+        if message.isOutgoing {
+            return "Replying to yourself"
+        }
+        let name = message.incomingSenderName(contactName: windowState.knownContact?.displayName)
+        return "Replying to \(name)"
+    }
+
     private func composeRow(icon: String, label: String, preview: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(label)
+                Text(joiningLines: label)
                     .font(.caption)
                     .bold()
+                    .singleLine()
 
                 Text(joiningLines: preview)
                     .font(.caption)

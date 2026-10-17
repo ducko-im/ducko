@@ -55,17 +55,24 @@ def sender(message):
     return message["from"]
 
 
+def moment_of(message):
+    return datetime.datetime.fromisoformat("%sT%s" % (presentation["date"], message["time"])).replace(tzinfo=zone)
+
+
+# A reply names the quoted message by its stanza id, as the app looks it up.
+stanza_of = {message["id"]: message["stanzaID"] for message in messages}
+
 # An amendment goes into its target message's day file, as the app files it.
 days = {}
 day_of = {}
 for message in messages:
-    moment = datetime.datetime.fromisoformat("%sT%s" % (presentation["date"], message["time"])).replace(tzinfo=zone)
+    moment = moment_of(message)
     body = message["body"]
     if "editedSecondsAgo" in message:
         body = body.rsplit(" ", 1)[0] if " " in body else body[:-1]
     day_of[message["id"]] = iso(moment)[:10]
-    days.setdefault(day_of[message["id"]], []).append({
-        "attachments": [],
+    line = {
+        "attachments": message.get("attachments", []),
         "body": body,
         "fromJID": sender(message),
         "id": message["id"],
@@ -76,7 +83,10 @@ for message in messages:
         "stanzaID": message["stanzaID"],
         "timestamp": iso(moment),
         "type": "msg",
-    })
+    }
+    if "replyTo" in message:
+        line["replyToID"] = stanza_of[message["replyTo"]]
+    days.setdefault(day_of[message["id"]], []).append(line)
 for message in messages:
     lines = days[day_of[message["id"]]]
     action = STATUS_AMENDMENT[message["status"]] if "status" in message else None
@@ -87,6 +97,9 @@ for message in messages:
         lines.append({
             "action": "edit", "body": message["body"], "targetMessageID": message["id"], "timestamp": iso(edited), "type": "amend",
         })
+    # Retracted at the message's own time, so its "(retracted …)" label changes monthly rather than by the minute.
+    if message.get("retracted"):
+        lines.append({"action": "retract", "targetMessageID": message["id"], "timestamp": iso(moment_of(message)), "type": "amend"})
 
 os.makedirs(args.directory, exist_ok=True)
 for name in os.listdir(args.directory):

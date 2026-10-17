@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix an open chat losing the contact's name and photo, and the Contacts window losing your own photo, when you go offline
 - Fix room nicknames all showing in gray: each occupant's name and picture now has its own color, and the participant list colors names to match
 - Fix Chat History naming contacts by their address: conversations, days and `/me` lines now use the names your contact list shows
-- Fix a reply to a contact's message quoting their address instead of their name
+- Fix a reply to a contact's message showing their address instead of their name, in its quote and in the bar above the message field, which now also says when you reply to yourself
 - Fix Chat History listing a message that arrived late out of time order
 - Fix a private chat within a room showing "Couldn't load older messages: Invalid JID" when scrolled to its start
 - Fix messages you sent or received on another device going missing when the server sends their copies without a sender address
@@ -33,11 +33,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix one-off CLI commands such as `ducko send` joining your bookmarked and remembered rooms, so everyone there saw you join and leave. Only `ducko interactive` joins them
 - Fix `ducko history <address> --search` accepting `--before` and `--server` and then ignoring them: both are now refused with `--search`
 - Stop Ducko asking the server's archive about a private chat within a room when you sign in, which could fill it with messages from the room's other private chats
+- Fix the name and size of a file you sent being hard to read on your message: they now sit on a darker card, and a file that is not on this Mac no longer looks grayed out
+- Fix the chat you were looking at counting as read after you opened another chat in a new tab, while that tab was still loading or for good when it failed to load
 
 ### Security
 
 - Ignore copies of your messages that claim to come from another of your devices instead of from your server, so nothing but your server can add them to your chats
-- Keep room addresses, nicknames and the senders of room invitations out of the log file at the default log level
+- Keep the addresses of rooms, contacts, your account and the services you use, room nicknames and the senders of room invitations out of the log file at the default log level
 
 ## [0.8.0] - 2026-10-08
 

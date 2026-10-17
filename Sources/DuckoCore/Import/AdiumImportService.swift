@@ -118,7 +118,8 @@ public actor AdiumImportService {
         do {
             logFiles = try AdiumLogDiscovery.logFileURLs(in: contactDir)
         } catch {
-            log.warning("Failed to enumerate logs in \(contactDir.path): \(error)")
+            log.warning("Failed to enumerate a contact's logs")
+            log.debug("The log folder that could not be enumerated is \(contactDir.path): \(error)")
             return
         }
 
@@ -144,7 +145,8 @@ public actor AdiumImportService {
                 throw CancellationError()
             } catch {
                 result.errors.append(ImportError(file: fileURL.path, message: error.localizedDescription))
-                log.warning("Failed to import \(fileURL.lastPathComponent): \(error)")
+                log.warning("Failed to import a log file")
+                log.debug("The log file that failed to import is \(fileURL.lastPathComponent): \(error)")
             }
 
             result.completedFiles += 1

@@ -391,7 +391,8 @@ public final class OMEMOService {
         do {
             conversation = try await chatService.openConversation(for: peerJID, accountID: accountID)
         } catch {
-            log.warning("Failed to open conversation for OMEMO message from \(senderJID): \(error)")
+            log.warning("Failed to open conversation for an OMEMO message: \(error)")
+            log.debug("The OMEMO message was from \(senderJID)")
             return
         }
 
@@ -463,7 +464,8 @@ public final class OMEMOService {
             )
             try? await omemoStore.saveTrust(updated)
         } else if let existing, !existing.fingerprint.isEmpty, existing.fingerprint != fingerprint {
-            log.warning("Identity key changed for \(jid) device \(deviceID)")
+            log.warning("Identity key changed for device \(deviceID)")
+            log.debug("The changed identity key belongs to \(jid)")
         } else if existing == nil {
             // New device — create undecided trust record with fingerprint
             let trust = OMEMOTrust(

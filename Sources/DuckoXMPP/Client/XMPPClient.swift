@@ -451,7 +451,8 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         connectedJIDLock.withLock { $0 = fullJID }
         processBind2Results(authResult, requestedCarbons: requestedCarbons)
 
-        log.notice("Connected as \(fullJID) via SASL2 + Bind 2")
+        log.notice("Connected via SASL2 + Bind 2")
+        log.debug("The connected JID is \(fullJID)")
         state = .connected(fullJID)
         return false
     }
@@ -490,7 +491,8 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             try await establishSession(reader: reader)
         }
 
-        log.notice("Connected as \(fullJID)")
+        log.notice("Connected")
+        log.debug("The connected JID is \(fullJID)")
         connectedJIDLock.withLock { $0 = fullJID }
         state = .connected(fullJID)
         return false
@@ -704,7 +706,8 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             for stanza in retransmitQueue {
                 try await connection.send(XMPPStreamWriter.stanza(stanza))
             }
-            log.notice("Stream resumed as \(jid)")
+            log.notice("Stream resumed")
+            log.debug("The resumed stream's JID is \(jid)")
             connectedJIDLock.withLock { $0 = jid }
             state = .connected(jid)
             return true
@@ -762,7 +765,8 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             for stanza in retransmitQueue {
                 try await connection.send(XMPPStreamWriter.stanza(stanza))
             }
-            log.notice("ISR resumed as \(jid)")
+            log.notice("ISR resumed")
+            log.debug("The ISR-resumed stream's JID is \(jid)")
             connectedJIDLock.withLock { $0 = jid }
             state = .connected(jid)
             return true

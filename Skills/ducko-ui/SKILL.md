@@ -113,7 +113,7 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `receiving-file-row` | Row at the end of the message list for a file the chat's contact is sending right now, shown like one of their messages with "Receiving…" under it until the saved file's message replaces it | Chat |
 | `file-drop-overlay` | Drag-and-drop overlay | Chat |
 | `attachment-view` | Attachment in message bubble | Chat |
-| `attachment-preview-button` | File attachment card that opens the system Quick Look panel. Disabled for remote files. | Chat |
+| `attachment-preview-button` | File attachment card that opens the system Quick Look panel. Absent for a file not saved on this Mac. | Chat |
 | `attachment-reveal-button` | Reveal-in-Finder button on a saved file attachment, shown on hover | Chat |
 | `attachment-open-button` | Open button on a remote (HTTP) file attachment | Chat |
 | `attachment-load-image` | Click-to-load placeholder for a remote image, showing the file name. Absent where the image loads on sight: your own messages, and a roster contact's messages in a 1:1 chat. Tapping it loads the image inline. | Chat |

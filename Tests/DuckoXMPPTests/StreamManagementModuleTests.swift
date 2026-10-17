@@ -276,31 +276,6 @@ enum StreamManagementModuleTests {
 
             await disconnectAndAck(client, sm: sm, mock: mock)
         }
-
-        @Test
-        func `SM-namespace elements are consumed and not dispatched to modules`() async throws {
-            let mock = MockTransport()
-            let (client, sm) = try await makeConnectedClient(mock: mock)
-
-            // Try to collect an iqReceived event — the SM <r> should NOT produce one
-            let eventsTask = Task {
-                try await collectEvents(from: client, timeout: .seconds(1)) { event in
-                    if case .iqReceived = event { return true }
-                    return false
-                }
-            }
-
-            await mock.simulateReceive("<r xmlns='urn:xmpp:sm:3'/>")
-
-            do {
-                _ = try await eventsTask.value
-                throw XMPPClientError.unexpectedStreamState("Should have timed out")
-            } catch is XMPPClientError {
-                // Expected: timeout means SM elements were consumed
-            }
-
-            await disconnectAndAck(client, sm: sm, mock: mock)
-        }
     }
 
     struct Resumption {

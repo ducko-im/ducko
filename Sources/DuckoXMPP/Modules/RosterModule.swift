@@ -254,7 +254,8 @@ public final class RosterModule: XMPPModule, Sendable {
         let (context, supported) = state.withLock { ($0.context, $0.supportsPreApproval) }
         guard let context else { return }
         guard supported else {
-            log.info("Server does not support pre-approval, skipping for \(jid)")
+            log.info("Server does not support pre-approval, skipping")
+            log.debug("The skipped pre-approval is for \(jid)")
             return
         }
         let presence = XMPPPresence(type: .subscribed, to: .bare(jid))
