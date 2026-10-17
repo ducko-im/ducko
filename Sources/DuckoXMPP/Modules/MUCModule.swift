@@ -460,8 +460,7 @@ public final class MUCModule: XMPPModule, Sendable {
 
     /// Leaves a MUC room.
     public func leaveRoom(_ room: BareJID) async throws {
-        guard let context = state.withLock({ $0.context }) else { return }
-        guard let nickname = state.withLock({ $0.rooms[room]?.nickname }),
+        guard let context = state.withLock({ $0.context }), let nickname = state.withLock({ $0.rooms[room]?.nickname }),
               let fullJID = FullJID(bareJID: room, resourcePart: nickname) else { return }
 
         let presence = XMPPPresence(type: .unavailable, to: .full(fullJID))
@@ -585,8 +584,7 @@ public final class MUCModule: XMPPModule, Sendable {
 
     /// Discovers rooms on a MUC service using disco#items.
     public func discoverRooms(on service: String) async throws -> [(jid: BareJID, name: String?)] {
-        guard let context = state.withLock({ $0.context }) else { return [] }
-        guard let serviceJID = BareJID.parse(service) else { return [] }
+        guard let context = state.withLock({ $0.context }), let serviceJID = BareJID.parse(service) else { return [] }
         var iq = XMPPIQ(type: .get, to: .bare(serviceJID), id: context.generateID())
         let query = XMLElement(name: "query", namespace: XMPPNamespaces.discoItems)
         iq.element.addChild(query)
@@ -642,8 +640,7 @@ public final class MUCModule: XMPPModule, Sendable {
         let query = XMLElement(name: "query", namespace: XMPPNamespaces.mucOwner)
         iq.element.addChild(query)
 
-        guard let result = try await context.sendIQ(iq) else { return [] }
-        guard let form = result.child(named: "x", namespace: XMPPNamespaces.dataForms) else { return [] }
+        guard let result = try await context.sendIQ(iq), let form = result.child(named: "x", namespace: XMPPNamespaces.dataForms) else { return [] }
         return parseDataForm(form)
     }
 

@@ -99,9 +99,7 @@ public final class FileLogWriter: Sendable {
     // MARK: - Rotation
 
     private func rotateIfNeeded(_ handle: inout FileHandle?) {
-        guard let active = handle else { return }
-        guard let size = try? active.offset() else { return }
-        guard size >= maxFileSize else { return }
+        guard let active = handle, let size = try? active.offset(), size >= maxFileSize else { return }
 
         try? active.close()
         handle = nil

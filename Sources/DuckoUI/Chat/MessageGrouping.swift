@@ -34,8 +34,6 @@ private extension TimelineItem {
 }
 
 private func isSameGroup(_ a: ChatMessage, as b: ChatMessage?, interval: TimeInterval) -> Bool {
-    guard let b else { return false }
-    guard a.isOutgoing == b.isOutgoing else { return false }
-    guard a.fromJID == b.fromJID else { return false }
+    guard let b, a.isOutgoing == b.isOutgoing, a.fromJID == b.fromJID else { return false }
     return abs(a.timestamp.timeIntervalSince(b.timestamp)) <= interval
 }

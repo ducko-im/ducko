@@ -125,11 +125,9 @@ func extractCertificateInfo(_ cert: SecCertificate) -> CertInfo? {
     var issuer: String?
     let expiry = SecCertificateCopyNotValidAfterDate(cert) as Date?
     let issuerKey = kSecOIDX509V1IssuerName as String
-    if let values = SecCertificateCopyValues(cert, [issuerKey] as CFArray, nil) as? [String: Any] {
-        if let issuerEntry = values[issuerKey] as? [String: Any],
-           let issuerValue = issuerEntry[kSecPropertyKeyValue as String] {
-            issuer = readableDistinguishedName(issuerValue)
-        }
+    if let values = SecCertificateCopyValues(cert, [issuerKey] as CFArray, nil) as? [String: Any], let issuerEntry = values[issuerKey] as? [String: Any],
+       let issuerValue = issuerEntry[kSecPropertyKeyValue as String] {
+        issuer = readableDistinguishedName(issuerValue)
     }
 
     return CertInfo(subject: subject, issuer: issuer, expiry: expiry, sha256: fingerprint)

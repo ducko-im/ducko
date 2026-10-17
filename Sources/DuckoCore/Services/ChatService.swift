@@ -430,9 +430,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     // MARK: - Typing
 
     public func userIsTyping(in jid: BareJID, accountID: UUID) async {
-        guard ChatPreferences.shared.enableChatStates else { return }
-        guard let client = accountService?.connectedClient(for: accountID) else { return }
-        guard let module = await client.module(ofType: ChatStatesModule.self) else { return }
+        guard ChatPreferences.shared.enableChatStates, let client = accountService?.connectedClient(for: accountID), let module = await client.module(ofType: ChatStatesModule.self) else { return }
 
         typingDebounce[accountID]?[jid]?.cancel()
         try? await module.sendChatState(.composing, to: recipientJID(for: jid, accountID: accountID))
@@ -1305,8 +1303,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     private func handleChatMarker(messageID: String, type: ChatMarkerType, from: JID, accountID: UUID) async {
-        guard type == .displayed else { return }
-        guard let conversation = await conversation(forSender: from, accountID: accountID) else { return }
+        guard type == .displayed, let conversation = await conversation(forSender: from, accountID: accountID) else { return }
         if conversation.isDirectChat {
             guard await markDisplayed(upTo: messageID, in: conversation.id) else { return }
         } else {
@@ -1377,8 +1374,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     private func handleMessageCorrected(originalID: String, newBody: String, from: JID, accountID: UUID) async {
         let conversationID = await conversationID(for: from, accountID: accountID)
         guard let conversationID,
-              let original = try? await transcripts.findMessage(stanzaID: originalID, conversationID: conversationID) else { return }
-        guard await verifySender(from: from, original: original, action: "correction", accountID: accountID) else { return }
+              let original = try? await transcripts.findMessage(stanzaID: originalID, conversationID: conversationID), await verifySender(from: from, original: original, action: "correction", accountID: accountID) else { return }
 
         let filterDirection: FilterDirection = original.isOutgoing ? .outgoing : .incoming
         let filtered = await filterBody(newBody, direction: filterDirection, accountID: accountID, fallback: from.bareJID)
@@ -1393,8 +1389,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     private func handleMessageRetracted(originalID: String, from: JID, accountID: UUID) async {
         let conversationID = await conversationID(for: from, accountID: accountID)
         guard let conversationID,
-              let original = try? await transcripts.findMessage(stanzaID: originalID, conversationID: conversationID) else { return }
-        guard await verifySender(from: from, original: original, action: "retraction", accountID: accountID) else { return }
+              let original = try? await transcripts.findMessage(stanzaID: originalID, conversationID: conversationID), await verifySender(from: from, original: original, action: "retraction", accountID: accountID) else { return }
 
         try? await transcripts.appendAmendment(
             TranscriptAmendment(action: .retract, targetMessageID: original.id, targetStanzaID: originalID, timestamp: Date()),
@@ -2323,9 +2318,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     private func syncRecentHistory(accountID: UUID) async {
-        guard let client = accountService?.connectedClient(for: accountID) else { return }
-        guard let mamModule = await client.module(ofType: MAMModule.self) else { return }
-        guard let account = accountService?.accounts.first(where: { $0.id == accountID }) else { return }
+        guard let client = accountService?.connectedClient(for: accountID), let mamModule = await client.module(ofType: MAMModule.self), let account = accountService?.accounts.first(where: { $0.id == accountID }) else { return }
         let accountJID = account.jid
 
         do {

@@ -120,8 +120,7 @@ enum IDNA {
         // NFC-stability by scalar identity (String == is canonical-equivalence-based, so it would
         // accept a non-NFC decoded label as "stable").
         let decodedString = String(String.UnicodeScalarView(decoded))
-        guard Array(decodedString.precomposedStringWithCanonicalMapping.unicodeScalars) == decoded else { return nil }
-        guard passesStructuralRules(decoded), validate(decoded) else { return nil }
+        guard Array(decodedString.precomposedStringWithCanonicalMapping.unicodeScalars) == decoded, passesStructuralRules(decoded), validate(decoded) else { return nil }
         // Re-encode round-trip rejects non-canonical A-labels.
         guard let reencoded = Punycode.encode(decoded), reencoded == suffix else { return nil }
         return (decoded, "xn--" + reencoded)
@@ -159,8 +158,7 @@ enum IDNA {
     /// A-labels, and non-ASCII U-labels): no leading/trailing hyphen, no `??--` in positions 3–4
     /// (reserved for `xn--`), and no leading combining mark.
     private static func passesStructuralRules(_ scalars: [Unicode.Scalar]) -> Bool {
-        guard let first = scalars.first, let last = scalars.last else { return false }
-        guard first.value != 0x2D, last.value != 0x2D else { return false }
+        guard let first = scalars.first, let last = scalars.last, first.value != 0x2D, last.value != 0x2D else { return false }
         if scalars.count >= 4, scalars[2].value == 0x2D, scalars[3].value == 0x2D { return false }
         switch first.properties.generalCategory {
         case .nonspacingMark, .spacingMark, .enclosingMark: return false

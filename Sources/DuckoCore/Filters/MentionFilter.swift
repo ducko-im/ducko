@@ -6,8 +6,7 @@ struct MentionFilter: MessageFilter {
     init() {}
 
     func filter(_ content: MessageContent, direction: FilterDirection, context: FilterContext) async -> MessageContent {
-        guard direction == .incoming else { return content }
-        guard let localPart = context.accountJID.localPart else { return content }
+        guard direction == .incoming, let localPart = context.accountJID.localPart else { return content }
 
         let mention = "@\(localPart)"
         guard content.body.contains(mention) else { return content }

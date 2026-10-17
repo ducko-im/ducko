@@ -69,8 +69,7 @@ public final class BookmarksService {
     /// Fetches the bookmarks and joins their auto-join rooms. Returns whether the fetched list replaced the kept one.
     @discardableResult
     public func loadBookmarks(accountID: UUID) async -> Bool {
-        guard let client = accountService?.connectedClient(for: accountID) else { return false }
-        guard let pepModule = await client.module(ofType: PEPModule.self) else { return false }
+        guard let client = accountService?.connectedClient(for: accountID), let pepModule = await client.module(ofType: PEPModule.self) else { return false }
 
         do {
             let items = try await pepModule.retrieveItems(node: XMPPNamespaces.bookmarks2)
@@ -89,10 +88,7 @@ public final class BookmarksService {
     }
 
     public func addBookmark(_ bookmark: RoomBookmark, accountID: UUID) async throws {
-        guard let client = accountService?.connectedClient(for: accountID) else {
-            throw BookmarksError.notConnected(accountID)
-        }
-        guard let pepModule = await client.module(ofType: PEPModule.self) else {
+        guard let client = accountService?.connectedClient(for: accountID), let pepModule = await client.module(ofType: PEPModule.self) else {
             throw BookmarksError.notConnected(accountID)
         }
 
@@ -118,8 +114,7 @@ public final class BookmarksService {
     }
 
     public func removeBookmark(jidString: String, accountID: UUID) async throws {
-        guard let client = accountService?.connectedClient(for: accountID) else { return }
-        guard let pepModule = await client.module(ofType: PEPModule.self) else { return }
+        guard let client = accountService?.connectedClient(for: accountID), let pepModule = await client.module(ofType: PEPModule.self) else { return }
 
         try await pepModule.retractItem(node: XMPPNamespaces.bookmarks2, itemID: jidString)
         bookmarksByAccount[accountID]?.removeAll { $0.jidString == jidString }

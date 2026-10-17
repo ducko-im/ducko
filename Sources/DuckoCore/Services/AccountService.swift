@@ -275,10 +275,7 @@ public final class AccountService {
         guard let client = connectionResources[accountID]?.client else {
             throw AccountServiceError.notConnected(accountID)
         }
-        guard let disco = await client.module(ofType: ServiceDiscoveryModule.self) else {
-            return ServerInfo(contactAddresses: [])
-        }
-        guard let account = accounts.first(where: { $0.id == accountID }),
+        guard let disco = await client.module(ofType: ServiceDiscoveryModule.self), let account = accounts.first(where: { $0.id == accountID }),
               let domainJID = JID.parse(account.jid.domainPart) else {
             return ServerInfo(contactAddresses: [])
         }

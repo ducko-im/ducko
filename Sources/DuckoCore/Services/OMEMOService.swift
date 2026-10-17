@@ -253,8 +253,7 @@ public final class OMEMOService {
     }
 
     private func trustedOwnDeviceIDs(accountID: UUID) async -> [UInt32] {
-        guard let ownJID = accountService?.accounts.first(where: { $0.id == accountID })?.jid else { return [] }
-        guard let accountJID = accountJIDString(for: accountID) else { return [] }
+        guard let ownJID = accountService?.accounts.first(where: { $0.id == accountID })?.jid, let accountJID = accountJIDString(for: accountID) else { return [] }
         // Own devices always use TOFU semantics — refusing to encrypt to your
         // own undecided devices breaks multi-device message sync.
         let allDevices = await (try? omemoStore.loadAllDevices(for: ownJID.description, accountJID: accountJID)) ?? []
@@ -268,8 +267,7 @@ public final class OMEMOService {
     }
 
     public func untrustDevice(accountID: UUID, peerJID: String, deviceID: UInt32) async throws {
-        guard let accountJID = accountJIDString(for: accountID) else { return }
-        guard let existing = try await omemoStore.loadTrust(accountJID: accountJID, peerJID: peerJID, deviceID: deviceID) else { return }
+        guard let accountJID = accountJIDString(for: accountID), let existing = try await omemoStore.loadTrust(accountJID: accountJID, peerJID: peerJID, deviceID: deviceID) else { return }
         try await setTrustLevel(.untrusted, accountID: accountID, peerJID: peerJID, deviceID: deviceID, fingerprint: existing.fingerprint)
     }
 
@@ -295,9 +293,7 @@ public final class OMEMOService {
 
     /// Returns own device info (device ID + fingerprint) for side-by-side verification.
     public func ownDeviceInfo(accountID: UUID) async -> OMEMODeviceInfo? {
-        guard let accountJID = accountJIDString(for: accountID) else { return nil }
-        guard let identity = try? await omemoStore.loadIdentity(for: accountJID) else { return nil }
-        guard let privateKey = try? Curve25519.Signing.PrivateKey(rawRepresentation: identity.identityKeyData) else {
+        guard let accountJID = accountJIDString(for: accountID), let identity = try? await omemoStore.loadIdentity(for: accountJID), let privateKey = try? Curve25519.Signing.PrivateKey(rawRepresentation: identity.identityKeyData) else {
             return nil
         }
         let fingerprint = omemoFingerprint(from: privateKey.publicKey.rawRepresentation)
@@ -437,11 +433,7 @@ public final class OMEMOService {
         identityKey: [UInt8], accountID: UUID
     ) async {
         guard let client = accountService?.connectedClient(for: accountID),
-              let omemoModule = await client.module(ofType: OMEMOModule.self)
-        else { return }
-
-        guard let entry = omemoModule.exportSession(jid: jid, deviceID: deviceID) else { return }
-        guard let accountJID = accountJIDString(for: accountID) else { return }
+              let omemoModule = await client.module(ofType: OMEMOModule.self), let entry = omemoModule.exportSession(jid: jid, deviceID: deviceID), let accountJID = accountJIDString(for: accountID) else { return }
 
         let session = OMEMOStoredSession(
             accountJID: accountJID, peerJID: jid.description,
@@ -479,9 +471,7 @@ public final class OMEMOService {
 
     private func handleConnected(accountID: UUID) async {
         guard let client = accountService?.connectedClient(for: accountID),
-              let omemoModule = await client.module(ofType: OMEMOModule.self)
-        else { return }
-        guard let accountJID = accountJIDString(for: accountID) else { return }
+              let omemoModule = await client.module(ofType: OMEMOModule.self), let accountJID = accountJIDString(for: accountID) else { return }
 
         // Wait until initial presence + caps are on the wire so PEP publishes follow the server seeing
         // this resource's caps (XEP-0163 §3.3.2). The identity poll below composes after this gate.
@@ -602,9 +592,7 @@ public final class OMEMOService {
     private func replenishPreKeysIfNeeded(accountJID: String, module: OMEMOModule) async {
         let preKeys = await (try? omemoStore.loadPreKeys(for: accountJID)) ?? []
         let available = preKeys.filter { !$0.isUsed }
-        guard available.count < OMEMOPreKeyManager.minimumPreKeyCount else { return }
-
-        guard let identityData = module.ownIdentityData else { return }
+        guard available.count < OMEMOPreKeyManager.minimumPreKeyCount, let identityData = module.ownIdentityData else { return }
         let maxExistingID = preKeys.map(\.keyID).max() ?? 0
         let startID = maxExistingID + 1
         let count = OMEMOPreKeyManager.targetPreKeyCount - available.count

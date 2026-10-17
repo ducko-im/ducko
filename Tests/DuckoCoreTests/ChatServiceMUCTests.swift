@@ -483,9 +483,9 @@ enum ChatServiceMUCTests {
     }
 }
 
+@MainActor
 extension ChatServiceMUCTests {
     @Test(arguments: [false, true], [false, true])
-    @MainActor
     static func `room and private room stanza metadata survives transcript reopening`(privateRoom: Bool, hasReply: Bool) async throws {
         try await verifyPersistedInboundMetadata(origin: privateRoom ? .privateRoom : .room, hasReply: hasReply)
     }

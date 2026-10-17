@@ -64,8 +64,7 @@ public final class BlockingModule: XMPPModule, Sendable {
     // MARK: - IQ Handling
 
     public func handleIQ(_ iq: XMPPIQ) throws -> Bool {
-        guard iq.isSet else { return false }
-        guard let child = iq.childElement else { return false }
+        guard iq.isSet, let child = iq.childElement else { return false }
 
         let isBlock = child.name == "block" && child.namespace == XMPPNamespaces.blocking
         let isUnblock = child.name == "unblock" && child.namespace == XMPPNamespaces.blocking

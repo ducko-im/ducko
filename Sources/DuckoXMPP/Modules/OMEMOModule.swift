@@ -660,16 +660,12 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
     ) {
         guard let event = message.element.child(
             named: "event", namespace: XMPPNamespaces.pubsubEvent
-        ) else { return }
-        guard let itemsEl = event.child(named: "items"),
-              itemsEl.attribute("node") == XMPPNamespaces.omemoDevices
-        else { return }
-        guard let from = message.from?.bareJID else { return }
-        guard let item = itemsEl.child(named: "item"),
-              let payload = item.children.compactMap({
-                  if case let .element(el) = $0 { return el }
-                  return nil
-              }).first
+        ), let itemsEl = event.child(named: "items"),
+        itemsEl.attribute("node") == XMPPNamespaces.omemoDevices, let from = message.from?.bareJID, let item = itemsEl.child(named: "item"),
+        let payload = item.children.compactMap({
+            if case let .element(el) = $0 { return el }
+            return nil
+        }).first
         else { return }
         let devices = parseDeviceList(payload)
         let context = state.withLock {
@@ -684,8 +680,7 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
     private func handleEncryptedMessage(_ message: XMPPMessage) {
         guard let encrypted = message.element.child(
             named: "encrypted", namespace: XMPPNamespaces.omemo
-        ) else { return }
-        guard let from = message.from else { return }
+        ), let from = message.from else { return }
 
         // Extract XEP-0359 stanza-id for dedup and marker correlation
         let stanzaID = message.element
@@ -1073,17 +1068,11 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
               let spkText = spkEl.textContent,
               let spkBytes = Base64.decode(spkText),
               let spkIDStr = spkEl.attribute("signedPreKeyId"),
-              let spkID = UInt32(spkIDStr)
-        else { return nil }
-        guard let sigEl = element.child(named: "signedPreKeySignature"),
+              let spkID = UInt32(spkIDStr), let sigEl = element.child(named: "signedPreKeySignature"),
               let sigText = sigEl.textContent,
-              let sigBytes = Base64.decode(sigText)
-        else { return nil }
-        guard let ikEl = element.child(named: "identityKey"),
+              let sigBytes = Base64.decode(sigText), let ikEl = element.child(named: "identityKey"),
               let ikText = ikEl.textContent,
-              let ikBytes = Base64.decode(ikText)
-        else { return nil }
-        guard let prekeysEl = element.child(named: "prekeys")
+              let ikBytes = Base64.decode(ikText), let prekeysEl = element.child(named: "prekeys")
         else { return nil }
         let preKeys = parsePreKeys(prekeysEl)
         return OMEMOBundle(

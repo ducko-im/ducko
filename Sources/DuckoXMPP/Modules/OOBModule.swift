@@ -47,11 +47,7 @@ public final class OOBModule: XMPPModule, Sendable {
         guard iq.isSet,
               let child = iq.childElement,
               child.name == "query",
-              child.namespace == XMPPNamespaces.oobIQ else {
-            return false
-        }
-
-        guard let stanzaID = iq.id,
+              child.namespace == XMPPNamespaces.oobIQ, let stanzaID = iq.id,
               let from = iq.from,
               let url = child.child(named: "url")?.textContent,
               !url.isEmpty else {

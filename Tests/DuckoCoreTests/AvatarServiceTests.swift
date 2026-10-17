@@ -919,9 +919,9 @@ enum AvatarServiceTests {
     }
 }
 
+@MainActor
 extension AvatarServiceTests {
     @Test(arguments: [false, true])
-    @MainActor
     static func `delayed avatar response cannot restore a removed contact identity`(readd: Bool) async throws {
         let connected = try await connectAvatarService()
         let original = try await fetchPeerContact(connected)

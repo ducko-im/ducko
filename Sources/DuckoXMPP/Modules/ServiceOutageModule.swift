@@ -31,9 +31,7 @@ public final class ServiceOutageModule: XMPPModule, Sendable {
     }
 
     private func checkForOutage() {
-        guard let context = state.withLock({ $0.context }) else { return }
-
-        guard let features = context.serverStreamFeatures(),
+        guard let context = state.withLock({ $0.context }), let features = context.serverStreamFeatures(),
               let outage = features.child(named: "outage", namespace: XMPPNamespaces.serviceOutage) else {
             return
         }

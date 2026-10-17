@@ -21,8 +21,7 @@ public final class ChatModule: XMPPModule, Sendable {
     }
 
     public func handleMessage(_ message: XMPPMessage) throws {
-        guard message.messageType == .chat || message.messageType == .normal || message.messageType == .error else { return }
-        guard let from = message.from else { return }
+        guard message.messageType == .chat || message.messageType == .normal || message.messageType == .error, let from = message.from else { return }
 
         let context = state.withLock { $0 }
 

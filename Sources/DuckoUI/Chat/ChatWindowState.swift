@@ -433,8 +433,7 @@ public final class ChatWindowState {
     /// has nothing older. The page is inserted once scrolling has come to rest. The call returns once the page is
     /// waiting for that, not once it is inserted.
     func loadOlderMessages() async {
-        guard let conversationID = conversation?.id else { return }
-        guard !isLoading, !isLoadingOlder, !hasReachedEnd else { return }
+        guard let conversationID = conversation?.id, !isLoading, !isLoadingOlder, !hasReachedEnd else { return }
 
         isLoadingOlder = true
         do {
@@ -714,8 +713,7 @@ public final class ChatWindowState {
     }
 
     func sendAttachments() async {
-        guard let accountID = resolvedAccountID else { return }
-        guard let conversation else { return }
+        guard let accountID = resolvedAccountID, let conversation else { return }
 
         let attachmentsToSend = pendingAttachments
         let directly = sendsAttachmentsDirectly

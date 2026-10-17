@@ -126,13 +126,11 @@ public enum MessageStylingParser {
             }
 
             // Try styled spans: * _ ~
-            if let marker = styledMarker(remaining.first) {
-                if isBoundaryStart(remaining, in: text) {
-                    if let (styledSpan, afterIndex) = parseStyledSpan(remaining, marker: marker, in: text) {
-                        spans.append(styledSpan)
-                        remaining = text[afterIndex...]
-                        continue
-                    }
+            if let marker = styledMarker(remaining.first), isBoundaryStart(remaining, in: text) {
+                if let (styledSpan, afterIndex) = parseStyledSpan(remaining, marker: marker, in: text) {
+                    spans.append(styledSpan)
+                    remaining = text[afterIndex...]
+                    continue
                 }
             }
 
@@ -143,10 +141,8 @@ public enum MessageStylingParser {
         }
 
         // Any remaining plain text
-        if spans.isEmpty {
-            if !text.isEmpty {
-                spans.append(.plain(text))
-            }
+        if spans.isEmpty, !text.isEmpty {
+            spans.append(.plain(text))
         }
 
         return coalescePlain(spans, originalText: text)
@@ -198,8 +194,7 @@ public enum MessageStylingParser {
     ) -> (StyledSpan, String.Index)? {
         let markerChar = marker.rawValue
         let afterOpen = text.index(after: text.startIndex)
-        guard afterOpen < text.endIndex else { return nil }
-        guard !isWhitespace(text[afterOpen]) else { return nil }
+        guard afterOpen < text.endIndex, !isWhitespace(text[afterOpen]) else { return nil }
 
         var searchFrom = afterOpen
         while searchFrom < text.endIndex {

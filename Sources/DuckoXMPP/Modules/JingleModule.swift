@@ -1656,8 +1656,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     /// and no event is emitted. Given `offerID`, it ends only the session of that offer.
     public func terminateSession(sid: String, reason: JingleTerminateReason, offerID: String? = nil) async throws {
         let (context, snapshot) = state.withLock { state -> (ModuleContext?, TerminateSnapshot?) in
-            guard let session = Self.session(sid, offerID: offerID, in: state) else { return (state.context, nil) }
-            guard let resources = detachSessionResources(sid: sid, state: &state) else { return (state.context, nil) }
+            guard let session = Self.session(sid, offerID: offerID, in: state), let resources = detachSessionResources(sid: sid, state: &state) else { return (state.context, nil) }
             return (state.context, TerminateSnapshot(session: session, resources: resources))
         }
         guard let context else { throw JingleError.notConnected }
@@ -2428,9 +2427,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         let query = XMLElement(name: "query", namespace: XMPPNamespaces.bytestreams)
         iq.element.addChild(query)
 
-        guard let result = try await context.sendIQ(iq) else { return nil }
-
-        guard let streamhost = result.child(named: "streamhost"),
+        guard let result = try await context.sendIQ(iq), let streamhost = result.child(named: "streamhost"),
               let host = streamhost.attribute("host"),
               let portStr = streamhost.attribute("port"),
               let port = UInt16(portStr) else { return nil }

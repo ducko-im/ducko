@@ -20,9 +20,7 @@ public final class ChatStatesModule: XMPPModule, Sendable {
     // MARK: - Message Handling
 
     public func handleMessage(_ message: XMPPMessage) throws {
-        guard let from = message.from?.bareJID else { return }
-
-        guard let chatState = ChatState.allCases.first(where: {
+        guard let from = message.from?.bareJID, let chatState = ChatState.allCases.first(where: {
             message.element.child(named: $0.rawValue, namespace: XMPPNamespaces.chatStates) != nil
         }) else { return }
 

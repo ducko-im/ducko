@@ -73,14 +73,13 @@ public final class PresenceModule: XMPPModule, Sendable {
 
         // XEP-0153: Check for vcard-temp:x:update element
         if let vcardUpdate = presence.element.child(named: "x", namespace: XMPPNamespaces.vcardAvatarUpdate),
-           presence.presenceType == nil {
-            // Only process if <photo> child is present
-            // Missing <photo> means "not ready to advertise" — skip
-            if vcardUpdate.child(named: "photo") != nil {
-                let hash = vcardUpdate.childText(named: "photo")
-                let photoHash = (hash?.isEmpty == true) ? nil : hash
-                context?.emitEvent(.vcardAvatarHashReceived(from: bareJID, hash: photoHash))
-            }
+           presence.presenceType == nil,
+           // Only process if <photo> child is present
+           // Missing <photo> means "not ready to advertise" — skip
+           vcardUpdate.child(named: "photo") != nil {
+            let hash = vcardUpdate.childText(named: "photo")
+            let photoHash = (hash?.isEmpty == true) ? nil : hash
+            context?.emitEvent(.vcardAvatarHashReceived(from: bareJID, hash: photoHash))
         }
 
         context?.emitEvent(.presenceUpdated(from: from, presence: presence))

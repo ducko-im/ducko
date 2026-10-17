@@ -449,10 +449,7 @@ final class TestHarness {
     /// through `TestHarnessError` rather than splitting between `#require` and
     /// thrown errors for different misconfiguration modes.
     func module<M: XMPPModule>(_ type: M.Type, for label: String) async throws -> M {
-        guard let account = accounts[label] else {
-            throw TestHarnessError.notConnected(label: label)
-        }
-        guard let client = environment.accountService.client(for: account.accountID) else {
+        guard let account = accounts[label], let client = environment.accountService.client(for: account.accountID) else {
             throw TestHarnessError.notConnected(label: label)
         }
         guard let module = await client.module(ofType: type) else {
@@ -477,11 +474,7 @@ final class TestHarness {
     private func loadOMEMOFixture(for credential: TestCredentials.Credential) async throws -> Bool {
         let fixtureURL = Self.fixtureURL(for: credential.label)
         guard let data = try? Data(contentsOf: fixtureURL) else { return false }
-        guard let fixture = try? JSONDecoder().decode(FixtureOMEMOIdentity.self, from: data) else {
-            log.warning("OMEMO fixture for \(credential.label) is malformed; ignoring and allowing fresh identity generation")
-            return false
-        }
-        guard fixture.passesShapeInvariants else {
+        guard let fixture = try? JSONDecoder().decode(FixtureOMEMOIdentity.self, from: data), fixture.passesShapeInvariants else {
             log.warning("OMEMO fixture for \(credential.label) is malformed; ignoring and allowing fresh identity generation")
             return false
         }

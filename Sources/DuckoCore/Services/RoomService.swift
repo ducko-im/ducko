@@ -240,8 +240,7 @@ final class RoomService {
 
     func roomMemberJIDs(roomJIDString: String, accountID: UUID) async throws -> [BareJID] {
         guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
-        guard let mucModule = await client.module(ofType: MUCModule.self) else { return [] }
-        guard let roomJID = BareJID.parse(roomJIDString) else { return [] }
+        guard let mucModule = await client.module(ofType: MUCModule.self), let roomJID = BareJID.parse(roomJIDString) else { return [] }
 
         let affiliations: [RoomAffiliation] = [.owner, .admin, .member]
         return await withTaskGroup(of: [BareJID].self) { group in
@@ -297,13 +296,11 @@ final class RoomService {
     }
 
     func discoverMUCService(accountID: UUID) async -> String? {
-        guard let client = accountService?.connectedClient(for: accountID) else { return nil }
-        guard let disco = await client.module(ofType: ServiceDiscoveryModule.self) else { return nil }
+        guard let client = accountService?.connectedClient(for: accountID), let disco = await client.module(ofType: ServiceDiscoveryModule.self) else { return nil }
 
         let account = accountService?.accounts.first { $0.id == accountID }
         guard let domain = account?.jid.domainPart,
-              let domainJID = BareJID.parse(domain) else { return nil }
-        guard let items = try? await disco.queryItems(for: .bare(domainJID)) else { return nil }
+              let domainJID = BareJID.parse(domain), let items = try? await disco.queryItems(for: .bare(domainJID)) else { return nil }
 
         for item in items {
             guard let info = try? await disco.queryInfo(for: item.jid) else { continue }

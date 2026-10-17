@@ -4,8 +4,7 @@ import Foundation
 
 extension ContactRecord {
     func toDomain() -> Contact? {
-        guard let bareJID = BareJID.parse(jid) else { return nil }
-        guard let accountID = account?.id else { return nil }
+        guard let bareJID = BareJID.parse(jid), let accountID = account?.id else { return nil }
         return Contact(
             id: id,
             accountID: accountID,

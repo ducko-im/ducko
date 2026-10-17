@@ -326,8 +326,7 @@ public final class PresenceService {
     /// `.streamResumed` does not reapply the held presence — a resumed session skips `handleConnect()`, so presence
     /// is never reset.
     private func reapplyHeldPresenceAfterReconnect(accountID: UUID) async {
-        guard shouldReapplyHeldPresence(accountID: accountID) else { return }
-        guard let client = accountService?.connectedClient(for: accountID) else { return }
+        guard shouldReapplyHeldPresence(accountID: accountID), let client = accountService?.connectedClient(for: accountID) else { return }
         // `.connected` is yielded before `PresenceModule.handleConnect()` sends its blank-available stanza, so
         // gate on the initial presence before re-broadcasting or it would just be overwritten.
         await client.awaitInitialPresenceSent()
@@ -619,9 +618,7 @@ public final class PresenceService {
 
     private func sendPresence(accountID: UUID) async {
         let effective = effectivePresence(for: accountID)
-        guard effective.status != .offline else { return }
-        guard let client = accountService?.connectedClient(for: accountID) else { return }
-        guard let presenceModule = await client.module(ofType: PresenceModule.self) else { return }
+        guard effective.status != .offline, let client = accountService?.connectedClient(for: accountID), let presenceModule = await client.module(ofType: PresenceModule.self) else { return }
 
         try? await presenceModule.broadcastPresence(show: effectiveShow(for: accountID), status: effective.message)
     }

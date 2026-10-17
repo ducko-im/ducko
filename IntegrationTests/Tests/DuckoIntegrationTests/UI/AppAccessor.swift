@@ -1657,10 +1657,7 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
             let app = AXUIElementCreateApplication(pid)
             var windowsValue: AnyObject?
             let err = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsValue)
-            guard err == .success, let windows = windowsValue as? [AXUIElement] else {
-                throw TestHarnessError.elementNotFound(identifier: identifier)
-            }
-            guard let window = windows.first(where: { window in
+            guard err == .success, let windows = windowsValue as? [AXUIElement], let window = windows.first(where: { window in
                 var titleValue: AnyObject?
                 let titleErr = AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleValue)
                 return titleErr == .success && (titleValue as? String)?.contains(title) == true

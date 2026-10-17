@@ -146,8 +146,7 @@ public final class AvatarService {
     /// Publishes the user's avatar via XEP-0084 PEP and optionally XEP-0153 vCard.
     public func publishAvatar(imageData: Data, mimeType: String, accountID: UUID) async throws {
         guard let client = accountService?.connectedClient(for: accountID) else { throw AvatarServiceError.notConnected(accountID) }
-        guard let pepModule = await client.module(ofType: PEPModule.self) else { return }
-        guard let presenceModule = await client.module(ofType: PresenceModule.self) else { return }
+        guard let pepModule = await client.module(ofType: PEPModule.self), let presenceModule = await client.module(ofType: PresenceModule.self) else { return }
 
         let hash = sha1Hex(Array(imageData))
         let base64String = imageData.base64EncodedString()
@@ -182,8 +181,7 @@ public final class AvatarService {
 
     public func removeAvatar(accountID: UUID) async throws {
         guard let client = accountService?.connectedClient(for: accountID) else { throw AvatarServiceError.notConnected(accountID) }
-        guard let pepModule = await client.module(ofType: PEPModule.self) else { return }
-        guard let presenceModule = await client.module(ofType: PresenceModule.self) else { return }
+        guard let pepModule = await client.module(ofType: PEPModule.self), let presenceModule = await client.module(ofType: PresenceModule.self) else { return }
 
         let metadata = DuckoXMPP.XMLElement(name: "metadata", namespace: XMPPNamespaces.avatarMetadata)
         try await pepModule.publishItem(
@@ -238,9 +236,7 @@ public final class AvatarService {
     }
 
     private func detectConversionSupport(accountID: UUID) async {
-        guard let client = accountService?.connectedClient(for: accountID) else { return }
-        guard let discoModule = await client.module(ofType: ServiceDiscoveryModule.self) else { return }
-        guard let account = accountService?.accounts.first(where: { $0.id == accountID }) else { return }
+        guard let client = accountService?.connectedClient(for: accountID), let discoModule = await client.module(ofType: ServiceDiscoveryModule.self), let account = accountService?.accounts.first(where: { $0.id == accountID }) else { return }
 
         do {
             let info = try await discoModule.queryInfo(for: .bare(account.jid))
@@ -257,9 +253,7 @@ public final class AvatarService {
     }
 
     private func loadOwnVCard(accountID: UUID) async {
-        guard let client = accountService?.connectedClient(for: accountID) else { return }
-        guard let vcardModule = await client.module(ofType: VCardModule.self) else { return }
-        guard let presenceModule = await client.module(ofType: PresenceModule.self) else { return }
+        guard let client = accountService?.connectedClient(for: accountID), let vcardModule = await client.module(ofType: VCardModule.self), let presenceModule = await client.module(ofType: PresenceModule.self) else { return }
 
         do {
             let vcard = try await vcardModule.fetchOwnVCard(forceRefresh: true)
@@ -281,9 +275,7 @@ public final class AvatarService {
     private func handleAvatarMetadataPublished(from: BareJID, items: [PEPItem], accountID: UUID) async {
         let rosterGeneration = rosterService?.contentGeneration(for: accountID)
         guard let account = accountService?.accounts.first(where: { $0.id == accountID }),
-              from != account.jid else { return }
-
-        guard let item = items.first else { return }
+              from != account.jid, let item = items.first else { return }
         let metadata = item.payload
 
         guard let info = metadata.child(named: "info") else {
@@ -321,8 +313,7 @@ public final class AvatarService {
 
         if contact.avatarHash == hash { return }
 
-        guard let client = accountService?.connectedClient(for: accountID) else { return }
-        guard let vcardModule = await client.module(ofType: VCardModule.self) else { return }
+        guard let client = accountService?.connectedClient(for: accountID), let vcardModule = await client.module(ofType: VCardModule.self) else { return }
 
         do {
             let vcard = try await vcardModule.fetchVCard(for: from, forceRefresh: true)
@@ -339,8 +330,7 @@ public final class AvatarService {
     }
 
     private func fetchAndStoreAvatar(for contact: Contact, hash: String?, accountID: UUID, rosterGeneration: UInt64?) async {
-        guard let client = accountService?.connectedClient(for: accountID) else { return }
-        guard let pepModule = await client.module(ofType: PEPModule.self) else { return }
+        guard let client = accountService?.connectedClient(for: accountID), let pepModule = await client.module(ofType: PEPModule.self) else { return }
 
         do {
             let items = try await pepModule.retrieveItems(
@@ -387,8 +377,7 @@ public final class AvatarService {
     }
 
     private func fetchPEPAvatar(for jid: BareJID, accountID: UUID) async -> AvatarData? {
-        guard let client = accountService?.connectedClient(for: accountID) else { return nil }
-        guard let pepModule = await client.module(ofType: PEPModule.self) else { return nil }
+        guard let client = accountService?.connectedClient(for: accountID), let pepModule = await client.module(ofType: PEPModule.self) else { return nil }
 
         do {
             let metaItems = try await pepModule.retrieveItems(
@@ -424,8 +413,7 @@ public final class AvatarService {
     }
 
     private func fetchVCardAvatar(for jid: BareJID, accountID: UUID) async -> AvatarData? {
-        guard let client = accountService?.connectedClient(for: accountID) else { return nil }
-        guard let vcardModule = await client.module(ofType: VCardModule.self) else { return nil }
+        guard let client = accountService?.connectedClient(for: accountID), let vcardModule = await client.module(ofType: VCardModule.self) else { return nil }
 
         do {
             let vcard = try await vcardModule.fetchVCard(for: jid, forceRefresh: true)

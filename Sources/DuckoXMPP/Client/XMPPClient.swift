@@ -870,12 +870,11 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
     /// Processes inline feature results from Bind 2 (SM enabled, carbons, etc.).
     private func processBind2Results(_ authResult: SASL2Authenticator.AuthResult, requestedCarbons: Bool) {
-        if let bound = authResult.bound {
-            // SM was enabled inline — server echoes <enabled> inside <bound>
-            if let smEnabled = bound.child(named: "enabled", namespace: XMPPNamespaces.sm),
-               let sm = modules[ObjectIdentifier(StreamManagementModule.self)] as? StreamManagementModule {
-                sm.processInlineEnabled(smEnabled)
-            }
+        if let bound = authResult.bound,
+           // SM was enabled inline — server echoes <enabled> inside <bound>
+           let smEnabled = bound.child(named: "enabled", namespace: XMPPNamespaces.sm),
+           let sm = modules[ObjectIdentifier(StreamManagementModule.self)] as? StreamManagementModule {
+            sm.processInlineEnabled(smEnabled)
         }
 
         // Carbons are activated by inclusion in the bind request — server doesn't echo back

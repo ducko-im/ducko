@@ -283,10 +283,7 @@ struct ProfileEditView: View {
     }
 
     private func handlePhotoSelected(_ result: Result<[URL], Error>) async {
-        guard case let .success(urls) = result, let url = urls.first else { return }
-        guard let accountID = account?.id else { return }
-
-        guard url.startAccessingSecurityScopedResource() else { return }
+        guard case let .success(urls) = result, let url = urls.first, let accountID = account?.id, url.startAccessingSecurityScopedResource() else { return }
         defer { url.stopAccessingSecurityScopedResource() }
 
         guard let imageData = try? Data(contentsOf: url) else { return }

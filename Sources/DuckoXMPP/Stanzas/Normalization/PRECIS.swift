@@ -23,8 +23,7 @@ enum PRECIS {
 
         if BidiRule.isRTLLabel(scalars), !BidiRule.satisfies(scalars) { return nil }
 
-        guard validate(scalars, freeform: false, checkContextual: true), !scalars.isEmpty else { return nil }
-        guard normalized.utf8.count <= maxOctets else { return nil }
+        guard validate(scalars, freeform: false, checkContextual: true), !scalars.isEmpty, normalized.utf8.count <= maxOctets else { return nil }
         return normalized
     }
 
@@ -37,8 +36,7 @@ enum PRECIS {
         let normalized = String(String.UnicodeScalarView(spaceMapped)).precomposedStringWithCanonicalMapping
         let scalars = Array(normalized.unicodeScalars)
 
-        guard validate(scalars, freeform: true, checkContextual: true), !scalars.isEmpty else { return nil }
-        guard normalized.utf8.count <= maxOctets else { return nil }
+        guard validate(scalars, freeform: true, checkContextual: true), !scalars.isEmpty, normalized.utf8.count <= maxOctets else { return nil }
         return normalized
     }
 

@@ -22,9 +22,7 @@ enum NetworkInterfaces {
             let flags = Int32(ifa.pointee.ifa_flags)
             guard flags & IFF_UP != 0,
                   flags & IFF_RUNNING != 0,
-                  flags & IFF_LOOPBACK == 0 else { continue }
-
-            guard let addr = ifa.pointee.ifa_addr else { continue }
+                  flags & IFF_LOOPBACK == 0, let addr = ifa.pointee.ifa_addr else { continue }
             let family = Int32(addr.pointee.sa_family)
 
             var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))

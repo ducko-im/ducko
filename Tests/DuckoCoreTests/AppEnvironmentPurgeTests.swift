@@ -77,9 +77,9 @@ enum AppEnvironmentPurgeTests {
     }
 }
 
+@MainActor
 extension AppEnvironmentPurgeTests {
     @Test(arguments: [false, true])
-    @MainActor
     static func `composed teardown clears the feature caches for only its account, and a delete also clears what stays shown offline`(delete: Bool) async throws {
         let store = MockPersistenceStore()
         let env = makeEnvironment(store: store)
@@ -94,7 +94,6 @@ extension AppEnvironmentPurgeTests {
     }
 
     @Test
-    @MainActor
     static func `disconnect cancels suspended roster dispatch before it can restore cache or store state`() async throws {
         let store = MockPersistenceStore()
         let env = makeEnvironment(store: store)
@@ -122,7 +121,6 @@ extension AppEnvironmentPurgeTests {
         #expect(env.avatarService.ownAvatarHash(for: id) == nil)
     }
 
-    @MainActor
     private static func seedCaches(_ env: AppEnvironment, store: MockPersistenceStore, name: String) async throws -> (id: UUID, peer: BareJID) {
         let id = try await env.accountService.createAccount(jidString: "\(name)@example.com")
         let peer = try #require(BareJID.parse("\(name)-peer@example.com"))
@@ -143,7 +141,6 @@ extension AppEnvironmentPurgeTests {
 
     /// `shown` covers what a disconnect keeps and a delete drops: the account's contact and your profile as open chats and
     /// the Contacts header still show them, and the OMEMO seen-device classifications.
-    @MainActor
     private static func assertCaches(_ env: AppEnvironment, account: (id: UUID, peer: BareJID), present: Bool, shown: Bool) async {
         #expect((env.rosterService.contact(jidString: account.peer.description, accountID: account.id) != nil) == present)
         #expect((env.rosterService.knownContact(jidString: account.peer.description, accountID: account.id) != nil) == shown)

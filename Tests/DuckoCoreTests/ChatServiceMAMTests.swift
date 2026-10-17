@@ -730,9 +730,9 @@ enum ChatServiceMAMTests {
     }
 }
 
+@MainActor
 extension ChatServiceMAMTests {
     @Test(arguments: [false, true])
-    @MainActor
     static func `archive ingestion persists reply and attachments without live filter side effects`(outgoing: Bool) async throws {
         try await withTemporaryDirectory { directory in
             let transcripts = FileTranscriptStore(baseDirectory: directory)
@@ -776,9 +776,9 @@ extension ChatServiceMAMTests {
     }
 }
 
+@MainActor
 extension ChatServiceMAMTests {
     @Test
-    @MainActor
     static func `initial history sync survives roster save failure and ignores readbacks`() async throws {
         let harness = try await makeGroupMAMHarness()
         let roster = RosterService(store: harness.store)

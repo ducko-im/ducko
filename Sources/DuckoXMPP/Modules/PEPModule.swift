@@ -89,9 +89,7 @@ public final class PEPModule: XMPPModule, Sendable {
         pubsub.addChild(items)
         iq.element.addChild(pubsub)
 
-        guard let result = try await context.sendIQ(iq) else { return [] }
-
-        guard let itemsElement = result.child(named: "items") else { return [] }
+        guard let result = try await context.sendIQ(iq), let itemsElement = result.child(named: "items") else { return [] }
         return parsePublishedItems(itemsElement)
     }
 
@@ -135,10 +133,7 @@ public final class PEPModule: XMPPModule, Sendable {
         }
 
         let (registeredNodes, context) = state.withLock { ($0.notifyNodes, $0.context) }
-        guard registeredNodes.contains(node) else { return }
-
-        guard let from = message.from?.bareJID else { return }
-        guard let context else { return }
+        guard registeredNodes.contains(node), let from = message.from?.bareJID, let context else { return }
 
         let (published, retracted) = parseItems(itemsElement)
 

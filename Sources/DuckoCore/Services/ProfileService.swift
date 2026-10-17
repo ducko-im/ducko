@@ -61,8 +61,7 @@ public final class ProfileService {
     // MARK: - Public API
 
     public func fetchOwnProfile(accountID: UUID) async {
-        guard let client = accountService?.connectedClient(for: accountID) else { return }
-        guard let vcardModule = await client.module(ofType: VCardModule.self) else { return }
+        guard let client = accountService?.connectedClient(for: accountID), let vcardModule = await client.module(ofType: VCardModule.self) else { return }
 
         do {
             let vcard = try await vcardModule.fetchOwnVCard(forceRefresh: true)
@@ -82,10 +81,7 @@ public final class ProfileService {
         guard let jid = BareJID.parse(jidString) else {
             throw ProfileServiceError.invalidJID(jidString)
         }
-        guard let client = accountService?.connectedClient(for: accountID) else {
-            throw ProfileServiceError.notConnected(accountID)
-        }
-        guard let vcardModule = await client.module(ofType: VCardModule.self) else {
+        guard let client = accountService?.connectedClient(for: accountID), let vcardModule = await client.module(ofType: VCardModule.self) else {
             throw ProfileServiceError.notConnected(accountID)
         }
 
@@ -100,10 +96,7 @@ public final class ProfileService {
     }
 
     public func publishProfile(_ profile: ProfileInfo, accountID: UUID) async throws {
-        guard let client = accountService?.connectedClient(for: accountID) else {
-            throw ProfileServiceError.notConnected(accountID)
-        }
-        guard let vcardModule = await client.module(ofType: VCardModule.self) else {
+        guard let client = accountService?.connectedClient(for: accountID), let vcardModule = await client.module(ofType: VCardModule.self) else {
             throw ProfileServiceError.notConnected(accountID)
         }
 

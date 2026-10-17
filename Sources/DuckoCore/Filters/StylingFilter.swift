@@ -5,8 +5,7 @@ struct StylingFilter: MessageFilter {
     init() {}
 
     func filter(_ content: MessageContent, direction: FilterDirection, context: FilterContext) async -> MessageContent {
-        guard !content.isUnstyled else { return content }
-        guard !content.body.isEmpty else { return content }
+        guard !content.isUnstyled, !content.body.isEmpty else { return content }
 
         let blocks = MessageStylingParser.parse(content.body)
 

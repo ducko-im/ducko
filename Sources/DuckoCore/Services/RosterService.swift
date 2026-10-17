@@ -208,8 +208,7 @@ public final class RosterService {
     func updateLastSeen(jid: BareJID, date: Date, accountID: UUID) async {
         let generationBeforeAwait = groupsLoadGeneration[accountID, default: 0]
         let contacts = await (try? store.fetchContacts(for: accountID)) ?? []
-        guard let contact = contacts.first(where: { $0.jid == jid }) else { return }
-        guard generationUnchanged(generationBeforeAwait, for: accountID) else { return }
+        guard let contact = contacts.first(where: { $0.jid == jid }), generationUnchanged(generationBeforeAwait, for: accountID) else { return }
         try? await store.updateContactIfExists(contact.id, accountID: accountID, update: .lastSeen(date))
         // A purge during the metadata update would otherwise let the follow-up loadContacts (fresh generation) republish.
         guard generationUnchanged(generationBeforeAwait, for: accountID) else { return }
@@ -289,8 +288,7 @@ public final class RosterService {
     private func handleBlockStateChanged(_ jid: BareJID, isBlocked: Bool, accountID: UUID) async {
         let generationBeforeAwait = groupsLoadGeneration[accountID, default: 0]
         let contacts = await (try? store.fetchContacts(for: accountID)) ?? []
-        guard let contact = contacts.first(where: { $0.jid == jid }) else { return }
-        guard generationUnchanged(generationBeforeAwait, for: accountID) else { return }
+        guard let contact = contacts.first(where: { $0.jid == jid }), generationUnchanged(generationBeforeAwait, for: accountID) else { return }
         try? await store.updateContactIfExists(contact.id, accountID: accountID, update: .blocked(isBlocked))
         // Re-check before the republish so a purge during the metadata update can't resurrect the account via loadContacts.
         guard generationUnchanged(generationBeforeAwait, for: accountID) else { return }

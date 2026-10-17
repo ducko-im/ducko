@@ -871,10 +871,7 @@ public final class FileTransferService {
     }
 
     private func oobModule(for accountID: UUID) async throws -> OOBModule {
-        guard let client = accountService?.connectedClient(for: accountID) else {
-            throw FileTransferError.noClient
-        }
-        guard let module = await client.module(ofType: OOBModule.self) else {
+        guard let client = accountService?.connectedClient(for: accountID), let module = await client.module(ofType: OOBModule.self) else {
             throw FileTransferError.noClient
         }
         return module

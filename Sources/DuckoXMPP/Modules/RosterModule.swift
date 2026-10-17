@@ -142,8 +142,7 @@ public final class RosterModule: XMPPModule, Sendable {
 
     public func handleIQ(_ iq: XMPPIQ) throws -> Bool {
         guard iq.isSet, let query = iq.childElement, query.namespace == XMPPNamespaces.roster else { return false }
-        guard let context = state.withLock({ $0.context }) else { return true }
-        guard iq.isFromOwnAccount(context.connectedJID()?.bareJID) else { return true }
+        guard let context = state.withLock({ $0.context }), iq.isFromOwnAccount(context.connectedJID()?.bareJID) else { return true }
         let children = query.children.compactMap { node -> XMLElement? in
             guard case let .element(child) = node else { return nil }
             return child

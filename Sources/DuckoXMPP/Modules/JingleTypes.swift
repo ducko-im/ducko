@@ -433,12 +433,8 @@ struct JingleContent {
     init?(from element: XMLElement) {
         guard element.name == "content",
               let name = element.attribute("name"),
-              let creator = element.attribute("creator") else { return nil }
-
-        guard let descElement = element.child(named: "description", namespace: XMPPNamespaces.jingleFileTransfer),
-              let description = JingleFileDescription(from: descElement) else { return nil }
-
-        guard let transportElement = element.child(named: "transport"),
+              let creator = element.attribute("creator"), let descElement = element.child(named: "description", namespace: XMPPNamespaces.jingleFileTransfer),
+              let description = JingleFileDescription(from: descElement), let transportElement = element.child(named: "transport"),
               let transport = JingleTransportDescription.parse(from: transportElement) else { return nil }
 
         self.name = name

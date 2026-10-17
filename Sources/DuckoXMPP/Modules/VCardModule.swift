@@ -163,18 +163,15 @@ public final class VCardModule: XMPPModule, Sendable {
 
     /// Fetches the user's own vCard (no `to` attribute per XEP-0054).
     public func fetchOwnVCard(forceRefresh: Bool = false) async throws -> VCard? {
-        guard let context = state.withLock({ $0.context }) else { return nil }
-        guard let bareJID = context.connectedJID()?.bareJID else { return nil }
+        guard let context = state.withLock({ $0.context }), let bareJID = context.connectedJID()?.bareJID else { return nil }
         return try await fetchVCardImpl(cacheKey: bareJID, to: nil, forceRefresh: forceRefresh)
     }
 
     // MARK: - Shared Fetch
 
     private func fetchVCardImpl(cacheKey: BareJID, to: JID?, forceRefresh: Bool) async throws -> VCard? {
-        if !forceRefresh {
-            if let cached = state.withLock({ $0.cache[cacheKey] }) {
-                return cached
-            }
+        if !forceRefresh, let cached = state.withLock({ $0.cache[cacheKey] }) {
+            return cached
         }
 
         guard let context = state.withLock({ $0.context }) else { return nil }

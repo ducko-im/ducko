@@ -9,8 +9,7 @@ enum CredentialHelper {
         if let jid, let store, let stored = store.loadPassword(for: jid) {
             return stored
         }
-        guard isatty(STDIN_FILENO) != 0 else { return nil }
-        guard let cString = getpass("Password: ") else { return nil }
+        guard isatty(STDIN_FILENO) != 0, let cString = getpass("Password: ") else { return nil }
         return String(cString: cString)
     }
 }
