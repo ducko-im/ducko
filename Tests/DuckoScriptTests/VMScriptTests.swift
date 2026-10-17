@@ -44,7 +44,7 @@ struct VMScriptTests {
         let lume = """
         #!/bin/zsh -f
         case $1 in
-        ls) print "ducko-ui macOS running" ;;
+        ls) print "ducko macOS running" ;;
         ssh)
             print -r -- "$7" >> "$LUME_LOG"
             [[ $7 == cat*vm-checkout* ]] && print -r -- "$LUME_CHECKOUT"

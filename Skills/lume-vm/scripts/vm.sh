@@ -2,7 +2,7 @@
 # Host-side driver for the Ducko UI-test VM. See ../SKILL.md for the workflow.
 set -eu
 
-VM=${DUCKO_VM:-ducko-ui}
+VM=${DUCKO_VM:-ducko}
 STORAGE=${DUCKO_VM_STORAGE:-home}
 SCRIPTS=${0:A:h}
 REPO=${SCRIPTS:h:h:h}
@@ -17,7 +17,6 @@ usage() {
     cat >&2 <<'EOF'
 usage: vm.sh <command>
   start | stop | status | view       boot (repo read-only + exchange shared), shut down, show state, open a viewer
-  reset                              replace the stopped VM with a fresh clone of <vm>-base
   sh <command>                       run in an SSH shell (no GUI session)
   gui <command>                      run in the logged-in GUI session (AX, screencapture, CGEvents, open)
   sync                               copy the working tree into the VM's build folder
@@ -114,11 +113,6 @@ stop)
     DUCKO_VM_TIMEOUT=10 guest 'sudo -n shutdown -h now' >/dev/null 2>&1 || true
     for _ in {1..30}; do running || exit 0; sleep 2; done
     lume stop "$VM" --storage "$STORAGE"
-    ;;
-reset)
-    ! running || { echo "$VM is running; stop it first" >&2; exit 1; }
-    lume delete "$VM" --storage "$STORAGE" --force
-    lume clone "$VM-base" "$VM" --source-storage "$STORAGE" --dest-storage "$STORAGE"
     ;;
 status) lume ls --storage "$STORAGE" | awk -v vm="$VM" 'NR == 1 || $1 == vm' ;;
 view) lume attach "$VM" --storage "$STORAGE" ;;

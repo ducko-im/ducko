@@ -1,6 +1,6 @@
 ---
 name: lume-vm
-description: "Run Ducko UI work inside a disposable Lume macOS VM instead of on the host desktop: start and stop the VM, run commands in its logged-in GUI session (Accessibility, screencapture, posted CGEvents, open), switch Light/Dark, and copy builds in and captures out. Use when a UI run would otherwise move the real pointer, bring windows to the front, flip the host's appearance, or capture whatever is on the host screen: demo-screenshots reference captures, smoke tests, ducko-ui end-to-end runs, or when the user asks to \"use the VM\", \"run it in the VM\", \"start the Lume VM\", or \"reset the VM\"."
+description: "Run Ducko UI work inside a disposable Lume macOS VM instead of on the host desktop: start and stop the VM, run commands in its logged-in GUI session (Accessibility, screencapture, posted CGEvents, open), switch Light/Dark, and copy builds in and captures out. Use when a UI run would otherwise move the real pointer, bring windows to the front, flip the host's appearance, or capture whatever is on the host screen: demo-screenshots reference captures, smoke tests, ducko-ui end-to-end runs, or when the user asks to \"use the VM\", \"run it in the VM\", \"start the Lume VM\", or \"rebuild the VM\"."
 ---
 
 # Lume UI-Test VM
@@ -20,7 +20,7 @@ Define `vm` in every Bash call that uses it, since shell functions do not carry 
 
 | | |
 |---|---|
-| Name, storage | `ducko-ui` in lume's `home` storage (`~/.lume`); baseline clone `ducko-ui-base` |
+| Name, storage | `ducko` in lume's `home` storage (`~/.lume`) |
 | System | macOS 27.0.1 (26A434); 6 CPUs, 12 GB; user `lume`, password `lume`, auto-login |
 | Display | 2880×1800 pixels, 1440×900 points, backing scale 2.0 |
 | Tools | Xcode at `/Applications/Xcode.app`, copied from the host and selected with `xcode-select`, and the Command Line Tools (Swift 6.4, Python 3.9.6). The Peekaboo CLI and Peekaboo.app, copied from the host's installs. The CLI gives the same results whether or not the app runs |
@@ -46,7 +46,6 @@ Python in the VM is 3.9: keep scripts meant to run there free of `match` and of 
 | `appearance light\|dark` | Switch the system appearance |
 | `allow` | Press Allow on pending consent alerts |
 | `ax list`, `ax press <process> <title>` | List or press buttons and menu items in any app's windows |
-| `reset` | Replace the stopped VM with a fresh clone of `ducko-ui-base` |
 | `provision` | Reapply the setup; safe to re-run |
 
 `sh` and `gui` pass the remote exit status through. Remote stderr arrives on stdout. Commands run without a timeout; set `DUCKO_VM_TIMEOUT=<seconds>` to bound one. A call cut by that timeout leaves its remote command running, so check with `pgrep -f` on part of the command that it has finished before running it again.
@@ -71,28 +70,19 @@ Shares are fixed when the VM boots, so start it from the checkout whose files yo
 - **Long-running processes.** A background job such as the stub server or the app keeps the SSH call open as long as it holds the call's output. Detach it with `nohup <cmd> >/path/log 2>&1 &`, or launch apps with `open`.
 - **Automation consent.** The first Apple Event to each target app raises an Allow alert, which stalls `osascript` until answered. Run `vm allow` from a second shell while the call waits, and the call goes on. A call bounded by `DUCKO_VM_TIMEOUT` that timed out is still waiting in the VM, so `vm allow` lets it finish; don't repeat it. The answer persists, and System Events and Finder are already allowed. The user TCC database stays unreadable even with SIP off, so these grants cannot be written in advance.
 
-## Reset and baseline
+## Updating Xcode
 
-`vm stop && vm reset` throws away everything since the baseline: app data, defaults, appearance and consent answers. The baseline carries Xcode, the Sparkle answers for `im.ducko`, Peekaboo.app and the demo copy's notification permission. The instant APFS clone costs no disk space until the two VMs diverge. To move the baseline forward after deliberate setup changes:
-
-```sh
-vm stop
-lume delete ducko-ui-base --storage home --force
-lume clone ducko-ui ducko-ui-base --source-storage home --dest-storage home
-```
-
-`provision` copies Xcode in only when the VM has none, since any Xcode that builds Ducko will do. To move the VM to the host's newer Xcode, run `vm sh 'sudo rm -rf /Applications/Xcode.app'`, then `vm provision`, then move the baseline forward.
+`provision` copies Xcode in only when the VM has none, since any Xcode that builds Ducko will do. To move the VM to the host's newer Xcode, run `vm sh 'sudo rm -rf /Applications/Xcode.app'`, then `vm provision`.
 
 ## Creating the VM from scratch
 
-Only needed when both VMs are gone or a new macOS build is wanted.
+The VM has no baseline copy, so starting fresh means rebuilding it. That is needed when the VM is gone, when its state has drifted past what `provision` repairs, or when a new macOS build is wanted. Delete the old VM first with `lume delete ducko --storage home --force`.
 
 1. Get the IPSW URL with `lume ipsw`, then download it with `curl -fL -C -`. The 27.0.1 image is 26.6 GB. `lume create` installs into a temporary folder in its default storage, `~/.lume`, and the finished VM takes about 30 GB, so check free space where the image goes and in `~/.lume`.
-2. `lume create ducko-ui --storage home --ipsw <file> --unattended tahoe --cpu 6 --memory 12 --disk-size 80 --display 2880x1800`
-3. Turn off SIP. This needs the user: `lume sip off` cannot read a German Recovery. Have them run `lume run ducko-ui --storage home --recovery-mode true`, choose Options, then Utilities › Terminal (Dienstprogramme › Terminal), run `csrutil disable` with `lume`/`lume`, and shut down.
+2. `lume create ducko --storage home --ipsw <file> --unattended tahoe --cpu 6 --memory 12 --disk-size 80 --display 2880x1800`
+3. Turn off SIP. This needs the user: `lume sip off` cannot read a German Recovery. Have them run `lume run ducko --storage home --recovery-mode true`, choose Options, then Utilities › Terminal (Dienstprogramme › Terminal), run `csrutil disable` with `lume`/`lume`, and shut down.
 4. `vm start`, then `vm provision`.
 5. Walk Setup Assistant, which reopens at every login until finished. Quitting it logs the session out instead. Read the buttons with `vm ax list`, check each page with `vm screenshot`, and press `vm ax press "Setup Assistant" "<title>"` through: Not Now (Accessibility), Other Sign-In Options, Sign in Later in Settings, Skip, Adult, 18 or older, Continue (analytics left unchecked), Not Now and Continue (FileVault), Only Download Automatically, Continue (Liquid Glass), Get Started.
-6. `vm stop`, then clone the baseline as above.
 
 ## Pitfalls
 
