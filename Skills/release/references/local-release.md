@@ -71,4 +71,8 @@ gh release create x.y.z \
   appcast.xml \
   --title "Ducko x.y.z" \
   --notes-file <(awk -v ver="x.y.z" '/^## / { if (found) exit; if ($2 == ver || $2 == "[" ver "]") found=1; next } found && /^\[[^]]+\]:/ { exit } found { print }' CHANGELOG.md)
+
+gh workflow run deploy.yml -R ducko-im/ducko-im.github.io --ref main -f version=x.y.z
 ```
+
+The last command asks ducko.im to rebuild for the new version. Without it, the site picks up the release on its next daily build.

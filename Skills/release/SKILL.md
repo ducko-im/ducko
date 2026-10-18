@@ -5,7 +5,7 @@ description: "Cut a Ducko release: update CHANGELOG.md on main, then push the X.
 
 # Release
 
-Cut a release straight from `main`: update the changelog, then push an `X.Y.Z` tag. CI does the build — the tag triggers `.github/workflows/release.yml`, which builds, signs, notarizes, packages a DMG, regenerates the Sparkle appcast, and publishes a GitHub Release whose body comes from `CHANGELOG.md`. Signing and Sparkle secrets are already configured in CI. Releases are built exclusively via GitHub Actions — never locally.
+Cut a release straight from `main`: update the changelog, then push an `X.Y.Z` tag. CI does the build — the tag triggers `.github/workflows/release.yml`, which builds, signs, notarizes, packages a DMG, regenerates the Sparkle appcast, publishes a GitHub Release whose body comes from `CHANGELOG.md`, and asks ducko.im to rebuild. The signing, Sparkle and site rebuild secrets are already configured in CI. Releases are built exclusively via GitHub Actions — never locally.
 
 There is no version file to bump — the marketing version comes from the tag, and `CHANGELOG.md` is the only prep artifact (`version.env` holds names, not the version; the build number is the commit count).
 
@@ -66,7 +66,7 @@ git tag -a X.Y.Z -m "X.Y.Z"
 git push origin X.Y.Z
 ```
 
-`release.yml` then builds, signs, notarizes, generates the appcast, creates the `X.Y.Z` GitHub Release (notes from the changelog section), and commits the updated `appcast.xml` back to `main`.
+`release.yml` then builds, signs, notarizes, generates the appcast, creates the `X.Y.Z` GitHub Release (notes from the changelog section), commits the updated `appcast.xml` back to `main`, and asks ducko.im to rebuild for the new version.
 
 ## Step 5: Finish
 
@@ -77,6 +77,14 @@ gh run list --commit "$(git rev-parse X.Y.Z^{commit})"   # every workflow on the
 ```
 
 `ci.yml` runs on the tagged commit from its push to `main`, separately from `release.yml`, so a passing release run does not cover it. Report the release as done only once both have passed, waiting on an unfinished run with `gh run watch <run-id> --exit-status`. When the CI run failed, name the failure and fix it on `main`.
+
+When only the release run's last step, `Rebuild ducko.im`, failed, the release is already published, so don't re-run the release. That step authenticates with `SITE_DISPATCH_TOKEN`, a fine-grained token with Actions: Read and write on `ducko-im/ducko-im.github.io`. Renew it when it has expired, then ask for the rebuild by hand:
+
+```bash
+gh workflow run deploy.yml -R ducko-im/ducko-im.github.io --ref main -f version=X.Y.Z
+```
+
+Without that, the site picks up the release on its next daily build.
 
 ## Notes
 

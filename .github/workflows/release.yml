@@ -157,11 +157,7 @@ jobs:
           cat release_notes.txt
 
       - name: Create GitHub Release
-        if: |
-          !inputs.dry_run && (
-            startsWith(github.ref, 'refs/tags/') ||
-            github.event_name == 'workflow_dispatch'
-          )
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -178,11 +174,7 @@ jobs:
             --notes-file release_notes.txt
 
       - name: Commit appcast.xml to main
-        if: |
-          !inputs.dry_run && (
-            startsWith(github.ref, 'refs/tags/') ||
-            github.event_name == 'workflow_dispatch'
-          )
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -215,6 +207,16 @@ jobs:
             *.dmg
             checksums.txt
             appcast.xml
+
+      - name: Rebuild ducko.im
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          # The site waits until the appcast it reads lists this version, because
+          # raw.githubusercontent.com can serve the previous one for a few minutes.
+          gh workflow run deploy.yml -R ducko-im/ducko-im.github.io --ref main \
+            -f version="${MARKETING_VERSION}"
 
       - name: Cleanup keychain
         if: always()
