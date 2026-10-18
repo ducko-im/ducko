@@ -68,16 +68,27 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
         state.withLock { $0.context = context }
     }
 
+    /// Installs the configured identity, because the session's stanzas can reach `handleMessage` before `handleConnect`
+    /// runs, and a resumed session never runs it.
+    public func handleSessionEstablished(resumed: Bool) {
+        do {
+            try installPendingIdentity()
+        } catch {
+            // A fresh session retries in `handleConnect`, which reports the failure. A resumed session runs without
+            // an identity.
+            log.warning("OMEMO identity could not be restored")
+            log.debug("OMEMO identity could not be restored: \(error)")
+        }
+    }
+
     public func handleConnect() async throws {
         let identity: OwnIdentity
         let ownListKnown: Bool
         do {
-            if let pending = state.withLock({ $0.pendingIdentity }) {
-                identity = try restoreIdentity(from: pending)
-                state.withLock {
-                    $0.pendingIdentity = nil
-                    $0.ownIdentity = identity
-                }
+            if let installed = state.withLock({ $0.ownIdentity }) {
+                identity = installed
+            } else if let restored = try installPendingIdentity() {
+                identity = restored
             } else {
                 identity = try generateOwnIdentity()
                 state.withLock { $0.ownIdentity = identity }
@@ -151,7 +162,7 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
         }
     }
 
-    /// Pre-configures identity data to be used on next `handleConnect()` instead of generating fresh.
+    /// Sets the identity to install when the next session is established, instead of generating a fresh one.
     public func configureIdentity(_ data: OMEMOIdentityData) {
         state.withLock { $0.pendingIdentity = data }
     }
@@ -460,6 +471,18 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
     }
 
     // MARK: - Identity Generation
+
+    /// Returns `nil` when no identity is pending.
+    @discardableResult
+    private func installPendingIdentity() throws -> OwnIdentity? {
+        guard let pending = state.withLock({ $0.pendingIdentity }) else { return nil }
+        let identity = try restoreIdentity(from: pending)
+        state.withLock {
+            $0.pendingIdentity = nil
+            $0.ownIdentity = identity
+        }
+        return identity
+    }
 
     private func restoreIdentity(from data: OMEMOIdentityData) throws -> OwnIdentity {
         let context = state.withLock { $0.context }

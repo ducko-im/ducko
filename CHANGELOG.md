@@ -36,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Stop Ducko asking the server's archive about a private chat within a room when you sign in, which could fill it with messages from the room's other private chats
 - Fix the name and size of a file you sent being hard to read on your message: they now sit on a darker card, and a file that is not on this Mac no longer looks grayed out
 - Fix the chat you were looking at counting as read after you opened another chat in a new tab, while that tab was still loading or for good when it failed to load
+- Fix encrypted messages reading "This message could not be decrypted" when they arrive after a dropped connection picks up where it left off, or right after you sign in
 
 ### Security
 

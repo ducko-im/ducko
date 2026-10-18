@@ -499,6 +499,27 @@ STARTTLS passes through the relay, and the certificate is still checked against 
 
 To check a room across the drop, add a second account in its own throwaway profile, connected directly, and run each REPL under tmux. In the relayed REPL run `/join <new-room>@<muc-service> <nick>` and then `/config submit-default`, since a new room starts locked, and `/join` it from the second REPL. Send `SIGUSR1` and have the second account send to the room right away. The relayed account resumes a few seconds later and prints that message, which the server replays, just before its `stream resumed as <jid>` line. `/members` and `/history <room>` in the relayed REPL then show both occupants and the message, a message it sends reaches the second REPL, and the second REPL shows no leave or join of the relayed account across the drop. `/leave` in both REPLs so the server removes the room, and clean up the second profile as Throwaway Profiles describes.
 
+## Encryption Smoke Testing
+
+To verify OMEMO between two accounts on the live test server, give a receiver and a sender each a throwaway profile. Put the receiver behind the relay when the check includes a stream resume, and drop its connection with `SIGUSR1` as Connection Smoke Testing describes. Run each REPL with `--output plain` under its own `tmux -L <name>`. Start the session as a shell and type the `DuckoCLI` command into it with `send-keys`, so the pane stays open and shows the reason when the REPL exits early. Run these steps unsandboxed, since they read and write under `~/Library`.
+
+The test accounts' device lists hold dozens of stale devices. A sender that trusts devices on first use encrypts to every one of them, so the check no longer shows whether the receiver's new device got a key. Start the receiver's REPL first, then, before the sender's REPL starts:
+
+```
+defaults write im.ducko.dev.<sender-profile> omemoTrustOnFirstUse -bool NO
+grep "OMEMO setup complete, device ID" "$HOME/Library/Application Support/Ducko-Dev-<receiver-profile>/Logs/ducko.log"   # the receiver's new device
+DUCKO_PROFILE=<sender-profile> .build/debug/DuckoCLI omemo devices RECEIVER_JID                                         # repeat until the device ID is listed
+DUCKO_PROFILE=<sender-profile> .build/debug/DuckoCLI omemo trust RECEIVER_JID <device-id>
+```
+
+Then run `/encrypt RECEIVER_JID on` and `send RECEIVER_JID <text>` in the sender's REPL.
+
+The REPL prints no line for an incoming encrypted message. Read it with `/history SENDER_JID` in the receiver's REPL: a decrypted message shows its text followed by `[encrypted]`, and a failed one shows `error: This message could not be decrypted` in place of the text, also marked `[encrypted]`. A failed decryption also logs `OMEMO decryption failed: <error>` in the receiver's file log. No history line and no log line means the message carried no key for the receiver's device, so check the trusted device ID.
+
+On the test server, a message sent while the receiver is offline reaches it through the archive sync on its next sign-in rather than as a live delivery. That path stores an encrypted message as undecryptable without trying, so this setup cannot check how a live delivery from offline storage decrypts.
+
+Each throwaway profile adds a device to its account's device list on the shared server. Afterwards, with the user's approval, run `DUCKO_RESET_FIXTURES=1 swift test --package-path IntegrationTests --filter ResetTestServerState` to retract the lists, and clean up both profiles as Throwaway Profiles describes.
+
 ## Examples
 
 ```bash

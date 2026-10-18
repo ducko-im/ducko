@@ -492,9 +492,9 @@ public final class OMEMOService {
         accountJID: String,
         pollTimeout: Duration = .seconds(5)
     ) async {
-        // First-time persistence only: if an identity is already stored, the
-        // module will restore it on handleConnect and there's nothing to do
-        // here. Skip both the readiness poll and the persistence writes.
+        // Only a first-time identity needs persisting. A stored one is handed to
+        // the module, which installs it when the session is established. Skip
+        // both the readiness poll and the persistence writes.
         let existingIdentity = try? await omemoStore.loadIdentity(for: accountJID)
         if existingIdentity == nil {
             // `.connected` is yielded before `OMEMOModule.handleConnect` runs,

@@ -1574,54 +1574,16 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
                 pepModule: recipientPep, deviceID: recipientDeviceID
             )
 
-            // Connect the initiator (fresh generated identity).
-            let initiatorMock = MockTransport()
-            let initiatorPep = PEPModule()
-            let initiatorOmemo = OMEMOModule(pepModule: initiatorPep)
-            let (initiatorClient, _) = try await makeConnectedClient(
-                mock: initiatorMock, omemoModule: initiatorOmemo, pepModule: initiatorPep
-            )
-
-            // Initiator encrypts a KEX to the recipient's device. The recipient's own JID on the wire is
-            // `user@example.com` (the connect helper's credentials), so that is what the initiator fetches.
-            let recipientJID = try #require(BareJID(localPart: "user", domainPart: "example.com"))
-            let encryptTask = Task {
-                try await initiatorOmemo.encryptMessage(
-                    plaintext: "secret", to: recipientJID,
-                    recipientDeviceIDs: [recipientDeviceID], ownDeviceIDs: []
-                )
-            }
-            await initiatorMock.waitForSent(count: 1)
-            let fetchID = try await #require(extractIQID(from: initiatorMock.sentBytes[0]))
-            // Respond with the recipient's REAL bundle so the KEX is decryptable by the recipient's keys.
-            await initiatorMock.simulateReceive(makeBundleResultIQ(
-                iqID: fetchID, fromJID: recipientJID, identity: recipient, module: initiatorOmemo
-            ))
-            let elements = try await encryptTask.value
+            let message = try await makeKEXMessage(to: recipient, plaintext: "secret")
 
             // Feed the initiator's KEX-bearing message into the recipient's public message-handling path.
-            let recipientEvents = Task {
-                try await collectEvents(from: recipientClient) { event in
-                    if case .omemoEncryptedMessageReceived = event { return true }
-                    return false
-                }
-            }
-            var messageEl = XMLElement(name: "message", attributes: [
-                "from": "peer@example.com/i", "to": recipientJID.description
-            ])
-            messageEl.addChild(elements.encrypted)
-            try recipientOmemo.handleMessage(XMPPMessage(element: messageEl))
+            let recipientEvents = Task { try await collectEvents(from: recipientClient, until: isEncryptedMessage) }
+            try recipientOmemo.handleMessage(XMPPMessage(element: message))
 
-            let collected = try await recipientEvents.value
-            guard case let .omemoEncryptedMessageReceived(_, body, _, _) = try #require(collected.last) else {
-                Issue.record("Expected omemoEncryptedMessageReceived event")
-                return
-            }
-            #expect(body == "secret")
+            #expect(try await decryptedBody(in: recipientEvents.value) == "secret")
             // The targeted pre-key was consumed during the responder key agreement.
             #expect(recipientOmemo.consumedPreKeyIDs() == [targetedPreKeyID])
 
-            await disconnectFast(initiatorClient)
             await disconnectFast(recipientClient)
         }
     }
@@ -1766,6 +1728,48 @@ private func makeBundleResultIQ(
     return bundleResultIQ(
         iqID: iqID, fromJID: fromJID, deviceID: identity.data.deviceID, bundleEl: module.buildBundleElement(bundle)
     )
+}
+
+/// A KEX `<message>` to `recipient`'s device from a separately connected initiator with a generated identity. The
+/// initiator fetches the recipient's real bundle, so a module configured with `recipient` can decrypt it.
+func makeKEXMessage(to recipient: TestOMEMOIdentity, plaintext: String) async throws -> XMLElement {
+    let mock = MockTransport()
+    let pepModule = PEPModule()
+    let omemoModule = OMEMOModule(pepModule: pepModule)
+    let (client, _) = try await makeConnectedClient(mock: mock, omemoModule: omemoModule, pepModule: pepModule)
+
+    // The recipient's own JID on the wire is `user@example.com` (the connect helpers' credentials).
+    let recipientJID = try #require(BareJID(localPart: "user", domainPart: "example.com"))
+    let encryptTask = Task {
+        try await omemoModule.encryptMessage(
+            plaintext: plaintext, to: recipientJID,
+            recipientDeviceIDs: [recipient.data.deviceID], ownDeviceIDs: []
+        )
+    }
+    await mock.waitForSent(count: 1)
+    let fetchID = try await #require(extractIQID(from: mock.sentBytes[0]))
+    await mock.simulateReceive(makeBundleResultIQ(
+        iqID: fetchID, fromJID: recipientJID, identity: recipient, module: omemoModule
+    ))
+    let elements = try await encryptTask.value
+    await disconnectFast(client)
+
+    var message = XMLElement(name: "message", attributes: [
+        "from": "peer@example.com/i", "to": recipientJID.description
+    ])
+    message.addChild(elements.encrypted)
+    return message
+}
+
+func isEncryptedMessage(_ event: XMPPEvent) -> Bool {
+    if case .omemoEncryptedMessageReceived = event { return true }
+    return false
+}
+
+/// The decrypted body of the last event, which `isEncryptedMessage` ends the collection on.
+func decryptedBody(in events: [XMPPEvent]) -> String? {
+    guard case let .omemoEncryptedMessageReceived(_, body, _, _) = events.last else { return nil }
+    return body
 }
 
 /// Extracts the bundle device ID from a captured `<iq>` whose pubsub items
@@ -1985,14 +1989,14 @@ private func makeTestBundle() -> OMEMOBundle {
 
 /// A real OMEMO identity with its private key material retained, so the same identity can both seed a
 /// module via `configureIdentity(_:)` (`data`) and build a decryptable peer bundle via the key pairs.
-private struct TestOMEMOIdentity {
+struct TestOMEMOIdentity {
     let data: OMEMOModule.OMEMOIdentityData
     let identityKeyPair: OMEMOIdentityKeyPair
     let signedPreKey: OMEMOSignedPreKey
     let preKeys: [OMEMOPreKey]
 }
 
-private func makeTestOMEMOIdentity(deviceID: UInt32, preKeyIDs: [UInt32]) throws -> TestOMEMOIdentity {
+func makeTestOMEMOIdentity(deviceID: UInt32, preKeyIDs: [UInt32]) throws -> TestOMEMOIdentity {
     let identityKeyPair = OMEMOIdentityKeyPair()
     let signedPreKey = try OMEMOPreKeyManager.generateSignedPreKey(keyID: 1, identityKey: identityKeyPair)
     let preKeys = preKeyIDs.map { OMEMOPreKey(keyID: $0) }
