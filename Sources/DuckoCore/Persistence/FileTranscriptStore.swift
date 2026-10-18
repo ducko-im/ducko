@@ -10,11 +10,11 @@ public actor FileTranscriptStore: TranscriptStore {
     private let decoder: JSONDecoder
     private let fileHandle: @Sendable (URL) throws -> FileHandle
 
-    /// In-memory index mapping stanzaID → (conversationID, date string) for single-file lookups in findMessage/messageExists.
-    private var stanzaIndex: [String: (UUID, String)] = [:]
+    /// In-memory index mapping conversationID → stanzaID → date string for single-file lookups in findMessage/messageExists.
+    private var stanzaIndex: [UUID: [String: String]] = [:]
 
-    /// In-memory index mapping serverID → (conversationID, date string) for single-file lookups in findMessage/messageExists.
-    private var serverIndex: [String: (UUID, String)] = [:]
+    /// In-memory index mapping conversationID → serverID → date string for single-file lookups in findMessage/messageExists.
+    private var serverIndex: [UUID: [String: String]] = [:]
 
     /// In-memory index of message UUID → (conversationID, date string). Authoritative
     /// for amendment routing; disambiguates per-session `ducko-N` counter collisions
@@ -119,21 +119,13 @@ public actor FileTranscriptStore: TranscriptStore {
         // UUID is authoritative — never fall through to stanzaID/serverID,
         // which can collide on `ducko-N` and leave a dangling record in
         // the wrong file.
-        if amendment.targetMessageID != nil {
-            if let date = scopedDate(uuidIndex, key: amendment.targetMessageID, conversationID: conversationID) { return date }
+        if let messageID = amendment.targetMessageID {
+            if let (indexedConv, date) = uuidIndex[messageID], indexedConv == conversationID { return date }
             return scanConversationForTarget(amendment: amendment, conversationID: conversationID)
         }
-        if let date = scopedDate(stanzaIndex, key: amendment.targetStanzaID, conversationID: conversationID) { return date }
-        if let date = scopedDate(serverIndex, key: amendment.targetServerID, conversationID: conversationID) { return date }
+        if let stanzaID = amendment.targetStanzaID, let date = stanzaIndex[conversationID]?[stanzaID] { return date }
+        if let serverID = amendment.targetServerID, let date = serverIndex[conversationID]?[serverID] { return date }
         return scanConversationForTarget(amendment: amendment, conversationID: conversationID)
-    }
-
-    /// Returns the indexed date only when the entry is scoped to `conversationID`.
-    /// Filters cross-conversation collisions so the caller falls through to a
-    /// per-conversation scan.
-    private func scopedDate<K: Hashable>(_ index: [K: (UUID, String)], key: K?, conversationID: UUID) -> String? {
-        guard let key, let (indexedConv, date) = index[key], indexedConv == conversationID else { return nil }
-        return date
     }
 
     /// Scans the given conversation's transcript files for the amendment's target message.
@@ -166,16 +158,21 @@ public actor FileTranscriptStore: TranscriptStore {
         return false
     }
 
-    /// Populates the uuid/stanza/server indexes for a single message;
-    /// shared by write, scan, and read paths.
+    /// Populates the uuid/stanza/server indexes for a message that is written or found by a scan. Reads fill only
+    /// the uuid index: a stanza or server ID can recur within a conversation (`ducko-N` collisions), and reading an
+    /// older day before the newer one is indexed would point the ID at the older message.
     private func indexEntry(id: UUID, stanzaID: String?, serverID: String?, conversationID: UUID, dateString: String) {
         uuidIndex[id] = (conversationID, dateString)
-        if let stanzaID {
-            stanzaIndex[stanzaID] = (conversationID, dateString)
-        }
-        if let serverID {
-            serverIndex[serverID] = (conversationID, dateString)
-        }
+        Self.indexNewestDay(stanzaID, in: &stanzaIndex[conversationID, default: [:]], dateString: dateString)
+        Self.indexNewestDay(serverID, in: &serverIndex[conversationID, default: [:]], dateString: dateString)
+    }
+
+    /// A recurring ID keeps its newest day, the one the newest-first scan resolves, so writing an older message, as an
+    /// archive sync does, leaves later amendments on the newer one.
+    private static func indexNewestDay(_ id: String?, in index: inout [String: String], dateString: String) {
+        guard let id else { return }
+        if let indexedDate = index[id], indexedDate > dateString { return }
+        index[id] = dateString
     }
 
     // MARK: - Read
@@ -244,10 +241,8 @@ public actor FileTranscriptStore: TranscriptStore {
     }
 
     public func findMessage(stanzaID: String, conversationID: UUID) async throws -> ChatMessage? {
-        // Fast path: check stanza index to read only one file. Verify the indexed
-        // conversationID matches — stanzaIDs can collide across conversations and
-        // last-write-wins would otherwise probe the wrong conversation's file.
-        if let (indexedConv, dateString) = stanzaIndex[stanzaID], indexedConv == conversationID {
+        // Fast path: check stanza index to read only one file.
+        if let dateString = stanzaIndex[conversationID]?[stanzaID] {
             let fileURL = transcriptFileURL(conversationID: conversationID, dateString: dateString)
             let messages = try readAndMaterialize(fileURL: fileURL, conversationID: conversationID)
             if let match = messages.first(where: { $0.stanzaID == stanzaID }) {
@@ -259,9 +254,8 @@ public actor FileTranscriptStore: TranscriptStore {
     }
 
     public func findMessages(stanzaID: String, conversationID: UUID) async throws -> [ChatMessage] {
-        // Full multi-file scan, not the `stanzaIndex` fast path: that index is single-valued
-        // (last-write-wins per stanzaID), so a colliding `ducko-N` would surface only the most
-        // recently written file and miss cross-file duplicates — the exact case callers need.
+        // Full multi-file scan, not the `stanzaIndex` fast path: that index holds one day per stanzaID, so a colliding
+        // `ducko-N` would surface only that day's file. Callers need the duplicates in the other files too.
         let dateFiles = try listDateFiles(for: conversationID)
         var matches: [ChatMessage] = []
         for (_, fileURL) in dateFiles {
@@ -272,9 +266,8 @@ public actor FileTranscriptStore: TranscriptStore {
     }
 
     public func findMessage(serverID: String, conversationID: UUID) async throws -> ChatMessage? {
-        // Fast path: check server index to read only one file. Verify the indexed
-        // conversationID matches for consistency with findMessage(stanzaID:).
-        if let (indexedConv, dateString) = serverIndex[serverID], indexedConv == conversationID {
+        // Fast path: check server index to read only one file.
+        if let dateString = serverIndex[conversationID]?[serverID] {
             let fileURL = transcriptFileURL(conversationID: conversationID, dateString: dateString)
             let messages = try readAndMaterialize(fileURL: fileURL, conversationID: conversationID)
             if let match = messages.first(where: { $0.serverID == serverID }) {
@@ -296,11 +289,11 @@ public actor FileTranscriptStore: TranscriptStore {
     public func messageExists(stanzaID: String, fromJID: String, conversationID: UUID) async throws -> Bool {
         // Inbound-only dedup: outgoing 1:1 rows persist `fromJID` as the RECIPIENT (so carbons can find them), so
         // omitting `!isOutgoing` would let an inbound from bob alias an outgoing alice→bob row and be dropped.
-        // Stanza index is 1:1 (last-write-wins) so falls through to per-file scan when it points at the wrong sender.
+        // The stanza index holds one day per stanzaID, so a miss there falls through to the per-file scan.
         let predicate: (ChatMessage) -> Bool = { msg in
             !msg.isOutgoing && msg.stanzaID == stanzaID && msg.fromJID == fromJID
         }
-        if let (indexedConv, dateString) = stanzaIndex[stanzaID], indexedConv == conversationID {
+        if let dateString = stanzaIndex[conversationID]?[stanzaID] {
             let fileURL = transcriptFileURL(conversationID: conversationID, dateString: dateString)
             let messages = try readAndMaterialize(fileURL: fileURL, conversationID: conversationID)
             if messages.contains(where: predicate) {
@@ -318,11 +311,7 @@ public actor FileTranscriptStore: TranscriptStore {
 
     public func matchingMessages(_ query: String, in conversationID: UUID, on day: Date) async throws -> [ChatMessage] {
         let fileURL = transcriptFileURL(conversationID: conversationID, dateString: Self.dateString(for: day))
-        // The lookup indexes keep the last entry they were given. A search reads days from the newest to the oldest, so
-        // filling them from its reads would leave them pointing at the oldest day read.
-        return try Self.oldestFirst(
-            readAndMaterialize(fileURL: fileURL, conversationID: conversationID, fillsIndexes: false).filter { $0.matchesSearch(query) }
-        )
+        return try Self.oldestFirst(readAndMaterialize(fileURL: fileURL, conversationID: conversationID).filter { $0.matchesSearch(query) })
     }
 
     // MARK: - Lifecycle
@@ -332,8 +321,8 @@ public actor FileTranscriptStore: TranscriptStore {
         if FileManager.default.fileExists(atPath: dir.path) {
             try FileManager.default.removeItem(at: dir)
         }
-        stanzaIndex = stanzaIndex.filter { $0.value.0 != conversationID }
-        serverIndex = serverIndex.filter { $0.value.0 != conversationID }
+        stanzaIndex[conversationID] = nil
+        serverIndex[conversationID] = nil
         uuidIndex = uuidIndex.filter { $0.value.0 != conversationID }
     }
 
@@ -435,7 +424,7 @@ public actor FileTranscriptStore: TranscriptStore {
             .sorted { $0.dateString > $1.dateString } // newest first
     }
 
-    private func readAndMaterialize(fileURL: URL, conversationID: UUID, fillsIndexes: Bool = true) throws -> [ChatMessage] {
+    private func readAndMaterialize(fileURL: URL, conversationID: UUID) throws -> [ChatMessage] {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
         let data = try Data(contentsOf: fileURL)
         guard !data.isEmpty else { return [] }
@@ -452,7 +441,7 @@ public actor FileTranscriptStore: TranscriptStore {
                 switch record {
                 case .message:
                     ingestMessageRecord(
-                        record, conversationID: conversationID, dateString: dateString, fillsIndexes: fillsIndexes, into: &accumulator
+                        record, conversationID: conversationID, dateString: dateString, into: &accumulator
                     )
                 case .amendment:
                     if let amendment = record.toAmendment() {
@@ -493,16 +482,13 @@ public actor FileTranscriptStore: TranscriptStore {
         _ record: TranscriptRecord,
         conversationID: UUID,
         dateString: String,
-        fillsIndexes: Bool,
         into accumulator: inout MaterializationAccumulator
     ) {
         guard var msg = record.toChatMessage(conversationID: conversationID) else { return }
         msg.isDelivered = !msg.isOutgoing
         accumulator.messages[msg.id] = msg
         accumulator.order.append(msg.id)
-        if fillsIndexes {
-            indexEntry(id: msg.id, stanzaID: msg.stanzaID, serverID: msg.serverID, conversationID: conversationID, dateString: dateString)
-        }
+        uuidIndex[msg.id] = (conversationID, dateString)
         if let sid = msg.stanzaID { accumulator.stanzaToID[sid] = msg.id }
         if let srvid = msg.serverID { accumulator.serverToID[srvid] = msg.id }
     }

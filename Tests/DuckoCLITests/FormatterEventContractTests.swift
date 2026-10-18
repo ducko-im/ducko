@@ -1,3 +1,4 @@
+import DuckoCore
 import DuckoXMPP
 import Foundation
 import Testing
@@ -52,7 +53,6 @@ struct FormatterEventContractTests {
             .vcardAvatarHashReceived(from: peer, hash: "hash"),
             .blockListLoaded([peer]), .contactBlocked(peer), .contactUnblocked(peer),
             .mucSelfPingFailed(room: peer, reason: .notJoined),
-            .omemoEncryptedMessageReceived(from: .bare(peer), decryptedBody: "secret", senderDeviceID: 12, stanzaID: "m1"),
             .omemoSessionAdvanced(jid: peer, deviceID: 12)
         ]
         for event in events {
@@ -104,7 +104,26 @@ struct FormatterEventContractTests {
         try expectMessage(event, json: json, human: human, color: color)
     }
 
-    private func expectMessage(_ event: XMPPEvent, json: [String: String], human: String, color: String) throws {
+    @Test(arguments: [String?.some("hello"), nil])
+    func `encrypted messages print as they arrive, marked encrypted`(body: String?) throws {
+        let full = try #require(FullJID.parse("alice@example.com/laptop"))
+        let event = XMPPEvent.omemoEncryptedMessageReceived(from: .full(full), decryptedBody: body, senderDeviceID: 12, stanzaID: "m1")
+        var json = [
+            "type": "message", "direction": "incoming", "from": peer.description, "body": body ?? "",
+            "encrypted": "true", "account": accountID.uuidString
+        ]
+        if body == nil { json["undecryptable"] = "true" }
+        let sender = "<- \(peer): "
+        try expectMessage(
+            event, json: json, human: sender + (body ?? "error: \(ChatMessage.undecryptableText)") + " [encrypted]", color: "32",
+            ansiHuman: sender + (body ?? "\u{001B}[31merror: \(ChatMessage.undecryptableText)"),
+            ansiTail: " \u{001B}[32m\u{001B}[2m[encrypted]\u{001B}[0m"
+        )
+    }
+
+    private func expectMessage(
+        _ event: XMPPEvent, json: [String: String], human: String, color: String, ansiHuman: String? = nil, ansiTail: String = ""
+    ) throws {
         let before = Date().addingTimeInterval(-1)
         let plain = try #require(PlainFormatter().formatEvent(event, accountID: accountID))
         let ansi = try #require(ANSIFormatter().formatEvent(event, accountID: accountID))
@@ -123,7 +142,7 @@ struct FormatterEventContractTests {
         let content = ansi.dropFirst(ansiPrefix.count)
         let ansiEnd = try #require(content.firstIndex(of: "]"))
         try expectTimestamp(String(content[..<ansiEnd]), between: before, and: after)
-        #expect(String(content[content.index(after: ansiEnd)...]) == "\u{001B}[0m \u{001B}[\(color)m\(human)\u{001B}[0m")
+        #expect(String(content[content.index(after: ansiEnd)...]) == "\u{001B}[0m \u{001B}[\(color)m\(ansiHuman ?? human)\u{001B}[0m\(ansiTail)")
     }
 
     private func expectTimestamp(_ value: String, between before: Date, and after: Date) throws {

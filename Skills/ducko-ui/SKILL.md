@@ -290,8 +290,8 @@ Right-click a participant in the chat window sidebar:
 | `ducko-room-settings.sh` | Open Room Settings sheet via context menu | `ROOM_JID` |
 | `ducko-connect.sh` | Reconnect by restarting the app | none |
 | `ducko-profile.sh` | Open My Profile sheet from the Contact menu | none |
-| `ducko-avatar.sh` | Upload an avatar image via profile sheet. Fills the Open panel like `ducko-attach.sh` and fails when it stays open | `IMAGE_PATH` |
-| `ducko-avatar-remove.sh` | Remove current avatar via profile sheet | none |
+| `ducko-avatar.sh` | Upload an avatar image via profile sheet. Fills the Open panel like `ducko-attach.sh` and fails when it stays open. Its success line means only that the panel closed: the publish runs afterwards, and a refused or failed one shows as red text under the avatar in the sheet's Photo section, below the fold | `IMAGE_PATH` |
+| `ducko-avatar-remove.sh` | Remove current avatar via profile sheet. Its success line does not check the outcome: a failed removal shows the same red text under the avatar | none |
 | `ducko-preferences.sh` | Open Preferences (Settings) window via Cmd+, | none |
 | `ducko-preferences-tab.sh` | Switch to a specific tab in the Preferences window | `<General\|Accounts\|Chat\|Status\|Appearance\|Advanced>` |
 | `ducko-status.sh` | Set presence status and optional status message from the header's status pull-down. The message step types with keystrokes, so the instance has to stay frontmost | `STATUS [MESSAGE]` (`STATUS`: available\|away\|xa\|dnd\|offline) |
@@ -592,11 +592,13 @@ vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 vm ui ducko-launch.sh
 vm ui ducko-profile.sh
 
-# 2. Upload avatar
+# 2. Upload avatar. The sheet opens at its top, so scroll it to the Photo section (or read its text through AX)
+#    before the screenshot. Once the progress indicator under the buttons is gone, check that the preview shows
+#    the picture and no error shows under it.
 vm ui ducko-avatar.sh "/path/to/test-image.png"
 vm ui ducko-screenshot.sh "avatar-uploaded.png"
 
-# 3. Remove avatar
+# 3. Remove avatar, then check the Photo section the same way: the placeholder again and no error.
 vm ui ducko-avatar-remove.sh
 vm ui ducko-screenshot.sh "avatar-removed.png"
 

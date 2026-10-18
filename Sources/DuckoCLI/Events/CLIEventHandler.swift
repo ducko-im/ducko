@@ -16,6 +16,7 @@ actor CLIEventHandler {
             if message.hasClassifiedEvent { return }
             ringBell()
         case .messageCarbonReceived, .messageCarbonSent,
+             .omemoEncryptedMessageReceived,
              .roomMessageReceived, .mucPrivateMessageReceived, .roomInviteReceived,
              .jingleFileTransferReceived,
              .oobIQOfferReceived:
@@ -42,7 +43,7 @@ actor CLIEventHandler {
              .jingleFileTransferCompleted, .jingleFileTransferFailed,
              .jingleChecksumReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked,
-             .omemoEncryptedMessageReceived, .omemoRecipientsPartial,
+             .omemoRecipientsPartial,
              .serviceOutageReceived:
             break
         }

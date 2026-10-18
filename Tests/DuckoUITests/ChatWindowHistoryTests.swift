@@ -269,6 +269,8 @@ struct ChatWindowHistoryTests {
         await fixture.windowState.sendMessage("corrected")
         #expect(list.takenRequests.isEmpty)
 
+        // Nothing is connected, so the correction failed and kept the edit open for another try.
+        fixture.windowState.cancelReplyOrEdit()
         await fixture.windowState.sendMessage("new")
         #expect(list.takenRequests == [.newest])
 

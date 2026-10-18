@@ -147,7 +147,8 @@ struct ANSIFormatter: CLIFormatter {
         case let .omemoDeviceListReceived(jid, devices): "\(Color.dim)OMEMO devices for \(jid): \(devices.map(String.init).joined(separator: ", "))\(Color.reset)"
         case let .omemoSessionEstablished(jid, deviceID, _): "\(Color.green)OMEMO session established with \(jid) device \(deviceID)\(Color.reset)"
         case let .omemoRecipientsPartial(conversation, dropped): "\(Color.yellow)⚠ OMEMO: skipped \(dropped.count) device(s) for \(conversation) — bundles missing\(Color.reset)"
-        case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
+        case let .omemoEncryptedMessageReceived(from, decryptedBody, _, _): formatMessage(liveEncryptedMessage(from: from, body: decryptedBody))
+        case .omemoSessionAdvanced: nil
         case let .serviceOutageReceived(info): formatOutageEvent(info)
         case .presenceReceived, .iqReceived,
              .rosterUpdated,

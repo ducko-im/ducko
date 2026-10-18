@@ -125,16 +125,49 @@ struct ChatWindowStateTests {
         #expect(fixture.windowState.messages.contains { $0.body == "older" })
     }
 
-    @Test func `sendMessage captures typed ChatService errors and preserves body`() async throws {
+    @Test func `sendMessage surfaces a not-connected failure and preserves body`() async throws {
         let fixture = try await ChatWindowFixture.make()
         let typed = "Reach for the sky"
 
-        // No connected client → `sendMessage` flows through the
-        // `ChatService.ChatServiceError.notConnected` catch arm.
         await fixture.windowState.sendMessage(typed)
 
         #expect(fixture.windowState.lastSendError != nil)
         #expect(fixture.windowState.lastFailedSendBody == typed)
+    }
+
+    /// A chat tab whose account is connected over a transport that fails the next stanza carrying a body.
+    private static func failingNextSend() async throws -> (ChatWindowFixture, XMPPClientError) {
+        let transport = MockTransport()
+        let fixture = try await ChatWindowFixture.make(
+            clientFactory: MockXMPPClientFactory(transport: transport, modules: [ChatModule()])
+        )
+        try await MockServerSession(transport: transport).connect(fixture.environment, accountID: fixture.accountID)
+        let failure = XMPPClientError.sendFailed("The connection was closed")
+        await transport.failNextSend(matching: "<body>", error: failure)
+        return (fixture, failure)
+    }
+
+    @Test func `sendMessage captures a failure on the wire and preserves body`() async throws {
+        let (fixture, failure) = try await Self.failingNextSend()
+        let typed = "Reach for the sky"
+
+        await fixture.windowState.sendMessage(typed)
+
+        #expect(fixture.windowState.lastSendError == failure.localizedDescription)
+        #expect(fixture.windowState.lastFailedSendBody == typed)
+    }
+
+    @Test func `a reply whose send fails stays a reply for the next try`() async throws {
+        let (fixture, _) = try await Self.failingNextSend()
+        let question = ChatMessage(
+            id: UUID(), conversationID: fixture.conversationID, stanzaID: "question", fromJID: Self.jidString, body: "Lunch?",
+            timestamp: Date(), isOutgoing: false, isDelivered: true, isEdited: false, type: "chat"
+        )
+        fixture.windowState.replyingTo = question
+
+        await fixture.windowState.sendMessage("Sure")
+
+        #expect(fixture.windowState.replyingTo?.id == question.id)
     }
 
     @Test func `clearSendError resets lastSendError`() async throws {

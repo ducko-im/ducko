@@ -341,22 +341,16 @@ public final class ChatWindowState {
             } else {
                 try await environment.chatService.sendMessage(toJIDString: jidString, body: body, accountID: accountID)
             }
-            lastSendError = nil
-            lastFailedSendBody = nil
+            clearSendError()
             draftText = ""
-        } catch let error as ChatService.ChatServiceError {
-            // Typed failures surface to the composer and let it restore the body.
+            cancelReplyOrEdit()
+        } catch {
+            // A failed send leaves no message in the chat, so the composer keeps the reply or edit and restores the body.
             lastSendError = error.localizedDescription
             lastFailedSendBody = body
             log.warning("Send failed")
-            log.debug("The send failed with: \(error.localizedDescription)")
-        } catch {
-            // Untyped send failures (network, etc.) leave messages as-is.
-            log.warning("Send failed")
             log.debug("The send failed with: \(error)")
         }
-
-        cancelReplyOrEdit()
     }
 
     func clearSendError() {

@@ -1,5 +1,6 @@
 import DuckoXMPP
 import Foundation
+import ImageIO
 import Logging
 
 private let log = Logger(label: "im.ducko.core.avatar")
@@ -133,10 +134,15 @@ public final class AvatarService {
 
     public enum AvatarServiceError: Error, LocalizedError {
         case notConnected(UUID)
+        case pictureTooLarge
+        case notAPicture
 
         public var errorDescription: String? {
             switch self {
             case .notConnected: notConnectedDescription
+            case .pictureTooLarge:
+                "The picture is larger than \(ByteCountFormatter.string(fromByteCount: Int64(AvatarLimits.maxBytes), countStyle: .memory))"
+            case .notAPicture: "The file is not a picture that can be read"
             }
         }
     }
@@ -145,6 +151,9 @@ public final class AvatarService {
 
     /// Publishes the user's avatar via XEP-0084 PEP and optionally XEP-0153 vCard.
     public func publishAvatar(imageData: Data, mimeType: String, accountID: UUID) async throws {
+        // Contacts drop an avatar over the cap and show one only once it decodes.
+        guard imageData.count <= AvatarLimits.maxBytes else { throw AvatarServiceError.pictureTooLarge }
+        guard Self.isDecodablePicture(imageData) else { throw AvatarServiceError.notAPicture }
         guard let client = accountService?.connectedClient(for: accountID) else { throw AvatarServiceError.notConnected(accountID) }
         guard let pepModule = await client.module(ofType: PEPModule.self), let presenceModule = await client.module(ofType: PresenceModule.self) else { return }
 
@@ -476,6 +485,15 @@ public final class AvatarService {
         ])
         metadata.addChild(info)
         return metadata
+    }
+
+    private static func isDecodablePicture(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 64
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) != nil
     }
 
     // MARK: - Private: Contact Lookup

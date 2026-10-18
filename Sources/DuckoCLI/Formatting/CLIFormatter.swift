@@ -64,6 +64,14 @@ func jingleProgressState(bytesTransferred: Int64, totalBytes: Int64) -> (progres
     return (progress, state)
 }
 
+/// An encrypted message as it arrives, shaped like its stored row so its live line matches the one `history` prints.
+func liveEncryptedMessage(from sender: JID, body: String?) -> ChatMessage {
+    ChatMessage(
+        id: UUID(), conversationID: UUID(), fromJID: sender.bareJID.description, body: body ?? "", timestamp: Date(),
+        isOutgoing: false, isDelivered: true, isEdited: false, type: "chat", isEncrypted: true, isUndecryptable: body == nil
+    )
+}
+
 func omemoFingerprintText(_ device: OMEMODeviceInfo) -> String {
     device.fingerprint.isEmpty ? "(no fingerprint)" : OMEMODeviceInfo.formatFingerprint(device.fingerprint)
 }

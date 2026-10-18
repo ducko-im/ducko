@@ -435,7 +435,7 @@ Same as plain with color codes (green incoming, cyan outgoing, red errors, dim t
 {"body":"Hello","direction":"incoming","from":"alice@example.com","timestamp":"2026-02-27T10:00:00Z","type":"message"}
 ```
 
-Optional keys: `"delivered":"true"`, `"read":"true"` (with `"delivered"` also set), `"edited":"true"`, `"encrypted":"true"`, `"error":"..."`, and `"undecryptable":"true"` for an OMEMO message that could not be decrypted (its `body` is then empty). Keys are sorted alphabetically.
+Optional keys: `"action":"true"` for a `/me` message (an outgoing one in history also carries `"actor"`, the account's address), `"attachments":"..."` (comma-separated attachment URLs, leaving out one whose URL is the whole body), `"delivered":"true"`, `"read":"true"` (with `"delivered"` also set), `"edited":"true"`, `"encrypted":"true"`, `"error":"..."`, and `"undecryptable":"true"` for an OMEMO message that could not be decrypted (its `body` is then empty). Keys are sorted alphabetically.
 
 A timeline note in history is a record of its own: `{"kind":"encryption-enabled-by-contact","text":"...","timestamp":"...","type":"note"}`.
 
@@ -514,7 +514,7 @@ DUCKO_PROFILE=<sender-profile> .build/debug/DuckoCLI omemo trust RECEIVER_JID <d
 
 Then run `/encrypt RECEIVER_JID on` and `send RECEIVER_JID <text>` in the sender's REPL.
 
-The REPL prints no line for an incoming encrypted message. Read it with `/history SENDER_JID` in the receiver's REPL: a decrypted message shows its text followed by `[encrypted]`, and a failed one shows `error: This message could not be decrypted` in place of the text, also marked `[encrypted]`. A failed decryption also logs `OMEMO decryption failed: <error>` in the receiver's file log. No history line and no log line means the message carried no key for the receiver's device, so check the trusted device ID.
+The receiver's REPL prints an incoming encrypted message as it arrives, and `/history SENDER_JID` shows it again. A decrypted message ends in `[encrypted]`. A failed one reads `error: This message could not be decrypted` in place of its text and is also marked `[encrypted]`. A failed decryption also logs `OMEMO decryption failed: <error>` in the receiver's file log. No message line, live or in the history, and no log line means the message carried no key for the receiver's device, so check the trusted device ID.
 
 On the test server, a message sent while the receiver is offline reaches it through the archive sync on its next sign-in rather than as a live delivery. That path stores an encrypted message as undecryptable without trying, so this setup cannot check how a live delivery from offline storage decrypts.
 

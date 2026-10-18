@@ -37,6 +37,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix the name and size of a file you sent being hard to read on your message: they now sit on a darker card, and a file that is not on this Mac no longer looks grayed out
 - Fix the chat you were looking at counting as read after you opened another chat in a new tab, while that tab was still loading or for good when it failed to load
 - Fix encrypted messages reading "This message could not be decrypted" when they arrive after a dropped connection picks up where it left off, or right after you sign in
+- Fix a message that failed to send because the connection dropped or encryption failed vanishing without a word: the error now shows, your text comes back, and a reply or correction that fails stays one for another try
+- Fix My Profile and `ducko avatar set` publishing any chosen file as your picture: a file that is not a readable picture, or one over 8 MB, is now refused with a message saying so
+- Fix `ducko interactive` printing nothing for an incoming encrypted message: it now shows it as it arrives, like any other message
+- Fix a delivery mark in a room, or in a private chat within one, sometimes landing on an older message of yours instead of the one you just sent
 
 ### Security
 

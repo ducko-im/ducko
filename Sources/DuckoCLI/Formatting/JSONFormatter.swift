@@ -212,7 +212,8 @@ struct JSONFormatter: CLIFormatter {
         case let .omemoDeviceListReceived(jid, devices): encode(["type": "omemo_device_list", "jid": jid.description, "devices": devices.map(String.init).joined(separator: ","), "account": account])
         case let .omemoSessionEstablished(jid, deviceID, identityKey): formatOMEMOSession(jid: jid, deviceID: deviceID, identityKey: identityKey, account: account)
         case let .omemoRecipientsPartial(conversation, dropped): formatOMEMORecipientsPartial(conversation: conversation, dropped: dropped, account: account)
-        case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
+        case let .omemoEncryptedMessageReceived(from, decryptedBody, _, _): formatEncryptedMessage(from: from, body: decryptedBody, account: account)
+        case .omemoSessionAdvanced: nil
         }
     }
 
@@ -333,18 +334,32 @@ struct JSONFormatter: CLIFormatter {
         let oob = message.oobData
         let body = message.body ?? oob.first?.url
         guard let body else { return nil }
-        var dict: [String: String] = [
+        var dict = incomingMessageFields(from: from, body: body, account: account)
+        let extraOOB = oob.filter { $0.url != body }
+        if !extraOOB.isEmpty {
+            dict["attachments"] = extraOOB.map(\.url).joined(separator: ",")
+        }
+        return encode(dict)
+    }
+
+    private func formatEncryptedMessage(from: JID, body: String?, account: String) -> String {
+        var dict = incomingMessageFields(from: from.bareJID, body: body ?? "", account: account)
+        dict["encrypted"] = "true"
+        if body == nil {
+            dict["undecryptable"] = "true"
+        }
+        return encode(dict)
+    }
+
+    private func incomingMessageFields(from: BareJID, body: String, account: String) -> [String: String] {
+        var dict = [
             "type": "message", "direction": "incoming", "from": from.description,
             "body": body, "account": account, "timestamp": formatTimestamp(Date())
         ]
         if body.hasPrefix("/me ") {
             dict["action"] = "true"
         }
-        let extraOOB = oob.filter { $0.url != body }
-        if !extraOOB.isEmpty {
-            dict["attachments"] = extraOOB.map(\.url).joined(separator: ",")
-        }
-        return encode(dict)
+        return dict
     }
 
     private func formatOOBIQOfferEvent(_ offer: OOBIQOffer, account: String) -> String {

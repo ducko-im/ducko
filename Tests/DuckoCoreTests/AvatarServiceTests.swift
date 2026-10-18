@@ -847,6 +847,28 @@ enum AvatarServiceTests {
     /// A disconnect/client-swap while `fetchOwnVCard` is in flight must skip the follow-up `publishVCard` — the
     /// `connectedClient(for:) === client` guard in `updateVCardPhoto`/`clearVCardPhoto` protects against
     /// publishing a stale vCard onto a torn-down/replaced connection.
+    struct PublishValidation {
+        @Test
+        @MainActor
+        func `publishAvatar refuses data contacts could not show, before it needs a connection`() async {
+            let service = AvatarService(store: MockPersistenceStore())
+            let accountID = UUID()
+            func failure(publishing data: Data) async -> String? {
+                do {
+                    try await service.publishAvatar(imageData: data, mimeType: "image/png", accountID: accountID)
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            }
+            let png = Data(base64Encoded: AvatarPayloads.validPNGBase64) ?? Data()
+
+            #expect(await failure(publishing: Data("not a picture".utf8)) == AvatarService.AvatarServiceError.notAPicture.localizedDescription)
+            #expect(await failure(publishing: Data(count: AvatarLimits.maxBytes + 1)) == AvatarService.AvatarServiceError.pictureTooLarge.localizedDescription)
+            #expect(await failure(publishing: png) == AvatarService.AvatarServiceError.notConnected(accountID).localizedDescription)
+        }
+    }
+
     struct PublishTeardownRace {
         private static let pngData = Data(base64Encoded: AvatarPayloads.validPNGBase64) ?? Data()
 

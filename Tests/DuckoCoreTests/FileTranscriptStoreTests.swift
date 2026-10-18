@@ -363,6 +363,55 @@ enum FileTranscriptStoreTests {
             }
         }
 
+        @Test(arguments: [false, true])
+        func `Reading an older day after a relaunch keeps a colliding stanzaID's amendment on the newer message`(searches: Bool) async throws {
+            try await withTemporaryDirectory { dir in
+                let twoDaysAgo = Date().addingTimeInterval(-2 * 86400)
+                let older = makeMessage(stanzaID: "ducko-12", body: "older send", timestamp: twoDaysAgo, isOutgoing: true)
+                let newer = makeMessage(stanzaID: "ducko-12", body: "newer send", isOutgoing: true)
+                try await FileTranscriptStore(baseDirectory: dir).appendMessages([older, newer])
+
+                let store = FileTranscriptStore(baseDirectory: dir)
+                if searches {
+                    _ = try await store.matchingMessages("send", in: testConversationID, on: twoDaysAgo)
+                } else {
+                    _ = try await store.fetchMessages(for: testConversationID, on: twoDaysAgo)
+                }
+                try await store.appendAmendment(
+                    TranscriptAmendment(action: .delivery, targetStanzaID: "ducko-12"), conversationID: testConversationID
+                )
+
+                let fetched = try await store.fetchMessages(for: testConversationID, before: nil, limit: 50)
+                let fetchedNewer = try #require(fetched.first { $0.id == newer.id })
+                let fetchedOlder = try #require(fetched.first { $0.id == older.id })
+                #expect(fetchedNewer.isDelivered)
+                #expect(!fetchedOlder.isDelivered)
+            }
+        }
+
+        @Test
+        func `An older message written after another conversation used its stanzaID leaves the amendment on the newer one`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                let newer = makeMessage(stanzaID: "ducko-12", body: "newer send", isOutgoing: true)
+                let elsewhere = makeMessage(conversationID: UUID(), stanzaID: "ducko-12", body: "another chat")
+                let older = makeMessage(stanzaID: "ducko-12", body: "archived send", timestamp: Date().addingTimeInterval(-2 * 86400), isOutgoing: true)
+                try await store.appendMessage(newer)
+                try await store.appendMessage(elsewhere)
+                try await store.appendMessage(older)
+
+                try await store.appendAmendment(
+                    TranscriptAmendment(action: .delivery, targetStanzaID: "ducko-12"), conversationID: testConversationID
+                )
+
+                let fetched = try await store.fetchMessages(for: testConversationID, before: nil, limit: 50)
+                let fetchedNewer = try #require(fetched.first { $0.id == newer.id })
+                let fetchedOlder = try #require(fetched.first { $0.id == older.id })
+                #expect(fetchedNewer.isDelivered)
+                #expect(!fetchedOlder.isDelivered)
+            }
+        }
+
         @Test
         func `Amendment routes to correct conversation when stanzaIDs collide`() async throws {
             try await withTemporaryDirectory { dir in
@@ -770,30 +819,6 @@ enum FileTranscriptStoreTests {
                 let day = try Self.date(day: 12)
                 let fetched = try await store.fetchMessages(for: testConversationID, on: day).map(\.id)
                 #expect(try await store.matchingMessages("needle", in: testConversationID, on: day).map(\.id) == fetched)
-            }
-        }
-
-        /// The lookup indexes keep the last entry they were given. A search reads days from the newest to the oldest,
-        /// so filling them from its reads would send an amendment that names only a stanza id to the oldest day read.
-        @Test
-        func `A match read leaves the routing of later amendments alone`() async throws {
-            try await withTemporaryDirectory { dir in
-                let store = FileTranscriptStore(baseDirectory: dir)
-                let older = try makeMessage(stanzaID: "ducko-1", body: "needle older", timestamp: Self.date(day: 10, hour: 9))
-                let newer = try makeMessage(stanzaID: "ducko-1", body: "needle newer", timestamp: Self.date(day: 12, hour: 9))
-                try await store.appendMessage(older)
-                try await store.appendMessage(newer)
-
-                #expect(try await store.matchingMessages("needle", in: testConversationID, on: older.timestamp).map(\.id) == [older.id])
-                try await store.appendAmendment(
-                    TranscriptAmendment(action: .displayed, targetStanzaID: "ducko-1", timestamp: newer.timestamp),
-                    conversationID: testConversationID
-                )
-
-                let onNewerDay = try await store.fetchMessages(for: testConversationID, on: newer.timestamp)
-                let onOlderDay = try await store.fetchMessages(for: testConversationID, on: older.timestamp)
-                #expect(onNewerDay.map(\.isDisplayed) == [true])
-                #expect(onOlderDay.map(\.isDisplayed) == [false])
             }
         }
     }
