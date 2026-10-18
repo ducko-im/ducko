@@ -34,6 +34,7 @@ DuckoApp (GUI) and DuckoCLI (CLI) are independent consumers of DuckoCore. When a
 - **CLI formatters**: Update `ANSIFormatter`, `PlainFormatter`, and `JSONFormatter` for any new `XMPPEvent` cases or changed event semantics.
 - **REPL commands**: Add corresponding REPL commands (e.g., `/pm`, `/moderate`) when the GUI gets new interactive features. Add the case to `REPLCommand` in `Sources/DuckoCLI/REPL/`, then the handler in the matching `REPL*Commands.swift` file there, which `REPL.swift` dispatches to.
 - **ducko-ui scripts**: Add automation scripts in `Skills/ducko-ui/scripts/` for new UI elements (buttons, context menu items, sheets). Update the ducko-ui skill's script inventory and accessibility identifier list.
+- **DOAP**: `ducko.doap` lists the RFCs and XEPs Ducko implements for xmpp.org's software list, which fetches it from `main`. When a change adds a XEP, closes a gap a DOAP note names, or opens a new one, update that entry's status and note. `complete` means the client side of the spec's MUSTs is met and reachable; a XEP whose wire format does not match the spec stays out of the file rather than being listed as `partial`.
 - **Website reference states**: When a change alters how a state in the website's reference manifest looks, run the demo-screenshots reference mode after the change lands, and update the website's recreation of that window in `ducko-im/ducko-im.github.io` to match.
 
 ## Build & Test
