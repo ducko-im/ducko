@@ -1,0 +1,480 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <Project xmlns="http://usefulinc.com/ns/doap#"
+             xmlns:foaf="http://xmlns.com/foaf/0.1/"
+             xmlns:xmpp="https://linkmauve.fr/ns/xmpp-doap#"
+             xmlns:schema="https://schema.org/">
+        <name>Ducko</name>
+
+        <shortdesc xml:lang="en">A modern macOS XMPP client – spiritual successor to Adium.</shortdesc>
+        <description xml:lang="en">Ducko is a modern, open-source XMPP client for the Mac. Instant messaging with Adium's soul.</description>
+
+        <homepage rdf:resource="https://ducko.im"/>
+        <download-page rdf:resource="https://github.com/ducko-im/ducko/releases"/>
+        <bug-database rdf:resource="https://github.com/ducko-im/ducko/issues"/>
+
+        <license rdf:resource="https://github.com/ducko-im/ducko/blob/main/LICENSE"/>
+        <language>en</language>
+
+        <schema:logo rdf:resource="https://raw.githubusercontent.com/ducko-im/ducko/main/AppIcon.png"/>
+
+        <programming-language>Swift</programming-language>
+        <os>macOS</os>
+
+        <category rdf:resource="https://linkmauve.fr/ns/xmpp-doap#category-xmpp"/>
+        <category rdf:resource="https://linkmauve.fr/ns/xmpp-doap#category-jabber"/>
+        <category rdf:resource="https://linkmauve.fr/ns/xmpp-doap#category-client"/>
+
+        <maintainer>
+            <foaf:Person>
+                <foaf:name>Tobias Hagemann</foaf:name>
+                <foaf:homepage rdf:resource="https://tobiha.de"/>
+            </foaf:Person>
+        </maintainer>
+
+        <repository>
+            <GitRepository>
+                <location rdf:resource="https://github.com/ducko-im/ducko.git"/>
+                <browse rdf:resource="https://github.com/ducko-im/ducko"/>
+            </GitRepository>
+        </repository>
+
+        <implements rdf:resource="https://xmpp.org/rfcs/rfc6120.html"/>
+        <implements rdf:resource="https://xmpp.org/rfcs/rfc6121.html"/>
+        <implements rdf:resource="https://www.rfc-editor.org/rfc/rfc7590"/>
+        <implements rdf:resource="https://www.rfc-editor.org/rfc/rfc7622"/>
+
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0004.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Used for registration and room configuration forms; form instructions, fixed fields and required markers are not shown, and text-private and jid-multi fields are shown as plain text fields</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0030.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0045.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">No voice requests, room registration or mediated invitations; a nickname the room assigns on join is not adopted, and a message with both subject and body is taken as a subject change</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0047.html"/>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">IQ stanzas only, used as the Jingle In-Band Bytestreams transport (XEP-0261)</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0054.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0059.html"/>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">Used for MAM paging</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0060.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Only the subset PEP needs: publishing with publish-options, retrieving and retracting items, and notifications</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0065.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Proxy discovery, activation and SOCKS5 connections for Jingle (XEP-0260) only; no standalone bytestream negotiation</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0066.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">A link offer that fails to download is offered again instead of answered with item-not-found</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0077.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">New accounts submit only username, password and email; data forms only for signed-in accounts</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0084.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Pictures are published in their own format rather than as PNG</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0085.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Composing is sent on every keystroke and to contacts that never sent a chat state; in group chats chat states go out as one-to-one messages</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0115.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Sent only with the initial presence, not with later presence or room joins</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0153.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">An avatar change made by another resource of the account is not followed</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0157.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0163.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0166.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">File transfer sessions only; unknown actions go unanswered, and unrecognized session-info payloads are acknowledged rather than refused</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0184.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0191.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0198.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">With SASL2 and Bind 2, streams are resumed only through Instant Stream Resumption</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0199.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0203.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Read only on Carbons and MAM results; offline messages, room history and encrypted messages are stamped with their arrival time</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0223.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Server support for publish-options is not checked before private data is published</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0234.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Sending and receiving offered files, one per session; no file requests and no ranged transfers</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0237.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0245.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0249.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0260.html"/>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">The initiator does not try the responder's candidates</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0261.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Only as the fallback from SOCKS5 Bytestreams; an IBB transport offered in session-initiate is not accepted, and a smaller block-size in transport-accept is ignored</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0280.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Encrypted messages, corrections and retractions arriving as carbons are dropped</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0297.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0300.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">SHA-256 for file checksums, SHA-256 and SHA-512 for Entity Capabilities 2.0; neither urn:xmpp:hashes:2 nor the supported hash functions are advertised</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0308.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Corrections arriving as carbons are dropped; corrections in the archive show as new messages</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0313.html"/>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">Catch-up after reconnect reads one page of 50 messages per known chat</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0333.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0334.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Only the store hint is sent</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0352.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0359.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0363.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Slot headers are not limited to Authorization, Cookie and Expires, and newlines in them are not stripped</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0368.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0380.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Outgoing OMEMO messages are marked; a one-to-one message using another encryption method, or an OMEMO message not encrypted for this device, is dropped without notice</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0386.html"/>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">The server's list of inline features is not read; Carbons are always requested inline</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0388.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Only used together with Bind 2; no user-agent element and no task continuation</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0390.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Hashes are sent only with the initial presence; only the first received hash is checked</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0392.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Hues are taken from the wrong bytes of the hash, so colors differ from other clients</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0393.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0398.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0402.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Unknown extensions in a bookmark are not preserved when it is republished; removals are not announced to other clients, and a changed autojoin flag does not join or leave the room</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0410.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0424.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">In group chats a retraction refers to, and is matched by, the message's own id instead of the room-assigned stanza-id; archived retractions show their fallback text</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0425.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0428.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Only marks the fallback body of retractions; incoming fallback markers are not processed</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0440.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Channel-binding types are read from inside the SASL2 authentication element instead of the stream features; not used with SASL1; tls-server-end-point only</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0461.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">One-to-one chats only; the feature is not advertised, no quote fallback is sent and an incoming one is not hidden</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+
+        <release>
+            <Version>
+                <revision>0.9.0</revision>
+                <created>2026-10-18</created>
+            </Version>
+        </release>
+        <release>
+            <Version>
+                <revision>0.8.0</revision>
+                <created>2026-10-08</created>
+            </Version>
+        </release>
+        <release>
+            <Version>
+                <revision>0.7.0</revision>
+                <created>2026-10-06</created>
+            </Version>
+        </release>
+        <release>
+            <Version>
+                <revision>0.6.0</revision>
+                <created>2026-10-04</created>
+            </Version>
+        </release>
+        <release>
+            <Version>
+                <revision>0.5.0</revision>
+                <created>2026-10-03</created>
+            </Version>
+        </release>
+        <release>
+            <Version>
+                <revision>0.4.0</revision>
+                <created>2026-09-24</created>
+            </Version>
+        </release>
+        <release>
+            <Version>
+                <revision>0.3.0</revision>
+                <created>2026-09-23</created>
+            </Version>
+        </release>
+        <release>
+            <Version>
+                <revision>0.2.1</revision>
+                <created>2026-09-22</created>
+            </Version>
+        </release>
+        <release>
+            <Version>
+                <revision>0.2.0</revision>
+                <created>2026-09-21</created>
+            </Version>
+        </release>
+        <release>
+            <Version>
+                <revision>0.1.0</revision>
+                <created>2026-09-16</created>
+            </Version>
+        </release>
+        <release>
+            <Version>
+                <revision>0.0.2</revision>
+                <created>2026-09-14</created>
+            </Version>
+        </release>
+        <release>
+            <Version>
+                <revision>0.0.1</revision>
+                <created>2026-09-14</created>
+            </Version>
+        </release>
+    </Project>
+</rdf:RDF>
