@@ -3,6 +3,15 @@
     <channel>
         <title>Ducko</title>
         <item>
+            <title>0.9.0</title>
+            <pubDate>Sun, 18 Oct 2026 14:37:23 +0000</pubDate>
+            <sparkle:version>387</sparkle:version>
+            <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/ducko-im/ducko/releases/download/0.9.0/Ducko-0.9.0.zip" length="18281729" type="application/octet-stream" sparkle:edSignature="xeFqPd7P3xzyXV4aJ0BzVa03FzEGyYR47SaD/ZtIpjjQrLaeuUV3COYKXXm9xR4KuSz1AJ1BXx8D6l6lv6BXCQ=="/>
+        </item>
+        <item>
             <title>0.8.0</title>
             <pubDate>Thu, 08 Oct 2026 18:31:24 +0000</pubDate>
             <sparkle:version>366</sparkle:version>
