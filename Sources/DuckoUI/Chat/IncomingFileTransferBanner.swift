@@ -47,7 +47,7 @@ private struct IncomingFileTransferRow: View {
                         .font(.callout)
                         .singleLine()
 
-                    Text("\(formattedFileSize) from \(offer.fromJIDString)")
+                    Text("\(formattedFileSize) from \(senderName)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -73,6 +73,11 @@ private struct IncomingFileTransferRow: View {
 
     private var formattedFileSize: String {
         ByteCountFormatter.string(fromByteCount: offer.fileSize, countStyle: .file)
+    }
+
+    /// The sender's name in the contact list, else their address.
+    private var senderName: String {
+        environment.rosterService.knownContactName(jidString: offer.fromJIDString, accountID: offer.accountID) ?? offer.fromJIDString
     }
 
     private func accept() {

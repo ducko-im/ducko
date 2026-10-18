@@ -576,6 +576,17 @@ enum RosterServiceTests {
             #expect(service.knownContact(jidString: alice, accountID: testAccountID) == nil)
         }
 
+        @Test(arguments: ["alice@example.com", "alice@example.com/phone"])
+        @MainActor
+        func `A known contact is named for their address or one of their devices`(_ address: String) async {
+            let fixture = RosterServiceFixture(store: makeStore())
+
+            await fixture.deliver(.snapshot([makeRosterItem(jid: contactJID1, name: "Alice")]), accountID: testAccountID)
+
+            #expect(fixture.service.knownContactName(jidString: address, accountID: testAccountID) == "Alice")
+            #expect(fixture.service.knownContactName(jidString: "mallory@example.com/phone", accountID: testAccountID) == nil)
+        }
+
         @Test
         @MainActor
         func `A roster load racing a purge does not repopulate the cleared groups`() async throws {

@@ -175,6 +175,26 @@ ducko_as_click_element_by_id() {
     echo "            click clickTarget"
 }
 
+# Type a value into a text field found by AXIdentifier, replacing its contents.
+# Keystrokes, unlike `set value`, reach the SwiftUI binding.
+# The value_expr is an AppleScript expression, such as a variable name.
+# Args: id_expr window_var value_expr [error_msg]
+ducko_as_fill_field_by_id() {
+    local id_expr="$1"
+    local window_var="${2:-targetWin}"
+    local value_expr="$3"
+    local error_msg="${4:-field not found}"
+    ducko_as_find_element_by_id "$id_expr" "$window_var" "$error_msg" "fillTarget"
+    cat << EOF
+            set focused of fillTarget to true
+            delay 0.2
+            keystroke "a" using command down
+            delay 0.1
+            keystroke ${value_expr}
+            delay 0.3
+EOF
+}
+
 # Find a message by text content within a window variable.
 # Searches AXStaticText elements, scoped to the transcript (message-list) when
 # present to bound the walk. If search_text_var is empty, selects the last

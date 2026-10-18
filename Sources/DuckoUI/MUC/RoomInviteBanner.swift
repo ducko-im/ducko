@@ -42,6 +42,12 @@ private struct RoomInviteRow: View {
         environment.accountService.accounts.first { $0.id == invite.accountID }
     }
 
+    /// The inviter's name in the contact list, else their address.
+    private var inviterName: String? {
+        guard let from = invite.fromJIDString else { return nil }
+        return environment.rosterService.knownContactName(jidString: from, accountID: invite.accountID) ?? from
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let errorMessage {
@@ -56,8 +62,8 @@ private struct RoomInviteRow: View {
                         .font(.callout)
                         .singleLine()
 
-                    if let from = invite.fromJIDString {
-                        Text("From: \(from)")
+                    if let inviterName {
+                        Text("From: \(inviterName)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

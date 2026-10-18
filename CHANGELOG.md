@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix room nicknames all showing in gray: each occupant's name and picture now has its own color, and the participant list colors names to match
 - Fix Chat History naming contacts by their address: conversations, days and `/me` lines now use the names your contact list shows
 - Fix a reply to a contact's message showing their address instead of their name, in its quote and in the bar above the message field, which now also says when you reply to yourself
+- Fix room invitations and offers of a file naming the sender by their address: they now use the name your contact list shows, and keep the address for someone not in it
 - Fix Chat History listing a message that arrived late out of time order
 - Fix a private chat within a room showing "Couldn't load older messages: Invalid JID" when scrolled to its start
 - Fix messages you sent or received on another device going missing when the server sends their copies without a sender address

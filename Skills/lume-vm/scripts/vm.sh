@@ -50,9 +50,12 @@ tool() {
 }
 
 # Folders and bundles cross the exchange folder as one ditto archive: the guest cannot resolve relative symlinks
-# (framework Versions/Current) read straight off the share.
+# (framework Versions/Current) read straight off the share. Each push stages under a name of its own, because the share
+# can answer the first lookup of a just-replaced path with the old file.
+pushes=0
 push() {
-    local name=push-$$ mode=
+    (( ++pushes ))
+    local name=push-$$-$pushes mode=
     [[ -d $1 ]] && { mode=-x; ditto -c "$1" "$EXCHANGE/$name"; } || ditto "$1" "$EXCHANGE/$name"
     local staged="$GUEST_EXCHANGE/$name"
     guest "ditto $mode ${(qq)staged} ${(qq)2}; s=\$?; rm -f ${(qq)staged}; exit \$s"

@@ -249,6 +249,7 @@ private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-device-trust.sh", arguments: [scriptSpecialArgument, "trust"], appleScriptArguments: ["-", scriptSpecialArgument, "trust"]),
     HandlerScriptCase(script: "ducko-edit-profile.sh", arguments: ["--fullname", scriptSpecialArgument, "--nickname", scriptSpecialArgument, "--email", scriptSpecialArgument, "--save"], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, "yes"], invocations: ["ducko-profile.sh", "sleep", "osascript"]),
     HandlerScriptCase(script: "ducko-import.sh", arguments: [], appleScriptArguments: []),
+    HandlerScriptCase(script: "ducko-join-room.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-login.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-register.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-remove-contact.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-"], invocations: ["pgrep", "osascript", "osascript"], earlierCallArguments: [["-", scriptSpecialArgument]]),

@@ -84,6 +84,12 @@ public final class RosterService {
             ?? groupsBeforeDisconnect[accountID].flatMap { Self.contact(jidString: jidString, in: $0) }
     }
 
+    /// The known contact's name for an address that may name one of their devices.
+    public func knownContactName(jidString: String, accountID: UUID) -> String? {
+        let bareJIDString = JID.parse(jidString)?.bareJID.description ?? jidString
+        return knownContact(jidString: bareJIDString, accountID: accountID)?.displayName
+    }
+
     private static func contact(jidString: String, in groups: [ContactGroup]) -> Contact? {
         groups.lazy.flatMap(\.contacts).first { $0.jid.description == jidString }
     }

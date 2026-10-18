@@ -224,6 +224,8 @@ Rules for the content:
 - Message times are on `presentation.date` in `presentation.timeZone`, and Steps 4–6 show them in local time. Keep the date in the past.
 - An incoming stanza appended to `$WORK/inject.txt` reaches the running instance. `{ME}` stands for the account's full JID.
 - A room invitation shows its banner in Contacts. Append one `<message from='…' to='{ME}'>` line carrying `<x xmlns='jabber:x:conference' jid='<room address>'/>` after the last relaunch, since a pending invitation is not kept across one.
+- A file offer shows its banner in the chat window. Append one `<iq type='set' from='…' to='{ME}' id='…'>` line carrying `<query xmlns='jabber:iq:oob'><url>…</url></query>` after the last relaunch, since a pending offer is not kept across one.
+- Each injected stanza takes one line, so write a line break in an injected body as `&#10;`. In an injected body, `` ``` `` fences on lines of their own, before and after the code, make a code block. A seeded message shows them as plain text.
 - A message takes `replyTo`, naming another message's `id`, for a reply quote, and `retracted: true` for the retraction notice. For file cards it takes `attachments`, a list of objects with `id` (a UUID string), `url`, and optionally `fileName`, `fileSize` and `mimeType`. The seeder writes them into the transcript, where a line that fails to decode is dropped without an error.
 - An attachment object with `"savedOrigin":"locallySaved"` and a `file:` address as its `url` is shown as a file saved on this Mac. When its `mimeType` starts with `image/` and no file exists at that address, the chat shows the missing-image placeholder with the file's name.
 - A contact's `status` may hold `\n` for a status message with line breaks.
