@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-18
+
 ### Added
 
 - Show unread messages and typing on contacts in the Contacts window, where their status dot sits and as on chat tabs, so you can see who wrote or is writing without opening the chat window
@@ -340,7 +342,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release.
 
-[Unreleased]: https://github.com/ducko-im/ducko/compare/0.8.0...HEAD
+[Unreleased]: https://github.com/ducko-im/ducko/compare/0.9.0...HEAD
+[0.9.0]: https://github.com/ducko-im/ducko/compare/0.8.0...0.9.0
 [0.8.0]: https://github.com/ducko-im/ducko/compare/0.7.0...0.8.0
 [0.7.0]: https://github.com/ducko-im/ducko/compare/0.6.0...0.7.0
 [0.6.0]: https://github.com/ducko-im/ducko/compare/0.5.0...0.6.0
