@@ -19,7 +19,7 @@ on run argv
         set frontmost of process "DuckoUITest" to true
         delay 0.5
         tell process "DuckoUITest"
-            $(ducko_as_find_window_by_id "message-field" "chat window not found" "chatWin")
+            $(ducko_as_raise_scene_window "chat" "chat window not found" "chatWin")
 
             -- Reveal the participant sidebar if it is not already shown.
             set sidebarElem to my findByAttr(chatWin, "AXIdentifier", "participant-sidebar", 0, 30)

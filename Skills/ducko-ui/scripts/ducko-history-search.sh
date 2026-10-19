@@ -11,7 +11,7 @@ ducko_require_vm_or_host_opt_in
 
 QUERY="${1:?Usage: ducko-history-search.sh QUERY}"
 
-RESULT=$(osascript - "$QUERY" << 'APPLESCRIPT'
+RESULT=$(osascript - "$QUERY" << APPLESCRIPT
 on run argv
     set query to item 1 of argv
     tell application "System Events"
@@ -19,15 +19,7 @@ on run argv
         delay 0.5
         tell process "DuckoUITest"
             -- Found by its own identifier: its title is the name of the conversation it shows.
-            set historyWin to missing value
-            repeat with win in windows
-                try
-                    if value of attribute "AXIdentifier" of win is "transcripts" then
-                        set historyWin to win
-                        exit repeat
-                    end if
-                end try
-            end repeat
+            $(ducko_as_find_scene_window "transcripts" "historyWin")
             if historyWin is missing value then return "ERROR: Chat History window not found"
             perform action "AXRaise" of historyWin
             delay 0.3

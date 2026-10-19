@@ -19,7 +19,7 @@ on run argv
         set frontmost of process "DuckoUITest" to true
         delay 0.5
         tell process "DuckoUITest"
-            $(ducko_as_find_window_by_id "message-field" "no chat window found" "chatWin")
+            $(ducko_as_raise_scene_window "chat" "no chat window found" "chatWin")
 
             $(ducko_as_find_message_by_text "searchText" "chatWin")
 

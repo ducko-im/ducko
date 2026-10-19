@@ -36,6 +36,19 @@ on findByAttr(el, attrName, attrValue, depth, maxDepth)
     return missing value
 end findByAttr
 
+-- Searches only the sheets of a window, so a polling loop does not walk the contents of the window itself each time.
+on findInSheets(win, identifierWanted)
+    tell application "System Events"
+        try
+            repeat with s in sheets of win
+                set found to my findByAttr(s, "AXIdentifier", identifierWanted, 0, 30)
+                if found is not missing value then return found
+            end repeat
+        end try
+    end tell
+    return missing value
+end findInSheets
+
 on findByRoleAndName(el, roleWanted, nameWanted, depth, maxDepth)
     tell application "System Events"
         if depth > maxDepth then return missing value
@@ -149,6 +162,45 @@ EOF
     ducko_as_find_window_by_id "$identifier" "$error_msg" "$var_name"
 }
 
+# Find a window by its scene id (such as `contacts` or `chat`), which is the window's own
+# AXIdentifier. One Apple event per window, so it suits a polling loop, unlike
+# ducko_as_find_window_by_id's walk of each window's contents.
+# Sets the AppleScript variable $var_name (default: targetWin), or sets it to missing value when no window matches.
+# Args: scene_id [var_name]
+ducko_as_find_scene_window() {
+    local scene_id="$1"
+    local var_name="${2:-targetWin}"
+    cat << EOF
+            set ${var_name} to missing value
+            repeat with win in windows
+                try
+                    if (value of attribute "AXIdentifier" of win) is "${scene_id}" then
+                        set ${var_name} to contents of win
+                        exit repeat
+                    end if
+                end try
+            end repeat
+EOF
+}
+
+# Find a window by its scene id and raise it. System Events window references
+# are positional, so the window is found again after the raise.
+# Args: scene_id [error_msg] [var_name] [raise_delay]
+ducko_as_raise_scene_window() {
+    local scene_id="$1"
+    local error_msg="${2:-window not found}"
+    local var_name="${3:-targetWin}"
+    local raise_delay="${4:-0.3}"
+    ducko_as_find_scene_window "$scene_id" "$var_name"
+    cat << EOF
+            if ${var_name} is missing value then return "ERROR: ${error_msg}"
+            perform action "AXRaise" of ${var_name}
+            delay ${raise_delay}
+EOF
+    ducko_as_find_scene_window "$scene_id" "$var_name"
+    echo "            if ${var_name} is missing value then return \"ERROR: ${error_msg}\""
+}
+
 # Find an element by AXIdentifier within a window variable.
 # The id_expr is an AppleScript expression: a quoted string like "\"foo\""
 # or a variable name like targetId.
@@ -185,8 +237,16 @@ ducko_as_fill_field_by_id() {
     local value_expr="$3"
     local error_msg="${4:-field not found}"
     ducko_as_find_element_by_id "$id_expr" "$window_var" "$error_msg" "fillTarget"
+    ducko_as_fill_element "fillTarget" "$value_expr"
+}
+
+# Type a value into a text field element, replacing its contents.
+# Args: element_var value_expr
+ducko_as_fill_element() {
+    local element_var="$1"
+    local value_expr="$2"
     cat << EOF
-            set focused of fillTarget to true
+            set focused of ${element_var} to true
             delay 0.2
             keystroke "a" using command down
             delay 0.1

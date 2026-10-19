@@ -236,10 +236,13 @@ private let scriptSpecialArgument = "quote\" and ' newline\n dollar$ backtick` b
 
 private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-add-affiliation.sh", arguments: ["room@example.com", scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument], invocations: ["ducko-room-settings.sh", "ducko-room-settings-tab.sh", "sleep", "osascript"]),
+    HandlerScriptCase(script: "ducko-add-bookmark.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument], invocations: ["ducko-bookmarks.sh", "osascript"]),
+    HandlerScriptCase(script: "ducko-add-contact.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-attach.sh", arguments: ["/etc/hosts"], appleScriptArguments: [], invocations: ["osascript", "swift"], environment: ["DUCKO_PID": "4242"]),
     HandlerScriptCase(script: "ducko-avatar.sh", arguments: ["/etc/hosts"], appleScriptArguments: [], invocations: ["ducko-profile.sh", "osascript", "swift"], environment: ["DUCKO_PID": "4242"]),
     HandlerScriptCase(script: "ducko-avatar-remove.sh", arguments: [], appleScriptArguments: [], invocations: ["ducko-profile.sh", "osascript"]),
     HandlerScriptCase(script: "ducko-chat-tabs.sh", arguments: ["close-all"], appleScriptArguments: ["-", "close-all", ""]),
+    HandlerScriptCase(script: "ducko-change-nickname.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-change-password.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument], invocations: ["ducko-preferences.sh", "ducko-preferences-tab.sh", "sleep", "osascript"]),
     HandlerScriptCase(script: "ducko-contact-info.sh", arguments: [scriptSpecialArgument, "remove"], appleScriptArguments: ["-", "contact-info-remove", "remove"], invocations: ["pgrep", "osascript", "osascript"], earlierCallArguments: [["-", scriptSpecialArgument, "remove"]]),
     HandlerScriptCase(script: "ducko-contact-menu.sh", arguments: [scriptSpecialArgument, "history"], appleScriptArguments: ["-", scriptSpecialArgument, "history", "History"]),
@@ -251,6 +254,7 @@ private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-import.sh", arguments: [], appleScriptArguments: []),
     HandlerScriptCase(script: "ducko-join-room.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-login.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
+    HandlerScriptCase(script: "ducko-new-chat.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-register.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-remove-contact.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-"], invocations: ["pgrep", "osascript", "osascript"], earlierCallArguments: [["-", scriptSpecialArgument]]),
     HandlerScriptCase(script: "ducko-remove-bookmark.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument], invocations: ["ducko-bookmarks.sh", "osascript"]),

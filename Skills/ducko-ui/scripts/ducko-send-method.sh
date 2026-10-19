@@ -30,7 +30,7 @@ on run
         delay 0.5
 
         tell process "DuckoUITest"
-            $(ducko_as_find_window_by_id "message-field" "chat window not found" "chatWin")
+            $(ducko_as_raise_scene_window "chat" "chat window not found" "chatWin")
             $(ducko_as_find_element_by_id '"attachment-send-method"' 'chatWin' "attachment-send-method not found: queue a file in a one-to-one chat first" "methodElem")
             if "${LABEL}" is "" then return "value: " & (value of methodElem as text)
             $(ducko_as_click_context_menu_item "${LABEL}" "methodElem" "chatWin" "${LABEL} is not available")

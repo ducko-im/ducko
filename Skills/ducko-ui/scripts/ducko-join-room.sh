@@ -23,7 +23,7 @@ on run argv
         delay 0.5
         tell process "DuckoUITest"
             -- Join Room (File menu, ⌘⇧N) is enabled only while Contacts is the key window.
-            $(ducko_as_raise_window_by_id "contact-list" "Contacts window not found" "contactWin")
+            $(ducko_as_raise_scene_window "contacts" "Contacts window not found" "contactWin")
             keystroke "n" using {command down, shift down}
             delay 1
             $(ducko_as_fill_field_by_id '"room-jid-field"' 'contactWin' 'roomJid' 'room-jid-field not found')
@@ -33,22 +33,18 @@ on run argv
             -- Join has .defaultAction keyboard shortcut
             keystroke return
             -- The room chat opens in front, which re-points window references, so find Contacts again each time.
-            -- The scene id is the window identifier, which needs no walk of the window contents.
             set roomRowId to "room-row-" & roomJid
             set contactsFound to false
             set sheetOpen to false
             set deadline to (current date) + 10
             repeat until (current date) > deadline
                 delay 0.5
-                set contactWin to missing value
-                repeat with win in windows
-                    try
-                        if (value of attribute "AXIdentifier" of win) is "contacts" then set contactWin to contents of win
-                    end try
-                end repeat
+                $(ducko_as_find_scene_window "contacts" "contactWin")
                 if contactWin is not missing value then
                     set contactsFound to true
-                    set sheetOpen to (count of sheets of contactWin) > 0
+                    -- A room new to the server opens its Room Settings sheet on Contacts, so look for a field of the
+                    -- Join Room sheet rather than for any sheet.
+                    set sheetOpen to (my findInSheets(contactWin, "room-jid-field")) is not missing value
                     if not sheetOpen and (my findByAttr(contactWin, "AXIdentifier", roomRowId, 0, 30)) is not missing value then return "ok"
                 end if
             end repeat

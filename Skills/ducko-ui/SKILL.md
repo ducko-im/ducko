@@ -64,11 +64,11 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `contact-search-field` | Roster search field, revealed by ⌘F | Contacts |
 | `message-field` | Message input text field | Chat |
 | `send-button` | Send message button | Chat |
-| `new-chat-jid-field` | JID field in New Chat sheet | Contacts |
-| `new-chat-account-picker` | Account picker in New Chat sheet (shown only when more than one account is enabled) | Contacts |
-| `start-chat-button` | Start Chat button in sheet | Contacts |
+| `new-chat-jid-field` | JID field in New Chat sheet | Chat |
+| `new-chat-account-picker` | Account picker in New Chat sheet (shown only when more than one account is enabled) | Chat |
+| `start-chat-button` | Start Chat button in sheet | Chat |
 | `add-contact-jid-field` | JID field in Add Contact sheet | Contacts |
-| `add-contact-error` | Rejected or unconfirmed contact-change error, kept in the sheet | Contacts |
+| `add-contact-error` | Rejected contact-change or invalid-JID error, kept in the sheet. An unconfirmed change closes the sheet and shows `roster-notice` instead | Contacts |
 | `add-contact-button` | Add Contact button in sheet | Contacts |
 | `rename-contact-field` | Display-name field in the Rename Contact sheet | Contacts |
 | `rename-contact-button` | Save button in the Rename Contact sheet | Contacts |
@@ -131,7 +131,7 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `affiliation-jid-field` | JID input for adding affiliation | Room Settings |
 | `affiliation-add-button` | Add affiliation button | Room Settings |
 | `change-nickname-menu-item` | "Change Nickname…" on self in sidebar | Chat (sidebar) |
-| `change-nickname-field` | Nickname text field in change alert | Chat (sidebar) |
+| `change-nickname-field` | Nickname text field in the change alert, a sheet of the chat window. Its identifier does not reach accessibility, so find it as the only text field of the alert. On macOS 27 the alert opens with Cancel focused, so focus the field before typing | Chat (sidebar) |
 | `profile-edit-view` | Profile editing sheet | Contacts |
 | `profile-fullname-field` | Full Name text field | Profile |
 | `profile-nickname-field` | Nickname text field | Profile |
@@ -277,8 +277,8 @@ Right-click a participant in the chat window sidebar:
 | `ducko-import.sh` | Switch to Import mode and click Import button | none |
 | `ducko-select-mode.sh` | Select a setup mode segment on the Welcome screen | `<Import\|Login\|Register>` |
 | `ducko-login.sh` | Fill JID + password, click Connect | `JID PASSWORD` |
-| `ducko-new-chat.sh` | Open New Chat sheet from contact list, fill JID, optionally pick the sending account, start chat | `JID [ACCOUNT]` |
-| `ducko-add-contact.sh` | Open Add Contact sheet from contact list, fill JID, submit | `JID` |
+| `ducko-new-chat.sh` | Open the New Chat sheet (⌘N, on the chat window), fill JID, optionally pick the sending account, start chat. Succeeds once the sheet has closed and the chat window has a tab for the JID | `JID [ACCOUNT]` |
+| `ducko-add-contact.sh` | Open Add Contact sheet from contact list, fill JID, submit. Succeeds once the sheet has closed, and fails with the sheet's error when it stays open. A change the server left unconfirmed also closes the sheet, with a `roster-notice` on Contacts, so success does not mean the server confirmed the contact | `JID` |
 | `ducko-send.sh` | Type a message and send it in the active chat window | `MESSAGE` |
 | `ducko-screenshot.sh` | Capture the frontmost `DuckoUITest` window by its window ID. Through `vm.sh ui`, a relative name lands in the host's `.build/vm-exchange/ducko-ui/` | `[FILENAME]` (optional, absolute path or relative to `$DUCKO_UI_OUTPUT_DIR`, else `/private/tmp/claude/`) |
 | `ducko-search.sh` | Toggle the Cmd+F find bar of whichever Ducko window is frontmost, the chat window or Chat History, and optionally search | `[QUERY]` (optional) |
@@ -286,7 +286,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-contact-search.sh` | Reveal the contact-list search (⌘F), optionally filter the roster | `[QUERY]` (optional) |
 | `ducko-reply.sh` | Right-click a message and select Reply | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
 | `ducko-sort.sh` | Open the View menu (Sort Contacts / Hide Offline), optionally select sort/filter (`hideOffline` is also ⌘⇧H with Contacts focused) | `[alphabetical\|byStatus\|recentConversation\|hideOffline]` (optional) |
-| `ducko-join-room.sh` | Raise Contacts, open the Join Room sheet, fill room JID + nickname, join. Succeeds once the sheet has closed and the room's row (`room-row-{jid}`) has appeared | `ROOM_JID [NICKNAME]` |
+| `ducko-join-room.sh` | Raise Contacts, open the Join Room sheet, fill room JID + nickname, join. Succeeds once the sheet has closed and the room's row (`room-row-{jid}`) has appeared. A room new to the server then has its Room Settings sheet open on Contacts | `ROOM_JID [NICKNAME]` |
 | `ducko-toggle-sidebar.sh` | Toggle participant sidebar in active groupchat window | none |
 | `ducko-focus-contacts.sh` | Raise the Contacts window to the front | none |
 | `ducko-room-settings.sh` | Open Room Settings sheet via context menu | `ROOM_JID` |
@@ -300,7 +300,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-status-menu.sh` | Set presence from the Status menu bar menu, or run its ⌘Y toggle / Custom… items | `<available\|away\|xa\|dnd\|offline\|toggle\|custom>` |
 | `ducko-account-status.sh` | Set one account's status from its submenu in the menu-bar extra, leaving the other accounts alone (needs 2+ enabled accounts and Show Ducko in Menu Bar). Not covered by the integration suite | `ACCOUNT <available\|away\|xa\|dnd\|offline>` (`ACCOUNT`: display name or JID as shown in the menu) |
 | `ducko-bookmarks.sh` | Open the Bookmarks sheet from the File menu (⌘⇧B) | none |
-| `ducko-add-bookmark.sh` | Add a bookmark via the Bookmarks sheet | `ROOM_JID [NICKNAME]` |
+| `ducko-add-bookmark.sh` | Add a bookmark via the Bookmarks sheet. Succeeds once the Add Bookmark sheet has closed and the bookmark's row (`bookmark-row-{jid}`) has appeared | `ROOM_JID [NICKNAME]` |
 | `ducko-remove-bookmark.sh` | Remove a bookmark from the Bookmarks sheet. On macOS 27 it fails with "remove button not found", because the bookmark row's identifier masks its children's. Remove the bookmark with the copy's CLI instead: `vm gui 'DUCKO_PROFILE=<profile> /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko bookmarks remove ROOM_JID'`, with the profile `uitest` unless the run set one. The app keeps listing the bookmark until it reconnects, since the removal is sent without `notify` and the app gets no push | `ROOM_JID` |
 | `ducko-leave-room.sh` | Leave a room via context menu | `ROOM_JID` |
 | `ducko-retract.sh` | Retract a message via context menu | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
@@ -311,7 +311,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-device-trust.sh` | Trust/untrust/verify an OMEMO device | `DEVICE_ID ACTION` (`ACTION`: trust\|untrust\|verify) |
 | `ducko-attach.sh` | Attach a file via the attachment button in chat. `ducko-file-panel.swift` fills the Open panel by posting key events to the panel's service process. The script succeeds only once the panel has closed. A panel still open after the wait is cancelled, and the script fails | `FILE_PATH` |
 | `ducko-send-method.sh` | Print or choose how the queued files are sent | `[upload\|direct]` (optional) |
-| `ducko-change-nickname.sh` | Change MUC nickname via participant sidebar context menu | `NICKNAME` |
+| `ducko-change-nickname.sh` | Change MUC nickname via participant sidebar context menu. Succeeds once the sidebar lists the new nickname | `NICKNAME` |
 | `ducko-private-message.sh` | Send a MUC private message via the participant sidebar context menu | `NICKNAME` |
 | `ducko-room-topic.sh` | View or set the room topic | `[TEXT]` (optional; no args prints current topic) |
 | `ducko-channel-search.sh` | Search for channels in the Join Room dialog | `QUERY` |
@@ -326,7 +326,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-contact-menu.sh` | Select a contact row, then run a Contact menu-bar command on it (`remove` confirms) | `JID <get-info\|history\|send-file\|remove>` |
 | `ducko-toggle-contacts.sh` | Toggle the Contacts window via Window ▸ Hide/Show Contact List (⌘/) | none |
 | `ducko-contact-info.sh` | Open the Contact Info window via context menu, optionally block/remove (`remove` confirms) | `JID [block\|remove]` |
-| `ducko-chat-tabs.sh` | List, select, close, or cycle bottom chat tabs, or close all chats (close is best-effort; the hover-revealed close button is merged into the chip's combined element) | `<list\|select\|close\|next\|previous\|close-all> [JID]` |
+| `ducko-chat-tabs.sh` | List, select, close, or cycle bottom chat tabs, or close all chats (close is best-effort; the hover-revealed close button is merged into the chip's combined element). On macOS 27 `list` finds no tabs, because `entire contents` does not reach the chips | `<list\|select\|close\|next\|previous\|close-all> [JID]` |
 | `ducko-chat-header.sh` | Click a chat-header toolbar button (Profile info / History) | `<info\|history>` |
 | `ducko-message-list.sh` | Press the jump button (`jump-to-newest`) in the active chat's message list. Fails while the list is at the newest message, where the button is absent | `jump` |
 | `ducko-invite-user.sh` | Invite a user to a room via context menu | `ROOM_JID INVITEE_JID` |
@@ -476,7 +476,8 @@ vm ui ducko-launch.sh
 
 # 2. Join a room (opens Join Room dialog, fills fields, joins)
 # The room appears in the "Rooms" section of the contact list
-# and a chat window opens automatically.
+# and a chat window opens automatically. A room new to the server also
+# opens Room Settings on Contacts; save or close it before any Contacts step.
 vm ui ducko-join-room.sh "room@conference.example.com" "mynick"
 
 # 3. Screenshot the room chat
@@ -914,10 +915,10 @@ To allow these scripts in `settings.local.json` without prompts:
 - `ducko-launch.sh` starts the copy with `-ApplePersistenceIgnoreState YES`, and a copy started by hand needs the same argument. `ducko-stop.sh` ends the copy with a signal, after which macOS would restore the last run's windows at the next launch instead of opening Contacts. The app does its launch work from the Contacts window: it loads accounts there and opens Welcome or the chat window. A run that ended on Welcome would therefore start with no window at all. The chat window still reopens when it was open at quit, because the app restores it itself.
 - Verifying any **live** update (subject, participant count, presence) needs a DuckoApp window on screen first. Otherwise CSI holds the pushes back (see "A DuckoApp window must be on screen while observing" above).
 - Multi-step interactions are bundled in single osascript blocks to avoid focus loss.
-- Element targeting uses recursive UI-element-tree walks (`findByAttr` and siblings) because `entire contents` silently collapses on deeply nested SwiftUI / NSTableView accessibility trees on macOS 26. Scripts that need these handlers source `ducko-helpers.sh` and emit `$(ducko_as_handlers)` in an unquoted heredoc. Scripts targeting shallow sheets, such as New Chat, Add Contact and Bookmarks, still use `entire contents` where it reaches their controls. SwiftUI `Picker` segments and Room Settings tabs expose their label through `AXDescription`, so scripts match that attribute. Confirmation-dialog buttons do too, so `ducko_as_click_button_by_label` falls back to it when a button has no title.
+- Element targeting uses recursive UI-element-tree walks (`findByAttr` and siblings) because `entire contents` silently collapses on deeply nested SwiftUI / NSTableView accessibility trees on macOS 26. Scripts that need these handlers source `ducko-helpers.sh` and emit `$(ducko_as_handlers)` in an unquoted heredoc. `entire contents` does reach the controls of shallow sheets such as Bookmarks, and some scripts use it there. It does not reach the chat tab chips on macOS 27. SwiftUI `Picker` segments and Room Settings tabs expose their label through `AXDescription`, so scripts match that attribute. Confirmation-dialog buttons do too, so `ducko_as_click_button_by_label` falls back to it when a button has no title.
 - On macOS 27, other SwiftUI buttons in a sheet, such as Room Settings' Save, expose neither a title nor `AXDescription` to System Events, although Swift AX reads their description. Drive those by identifier or through Swift AX.
 - System Events window references are positional, so raising a window re-points a variable that held another one. When a script uses the window after raising it, raise it with `ducko_as_raise_window_by_id`, which finds it again after `AXRaise`.
-- A window's scene id (`contacts`, `chat`, `transcripts`) is its own `AXIdentifier`, so `value of attribute "AXIdentifier" of win`, wrapped in `try` as `ducko-history-search.sh` does, finds it with one Apple event per window. Prefer that inside a polling loop: `ducko_as_find_window_by_id` walks each window's contents, which costs seconds per window.
+- A window's scene id (`contacts`, `chat`, `transcripts`) is its own `AXIdentifier`, so `ducko_as_find_scene_window` finds it with one Apple event per window. Prefer it inside a polling loop, because `ducko_as_find_window_by_id` walks each window's contents, which costs seconds per window. To check a sheet inside such a loop, the `findInSheets` handler searches only the window's sheets.
 - Scripts that confirm a removal refuse while more than one `DuckoUITest` runs, for example copies from two checkouts, because System Events could press the confirmation in the wrong process. They also refuse while a dialog is already open in the target window, so a leftover dialog is never the one they act on. `ducko-contact-menu.sh` applies the open-dialog check to every action.
 - To verify a destructive confirm step without confirming, open the dialog and resolve its confirm button inside the dialog sheet with `findButtonByLabel(<sheetVar>, "<label>", 0, 30)` (from `$(ducko_as_handlers)`) without clicking it. Scope the lookup to the sheet, because a window can hold a same-named button outside the dialog (Contact Info does). Then dismiss the dialog with the generated `ducko_as_click_button_by_label "Cancel" <sheetVar>` snippet, which exercises the same lookup and click path end to end.
 - Keep apostrophes out of osascript heredoc bodies. `/bin/bash` 3.2, which the scripts' shebang selects, rejects a `$(… << EOF …)` body with an odd apostrophe count, while Homebrew bash 5 accepts it, so check with `/bin/bash -n` rather than a bare `bash -n`.
@@ -928,7 +929,7 @@ To allow these scripts in `settings.local.json` without prompts:
 - Pass runtime values as arguments to `osascript -` and read them with `on run argv`. Keep them out of the generated AppleScript source.
 - Credentials are arguments, never hardcoded.
 - When the user drives the GUI on a profile, run CLI or integration tests meanwhile on other `DUCKO_PROFILE`s and accounts, so their offers and messages stay out of the user's window. Hand the GUI over by running `swift build` and launching `DUCKO_PROFILE=<name> .build/debug/DuckoApp` (a packaged bundle can be stale).
-- PID-targeted AX (`AXUIElementCreateApplication(pid)`, as `ducko-dismiss.swift` does) reaches one instance whatever its name. AX actions need no focus: `AXShowMenu` on a `contact-row-*` followed by pressing its "Start Chat" menu item opens a chat, and `AXPress` works on `status-picker` and on picker radios. Prefer these to synthesized mouse clicks, which land on whatever window is frontmost.
+- PID-targeted AX (`AXUIElementCreateApplication(pid)`, as `ducko-dismiss.swift` does) reaches one instance whatever its name. AX actions need no focus: `AXShowMenu` on a `contact-row-*` followed by pressing its "Start Chat" menu item opens a chat, and `AXPress` works on `status-picker` and on picker radios. Prefer these to synthesized mouse clicks, which land on whatever window is frontmost. A context menu still needs its window to be key: opened with `AXShowMenu` in a window that is not key, its items may be missing from an AX lookup, and a System Events Escape (`key code 53`) meant to close it goes to the key window instead. Raise the window first, as `ducko-change-nickname.sh` does with `ducko_as_raise_scene_window`.
 - Open a menu with whichever action the element advertises — `AXShowMenu` returns success without opening the menu on a control that does not advertise it, such as `account-actions-menu`, a `Menu` inside a grouped `Form`, which advertises only `AXPress`. `AppAccessor.pressMenuItem` and `ducko_as_click_context_menu_item` both branch on the advertised action list.
 - A throwaway `DUCKO_PROFILE` gets a persisted account from the CLI (`DuckoCLI account add --no-connect`), after which the GUI opens on Contacts with no Welcome screen. That account has Connect on Launch off, so it starts Offline: `AXPress` `status-picker`, then press its Available item. Once a session has been online, a relaunch starts Offline again but lists the contacts stored from that session. With Hide Offline Contacts on, it lists only those with unread messages. `AXShowMenu` on a row and its "Start Chat" item open the chat there without connecting.
 - For a run that needs contacts with presence, avatars and a chat but no live account, point the `DuckoUITest` copy at the `/demo-screenshots` skill's stub, so these scripts can drive it. Give the run a `DUCKO_PROFILE`, a port and a VM work folder of its own: the `uitest` profile may hold a live account, and that skill's reference mode uses port 5299 and `/Users/lume/work`.
