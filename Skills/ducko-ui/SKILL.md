@@ -301,7 +301,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-account-status.sh` | Set one account's status from its submenu in the menu-bar extra, leaving the other accounts alone (needs 2+ enabled accounts and Show Ducko in Menu Bar). Not covered by the integration suite | `ACCOUNT <available\|away\|xa\|dnd\|offline>` (`ACCOUNT`: display name or JID as shown in the menu) |
 | `ducko-bookmarks.sh` | Open the Bookmarks sheet from the File menu (⌘⇧B) | none |
 | `ducko-add-bookmark.sh` | Add a bookmark via the Bookmarks sheet | `ROOM_JID [NICKNAME]` |
-| `ducko-remove-bookmark.sh` | Remove a bookmark from the Bookmarks sheet | `ROOM_JID` |
+| `ducko-remove-bookmark.sh` | Remove a bookmark from the Bookmarks sheet. On macOS 27 it fails with "remove button not found", because the bookmark row's identifier masks its children's. Remove the bookmark with the copy's CLI instead: `vm gui 'DUCKO_PROFILE=<profile> /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko bookmarks remove ROOM_JID'`, with the profile `uitest` unless the run set one. The app keeps listing the bookmark until it reconnects, since the removal is sent without `notify` and the app gets no push | `ROOM_JID` |
 | `ducko-leave-room.sh` | Leave a room via context menu | `ROOM_JID` |
 | `ducko-retract.sh` | Retract a message via context menu | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
 | `ducko-moderate.sh` | Moderate (remove) a message via context menu | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
@@ -683,9 +683,10 @@ vm ui ducko-screenshot.sh "bookmarks-list.png"
 vm ui ducko-add-bookmark.sh "room@conference.example.com" "mynick"
 vm ui ducko-screenshot.sh "bookmark-added.png"
 
-# 4. Remove the bookmark
-vm ui ducko-remove-bookmark.sh "room@conference.example.com"
-vm ui ducko-screenshot.sh "bookmark-removed.png"
+# 4. Remove the bookmark through the copy's CLI (ducko-remove-bookmark.sh fails on macOS 27, see its row),
+#    and confirm it from the server's list, since the app keeps listing it until it reconnects
+vm gui 'DUCKO_PROFILE=uitest /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko bookmarks remove room@conference.example.com'
+vm gui 'DUCKO_PROFILE=uitest /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko bookmarks list'
 
 # 5. Cleanup
 vm ui ducko-stop.sh
