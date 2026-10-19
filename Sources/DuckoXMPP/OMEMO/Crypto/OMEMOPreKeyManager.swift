@@ -23,6 +23,18 @@ public enum OMEMOPreKeyManager {
         try OMEMOSignedPreKey(keyID: keyID, identityKey: identityKey)
     }
 
+    /// Generates a signed pre-key for the identity whose raw key is `identityKeyRaw`, as the raw private key and the
+    /// signature over its public half, for storing beside that identity.
+    package static func generateSignedPreKeyData(
+        keyID: UInt32,
+        identityKeyRaw: [UInt8]
+    ) throws -> (keyRaw: [UInt8], signature: [UInt8]) {
+        let signedPreKey = try generateSignedPreKey(
+            keyID: keyID, identityKey: OMEMOIdentityKeyPair(rawRepresentation: identityKeyRaw)
+        )
+        return (signedPreKey.rawRepresentation, signedPreKey.signature)
+    }
+
     /// Builds a publishable OMEMO bundle from local key material.
     static func buildBundle(
         deviceID: OMEMODeviceID,

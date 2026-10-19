@@ -79,7 +79,7 @@ struct PlainRoomFormatterTests {
     @Test func `format event room occupant left`() throws {
         let room = try #require(BareJID.parse("chat@conference.example.com"))
         let occupant = RoomOccupant(nickname: "charlie", affiliation: .member, role: .participant)
-        let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: nil), accountID: UUID()))
+        let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: nil, isSelf: false), accountID: UUID()))
         #expect(output.contains("charlie"))
         #expect(output.contains("left"))
     }
@@ -87,7 +87,7 @@ struct PlainRoomFormatterTests {
     @Test func `format event room occupant kicked with reason`() throws {
         let room = try #require(BareJID.parse("chat@conference.example.com"))
         let occupant = RoomOccupant(nickname: "charlie", affiliation: .member, role: .participant)
-        let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: .kicked(reason: "disruptive")), accountID: UUID()))
+        let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: .kicked(reason: "disruptive"), isSelf: false), accountID: UUID()))
         #expect(output.contains("charlie"))
         #expect(output.contains("was kicked"))
         #expect(output.contains("disruptive"))
@@ -96,7 +96,7 @@ struct PlainRoomFormatterTests {
     @Test func `format event room occupant banned`() throws {
         let room = try #require(BareJID.parse("chat@conference.example.com"))
         let occupant = RoomOccupant(nickname: "spammer", affiliation: .none, role: .participant)
-        let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: .banned(reason: nil)), accountID: UUID()))
+        let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: .banned(reason: nil), isSelf: false), accountID: UUID()))
         #expect(output.contains("spammer"))
         #expect(output.contains("was banned"))
     }
@@ -266,20 +266,35 @@ struct JSONRoomFormatterTests {
         #expect(json["nickname"] == "charlie")
     }
 
-    @Test func `format event room occupant left is valid JSON`() throws {
+    /// Like the other event flags, `self` appears only when it is set.
+    @Test(arguments: [true, false])
+    func `format event room occupant left is valid JSON`(isSelf: Bool) throws {
         let room = try #require(BareJID.parse("chat@conference.example.com"))
         let occupant = RoomOccupant(nickname: "charlie", affiliation: .member, role: .participant)
-        let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: nil), accountID: UUID()))
+        let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: nil, isSelf: isSelf), accountID: UUID()))
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_occupant_left")
         #expect(json["nickname"] == "charlie")
+        #expect(json["self"] == (isSelf ? "true" : nil))
+    }
+
+    @Test(arguments: [true, false])
+    func `format event of a nickname change marks the user's own`(isSelf: Bool) throws {
+        let room = try #require(BareJID.parse("chat@conference.example.com"))
+        let occupant = RoomOccupant(nickname: "me2", affiliation: .member, role: .participant)
+        let event = XMPPEvent.roomOccupantNickChanged(room: room, oldNickname: "me", occupant: occupant, isSelf: isSelf)
+        let output = try #require(formatter.formatEvent(event, accountID: UUID()))
+        let data = try #require(output.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+        #expect(json["type"] == "room_nick_changed")
+        #expect(json["self"] == (isSelf ? "true" : nil))
     }
 
     @Test func `format event room occupant kicked is valid JSON`() throws {
         let room = try #require(BareJID.parse("chat@conference.example.com"))
         let occupant = RoomOccupant(nickname: "troublemaker", affiliation: .none, role: .participant)
-        let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: .kicked(reason: "disruptive")), accountID: UUID()))
+        let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: .kicked(reason: "disruptive"), isSelf: false), accountID: UUID()))
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_occupant_left")

@@ -32,11 +32,18 @@ public final class MUCModule: XMPPModule, Sendable {
 
     fileprivate struct RoomState {
         var nickname: String
+        /// Whether the room confirmed `nickname` with the user's own presence. Until then the join is pending, and
+        /// another occupant may still hold the nickname asked for.
+        var isJoined = false
         var password: String?
         var occupants: [String: RoomOccupant] = [:]
         var subject: String?
         var flags: Set<RoomFlag> = []
         var lastActivity: ContinuousClock.Instant = .now
+
+        var confirmedNickname: String? {
+            isJoined ? nickname : nil
+        }
 
         var occupancy: RoomOccupancy {
             RoomOccupancy(nickname: nickname, occupants: Array(occupants.values), subject: subject, flags: flags)
@@ -159,7 +166,7 @@ public final class MUCModule: XMPPModule, Sendable {
     /// room already joined, such as a refused nickname change, leaves the room as it was.
     private func handleErrorPresence(_ presence: XMPPPresence, roomJID: BareJID) {
         let (wasPendingJoin, pingTask) = state.withLock { state -> (Bool, Task<Void, Never>?) in
-            guard let room = state.rooms[roomJID], room.occupants[room.nickname] == nil else { return (false, nil) }
+            guard let room = state.rooms[roomJID], !room.isJoined else { return (false, nil) }
             return (true, state.removeRoom(roomJID))
         }
         guard wasPendingJoin else { return }
@@ -206,7 +213,7 @@ public final class MUCModule: XMPPModule, Sendable {
             nil
         }
 
-        handleOccupantLeft(roomJID: info.roomJID, nickname: info.nickname, occupant: info.occupant, leaveReason: leaveReason, context: context)
+        handleOccupantLeft(info, leaveReason: leaveReason, context: context)
     }
 
     private func handleAvailablePresence(_ info: PresenceInfo, context: ModuleContext?) {
@@ -221,11 +228,15 @@ public final class MUCModule: XMPPModule, Sendable {
                 state.rooms[info.roomJID]?.occupants.removeValue(forKey: oldNickname)
                 state.rooms[info.roomJID]?.occupants[info.nickname] = info.occupant
                 if info.isSelfPresence {
+                    // The user's own presence confirms the new nickname, as it confirms a join.
                     state.rooms[info.roomJID]?.nickname = info.nickname
+                    state.rooms[info.roomJID]?.isJoined = true
                 }
             }
             log.debug("Occupant \(oldNickname) changed nick to \(info.nickname) in \(info.roomJID)")
-            context?.emitEvent(.roomOccupantNickChanged(room: info.roomJID, oldNickname: oldNickname, occupant: info.occupant))
+            context?.emitEvent(.roomOccupantNickChanged(
+                room: info.roomJID, oldNickname: oldNickname, occupant: info.occupant, isSelf: info.isSelfPresence
+            ))
         } else if info.isSelfPresence {
             handleSelfJoined(roomJID: info.roomJID, nickname: info.nickname, occupant: info.occupant, statusCodes: info.statusCodes, context: context)
         } else {
@@ -248,6 +259,9 @@ public final class MUCModule: XMPPModule, Sendable {
         }()
 
         let occupancy = state.withLock { state -> RoomOccupancy in
+            // XEP-0045 status code 210: the room may give the user another nickname than the one asked for.
+            state.rooms[roomJID]?.nickname = nickname
+            state.rooms[roomJID]?.isJoined = true
             state.rooms[roomJID]?.occupants[nickname] = occupant
             state.rooms[roomJID]?.flags = flags
             state.rooms[roomJID]?.lastActivity = .now
@@ -277,16 +291,15 @@ public final class MUCModule: XMPPModule, Sendable {
         context?.emitEvent(.roomOccupantJoined(room: roomJID, occupant: occupant))
     }
 
-    private func handleOccupantLeft(
-        roomJID: BareJID,
-        nickname: String,
-        occupant: RoomOccupant,
-        leaveReason: OccupantLeaveReason? = nil,
-        context: ModuleContext?
-    ) {
+    /// The departure is the user's when the room says so with status 110, or when it names the nickname the room
+    /// already confirmed as the user's. XEP-0045's ban and affiliation examples leave out the 110. While a join is
+    /// pending, the nickname asked for may be another occupant's, whose departure leaves the join as it is.
+    private func handleOccupantLeft(_ info: PresenceInfo, leaveReason: OccupantLeaveReason?, context: ModuleContext?) {
+        let roomJID = info.roomJID
+        let nickname = info.nickname
         let (isSelf, pingTask) = state.withLock { state -> (Bool, Task<Void, Never>?) in
             state.rooms[roomJID]?.occupants.removeValue(forKey: nickname)
-            let selfLeft = state.rooms[roomJID]?.nickname == nickname
+            let selfLeft = info.isSelfPresence || state.rooms[roomJID]?.confirmedNickname == nickname
             return (selfLeft, selfLeft ? state.removeRoom(roomJID) : nil)
         }
         pingTask?.cancel()
@@ -298,7 +311,7 @@ public final class MUCModule: XMPPModule, Sendable {
             log.debug("Occupant \(nickname) left \(roomJID)")
         }
 
-        context?.emitEvent(.roomOccupantLeft(room: roomJID, occupant: occupant, reason: leaveReason))
+        context?.emitEvent(.roomOccupantLeft(room: roomJID, occupant: info.occupant, reason: leaveReason, isSelf: isSelf))
     }
 
     // MARK: - Message Handling
@@ -436,11 +449,36 @@ public final class MUCModule: XMPPModule, Sendable {
 
     // MARK: - Public API
 
-    /// Joins a MUC room with the given nickname.
-    public func joinRoom(_ room: BareJID, nickname: String, password: String? = nil, history: RoomHistoryFetch = .initial) async throws {
-        guard let context = state.withLock({ $0.context }) else { return }
+    /// Joins a MUC room with the given nickname. A room the user is in already keeps its occupants, subject and
+    /// self-ping. There the same nickname asks the room for nothing, and another one is a nickname change, since
+    /// XEP-0045 reads a join presence to a room the user is in as one.
+    @discardableResult
+    public func joinRoom(
+        _ room: BareJID, nickname: String, password: String? = nil, history: RoomHistoryFetch = .initial
+    ) async throws -> RoomJoinOutcome {
         // Normalize once at the room-state boundary so the stored nickname matches the
         // OpaqueString-normalized form that incoming presence (parsed via FullJID) carries.
+        let nickname = try Self.normalizedNickname(nickname)
+        let confirmedNickname = state.withLock { state -> String? in
+            guard let confirmed = state.rooms[room]?.confirmedNickname else { return nil }
+            if let password {
+                state.rooms[room]?.password = password
+            }
+            return confirmed
+        }
+        if let confirmedNickname {
+            guard confirmedNickname != nickname else { return .alreadyJoined }
+            try await changeNickname(in: room, to: nickname)
+            return .changingNickname
+        }
+        try await rejoinRoom(room, nickname: nickname, password: password, history: history)
+        return .joining
+    }
+
+    /// Joins `room` afresh, dropping what the module tracked for it, as after the room let the user go without the
+    /// client noticing.
+    public func rejoinRoom(_ room: BareJID, nickname: String, password: String? = nil, history: RoomHistoryFetch = .initial) async throws {
+        guard let context = state.withLock({ $0.context }) else { return }
         let nickname = try Self.normalizedNickname(nickname)
         let password = password ?? state.withLock { $0.rooms[room]?.password }
 
@@ -598,8 +636,16 @@ public final class MUCModule: XMPPModule, Sendable {
         }
     }
 
+    /// The nickname the user has in `room`, or asked for while a join is still pending. `confirmedNickname(in:)` is
+    /// the one the room confirmed as the user's.
     public func nickname(in room: BareJID) -> String? {
         state.withLock { $0.rooms[room]?.nickname }
+    }
+
+    /// The user's nickname in `room` once the room has confirmed it with the user's own presence. While a join waits
+    /// for that presence, the nickname asked for may still be refused, rewritten, or held by another occupant.
+    public func confirmedNickname(in room: BareJID) -> String? {
+        state.withLock { $0.rooms[room]?.confirmedNickname }
     }
 
     /// The occupancy of every tracked room, including one whose join has not completed yet.

@@ -34,6 +34,10 @@ public final class OMEMOService {
     /// In-flight flag for the emergency-retract path. Held across the entire publish/retract/cleanup phase
     /// (not just the closure await) so a second prune after a mid-retract module rebuild bails cleanly.
     private var emergencyRetractInFlightAccounts: Set<String> = []
+    /// Accounts whose pre-key upkeep is running.
+    private var preKeyMaintenanceRunning: Set<UUID> = []
+    /// The used pre-key ids waiting for each account's next upkeep run.
+    private var preKeyMaintenanceQueue: [UUID: Set<UInt32>] = [:]
 
     /// UI-supplied confirmation closure before the emergency-retract path publishes a singleton devicelist.
     /// Default `nil` preserves the pre-feature bail behavior. `@Sendable`; callers hop to `MainActor` inside.
@@ -93,44 +97,60 @@ public final class OMEMOService {
             orphanPurger: self
         )
 
-        // Restore persisted identity
-        if let stored = try? await omemoStore.loadIdentity(for: jidString) {
-            let preKeys = await (try? omemoStore.loadPreKeys(for: jidString)) ?? []
-            let signedPreKey = try? await omemoStore.loadSignedPreKey(for: jidString)
-
-            let preKeyData = preKeys.filter { !$0.isUsed }.map {
-                OMEMOModule.OMEMOIdentityData.PreKeyData(
-                    keyID: $0.keyID, keyRaw: Array($0.keyData)
-                )
-            }
-
-            if let spk = signedPreKey {
-                let identityData = OMEMOModule.OMEMOIdentityData(
-                    deviceID: stored.deviceID,
-                    identityKeyRaw: Array(stored.identityKeyData),
-                    signedPreKeyID: spk.keyID,
-                    signedPreKeyRaw: Array(spk.keyData),
-                    signedPreKeySignature: Array(spk.signature),
-                    preKeys: preKeyData
-                )
-                module.configureIdentity(identityData)
-            }
-        }
-
-        // Restore persisted sessions
-        if let sessions = try? await omemoStore.loadSessions(for: jidString) {
-            let entries = sessions.map {
+        // Keys that cannot be read must never be replaced by a new device, so a failed load leaves encryption off for
+        // this connection and the next connect tries again.
+        do {
+            guard let identityData = try await loadStoredIdentity(accountJID: jidString) else { return module }
+            let sessions = try await omemoStore.loadSessions(for: jidString)
+            module.configureIdentity(identityData)
+            module.restoreSessions(sessions.map {
                 OMEMOModule.StoredSessionEntry(
                     jid: BareJID.parse($0.peerJID) ?? accountJID,
                     deviceID: $0.peerDeviceID,
                     sessionData: Array($0.sessionData),
                     associatedData: Array($0.associatedData)
                 )
-            }
-            module.restoreSessions(entries)
+            })
+        } catch {
+            module.markIdentityUnavailable()
+            log.warning("OMEMO keys could not be loaded; encryption stays off until the next connect")
+            log.debug("OMEMO keys could not be loaded: \(error)")
         }
-
         return module
+    }
+
+    /// The stored identity with its unused pre-keys and its signed pre-key, or nil for a new installation. A signed
+    /// pre-key that is missing is replaced for the same device, and stored before anything publishes it.
+    private func loadStoredIdentity(accountJID: String) async throws -> OMEMOModule.OMEMOIdentityData? {
+        guard let stored = try await omemoStore.loadIdentity(for: accountJID) else { return nil }
+        let preKeys = try await omemoStore.loadPreKeys(for: accountJID)
+        let signedPreKey = if let loaded = try await omemoStore.loadSignedPreKey(for: accountJID) {
+            loaded
+        } else {
+            try await replaceSignedPreKey(identityKeyData: stored.identityKeyData, accountJID: accountJID)
+        }
+        return OMEMOModule.OMEMOIdentityData(
+            deviceID: stored.deviceID,
+            identityKeyRaw: Array(stored.identityKeyData),
+            signedPreKeyID: signedPreKey.keyID,
+            signedPreKeyRaw: Array(signedPreKey.keyData),
+            signedPreKeySignature: Array(signedPreKey.signature),
+            preKeys: preKeys.filter { !$0.isUsed }.map {
+                OMEMOModule.OMEMOIdentityData.PreKeyData(keyID: $0.keyID, keyRaw: Array($0.keyData))
+            }
+        )
+    }
+
+    private func replaceSignedPreKey(identityKeyData: Data, accountJID: String) async throws -> OMEMOStoredSignedPreKey {
+        let keyID: UInt32 = 1
+        let generated = try OMEMOPreKeyManager.generateSignedPreKeyData(keyID: keyID, identityKeyRaw: Array(identityKeyData))
+        let signedPreKey = OMEMOStoredSignedPreKey(
+            accountJID: accountJID, keyID: keyID,
+            keyData: Data(generated.keyRaw), signature: Data(generated.signature), timestamp: Date()
+        )
+        try await omemoStore.saveSignedPreKey(signedPreKey)
+        log.info("OMEMO signed pre-key was missing and has been replaced")
+        return signedPreKey
     }
 
     // MARK: - Event Handling
@@ -139,23 +159,28 @@ public final class OMEMOService {
         switch event {
         case let .omemoDeviceListReceived(jid, devices):
             await handleDeviceListReceived(jid: jid, devices: devices, accountID: accountID)
-        case let .omemoEncryptedMessageReceived(from, decryptedBody, _, stanzaID):
-            await handleEncryptedMessageReceived(from: from, decryptedBody: decryptedBody, stanzaID: stanzaID, accountID: accountID)
-        case let .omemoSessionEstablished(jid, deviceID, identityKey):
+        case let .omemoEncryptedMessageReceived(message, decryptedBody, _):
+            await handleEncryptedMessageReceived(message: message, decryptedBody: decryptedBody, accountID: accountID)
+        case let .omemoSessionEstablished(jid, deviceID, identityKey, consumedPreKeyID):
             await handleSessionEstablished(
                 jid: jid, deviceID: deviceID,
                 identityKey: identityKey, accountID: accountID
             )
+            await schedulePreKeyMaintenance(accountID: accountID, consumedPreKeyID: consumedPreKeyID)
         case .omemoSessionAdvanced:
-            if let client = accountService?.connectedClient(for: accountID),
+            // Any client, not only a connected one, since stanzas the server replays after a resume arrive before the
+            // account counts as connected again.
+            if let client = accountService?.client(for: accountID),
                let omemoModule = await client.module(ofType: OMEMOModule.self) {
                 await saveModuleSessions(module: omemoModule, accountID: accountID)
             }
         case .connected:
             await handleConnected(accountID: accountID)
+        case .streamResumed:
+            await schedulePreKeyMaintenance(accountID: accountID, consumedPreKeyID: nil)
         case .disconnected:
             break
-        case .streamResumed, .authenticationFailed,
+        case .authenticationFailed,
              .messageReceived, .presenceReceived, .iqReceived,
              .rosterUpdated,
              .presenceUpdated, .presenceSubscriptionRequest,
@@ -370,59 +395,40 @@ public final class OMEMOService {
         }
     }
 
-    private func handleEncryptedMessageReceived(from: JID, decryptedBody: String?, stanzaID: String?, accountID: UUID) async {
+    private func handleEncryptedMessageReceived(message xmppMessage: XMPPMessage, decryptedBody: String?, accountID: UUID) async {
+        guard let from = xmppMessage.from, let chatService else { return }
         let senderJID = from.bareJID
-        guard let chatService else { return }
 
         // Capture the arrival tick now, before the first await, so the resource lock learned below advances in
         // arrival order even if this handler interleaves with another inbound's handler on the MainActor.
         let lockSequence = chatService.nextLockSequence()
 
-        // Determine if this is our own message echoed back (carbon/MAM)
-        let ownJID = accountService?.accounts.first(where: { $0.id == accountID })?.jid
-        let isOutgoing = ownJID != nil && senderJID == ownJID
-        let peerJID = isOutgoing ? (from.bareJID) : senderJID
-
         let conversation: Conversation
         do {
-            conversation = try await chatService.openConversation(for: peerJID, accountID: accountID)
+            conversation = try await chatService.openConversation(for: senderJID, accountID: accountID)
         } catch {
             log.warning("Failed to open conversation for an OMEMO message: \(error)")
             log.debug("The OMEMO message was from \(senderJID)")
             return
         }
 
-        let message = ChatMessage(
-            id: UUID(),
-            conversationID: conversation.id,
-            serverID: stanzaID,
-            fromJID: peerJID.description,
-            body: decryptedBody ?? "",
-            timestamp: Date(),
-            isOutgoing: isOutgoing,
-            isDelivered: false,
-            isEdited: false,
-            type: "chat",
-            isEncrypted: true,
-            isUndecryptable: decryptedBody == nil
-        )
+        let isOutgoing = await chatService.isOwnEncryptedMessage(from: from, in: conversation, accountID: accountID)
 
-        // RFC 6121 §5.1 resource lock — learn the peer's resource from the live encrypted inbound, mirroring
-        // the plaintext path in ChatService. Own-message echoes (carbon/MAM) still persist below but must not
-        // move the lock (gated on `!isOutgoing`), and a nil body is a failed/unauthenticated decrypt that must
-        // not steer routing (gated on `decryptedBody != nil`).
-        if !isOutgoing, decryptedBody != nil {
+        let outcome = await chatService.ingestEncryptedMessage(
+            message: xmppMessage, decryptedBody: decryptedBody, isOutgoing: isOutgoing,
+            in: conversation, accountID: accountID
+        )
+        // Only a new message from the contact that this device could read counts, for the RFC 6121 §5.1 resource lock
+        // and for switching encryption on. A copy already stored, as a stanza re-sent after a resume is, says nothing
+        // new. An echo of the user's own message says nothing about the contact, and a failed decrypt must not steer
+        // routing or ground encrypting the reply.
+        if let outcome, outcome != .duplicate, !isOutgoing, decryptedBody != nil {
             chatService.learnResourceLock(from: from, accountID: accountID, sequence: lockSequence)
-        }
-        await chatService.persistEncryptedMessage(message, in: conversation, accountID: accountID)
-        // Only a message from the contact that this device could read counts. An echo of the user's own message says
-        // nothing about the contact, and a failed decrypt is no ground for encrypting the reply.
-        if !isOutgoing, decryptedBody != nil {
             await chatService.enableEncryptionForContact(in: conversation.id, accountID: accountID)
         }
 
         // Persist session state after decryption (ratchet may have advanced)
-        if let client = accountService?.connectedClient(for: accountID),
+        if let client = accountService?.client(for: accountID),
            let omemoModule = await client.module(ofType: OMEMOModule.self) {
             await saveModuleSessions(module: omemoModule, accountID: accountID)
         }
@@ -432,7 +438,7 @@ public final class OMEMOService {
         jid: BareJID, deviceID: UInt32,
         identityKey: [UInt8], accountID: UUID
     ) async {
-        guard let client = accountService?.connectedClient(for: accountID),
+        guard let client = accountService?.client(for: accountID),
               let omemoModule = await client.module(ofType: OMEMOModule.self), let entry = omemoModule.exportSession(jid: jid, deviceID: deviceID), let accountJID = accountJIDString(for: accountID) else { return }
 
         let session = OMEMOStoredSession(
@@ -482,20 +488,27 @@ public final class OMEMOService {
             accountJID: accountJID
         )
 
-        await replenishPreKeysIfNeeded(accountJID: accountJID, module: omemoModule)
+        await schedulePreKeyMaintenance(accountID: accountID, consumedPreKeyID: nil)
     }
 
-    /// First-time identity persistence + consumed-pre-key sync. Extracted so tests can drive the polling/persistence
-    /// branches via a stub `OMEMOIdentityProviding` and a short `pollTimeout` (bypassing the 5s real wait).
+    /// First-time identity persistence. Extracted so tests can drive the polling/persistence branches via a stub
+    /// `OMEMOIdentityProviding` and a short `pollTimeout` (bypassing the 5s real wait).
     package func handleConnectedFirstTimePersistence(
         provider: any OMEMOIdentityProviding,
         accountJID: String,
         pollTimeout: Duration = .seconds(5)
     ) async {
-        // Only a first-time identity needs persisting. A stored one is handed to
-        // the module, which installs it when the session is established. Skip
-        // both the readiness poll and the persistence writes.
-        let existingIdentity = try? await omemoStore.loadIdentity(for: accountJID)
+        // Only a first-time identity needs persisting. A stored one is handed to the module, which installs it when the
+        // session is established. Skip both the readiness poll and the persistence writes. A store that could not be
+        // read is skipped too, since its identity is unknown rather than absent.
+        let existingIdentity: OMEMOStoredIdentity?
+        do {
+            existingIdentity = try await omemoStore.loadIdentity(for: accountJID)
+        } catch {
+            log.warning("OMEMO identity could not be read; skipping first-time persistence")
+            log.debug("OMEMO identity could not be read: \(error)")
+            return
+        }
         if existingIdentity == nil {
             // `.connected` is yielded before `OMEMOModule.handleConnect` runs,
             // so `ownIdentityData` may still be `nil` on first-time generation.
@@ -516,39 +529,139 @@ public final class OMEMOService {
                 interval: .milliseconds(50)
             )
             if let identityData = captured {
-                let stored = OMEMOStoredIdentity(
-                    accountJID: accountJID,
-                    deviceID: identityData.deviceID,
-                    identityKeyData: Data(identityData.identityKeyRaw),
-                    registrationID: 0
-                )
-                try? await omemoStore.saveIdentity(stored)
-
-                let preKeys = identityData.preKeys.map {
-                    OMEMOStoredPreKey(
-                        accountJID: accountJID, keyID: $0.keyID,
-                        keyData: Data($0.keyRaw), isUsed: false
-                    )
-                }
-                try? await omemoStore.savePreKeys(preKeys)
-
-                let spk = OMEMOStoredSignedPreKey(
-                    accountJID: accountJID,
-                    keyID: identityData.signedPreKeyID,
-                    keyData: Data(identityData.signedPreKeyRaw),
-                    signature: Data(identityData.signedPreKeySignature),
-                    timestamp: Date()
-                )
-                try? await omemoStore.saveSignedPreKey(spk)
+                await persistFirstTimeIdentity(identityData, accountJID: accountJID)
             } else {
                 log.warning("OMEMO identity not ready after \(pollTimeout) wait; skipping first-time persistence")
             }
         }
+    }
 
-        // Mark consumed pre-keys
-        let consumed = provider.consumedPreKeyIDs()
-        for keyID in consumed {
-            try? await omemoStore.consumePreKey(id: keyID, accountJID: accountJID)
+    /// The keys are stored only after the identity is: without it they would be orphans whose ids the next new device
+    /// reuses. The pre-keys and the signed pre-key are each tried even when the other failed.
+    private func persistFirstTimeIdentity(_ identityData: OMEMOModule.OMEMOIdentityData, accountJID: String) async {
+        let stored = OMEMOStoredIdentity(
+            accountJID: accountJID,
+            deviceID: identityData.deviceID,
+            identityKeyData: Data(identityData.identityKeyRaw),
+            registrationID: 0
+        )
+        do {
+            try await omemoStore.saveIdentity(stored)
+        } catch {
+            log.warning("Could not store the new OMEMO identity")
+            log.debug("Could not store the new OMEMO identity: \(error)")
+            return
+        }
+
+        let preKeys = identityData.preKeys.map {
+            OMEMOStoredPreKey(
+                accountJID: accountJID, keyID: $0.keyID,
+                keyData: Data($0.keyRaw), isUsed: false
+            )
+        }
+        do {
+            try await omemoStore.savePreKeys(preKeys)
+        } catch {
+            log.warning("Could not store the new OMEMO pre-keys")
+            log.debug("Could not store the new OMEMO pre-keys: \(error)")
+        }
+
+        let spk = OMEMOStoredSignedPreKey(
+            accountJID: accountJID,
+            keyID: identityData.signedPreKeyID,
+            keyData: Data(identityData.signedPreKeyRaw),
+            signature: Data(identityData.signedPreKeySignature),
+            timestamp: Date()
+        )
+        do {
+            try await omemoStore.saveSignedPreKey(spk)
+        } catch {
+            log.warning("Could not store the new OMEMO signed pre-key")
+            log.debug("Could not store the new OMEMO signed pre-key: \(error)")
+        }
+    }
+
+    /// Runs pre-key upkeep for the account's current client. Runs coalesce: a trigger that arrives during a run is
+    /// taken by one more run afterwards, so a burst of key exchanges never has two runs allocate pre-key ids at once.
+    /// Each run looks the client up again, so a run waiting on an old client cannot swallow a resumed one's publish.
+    private func schedulePreKeyMaintenance(accountID: UUID, consumedPreKeyID: UInt32?) async {
+        preKeyMaintenanceQueue[accountID, default: []].formUnion(consumedPreKeyID.map { [$0] } ?? [])
+        guard preKeyMaintenanceRunning.insert(accountID).inserted else { return }
+        defer { preKeyMaintenanceRunning.remove(accountID) }
+        while let consumed = preKeyMaintenanceQueue.removeValue(forKey: accountID) {
+            guard let accountJID = accountJIDString(for: accountID) else { return }
+            let client = accountService?.client(for: accountID)
+            let module = await client?.module(ofType: OMEMOModule.self)
+            await maintainPreKeys(
+                accountJID: accountJID, module: module, consumedPreKeyIDs: consumed,
+                awaitReady: { await client?.awaitInitialPresenceSent() }
+            )
+        }
+    }
+
+    /// Records used pre-keys, tops the pre-keys up when they run low, and republishes the bundle when it lags behind.
+    /// Failures are logged, and the next trigger retries: the store and the module are read afresh each run.
+    /// `awaitReady` holds the publish until the server has seen this resource's caps (XEP-0163 §3.3.2).
+    package func maintainPreKeys(
+        accountJID: String,
+        module: (any OMEMOPreKeyMaintaining)?,
+        consumedPreKeyIDs eventPreKeyIDs: Set<UInt32> = [],
+        awaitReady: () async -> Void = {}
+    ) async {
+        // A brand-new device is left to first-time persistence until its identity is stored, or both would save its
+        // pre-keys.
+        let stored: [OMEMOStoredPreKey]
+        do {
+            guard try await omemoStore.loadIdentity(for: accountJID) != nil else { return }
+            stored = try await omemoStore.loadPreKeys(for: accountJID)
+        } catch {
+            log.warning("Could not read the OMEMO pre-keys for upkeep")
+            log.debug("Could not read the OMEMO pre-keys for upkeep: \(error)")
+            return
+        }
+
+        // The event's ids are recorded even when the module that used them is gone, since a new module starts without
+        // them.
+        var unusedIDs = Set(stored.filter { !$0.isUsed }.map(\.keyID))
+        let consumed = eventPreKeyIDs.union(module?.consumedPreKeyIDs() ?? [])
+        for keyID in consumed where unusedIDs.contains(keyID) {
+            do {
+                try await omemoStore.consumePreKey(id: keyID, accountJID: accountJID)
+                unusedIDs.remove(keyID)
+            } catch {
+                log.warning("Could not record a used OMEMO pre-key")
+                log.debug("Could not record used OMEMO pre-key \(keyID): \(error)")
+            }
+        }
+
+        guard let module, let identityData = module.ownIdentityData else { return }
+        // A module built while an earlier connection's run was still recording a key holds that key as unused.
+        module.retirePreKeys(Set(stored.filter(\.isUsed).map(\.keyID)).union(eventPreKeyIDs))
+        if unusedIDs.count < OMEMOPreKeyManager.minimumPreKeyCount {
+            // Past every id the store or the module has used, so no new key can take the id of an older one.
+            let highestID = max(stored.map(\.keyID).max() ?? 0, identityData.preKeys.map(\.keyID).max() ?? 0)
+            let newPreKeys = OMEMOPreKeyManager.generatePreKeys(
+                startID: highestID + 1, count: OMEMOPreKeyManager.targetPreKeyCount - unusedIDs.count
+            )
+            do {
+                try await omemoStore.savePreKeys(newPreKeys.map {
+                    OMEMOStoredPreKey(accountJID: accountJID, keyID: $0.keyID, keyData: Data($0.rawRepresentation), isUsed: false)
+                })
+                module.addPreKeys(newPreKeys)
+                log.info("Replenished pre-keys: \(newPreKeys.count) new")
+            } catch {
+                log.warning("Could not store new OMEMO pre-keys")
+                log.debug("Could not store new OMEMO pre-keys: \(error)")
+            }
+        }
+
+        guard module.bundleNeedsPublish else { return }
+        await awaitReady()
+        do {
+            try await module.republishBundle()
+        } catch {
+            log.warning("Could not publish the OMEMO bundle")
+            log.debug("Could not publish the OMEMO bundle: \(error)")
         }
     }
 
@@ -587,39 +700,6 @@ public final class OMEMOService {
             // No trust record or empty fingerprint — allow (TOFU);
             // fingerprint stored on session-established event
         }
-    }
-
-    private func replenishPreKeysIfNeeded(accountJID: String, module: OMEMOModule) async {
-        let preKeys = await (try? omemoStore.loadPreKeys(for: accountJID)) ?? []
-        let available = preKeys.filter { !$0.isUsed }
-        guard available.count < OMEMOPreKeyManager.minimumPreKeyCount, let identityData = module.ownIdentityData else { return }
-        let maxExistingID = preKeys.map(\.keyID).max() ?? 0
-        let startID = maxExistingID + 1
-        let count = OMEMOPreKeyManager.targetPreKeyCount - available.count
-
-        let newPreKeys = OMEMOPreKeyManager.generatePreKeys(startID: startID, count: count)
-        let storedPreKeys = newPreKeys.map {
-            OMEMOStoredPreKey(
-                accountJID: accountJID, keyID: $0.keyID,
-                keyData: Data($0.rawRepresentation), isUsed: false
-            )
-        }
-        try? await omemoStore.savePreKeys(storedPreKeys)
-
-        // Republish bundle with updated pre-keys
-        let allPreKeys = await (try? omemoStore.loadPreKeys(for: accountJID))?.filter { !$0.isUsed } ?? []
-        let updatedIdentity = OMEMOModule.OMEMOIdentityData(
-            deviceID: identityData.deviceID,
-            identityKeyRaw: identityData.identityKeyRaw,
-            signedPreKeyID: identityData.signedPreKeyID,
-            signedPreKeyRaw: identityData.signedPreKeyRaw,
-            signedPreKeySignature: identityData.signedPreKeySignature,
-            preKeys: allPreKeys.map {
-                OMEMOModule.OMEMOIdentityData.PreKeyData(keyID: $0.keyID, keyRaw: Array($0.keyData))
-            }
-        )
-        module.configureIdentity(updatedIdentity)
-        log.info("Replenished pre-keys: \(count) new, \(allPreKeys.count) total available")
     }
 
     private func setTrustLevel(

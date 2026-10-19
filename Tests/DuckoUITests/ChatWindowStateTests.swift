@@ -298,9 +298,8 @@ struct ChatWindowStateTests {
         // live conversation's roomNickname; the frozen load-time copy is untouched.
         await environment.chatService.handleEvent(
             .roomOccupantNickChanged(
-                room: roomJID,
-                oldNickname: "me",
-                occupant: RoomOccupant(nickname: "me2", affiliation: .owner, role: .moderator)
+                room: roomJID, oldNickname: "me",
+                occupant: RoomOccupant(nickname: "me2", affiliation: .owner, role: .moderator), isSelf: true
             ),
             accountID: account.id
         )

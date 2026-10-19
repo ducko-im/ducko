@@ -1,5 +1,15 @@
 import Foundation
 
+/// What `TranscriptStore.storeEncryptedMessage(_:fromArchive:)` did with an encrypted message.
+public enum EncryptedMessageStoreOutcome: Sendable, Equatable {
+    /// No copy was stored yet, so the message was appended.
+    case inserted
+    /// An undecryptable copy was stored under the same server id, and now shows the decrypted text.
+    case upgraded(placeholderID: UUID, timestamp: Date)
+    /// A copy was stored already, and nothing was written.
+    case duplicate
+}
+
 public protocol TranscriptStore: Sendable {
     // MARK: - Write
 
@@ -7,6 +17,12 @@ public protocol TranscriptStore: Sendable {
     func appendMessages(_ messages: [ChatMessage]) async throws
     func appendAmendment(_ amendment: TranscriptAmendment, conversationID: UUID) async throws
     func appendNote(_ note: TimelineNote) async throws
+    /// Stores an encrypted message unless a copy of it is stored already. The lookup and the write happen in one step,
+    /// so a live copy and its archived copy arriving at once cannot both be stored. A message with a server id is
+    /// matched by it. A message without one is matched by its message id, scoped to the sender when it was received. An
+    /// archived copy is also matched by message id against a stored row that has no server id. A readable copy fills in
+    /// an undecryptable one with the same server id and direction.
+    func storeEncryptedMessage(_ message: ChatMessage, fromArchive: Bool) async throws -> EncryptedMessageStoreOutcome
 
     // MARK: - Read
 

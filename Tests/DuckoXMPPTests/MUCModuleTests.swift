@@ -23,6 +23,21 @@ private func makeConnectedClient(mock: MockTransport) async throws -> XMPPClient
 
 private let testRoomJID = BareJID(localPart: "room", domainPart: "conference.example.com")!
 
+/// Joins the test room as "me" and has the room confirm it with the user's own presence.
+private func joinConfirmed(_ module: MUCModule, mock: MockTransport) async throws {
+    try await module.joinRoom(testRoomJID, nickname: "me")
+    await mock.simulateReceive("""
+    <presence from='room@conference.example.com/me'><x xmlns='http://jabber.org/protocol/muc#user'>\
+    <item affiliation='member' role='participant'/><status code='110'/></x></presence>
+    """)
+    let confirmed = try await boundedOutcome {
+        while module.confirmedNickname(in: testRoomJID) != "me" {
+            try Task.checkCancellation(); await Task.yield()
+        }
+    }
+    try #require(confirmed != nil)
+}
+
 // MARK: - Tests
 
 enum MUCModuleTests { // swiftlint:disable:this type_body_length
@@ -68,6 +83,60 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             #expect(room == testRoomJID)
             #expect(occupancy.nickname == "me")
             #expect(occupancy.occupants.count == 2)
+
+            await disconnectFast(client)
+        }
+    }
+
+    struct ServerAssignedNickname {
+        @Test
+        func `The nickname the room gives on joining becomes the user's, and leaving under it leaves the room`() async throws {
+            let mock = MockTransport()
+            let client = try await makeConnectedClient(mock: mock)
+            let module = try #require(await client.module(ofType: MUCModule.self))
+
+            try await module.joinRoom(testRoomJID, nickname: "me")
+            // Another occupant holds the nickname asked for, so the room gives the user another one.
+            let otherJoined = Task {
+                try await collectEvents(from: client) { event in
+                    if case .roomOccupantJoined = event { return true }
+                    return false
+                }
+            }
+            await mock.simulateReceive("""
+            <presence from='room@conference.example.com/me'>\
+            <x xmlns='http://jabber.org/protocol/muc#user'><item affiliation='member' role='participant'/></x>\
+            </presence>
+            """)
+            _ = try await otherJoined.value
+            #expect(module.confirmedNickname(in: testRoomJID) == nil)
+
+            let joined = Task {
+                try await collectEvents(from: client) { event in
+                    if case .roomJoined = event { return true }
+                    return false
+                }
+            }
+            await mock.simulateReceive("""
+            <presence from='room@conference.example.com/me_'><x xmlns='http://jabber.org/protocol/muc#user'>\
+            <item affiliation='member' role='participant'/><status code='110'/><status code='210'/></x></presence>
+            """)
+            _ = try await joined.value
+            #expect(module.nickname(in: testRoomJID) == "me_")
+            #expect(module.confirmedNickname(in: testRoomJID) == "me_")
+
+            let left = Task {
+                try await collectEvents(from: client) { event in
+                    if case .roomOccupantLeft = event { return true }
+                    return false
+                }
+            }
+            await mock.simulateReceive("""
+            <presence from='room@conference.example.com/me_' type='unavailable'><x xmlns='http://jabber.org/protocol/muc#user'>\
+            <item affiliation='member' role='none'/><status code='110'/></x></presence>
+            """)
+            _ = try await left.value
+            #expect(module.nickname(in: testRoomJID) == nil)
 
             await disconnectFast(client)
         }
@@ -333,7 +402,8 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             let client = try await makeConnectedClient(mock: mock)
             let module = try #require(await client.module(ofType: MUCModule.self))
 
-            try await module.joinRoom(testRoomJID, nickname: "me")
+            // The room confirmed the user's nickname, so a nickname match alone would read as the user's.
+            try await joinConfirmed(module, mock: mock)
 
             // First make occupant join
             await mock.simulateReceive("""
@@ -362,12 +432,14 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             """)
 
             let events = try await eventsTask.value
-            guard case let .roomOccupantLeft(room, occupant, reason) = events.last else {
+            guard case let .roomOccupantLeft(room, occupant, reason, isSelf) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected roomOccupantLeft event")
             }
             #expect(room == testRoomJID)
             #expect(occupant.nickname == "leaver")
             #expect(reason == nil)
+            #expect(!isSelf)
+            #expect(module.nickname(in: testRoomJID) == "me")
 
             await disconnectFast(client)
         }
@@ -616,7 +688,7 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             """)
 
             let events = try await eventsTask.value
-            guard case let .roomOccupantLeft(room, occupant, reason) = events.last else {
+            guard case let .roomOccupantLeft(room, occupant, reason, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected roomOccupantLeft event")
             }
             #expect(room == testRoomJID)
@@ -662,7 +734,7 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             """)
 
             let events = try await eventsTask.value
-            guard case let .roomOccupantLeft(room, occupant, reason) = events.last else {
+            guard case let .roomOccupantLeft(room, occupant, reason, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected roomOccupantLeft event")
             }
             #expect(room == testRoomJID)
@@ -706,7 +778,7 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             """)
 
             let events = try await eventsTask.value
-            guard case let .roomOccupantLeft(_, _, reason) = events.last else {
+            guard case let .roomOccupantLeft(_, _, reason, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected roomOccupantLeft event")
             }
             #expect(reason == .affiliationChanged(reason: nil))
@@ -748,7 +820,7 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             """)
 
             let events = try await eventsTask.value
-            guard case let .roomOccupantLeft(_, _, reason) = events.last else {
+            guard case let .roomOccupantLeft(_, _, reason, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected roomOccupantLeft event")
             }
             #expect(reason == .serviceShutdown)
@@ -970,7 +1042,8 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             let client = try await makeConnectedClient(mock: mock)
             let module = try #require(await client.module(ofType: MUCModule.self))
 
-            try await module.joinRoom(testRoomJID, nickname: "me")
+            // The room confirmed the user's nickname, so a nickname match alone would read as the user's.
+            try await joinConfirmed(module, mock: mock)
 
             // Add occupant
             await mock.simulateReceive("""
@@ -1009,12 +1082,14 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             """)
 
             let events = try await eventsTask.value
-            guard case let .roomOccupantNickChanged(room, oldNickname, occupant) = events.last else {
+            guard case let .roomOccupantNickChanged(room, oldNickname, occupant, isSelf) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected roomOccupantNickChanged event")
             }
             #expect(room == testRoomJID)
             #expect(oldNickname == "oldnick")
             #expect(occupant.nickname == "newnick")
+            #expect(!isSelf)
+            #expect(module.confirmedNickname(in: testRoomJID) == "me")
 
             await disconnectFast(client)
         }

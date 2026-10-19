@@ -81,6 +81,59 @@ enum ChatServiceMUCCorrectionTests {
             #expect(messages[0].isEdited == false)
         }
 
+        /// With `joined`, the room module confirmed the user's nickname and the room stores none. Without it, the
+        /// stored nickname is the only one.
+        @Test(arguments: [false, true])
+        @MainActor
+        func `Only the user's nickname corrects or retracts the user's own room message`(joined: Bool) async throws {
+            let store = makeStore()
+            let transcripts = makeTranscripts()
+            let service = makeChatService(store: store, transcripts: transcripts)
+            var accountID = testAccountID
+            var accountService: AccountService?
+            if joined {
+                let transport = MockTransport()
+                let connected = makeAccountService(store: store, clientFactory: MockXMPPClientFactory(transport: transport, modules: [MUCModule()]))
+                service.setAccountService(connected)
+                let connectTask = Task { @MainActor in
+                    try await connected.createAndConnect(jidString: testJIDString, password: "secret", host: "example.com", port: 5222)
+                }
+                await simulateNoTLSConnect(transport)
+                accountID = try await connectTask.value
+                let muc = try #require(await connected.client(for: accountID)?.module(ofType: MUCModule.self))
+                try await muc.joinRoom(roomJID, nickname: "me")
+                await transport.simulateReceive(
+                    "<presence from='\(roomJID)/me'><x xmlns='http://jabber.org/protocol/muc#user'>"
+                        + "<item affiliation='member' role='participant'/><status code='110'/></x></presence>"
+                )
+                try await eventually { muc.confirmedNickname(in: roomJID) == "me" }
+                accountService = connected
+            }
+            let conversationID = UUID()
+            await store.addConversation(Conversation(
+                id: conversationID, accountID: accountID, jid: roomJID, type: .groupchat, isPinned: false, isMuted: false,
+                unreadCount: 0, roomNickname: joined ? nil : "me", createdAt: Date()
+            ))
+            await transcripts.addMessage(ChatMessage(
+                id: UUID(), conversationID: conversationID, stanzaID: "msg-own", fromJID: "me", body: "Mine",
+                timestamp: Date(), isOutgoing: true, isDelivered: false, isEdited: false, type: "groupchat"
+            ))
+
+            let other = try #require(JID.parse("room@conference.example.com/bob"))
+            let own = try #require(JID.parse("room@conference.example.com/me"))
+            await service.handleEvent(.messageCorrected(originalID: "msg-own", newBody: "Hacked", from: other), accountID: accountID)
+            await service.handleEvent(.messageRetracted(originalID: "msg-own", from: other), accountID: accountID)
+            // Armed: the user's own correction goes through.
+            await service.handleEvent(.messageCorrected(originalID: "msg-own", newBody: "Fixed", from: own), accountID: accountID)
+
+            let amendments = await transcripts.amendments.map(\.amendment)
+            #expect(amendments.map(\.action) == [.edit])
+            #expect(amendments.map(\.body) == ["Fixed"])
+            if let accountService {
+                await accountService.disconnect(accountID: accountID)
+            }
+        }
+
         @Test
         @MainActor
         func `MUC correction rejected when from is bare JID`() async throws {

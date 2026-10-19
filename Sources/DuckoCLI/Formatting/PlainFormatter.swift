@@ -36,6 +36,10 @@ struct PlainFormatter: CLIFormatter {
         return line
     }
 
+    func formatEncryptedMessage(_ message: ChatMessage, accountID: UUID) -> String {
+        formatMessage(message)
+    }
+
     func formatNote(_ note: TimelineNote, contactName: String) -> String {
         "[\(iso8601(note.timestamp))] -- \(note.text(contactName: contactName))"
     }
@@ -106,8 +110,8 @@ struct PlainFormatter: CLIFormatter {
         case let .messageModerated(originalID, moderator, room, reason): formatModeratedMessage(originalID: originalID, moderator: moderator, room: room, reason: reason)
         case let .roomJoined(room, occupancy, isNewlyCreated): formatRoomJoinedMUC(room: room, occupancy: occupancy, isNewlyCreated: isNewlyCreated)
         case let .roomOccupantJoined(room, occupant): "\(room): \(occupant.nickname) joined"
-        case let .roomOccupantLeft(room, occupant, reason): formatOccupantLeftMUC(room: room, occupant: occupant, reason: reason)
-        case let .roomOccupantNickChanged(room, oldNickname, occupant): "\(room): \(oldNickname) is now known as \(occupant.nickname)"
+        case let .roomOccupantLeft(room, occupant, reason, _): formatOccupantLeftMUC(room: room, occupant: occupant, reason: reason)
+        case let .roomOccupantNickChanged(room, oldNickname, occupant, _): "\(room): \(oldNickname) is now known as \(occupant.nickname)"
         case let .roomSubjectChanged(room, subject, setter): formatRoomSubject(room: room, subject: subject, setter: setter)
         case let .roomInviteReceived(invite): formatRoomInviteMUC(invite)
         case let .roomMessageReceived(message): formatIncomingRoomMessage(message)
@@ -131,10 +135,9 @@ struct PlainFormatter: CLIFormatter {
              .blockListLoaded, .contactBlocked, .contactUnblocked:
             nil
         case let .omemoDeviceListReceived(jid, devices): "OMEMO devices for \(jid): \(devices.map(String.init).joined(separator: ", "))"
-        case let .omemoSessionEstablished(jid, deviceID, _): "OMEMO session established with \(jid) device \(deviceID)"
+        case let .omemoSessionEstablished(jid, deviceID, _, _): "OMEMO session established with \(jid) device \(deviceID)"
         case let .omemoRecipientsPartial(conversation, dropped): "OMEMO: skipped \(dropped.count) device(s) for \(conversation) — bundles missing"
-        case let .omemoEncryptedMessageReceived(from, decryptedBody, _, _): formatMessage(liveEncryptedMessage(from: from, body: decryptedBody))
-        case .omemoSessionAdvanced: nil
+        case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
         }
     }
 

@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Add a `self` field to the CLI's JSON output when a room departure or nickname change is your own
+
+### Fixed
+
+- Fix an encrypted message that decrypted on arrival gaining an undecryptable twin after the next archive sync, and show the text of a message stored as undecryptable once another copy of it decrypts
+- Keep contacts able to start encrypted chats with you: replace used one-time keys and publish the change during the session, including after a resumed connection, and erase a used key from storage
+- Ignore a repeated key exchange instead of showing an old encrypted message again, and reject one that names a key Ducko does not have
+- Keep your encryption device when its stored keys cannot be read at sign-in, instead of quietly creating a new one
+- Save the encryption sessions and contact fingerprints learned from messages the server replays after a resumed connection
+- Show a conversation's newest message as its preview, even when an older one arrives later
+- Stop counting your own messages sent from another device as unread
+- Keep unblocking everyone, background-state updates and roster pre-approval working after a resumed connection
+- Use the nickname a room assigns you when you join it
+- Change your nickname when you join a room you are already in under another one, instead of timing out, and finish at once when the nickname is the same
+- Stop another occupant who holds your earlier nickname from changing which room messages count as yours, or from turning off rejoining when they are kicked or renamed
+- Show your role controls in an open room window right after you rejoin under another nickname
+
 ## [0.9.0] - 2026-10-18
 
 ### Added

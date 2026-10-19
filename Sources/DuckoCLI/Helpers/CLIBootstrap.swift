@@ -36,6 +36,13 @@ enum CLIBootstrap {
         )
         // A short-lived command that joined the account's rooms would show everyone in them a join and a leave.
         environment.bookmarksService.autoJoinEnabled = false
+        // Plaintext messages print from their events. An encrypted one prints once stored, which a duplicate never is.
+        environment.chatService.onIncomingMessage = { message, conversation in
+            guard message.isEncrypted, let accountID = conversation.accountID else { return }
+            Task {
+                await eventHandler.handleEncryptedMessage(message, accountID: accountID)
+            }
+        }
 
         return CLIContext(environment: environment)
     }

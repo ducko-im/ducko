@@ -47,7 +47,7 @@ public actor FileTranscriptStore: TranscriptStore {
 
     // MARK: - Write
 
-    public func appendMessage(_ message: ChatMessage) async throws {
+    public func appendMessage(_ message: ChatMessage) throws {
         let dateString = Self.dateString(for: message.timestamp)
         let fileURL = transcriptFileURL(conversationID: message.conversationID, dateString: dateString)
         let record = TranscriptRecord.from(message)
@@ -86,7 +86,7 @@ public actor FileTranscriptStore: TranscriptStore {
         }
     }
 
-    public func appendAmendment(_ amendment: TranscriptAmendment, conversationID: UUID) async throws {
+    public func appendAmendment(_ amendment: TranscriptAmendment, conversationID: UUID) throws {
         // Amendments must land in the SAME daily file as the target message because
         // applyAmendments runs per-file. If the amendment's date differs from the
         // message's date, the per-file stanzaToID map won't resolve the target and
@@ -111,6 +111,36 @@ public actor FileTranscriptStore: TranscriptStore {
     public func appendNote(_ note: TimelineNote) async throws {
         let fileURL = transcriptFileURL(conversationID: note.conversationID, dateString: Self.dateString(for: note.timestamp))
         try appendRecord(TranscriptRecord.from(note), to: fileURL, conversationID: note.conversationID)
+    }
+
+    /// Runs without a suspension between the lookup and the write, so the live and archive paths cannot both store a
+    /// copy of one message.
+    public func storeEncryptedMessage(_ message: ChatMessage, fromArchive: Bool) async throws -> EncryptedMessageStoreOutcome {
+        let conversationID = message.conversationID
+        if let serverID = message.serverID, let stored = try findMessage(serverID: serverID, conversationID: conversationID) {
+            // A server id is the server's to choose, so one that names a message of the other direction upgrades nothing.
+            guard stored.isUndecryptable, !stored.isRetracted, !message.isUndecryptable,
+                  stored.isOutgoing == message.isOutgoing
+            else { return .duplicate }
+            try appendAmendment(
+                TranscriptAmendment(
+                    action: .decrypted, targetMessageID: stored.id, timestamp: Date(),
+                    body: message.body, htmlBody: message.htmlBody
+                ),
+                conversationID: conversationID
+            )
+            return .upgraded(placeholderID: stored.id, timestamp: stored.timestamp)
+        }
+        // A message id restarts with each client, so it is a key only where no server id tells two messages apart.
+        if message.serverID == nil || fromArchive, let stanzaID = message.stanzaID {
+            let matches = try lookupMessage(stanzaID: stanzaID, conversationID: conversationID) { stored in
+                if fromArchive, stored.serverID != nil { return false }
+                return message.isOutgoing ? stored.isOutgoing : !stored.isOutgoing && stored.fromJID == message.fromJID
+            }
+            if matches != nil { return .duplicate }
+        }
+        try appendMessage(message)
+        return .inserted
     }
 
     /// Locates the date file containing the amendment's target message within `conversationID`.
@@ -241,16 +271,7 @@ public actor FileTranscriptStore: TranscriptStore {
     }
 
     public func findMessage(stanzaID: String, conversationID: UUID) async throws -> ChatMessage? {
-        // Fast path: check stanza index to read only one file.
-        if let dateString = stanzaIndex[conversationID]?[stanzaID] {
-            let fileURL = transcriptFileURL(conversationID: conversationID, dateString: dateString)
-            let messages = try readAndMaterialize(fileURL: fileURL, conversationID: conversationID)
-            if let match = messages.first(where: { $0.stanzaID == stanzaID }) {
-                return match
-            }
-        }
-        // Slow path: scan all date files
-        return try findMessage(in: conversationID) { $0.stanzaID == stanzaID }
+        try lookupMessage(stanzaID: stanzaID, conversationID: conversationID) { _ in true }
     }
 
     public func findMessages(stanzaID: String, conversationID: UUID) async throws -> [ChatMessage] {
@@ -265,7 +286,7 @@ public actor FileTranscriptStore: TranscriptStore {
         return matches
     }
 
-    public func findMessage(serverID: String, conversationID: UUID) async throws -> ChatMessage? {
+    public func findMessage(serverID: String, conversationID: UUID) throws -> ChatMessage? {
         // Fast path: check server index to read only one file.
         if let dateString = serverIndex[conversationID]?[serverID] {
             let fileURL = transcriptFileURL(conversationID: conversationID, dateString: dateString)
@@ -283,24 +304,30 @@ public actor FileTranscriptStore: TranscriptStore {
     }
 
     public func messageExists(serverID: String, conversationID: UUID) async throws -> Bool {
-        try await findMessage(serverID: serverID, conversationID: conversationID) != nil
+        try findMessage(serverID: serverID, conversationID: conversationID) != nil
     }
 
     public func messageExists(stanzaID: String, fromJID: String, conversationID: UUID) async throws -> Bool {
         // Inbound-only dedup: outgoing 1:1 rows persist `fromJID` as the RECIPIENT (so carbons can find them), so
         // omitting `!isOutgoing` would let an inbound from bob alias an outgoing alice→bob row and be dropped.
-        // The stanza index holds one day per stanzaID, so a miss there falls through to the per-file scan.
-        let predicate: (ChatMessage) -> Bool = { msg in
-            !msg.isOutgoing && msg.stanzaID == stanzaID && msg.fromJID == fromJID
-        }
+        try lookupMessage(stanzaID: stanzaID, conversationID: conversationID) { msg in
+            !msg.isOutgoing && msg.fromJID == fromJID
+        } != nil
+    }
+
+    /// The message stored under `stanzaID` that also satisfies `predicate`. The stanza index holds one day per stanzaID,
+    /// so a miss there falls through to the per-file scan.
+    private func lookupMessage(
+        stanzaID: String, conversationID: UUID, where predicate: (ChatMessage) -> Bool
+    ) throws -> ChatMessage? {
+        let matches: (ChatMessage) -> Bool = { $0.stanzaID == stanzaID && predicate($0) }
         if let dateString = stanzaIndex[conversationID]?[stanzaID] {
             let fileURL = transcriptFileURL(conversationID: conversationID, dateString: dateString)
-            let messages = try readAndMaterialize(fileURL: fileURL, conversationID: conversationID)
-            if messages.contains(where: predicate) {
-                return true
+            if let match = try readAndMaterialize(fileURL: fileURL, conversationID: conversationID).first(where: matches) {
+                return match
             }
         }
-        return try findMessage(in: conversationID, where: predicate) != nil
+        return try findMessage(in: conversationID, where: matches)
     }
 
     // MARK: - Days
@@ -538,6 +565,13 @@ public actor FileTranscriptStore: TranscriptStore {
                 msg.isDisplayed = true
             case .error:
                 msg.errorText = amendment.errorText
+            case .decrypted:
+                msg.isUndecryptable = false
+                // A retraction keeps the message gone, and a correction's text is the newer one.
+                if !msg.isRetracted, !msg.isEdited {
+                    msg.body = amendment.body ?? ""
+                    msg.htmlBody = amendment.htmlBody
+                }
             }
 
             messages[targetID] = msg

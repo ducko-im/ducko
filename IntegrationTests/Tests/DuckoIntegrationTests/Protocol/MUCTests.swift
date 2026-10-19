@@ -69,7 +69,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 try await bobMUC.leaveRoom(roomJID)
 
                 _ = try await alice.waitForEvent { event in
-                    if case let .roomOccupantLeft(room, occupant, _) = event,
+                    if case let .roomOccupantLeft(room, occupant, _, _) = event,
                        room == roomJID, occupant.nickname == "bob" {
                         return true
                     }
@@ -109,7 +109,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 try await probeMUC.leaveRoom(roomJID)
                 _ = try await alice.waitForEvent { event in
-                    if case let .roomOccupantLeft(room, occupant, _) = event, room == roomJID, occupant.nickname == "probe" {
+                    if case let .roomOccupantLeft(room, occupant, _, _) = event, room == roomJID, occupant.nickname == "probe" {
                         return true
                     }
                     return false
@@ -176,7 +176,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 try await aliceMUC.changeNickname(in: roomJID, to: newNick)
 
                 _ = try await alice.waitForEvent { event in
-                    if case let .roomOccupantNickChanged(room, _, occupant) = event,
+                    if case let .roomOccupantNickChanged(room, _, occupant, _) = event,
                        room == roomJID, occupant.nickname == newNick {
                         return true
                     }
@@ -306,7 +306,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 )
 
                 let kickReason = try await bob.waitForEvent(extracting: { event -> String? in
-                    if case let .roomOccupantLeft(room, occupant, reason) = event,
+                    if case let .roomOccupantLeft(room, occupant, reason, _) = event,
                        room == roomJID, occupant.nickname == "bob",
                        case let .kicked(extractedReason?) = reason {
                         return extractedReason
@@ -338,7 +338,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 )
 
                 let banReason = try await bob.waitForEvent(extracting: { event -> String? in
-                    if case let .roomOccupantLeft(room, occupant, reason) = event,
+                    if case let .roomOccupantLeft(room, occupant, reason, _) = event,
                        room == roomJID, occupant.nickname == "bob",
                        case let .banned(extractedReason?) = reason {
                         return extractedReason

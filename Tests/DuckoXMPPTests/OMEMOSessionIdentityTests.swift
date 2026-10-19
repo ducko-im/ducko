@@ -44,6 +44,42 @@ extension OMEMOModuleTests {
             await mock.simulateDisconnect()
         }
 
+        @Test func `a key exchange replayed after a resume carries its stanza and records the pre-key it used`() async throws {
+            var message = try await makeKEXMessage(to: recipient, plaintext: "secret")
+            message.setAttribute("id", value: "kex-1")
+            let resumeState = try SMResumeState(
+                resumptionId: "sm-resume-1", incomingCounter: 0, outgoingCounter: 0, outgoingQueue: [],
+                connectedJID: #require(FullJID.parse("user@example.com/ducko")), location: nil
+            )
+
+            let mock = MockTransport()
+            let sm = StreamManagementModule(previousState: resumeState)
+            let omemo = OMEMOModule(pepModule: PEPModule())
+            omemo.configureIdentity(recipient.data)
+            let client = XMPPClient(
+                domain: "example.com", credentials: .init(username: "user", password: "pass"),
+                transport: mock, requireTLS: false
+            )
+            await client.register(sm)
+            await client.addInterceptor(sm)
+            await client.register(omemo)
+            let received = Task { try await collectEvents(from: client, until: isEncryptedMessage) }
+
+            let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
+            await simulateResumeConnect(mock, resumeResponse: "<resumed xmlns='urn:xmpp:sm:3' previd='sm-resume-1' h='0'/>")
+            try await connectTask.value
+            await mock.simulateReceive(message.xmlString)
+
+            guard case let .omemoEncryptedMessageReceived(stanza, _, _) = try await received.value.last else {
+                Issue.record("Expected an encrypted message")
+                return
+            }
+            #expect(stanza.id == "kex-1")
+            #expect(omemo.consumedPreKeyIDs() == [7])
+
+            await mock.simulateDisconnect()
+        }
+
         @Test func `a fresh session decrypts a message that arrives before the caps presence is sent`() async throws {
             let message = try await makeKEXMessage(to: recipient, plaintext: "secret")
 

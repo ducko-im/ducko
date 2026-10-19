@@ -99,6 +99,8 @@ extension OMEMOModuleError: LocalizedError {
         case .bundleNotFound: "The recipient's encryption keys were not found"
         case .noSession: "No encryption session exists for the sending device"
         case .notForThisDevice: "The message was not encrypted for this device"
+        case .unknownPreKey: "The encrypted message uses a key this device no longer has"
+        case .replayedKeyExchange: "The encrypted message repeats one already received"
         case .invalidKeyData: "The encrypted message contains invalid key data"
         case .invalidHeader: "The encrypted message has an invalid header"
         case .invalidPayload: "The encrypted message has an invalid payload"

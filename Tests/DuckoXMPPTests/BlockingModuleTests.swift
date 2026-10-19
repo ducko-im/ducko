@@ -1,4 +1,5 @@
 import DuckoTestSupport
+import struct os.OSAllocatedUnfairLock
 import Testing
 @testable import DuckoXMPP
 
@@ -231,6 +232,26 @@ enum BlockingModuleTests {
             #expect(module.blockedJIDs == [jid])
 
             await disconnectFast(client)
+        }
+    }
+
+    struct StreamResume {
+        /// A module built for a resumed stream never loaded the list, so it cannot name the contacts an empty unblock
+        /// frees.
+        @Test
+        func `An empty unblock on a resumed stream announces an empty block list`() throws {
+            let module = BlockingModule()
+            let events = OSAllocatedUnfairLock<[XMPPEvent]>(initialState: [])
+            module.setUp(makeStubModuleContext(emitEvent: { event in events.withLock { $0.append(event) } }))
+
+            _ = try module.handleIQ(XMPPIQ(element: stanza("<iq type='set' id='push-1'><unblock xmlns='urn:xmpp:blocking'/></iq>")))
+
+            let emitted = events.withLock { $0 }
+            guard emitted.count == 1, case let .blockListLoaded(jids) = emitted[0] else {
+                Issue.record("Expected one blockListLoaded event, got \(emitted)")
+                return
+            }
+            #expect(jids.isEmpty)
         }
     }
 

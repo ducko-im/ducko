@@ -10,7 +10,6 @@ public final class RosterModule: XMPPModule, Sendable {
         var receipt: UInt64 = 0
         var isActive = true
         var rosterVersionProvider: (@Sendable () -> String?)?
-        var supportsPreApproval: Bool = false
     }
 
     private let state: OSAllocatedUnfairLock<State>
@@ -39,9 +38,7 @@ public final class RosterModule: XMPPModule, Sendable {
 
         let serverFeatures = context.serverStreamFeatures()
         let supportsVersioning = serverFeatures?.child(named: "ver", namespace: XMPPNamespaces.rosterVersioning) != nil
-        let supportsPreApproval = serverFeatures?.child(named: "sub", namespace: XMPPNamespaces.preApproval) != nil
-        state.withLock { $0.supportsPreApproval = supportsPreApproval }
-        if supportsPreApproval {
+        if Self.supportsPreApproval(serverFeatures) {
             log.info("Server supports subscription pre-approval")
         }
 
@@ -70,10 +67,7 @@ public final class RosterModule: XMPPModule, Sendable {
     }
 
     public func handleDisconnect() async {
-        state.withLock {
-            $0.isActive = false
-            $0.supportsPreApproval = false
-        }
+        state.withLock { $0.isActive = false }
     }
 
     public func requestFullRoster(id: String) async throws -> UInt64 {
@@ -250,9 +244,8 @@ public final class RosterModule: XMPPModule, Sendable {
 
     /// Pre-approves a future subscription request (RFC 6121 §3.4).
     public func preApprove(jid: BareJID) async throws {
-        let (context, supported) = state.withLock { ($0.context, $0.supportsPreApproval) }
-        guard let context else { return }
-        guard supported else {
+        guard let context = state.withLock({ $0.context }) else { return }
+        guard Self.supportsPreApproval(context.serverStreamFeatures()) else {
             log.info("Server does not support pre-approval, skipping")
             log.debug("The skipped pre-approval is for \(jid)")
             return
@@ -261,8 +254,13 @@ public final class RosterModule: XMPPModule, Sendable {
         try await context.sendStanza(presence)
     }
 
-    /// Whether the server advertises subscription pre-approval support (RFC 6121 §3.4).
+    /// Whether the server advertises subscription pre-approval support (RFC 6121 §3.4). Read from the stream features
+    /// at call time, which a resumed stream keeps.
     public var supportsPreApproval: Bool {
-        state.withLock { $0.supportsPreApproval }
+        Self.supportsPreApproval(state.withLock { $0.context }?.serverStreamFeatures())
+    }
+
+    private static func supportsPreApproval(_ features: XMLElement?) -> Bool {
+        features?.child(named: "sub", namespace: XMPPNamespaces.preApproval) != nil
     }
 }

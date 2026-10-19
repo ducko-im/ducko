@@ -85,4 +85,17 @@ public struct Conversation: Sendable, Identifiable {
     public var displayTitle: String {
         displayName ?? jid.localPart ?? jid.description
     }
+
+    /// Makes `message` the last message unless the one stored is newer. Dates compare to the second, the precision
+    /// transcripts keep, so a message read back from a transcript ties with itself as it was received. `winsTies`
+    /// settles such a tie.
+    mutating func recordLastMessage(_ message: ChatMessage, winsTies: Bool) {
+        let seconds = { (date: Date) in date.timeIntervalSince1970.rounded(.down) }
+        if let stored = lastMessageDate.map(seconds) {
+            let date = seconds(message.timestamp)
+            guard winsTies ? date >= stored : date > stored else { return }
+        }
+        lastMessageDate = message.timestamp
+        lastMessagePreview = String(message.previewText.prefix(100))
+    }
 }

@@ -297,12 +297,10 @@ public actor AdiumImportService {
     }
 
     private func updateConversationMetadata(state: ContactImportState) async throws {
-        guard let conv = state.conversation, let latestMessage = state.latestMessage,
-              latestMessage.timestamp > (conv.lastMessageDate ?? .distantPast) else { return }
-        let (date, preview) = (latestMessage.timestamp, String(latestMessage.previewText.prefix(100)))
-        try await store.updateConversation(conv.id) {
-            $0.lastMessageDate = date
-            $0.lastMessagePreview = preview
+        guard let conv = state.conversation, let latestMessage = state.latestMessage else { return }
+        // Decided inside the update, as a live message can arrive while the import runs.
+        try await store.updateConversation(conv.id) { conversation in
+            conversation.recordLastMessage(latestMessage, winsTies: false)
         }
     }
 

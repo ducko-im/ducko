@@ -15,6 +15,9 @@ protocol CLIFormatter: Sendable {
     func formatGroupHeader(_ group: ContactGroup) -> String
     func formatError(_ error: any Error) -> String
     func formatEvent(_ event: XMPPEvent, accountID: UUID) -> String?
+    /// An encrypted message as it was stored on arrival, printed the way `history` prints a stored message, except that
+    /// a `/me` line the user sent from another device names the row's sender address rather than the account's.
+    func formatEncryptedMessage(_ message: ChatMessage, accountID: UUID) -> String
     func formatTypingIndicator(from jid: BareJID, state: ChatState) -> String?
     func formatRoom(_ room: DiscoveredRoom) -> String
     func formatRoomParticipant(_ participant: RoomParticipant) -> String
@@ -62,14 +65,6 @@ func jingleProgressState(bytesTransferred: Int64, totalBytes: Int64) -> (progres
     let progress = Double(bytesTransferred) / Double(totalBytes)
     let state = progress < 1.0 ? "transferring" : "finishing"
     return (progress, state)
-}
-
-/// An encrypted message as it arrives, shaped like its stored row so its live line matches the one `history` prints.
-func liveEncryptedMessage(from sender: JID, body: String?) -> ChatMessage {
-    ChatMessage(
-        id: UUID(), conversationID: UUID(), fromJID: sender.bareJID.description, body: body ?? "", timestamp: Date(),
-        isOutgoing: false, isDelivered: true, isEdited: false, type: "chat", isEncrypted: true, isUndecryptable: body == nil
-    )
 }
 
 func omemoFingerprintText(_ device: OMEMODeviceInfo) -> String {

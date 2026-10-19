@@ -514,7 +514,7 @@ DUCKO_PROFILE=<sender-profile> .build/debug/DuckoCLI omemo trust RECEIVER_JID <d
 
 Then run `/encrypt RECEIVER_JID on` and `send RECEIVER_JID <text>` in the sender's REPL.
 
-The receiver's REPL prints an incoming encrypted message as it arrives, and `/history SENDER_JID` shows it again. A decrypted message ends in `[encrypted]`. A failed one reads `error: This message could not be decrypted` in place of its text and is also marked `[encrypted]`. A failed decryption also logs `OMEMO decryption failed: <error>` in the receiver's file log. No message line, live or in the history, and no log line means the message carried no key for the receiver's device, so check the trusted device ID.
+The receiver's REPL prints an incoming encrypted message as it arrives, and `/history SENDER_JID` shows it again. A decrypted message ends in `[encrypted]`. A failed one reads `error: This message could not be decrypted` in place of its text and is also marked `[encrypted]`. A failed decryption also logs a warning in the receiver's file log. It reads `OMEMO key exchange rejected: …` when the sender used a pre-key the receiver no longer has, and `OMEMO decryption failed: <error>` otherwise. A repeated key exchange prints no message line and logs `OMEMO key exchange ignored: …`. No message line, live or in the history, and no log line means the message carried no key for the receiver's device, so check the trusted device ID.
 
 On the test server, a message sent while the receiver is offline reaches it through the archive sync on its next sign-in rather than as a live delivery. That path stores an encrypted message as undecryptable without trying, so this setup cannot check how a live delivery from offline storage decrypts.
 

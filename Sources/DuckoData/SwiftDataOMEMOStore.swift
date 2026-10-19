@@ -21,27 +21,28 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
     }
 
     public func saveIdentity(_ identity: OMEMOStoredIdentity) throws {
-        let accountJID = identity.accountJID
-        var descriptor = FetchDescriptor<OMEMOIdentityRecord>(
-            predicate: #Predicate { $0.accountJID == accountJID }
-        )
-        descriptor.fetchLimit = 1
-
-        if let existing = try modelContext.fetch(descriptor).first {
-            existing.deviceID = Int64(identity.deviceID)
-            existing.identityKeyData = identity.identityKeyData
-            existing.registrationID = Int64(identity.registrationID)
-        } else {
-            let record = OMEMOIdentityRecord(
-                id: UUID(),
-                accountJID: identity.accountJID,
-                deviceID: Int64(identity.deviceID),
-                identityKeyData: identity.identityKeyData,
-                registrationID: Int64(identity.registrationID)
+        try write {
+            let accountJID = identity.accountJID
+            var descriptor = FetchDescriptor<OMEMOIdentityRecord>(
+                predicate: #Predicate { $0.accountJID == accountJID }
             )
-            modelContext.insert(record)
+            descriptor.fetchLimit = 1
+
+            if let existing = try modelContext.fetch(descriptor).first {
+                existing.deviceID = Int64(identity.deviceID)
+                existing.identityKeyData = identity.identityKeyData
+                existing.registrationID = Int64(identity.registrationID)
+            } else {
+                let record = OMEMOIdentityRecord(
+                    id: UUID(),
+                    accountJID: identity.accountJID,
+                    deviceID: Int64(identity.deviceID),
+                    identityKeyData: identity.identityKeyData,
+                    registrationID: Int64(identity.registrationID)
+                )
+                modelContext.insert(record)
+            }
         }
-        try modelContext.save()
     }
 
     // MARK: - Pre-Keys
@@ -61,28 +62,46 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
     }
 
     public func savePreKeys(_ preKeys: [OMEMOStoredPreKey]) throws {
-        for preKey in preKeys {
-            let record = OMEMOPreKeyRecord(
-                id: UUID(),
-                accountJID: preKey.accountJID,
-                keyID: Int64(preKey.keyID),
-                keyData: preKey.keyData,
-                isUsed: preKey.isUsed
-            )
-            modelContext.insert(record)
+        try write {
+            for preKey in preKeys {
+                let record = OMEMOPreKeyRecord(
+                    id: UUID(),
+                    accountJID: preKey.accountJID,
+                    keyID: Int64(preKey.keyID),
+                    keyData: preKey.keyData,
+                    isUsed: preKey.isUsed
+                )
+                modelContext.insert(record)
+            }
         }
-        try modelContext.save()
     }
 
     public func consumePreKey(id: UInt32, accountJID: String) throws {
-        let keyID = Int64(id)
-        var descriptor = FetchDescriptor<OMEMOPreKeyRecord>(
-            predicate: #Predicate { $0.accountJID == accountJID && $0.keyID == keyID }
-        )
-        descriptor.fetchLimit = 1
-        if let record = try modelContext.fetch(descriptor).first {
-            record.isUsed = true
-            try modelContext.save()
+        try write {
+            let keyID = Int64(id)
+            let descriptor = FetchDescriptor<OMEMOPreKeyRecord>(
+                predicate: #Predicate { $0.accountJID == accountJID && $0.keyID == keyID }
+            )
+            let records = try modelContext.fetch(descriptor)
+            guard !records.isEmpty else { return }
+            for record in records {
+                record.isUsed = true
+                record.keyData = Data()
+            }
+        }
+    }
+
+    /// Runs a writer's changes and saves them. Changes left pending by anything that throws, the save included, would
+    /// still show to later fetches and ride along with the next save, so they are rolled back.
+    private func write(_ changes: () throws -> Void) throws {
+        do {
+            try changes()
+            if modelContext.hasChanges {
+                try modelContext.save()
+            }
+        } catch {
+            modelContext.rollback()
+            throw error
         }
     }
 
@@ -104,29 +123,30 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
     }
 
     public func saveSignedPreKey(_ key: OMEMOStoredSignedPreKey) throws {
-        let accountJID = key.accountJID
-        var descriptor = FetchDescriptor<OMEMOSignedPreKeyRecord>(
-            predicate: #Predicate { $0.accountJID == accountJID }
-        )
-        descriptor.fetchLimit = 1
-
-        if let existing = try modelContext.fetch(descriptor).first {
-            existing.keyID = Int64(key.keyID)
-            existing.keyData = key.keyData
-            existing.signature = key.signature
-            existing.timestamp = key.timestamp
-        } else {
-            let record = OMEMOSignedPreKeyRecord(
-                id: UUID(),
-                accountJID: key.accountJID,
-                keyID: Int64(key.keyID),
-                keyData: key.keyData,
-                signature: key.signature,
-                timestamp: key.timestamp
+        try write {
+            let accountJID = key.accountJID
+            var descriptor = FetchDescriptor<OMEMOSignedPreKeyRecord>(
+                predicate: #Predicate { $0.accountJID == accountJID }
             )
-            modelContext.insert(record)
+            descriptor.fetchLimit = 1
+
+            if let existing = try modelContext.fetch(descriptor).first {
+                existing.keyID = Int64(key.keyID)
+                existing.keyData = key.keyData
+                existing.signature = key.signature
+                existing.timestamp = key.timestamp
+            } else {
+                let record = OMEMOSignedPreKeyRecord(
+                    id: UUID(),
+                    accountJID: key.accountJID,
+                    keyID: Int64(key.keyID),
+                    keyData: key.keyData,
+                    signature: key.signature,
+                    timestamp: key.timestamp
+                )
+                modelContext.insert(record)
+            }
         }
-        try modelContext.save()
     }
 
     // MARK: - Sessions
@@ -147,62 +167,64 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
     }
 
     public func saveSession(_ session: OMEMOStoredSession) throws {
-        let accountJID = session.accountJID
-        let peerJID = session.peerJID
-        let peerDeviceID = Int64(session.peerDeviceID)
-        var descriptor = FetchDescriptor<OMEMOSessionRecord>(
-            predicate: #Predicate {
-                $0.accountJID == accountJID && $0.peerJID == peerJID && $0.peerDeviceID == peerDeviceID
-            }
-        )
-        descriptor.fetchLimit = 1
-
-        if let existing = try modelContext.fetch(descriptor).first {
-            existing.sessionData = session.sessionData
-            existing.associatedData = session.associatedData
-            existing.updatedAt = Date()
-        } else {
-            let record = OMEMOSessionRecord(
-                id: UUID(),
-                accountJID: session.accountJID,
-                peerJID: session.peerJID,
-                peerDeviceID: peerDeviceID,
-                sessionData: session.sessionData,
-                associatedData: session.associatedData
+        try write {
+            let accountJID = session.accountJID
+            let peerJID = session.peerJID
+            let peerDeviceID = Int64(session.peerDeviceID)
+            var descriptor = FetchDescriptor<OMEMOSessionRecord>(
+                predicate: #Predicate {
+                    $0.accountJID == accountJID && $0.peerJID == peerJID && $0.peerDeviceID == peerDeviceID
+                }
             )
-            modelContext.insert(record)
+            descriptor.fetchLimit = 1
+
+            if let existing = try modelContext.fetch(descriptor).first {
+                existing.sessionData = session.sessionData
+                existing.associatedData = session.associatedData
+                existing.updatedAt = Date()
+            } else {
+                let record = OMEMOSessionRecord(
+                    id: UUID(),
+                    accountJID: session.accountJID,
+                    peerJID: session.peerJID,
+                    peerDeviceID: peerDeviceID,
+                    sessionData: session.sessionData,
+                    associatedData: session.associatedData
+                )
+                modelContext.insert(record)
+            }
         }
-        try modelContext.save()
     }
 
     // MARK: - Trust
 
     public func saveTrust(_ trust: OMEMOTrust) throws {
-        let accountJID = trust.accountJID
-        let peerJID = trust.peerJID
-        let deviceID = Int64(trust.deviceID)
-        var descriptor = FetchDescriptor<OMEMOTrustRecord>(
-            predicate: #Predicate {
-                $0.accountJID == accountJID && $0.peerJID == peerJID && $0.deviceID == deviceID
-            }
-        )
-        descriptor.fetchLimit = 1
-
-        if let existing = try modelContext.fetch(descriptor).first {
-            existing.fingerprint = trust.fingerprint
-            existing.trustLevel = trust.trustLevel.rawValue
-        } else {
-            let record = OMEMOTrustRecord(
-                id: UUID(),
-                accountJID: trust.accountJID,
-                peerJID: trust.peerJID,
-                deviceID: deviceID,
-                fingerprint: trust.fingerprint,
-                trustLevel: trust.trustLevel.rawValue
+        try write {
+            let accountJID = trust.accountJID
+            let peerJID = trust.peerJID
+            let deviceID = Int64(trust.deviceID)
+            var descriptor = FetchDescriptor<OMEMOTrustRecord>(
+                predicate: #Predicate {
+                    $0.accountJID == accountJID && $0.peerJID == peerJID && $0.deviceID == deviceID
+                }
             )
-            modelContext.insert(record)
+            descriptor.fetchLimit = 1
+
+            if let existing = try modelContext.fetch(descriptor).first {
+                existing.fingerprint = trust.fingerprint
+                existing.trustLevel = trust.trustLevel.rawValue
+            } else {
+                let record = OMEMOTrustRecord(
+                    id: UUID(),
+                    accountJID: trust.accountJID,
+                    peerJID: trust.peerJID,
+                    deviceID: deviceID,
+                    fingerprint: trust.fingerprint,
+                    trustLevel: trust.trustLevel.rawValue
+                )
+                modelContext.insert(record)
+            }
         }
-        try modelContext.save()
     }
 
     public func loadTrust(accountJID: String, peerJID: String, deviceID: UInt32) throws -> OMEMOTrust? {
@@ -239,16 +261,17 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
     }
 
     public func deleteTrust(accountJID: String, peerJID: String, deviceID: UInt32) throws {
-        let deviceIDInt = Int64(deviceID)
-        var descriptor = FetchDescriptor<OMEMOTrustRecord>(
-            predicate: #Predicate {
-                $0.accountJID == accountJID && $0.peerJID == peerJID && $0.deviceID == deviceIDInt
+        try write {
+            let deviceIDInt = Int64(deviceID)
+            var descriptor = FetchDescriptor<OMEMOTrustRecord>(
+                predicate: #Predicate {
+                    $0.accountJID == accountJID && $0.peerJID == peerJID && $0.deviceID == deviceIDInt
+                }
+            )
+            descriptor.fetchLimit = 1
+            if let record = try modelContext.fetch(descriptor).first {
+                modelContext.delete(record)
             }
-        )
-        descriptor.fetchLimit = 1
-        if let record = try modelContext.fetch(descriptor).first {
-            modelContext.delete(record)
-            try modelContext.save()
         }
     }
 
@@ -270,7 +293,26 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
     }
 
     public func upsertSeenDevices(_ devices: [OMEMOStoredSeenDevice], for accountJID: String) throws {
-        guard !devices.isEmpty else { return }
+        try write {
+            try upsertSeenDeviceRows(devices, for: accountJID)
+        }
+    }
+
+    public func replaceSeenDevices(_ devices: [OMEMOStoredSeenDevice], for accountJID: String) throws {
+        try write {
+            let keepIDs = Set(devices.map { Int64($0.deviceID) })
+            let descriptor = FetchDescriptor<OMEMOSeenDeviceRecord>(
+                predicate: #Predicate { $0.accountJID == accountJID }
+            )
+            for existing in try modelContext.fetch(descriptor) where !keepIDs.contains(existing.deviceID) {
+                modelContext.delete(existing)
+            }
+            // "replace = delete absent + upsert present" — reuse the upsert path so row state is shared.
+            try upsertSeenDeviceRows(devices, for: accountJID)
+        }
+    }
+
+    private func upsertSeenDeviceRows(_ devices: [OMEMOStoredSeenDevice], for accountJID: String) throws {
         for device in devices {
             let deviceIDInt = Int64(device.deviceID)
             var descriptor = FetchDescriptor<OMEMOSeenDeviceRecord>(
@@ -295,57 +337,33 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
                 modelContext.insert(record)
             }
         }
-        try modelContext.save()
-    }
-
-    public func replaceSeenDevices(_ devices: [OMEMOStoredSeenDevice], for accountJID: String) throws {
-        let keepIDs = Set(devices.map { Int64($0.deviceID) })
-        let descriptor = FetchDescriptor<OMEMOSeenDeviceRecord>(
-            predicate: #Predicate { $0.accountJID == accountJID }
-        )
-        var deletedAny = false
-        for existing in try modelContext.fetch(descriptor) where !keepIDs.contains(existing.deviceID) {
-            modelContext.delete(existing)
-            deletedAny = true
-        }
-        if devices.isEmpty {
-            // `upsertSeenDevices` early-returns on empty input without
-            // saving, so the pending deletes above would never persist.
-            // Save here to keep the "wholesale replace" contract holding
-            // even for the empty-baseline case used by the bypass-defense
-            // empty-peer-list path.
-            if deletedAny {
-                try modelContext.save()
-            }
-            return
-        }
-        // "replace = delete absent + upsert present" — reuse the upsert path so row state is shared.
-        try upsertSeenDevices(devices, for: accountJID)
     }
 
     public func purgeSeenDevices(for accountJID: String) throws {
-        let descriptor = FetchDescriptor<OMEMOSeenDeviceRecord>(
-            predicate: #Predicate { $0.accountJID == accountJID }
-        )
-        for record in try modelContext.fetch(descriptor) {
-            modelContext.delete(record)
+        try write {
+            let descriptor = FetchDescriptor<OMEMOSeenDeviceRecord>(
+                predicate: #Predicate { $0.accountJID == accountJID }
+            )
+            for record in try modelContext.fetch(descriptor) {
+                modelContext.delete(record)
+            }
         }
-        try modelContext.save()
     }
 
     // MARK: - Session Deletion
 
     public func deleteSession(accountJID: String, peerJID: String, peerDeviceID: UInt32) throws {
-        let peerDeviceIDInt = Int64(peerDeviceID)
-        var descriptor = FetchDescriptor<OMEMOSessionRecord>(
-            predicate: #Predicate {
-                $0.accountJID == accountJID && $0.peerJID == peerJID && $0.peerDeviceID == peerDeviceIDInt
+        try write {
+            let peerDeviceIDInt = Int64(peerDeviceID)
+            var descriptor = FetchDescriptor<OMEMOSessionRecord>(
+                predicate: #Predicate {
+                    $0.accountJID == accountJID && $0.peerJID == peerJID && $0.peerDeviceID == peerDeviceIDInt
+                }
+            )
+            descriptor.fetchLimit = 1
+            if let record = try modelContext.fetch(descriptor).first {
+                modelContext.delete(record)
             }
-        )
-        descriptor.fetchLimit = 1
-        if let record = try modelContext.fetch(descriptor).first {
-            modelContext.delete(record)
-            try modelContext.save()
         }
     }
 }

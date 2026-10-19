@@ -67,14 +67,14 @@ struct IncomingAttentionTests {
         #expect(attention == IncomingAttention(opensChatQuietly: false, notifies: true))
     }
 
-    @Test func `the user's own message opens no chat`() {
+    @Test func `the user's own message from another device opens no chat and posts no notification`() {
         let conversation = Self.makeConversation()
 
         let attention = IncomingAttention.forMessage(
             Self.makeMessage(in: conversation, isOutgoing: true), in: conversation, isFromRosterContact: true, isInView: false
         )
 
-        #expect(!attention.opensChatQuietly)
+        #expect(attention == IncomingAttention())
     }
 
     @Test func `a muted chat's message does nothing`() {

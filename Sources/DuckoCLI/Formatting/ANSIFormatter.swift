@@ -51,6 +51,10 @@ struct ANSIFormatter: CLIFormatter {
         return line
     }
 
+    func formatEncryptedMessage(_ message: ChatMessage, accountID: UUID) -> String {
+        formatMessage(message)
+    }
+
     func formatNote(_ note: TimelineNote, contactName: String) -> String {
         "\(Color.dim)[\(iso8601(note.timestamp))] -- \(note.text(contactName: contactName))\(Color.reset)"
     }
@@ -131,8 +135,8 @@ struct ANSIFormatter: CLIFormatter {
         case let .messageModerated(originalID, moderator, room, reason): formatModeratedMessage(originalID: originalID, moderator: moderator, room: room, reason: reason)
         case let .roomJoined(room, occupancy, isNewlyCreated): formatRoomJoinedMUC(room: room, occupancy: occupancy, isNewlyCreated: isNewlyCreated)
         case let .roomOccupantJoined(room, occupant): "\(Color.yellow)\(room): \(occupant.nickname) joined\(Color.reset)"
-        case let .roomOccupantLeft(room, occupant, reason): formatOccupantLeftMUC(room: room, occupant: occupant, reason: reason)
-        case let .roomOccupantNickChanged(room, oldNickname, occupant): "\(Color.yellow)\(room): \(oldNickname) is now known as \(occupant.nickname)\(Color.reset)"
+        case let .roomOccupantLeft(room, occupant, reason, _): formatOccupantLeftMUC(room: room, occupant: occupant, reason: reason)
+        case let .roomOccupantNickChanged(room, oldNickname, occupant, _): "\(Color.yellow)\(room): \(oldNickname) is now known as \(occupant.nickname)\(Color.reset)"
         case let .roomSubjectChanged(room, subject, setter): formatRoomSubject(room: room, subject: subject, setter: setter)
         case let .roomInviteReceived(invite): formatRoomInviteMUC(invite)
         case let .roomMessageReceived(message): formatIncomingRoomMessage(message)
@@ -145,10 +149,9 @@ struct ANSIFormatter: CLIFormatter {
         case let .jingleFileTransferFailed(sid, reason): formatJingleTransferFailed(sid: sid, reason: reason)
         case let .oobIQOfferReceived(offer): formatOOBOffer(offer: offer)
         case let .omemoDeviceListReceived(jid, devices): "\(Color.dim)OMEMO devices for \(jid): \(devices.map(String.init).joined(separator: ", "))\(Color.reset)"
-        case let .omemoSessionEstablished(jid, deviceID, _): "\(Color.green)OMEMO session established with \(jid) device \(deviceID)\(Color.reset)"
+        case let .omemoSessionEstablished(jid, deviceID, _, _): "\(Color.green)OMEMO session established with \(jid) device \(deviceID)\(Color.reset)"
         case let .omemoRecipientsPartial(conversation, dropped): "\(Color.yellow)⚠ OMEMO: skipped \(dropped.count) device(s) for \(conversation) — bundles missing\(Color.reset)"
-        case let .omemoEncryptedMessageReceived(from, decryptedBody, _, _): formatMessage(liveEncryptedMessage(from: from, body: decryptedBody))
-        case .omemoSessionAdvanced: nil
+        case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
         case let .serviceOutageReceived(info): formatOutageEvent(info)
         case .presenceReceived, .iqReceived,
              .rosterUpdated,

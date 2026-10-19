@@ -576,7 +576,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             #expect(translated as? OMEMOModuleError == .bundleNotFound)
         }
 
-        @Test func `Invalid stored identity key fails connect with a cryptographic failure`() async throws {
+        @Test func `Invalid stored identity key leaves the connection up without generating a device`() async throws {
             let mock = MockTransport()
             let pepModule = PEPModule()
             let omemoModule = OMEMOModule(pepModule: pepModule)
@@ -599,10 +599,12 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             await simulateNoTLSConnect(mock)
+            try await connectTask.value
 
-            await #expect(throws: OMEMOModuleError.cryptographicFailure("The encryption keys are invalid or unusable")) {
-                try await connectTask.value
-            }
+            #expect(omemoModule.ownIdentityData == nil)
+            // Only the four handshake stanzas: no device list read, no publish.
+            #expect(await mock.sentBytes.count == 4)
+            await disconnectFast(client)
         }
 
         @Test func `Peer bundle with an invalid signature fails encrypt with a cryptographic failure`() async throws {
@@ -1600,7 +1602,7 @@ private func makeModule() -> OMEMOModule {
 /// these directly instead of indexing into post-handshake `mock.sentBytes`
 /// offsets. The own device-list retrieve IQ is consumed during connect and not
 /// surfaced — add it here if a future test needs to inspect it.
-private struct OMEMOConnectArtifacts {
+struct OMEMOConnectArtifacts {
     let deviceListPublishIQ: [UInt8]
     let bundlePublishIQ: [UInt8]
 }
@@ -1612,7 +1614,7 @@ private struct OMEMOConnectArtifacts {
 /// publish IQ byte buffers (device-list publish, bundle publish) are returned
 /// via `OMEMOConnectArtifacts`. The own-device-list retrieve IQ is consumed
 /// in-place and not surfaced.
-private func makeConnectedClient(
+func makeConnectedClient(
     mock: MockTransport,
     omemoModule: OMEMOModule,
     pepModule: PEPModule
@@ -1716,7 +1718,7 @@ private func makeValidBundleResultIQ(
 /// Builds a `<iq type='result'>` carrying the bundle for `identity`'s real keys, so a KEX encrypted to it
 /// is decryptable by a module configured with the same identity — unlike `makeValidBundleResultIQ`, whose
 /// throwaway keys discard the private halves the responder needs.
-private func makeBundleResultIQ(
+func makeBundleResultIQ(
     iqID: String, fromJID: BareJID, identity: TestOMEMOIdentity, module: OMEMOModule
 ) -> String {
     let bundle = OMEMOPreKeyManager.buildBundle(
@@ -1768,7 +1770,7 @@ func isEncryptedMessage(_ event: XMPPEvent) -> Bool {
 
 /// The decrypted body of the last event, which `isEncryptedMessage` ends the collection on.
 func decryptedBody(in events: [XMPPEvent]) -> String? {
-    guard case let .omemoEncryptedMessageReceived(_, body, _, _) = events.last else { return nil }
+    guard case let .omemoEncryptedMessageReceived(_, body, _) = events.last else { return nil }
     return body
 }
 

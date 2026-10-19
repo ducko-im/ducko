@@ -89,18 +89,12 @@ public final class BlockingModule: XMPPModule, Sendable {
             return BareJID.parse(jidStr)
         }
 
-        // XEP-0191 §3.6: Empty <unblock/> clears the entire block list.
+        // XEP-0191 §3.6: Empty <unblock/> clears the entire block list. Announced as an empty list rather than per contact,
+        // since a module built for a resumed stream never loaded the list it would name them from.
         if !isBlock, jids.isEmpty {
-            let previouslyBlocked = state.withLock { state -> [BareJID] in
-                let all = Array(state.blockedJIDs)
-                state.blockedJIDs.removeAll()
-                return all
-            }
-            for jid in previouslyBlocked {
-                log.info("Contact unblocked")
-                log.debug("The unblocked contact is \(jid)")
-                context.emitEvent(.contactUnblocked(jid))
-            }
+            state.withLock { $0.blockedJIDs.removeAll() }
+            log.info("Block list cleared")
+            context.emitEvent(.blockListLoaded([]))
             return
         }
 

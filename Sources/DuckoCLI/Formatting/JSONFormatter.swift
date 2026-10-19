@@ -12,6 +12,10 @@ struct JSONFormatter: CLIFormatter {
     // MARK: - CLIFormatter
 
     func formatMessage(_ message: ChatMessage, accountJID: BareJID? = nil) -> String {
+        encode(messageFields(message, accountJID: accountJID))
+    }
+
+    private func messageFields(_ message: ChatMessage, accountJID: BareJID?) -> [String: String] {
         var dict: [String: String] = [
             "type": "message",
             "direction": message.isOutgoing ? "outgoing" : "incoming",
@@ -47,7 +51,7 @@ struct JSONFormatter: CLIFormatter {
         if !extraAttachments.isEmpty {
             dict["attachments"] = extraAttachments.map(\.url).joined(separator: ",")
         }
-        return encode(dict)
+        return dict
     }
 
     func formatNote(_ note: TimelineNote, contactName: String) -> String {
@@ -185,8 +189,8 @@ struct JSONFormatter: CLIFormatter {
         case let .messageModerated(originalID, moderator, room, reason): formatModeratedMessage(originalID: originalID, moderator: moderator, room: room, reason: reason, account: account)
         case let .roomJoined(room, occupancy, isNewlyCreated): formatRoomJoinedEvent(room: room, occupancy: occupancy, isNewlyCreated: isNewlyCreated, account: account)
         case let .roomOccupantJoined(room, occupant): encode(["type": "room_occupant_joined", "room": room.description, "nickname": occupant.nickname, "account": account])
-        case let .roomOccupantLeft(room, occupant, reason): formatOccupantLeftEvent(room: room, occupant: occupant, reason: reason, account: account)
-        case let .roomOccupantNickChanged(room, oldNickname, occupant): encode(["type": "room_nick_changed", "room": room.description, "old_nickname": oldNickname, "new_nickname": occupant.nickname, "account": account])
+        case let .roomOccupantLeft(room, occupant, reason, isSelf): formatOccupantLeftEvent(room: room, occupant: occupant, reason: reason, isSelf: isSelf, account: account)
+        case let .roomOccupantNickChanged(room, old, occupant, isSelf): formatNickChangedEvent(room: room, oldNickname: old, occupant: occupant, isSelf: isSelf, account: account)
         case let .roomSubjectChanged(room, subject, setter): formatRoomSubjectEvent(room: room, subject: subject, setter: setter, account: account)
         case let .roomInviteReceived(invite): formatRoomInvite(invite: invite, account: account)
         case let .roomMessageReceived(message): formatIncomingRoomMessage(message, account: account)
@@ -210,10 +214,9 @@ struct JSONFormatter: CLIFormatter {
              .blockListLoaded, .contactBlocked, .contactUnblocked:
             nil
         case let .omemoDeviceListReceived(jid, devices): encode(["type": "omemo_device_list", "jid": jid.description, "devices": devices.map(String.init).joined(separator: ","), "account": account])
-        case let .omemoSessionEstablished(jid, deviceID, identityKey): formatOMEMOSession(jid: jid, deviceID: deviceID, identityKey: identityKey, account: account)
+        case let .omemoSessionEstablished(jid, deviceID, identityKey, _): formatOMEMOSession(jid: jid, deviceID: deviceID, identityKey: identityKey, account: account)
         case let .omemoRecipientsPartial(conversation, dropped): formatOMEMORecipientsPartial(conversation: conversation, dropped: dropped, account: account)
-        case let .omemoEncryptedMessageReceived(from, decryptedBody, _, _): formatEncryptedMessage(from: from, body: decryptedBody, account: account)
-        case .omemoSessionAdvanced: nil
+        case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
         }
     }
 
@@ -342,12 +345,9 @@ struct JSONFormatter: CLIFormatter {
         return encode(dict)
     }
 
-    private func formatEncryptedMessage(from: JID, body: String?, account: String) -> String {
-        var dict = incomingMessageFields(from: from.bareJID, body: body ?? "", account: account)
-        dict["encrypted"] = "true"
-        if body == nil {
-            dict["undecryptable"] = "true"
-        }
+    func formatEncryptedMessage(_ message: ChatMessage, accountID: UUID) -> String {
+        var dict = messageFields(message, accountJID: nil)
+        dict["account"] = accountID.uuidString
         return encode(dict)
     }
 
@@ -519,13 +519,27 @@ struct JSONFormatter: CLIFormatter {
         return encode(dict)
     }
 
-    private func formatOccupantLeftEvent(room: BareJID, occupant: RoomOccupant, reason: OccupantLeaveReason?, account: String) -> String {
+    private func formatNickChangedEvent(room: BareJID, oldNickname: String, occupant: RoomOccupant, isSelf: Bool, account: String) -> String {
+        var dict = [
+            "type": "room_nick_changed", "room": room.description, "old_nickname": oldNickname,
+            "new_nickname": occupant.nickname, "account": account
+        ]
+        if isSelf {
+            dict["self"] = "true"
+        }
+        return encode(dict)
+    }
+
+    private func formatOccupantLeftEvent(room: BareJID, occupant: RoomOccupant, reason: OccupantLeaveReason?, isSelf: Bool, account: String) -> String {
         var dict: [String: String] = [
             "type": "room_occupant_left",
             "room": room.description,
             "nickname": occupant.nickname,
             "account": account
         ]
+        if isSelf {
+            dict["self"] = "true"
+        }
         switch reason {
         case let .kicked(r):
             dict["leave_reason"] = "kicked"

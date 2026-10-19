@@ -11,34 +11,6 @@ private func makeOMEMOService(store: MockOMEMOStore) -> OMEMOService {
     OMEMOService(omemoStore: store)
 }
 
-private func makeIdentityData(deviceID: UInt32) -> OMEMOModule.OMEMOIdentityData {
-    OMEMOModule.OMEMOIdentityData(
-        deviceID: deviceID,
-        identityKeyRaw: Array(repeating: 0xA1, count: 32),
-        signedPreKeyID: 7,
-        signedPreKeyRaw: Array(repeating: 0xB2, count: 32),
-        signedPreKeySignature: Array(repeating: 0xC3, count: 64),
-        preKeys: [
-            OMEMOModule.OMEMOIdentityData.PreKeyData(
-                keyID: 1, keyRaw: Array(repeating: 0xD4, count: 32)
-            )
-        ]
-    )
-}
-
-private struct StubOMEMOIdentityProvider: OMEMOIdentityProviding {
-    let identity: OMEMOModule.OMEMOIdentityData?
-    let consumed: Set<UInt32>
-
-    var ownIdentityData: OMEMOModule.OMEMOIdentityData? {
-        identity
-    }
-
-    func consumedPreKeyIDs() -> Set<UInt32> {
-        consumed
-    }
-}
-
 // MARK: - Tests
 
 enum OMEMOServiceTests {
@@ -52,7 +24,7 @@ enum OMEMOServiceTests {
             await store.seedFromIdentityData(identityData, accountJID: accountJID)
 
             let service = makeOMEMOService(store: store)
-            let stub = StubOMEMOIdentityProvider(identity: identityData, consumed: [])
+            let stub = StubPreKeyModule(identity: identityData, consumed: [])
 
             await service.handleConnectedFirstTimePersistence(
                 provider: stub,
@@ -71,7 +43,7 @@ enum OMEMOServiceTests {
             let store = MockOMEMOStore()
             let accountJID = testAccountJID.description
             let identityData = makeIdentityData(deviceID: 4242)
-            let stub = StubOMEMOIdentityProvider(identity: identityData, consumed: [])
+            let stub = StubPreKeyModule(identity: identityData, consumed: [])
             let service = makeOMEMOService(store: store)
 
             await service.handleConnectedFirstTimePersistence(
@@ -101,46 +73,10 @@ enum OMEMOServiceTests {
 
         @Test
         @MainActor
-        func `marks consumed pre-keys as used`() async throws {
-            let store = MockOMEMOStore()
-            let accountJID = testAccountJID.description
-
-            // Pre-seed identity (so the persistence branch early-returns) plus
-            // three fresh pre-keys to consume against.
-            await store.seedFromIdentityData(makeIdentityData(deviceID: 4242), accountJID: accountJID)
-            await store.seedPreKeys([2, 3].map {
-                OMEMOStoredPreKey(
-                    accountJID: accountJID, keyID: $0,
-                    keyData: Data(Array(repeating: UInt8($0), count: 32)),
-                    isUsed: false
-                )
-            })
-
-            let service = makeOMEMOService(store: store)
-            let stub = StubOMEMOIdentityProvider(
-                identity: makeIdentityData(deviceID: 4242),
-                consumed: [1, 3]
-            )
-
-            await service.handleConnectedFirstTimePersistence(
-                provider: stub,
-                accountJID: accountJID,
-                pollTimeout: .milliseconds(100)
-            )
-
-            let preKeys = try await store.loadPreKeys(for: accountJID)
-            let used = Set(preKeys.filter(\.isUsed).map(\.keyID))
-            let unused = Set(preKeys.filter { !$0.isUsed }.map(\.keyID))
-            #expect(used == [1, 3])
-            #expect(unused == [2])
-        }
-
-        @Test
-        @MainActor
         func `skips persistence when identity never readies`() async {
             let store = MockOMEMOStore()
             let accountJID = testAccountJID.description
-            let stub = StubOMEMOIdentityProvider(identity: nil, consumed: [])
+            let stub = StubPreKeyModule(identity: nil, consumed: [])
             let service = makeOMEMOService(store: store)
 
             let start = ContinuousClock.now
@@ -157,6 +93,43 @@ enum OMEMOServiceTests {
             // Polling exhausts at ~100 ms; allow generous slack for CI variance.
             #expect(elapsed < .milliseconds(500))
         }
+
+        @Test(arguments: [MockOMEMOStore.FailingCall.saveIdentity, .savePreKeys])
+        @MainActor
+        func `stores no keys without the identity, and the signed pre-key without the pre-keys`(
+            failing: MockOMEMOStore.FailingCall
+        ) async {
+            let store = MockOMEMOStore()
+            await store.setFailing(failing)
+            let service = makeOMEMOService(store: store)
+
+            await service.handleConnectedFirstTimePersistence(
+                provider: StubPreKeyModule(identity: makeIdentityData(), consumed: []),
+                accountJID: testAccountJID.description,
+                pollTimeout: .milliseconds(100)
+            )
+
+            #expect(await store.saveIdentityCalls == 1)
+            #expect(await store.savePreKeysCalls == (failing == .saveIdentity ? 0 : 1))
+            #expect(await store.saveSignedPreKeyCalls == (failing == .saveIdentity ? 0 : 1))
+        }
+
+        @Test
+        @MainActor
+        func `skips persistence when the stored identity cannot be read`() async {
+            let store = MockOMEMOStore()
+            await store.setFailing(.loadIdentity)
+            let service = makeOMEMOService(store: store)
+
+            await service.handleConnectedFirstTimePersistence(
+                provider: StubPreKeyModule(identity: makeIdentityData(), consumed: []),
+                accountJID: testAccountJID.description,
+                pollTimeout: .milliseconds(100)
+            )
+
+            #expect(await store.saveIdentityCalls == 0)
+            #expect(await store.savePreKeysCalls == 0)
+        }
     }
 
     struct FailedDecrypt {
@@ -172,7 +145,7 @@ enum OMEMOServiceTests {
             let peer = try #require(BareJID(localPart: "peer", domainPart: "example.com"))
 
             await service.handleEvent(
-                .omemoEncryptedMessageReceived(from: .bare(peer), decryptedBody: nil, senderDeviceID: 0, stanzaID: "omemo-bad"),
+                .omemoEncryptedMessageReceived(message: makeEncryptedStanza(from: .bare(peer), id: "omemo-bad"), decryptedBody: nil, senderDeviceID: 0),
                 accountID: accountID
             )
 
@@ -218,6 +191,7 @@ enum OMEMOServiceTests {
                 let accountService = makeAccountService(store: store)
                 try await accountService.loadAccounts()
                 let chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+                chatService.setAccountService(accountService)
                 let service = makeOMEMOService(store: MockOMEMOStore())
                 service.setAccountService(accountService)
                 service.setChatService(chatService)
@@ -233,7 +207,9 @@ enum OMEMOServiceTests {
 
             func receiveEncrypted(body: String?, stanzaID: String, from sender: BareJID? = nil) async {
                 await service.handleEvent(
-                    .omemoEncryptedMessageReceived(from: .bare(sender ?? peer), decryptedBody: body, senderDeviceID: 0, stanzaID: stanzaID),
+                    .omemoEncryptedMessageReceived(
+                        message: makeEncryptedStanza(from: .bare(sender ?? peer), id: stanzaID), decryptedBody: body, senderDeviceID: 0
+                    ),
                     accountID: accountID
                 )
             }
@@ -342,11 +318,10 @@ enum OMEMOServiceTests {
             // Armed: the switch is stored, so the older copy below disagrees with it.
             try #require(fixture.conversation?.encryptionEnabled == true)
 
-            let late = ChatMessage(
-                id: UUID(), conversationID: fixture.seeded.id, fromJID: fixture.peer.description, body: "late",
-                timestamp: Date(), isOutgoing: false, isDelivered: false, isEdited: false, type: "chat"
+            await fixture.chatService.ingestEncryptedMessage(
+                message: makeEncryptedStanza(from: .bare(fixture.peer), id: "late"), decryptedBody: "late",
+                isOutgoing: false, in: fixture.seeded, accountID: fixture.accountID
             )
-            await fixture.chatService.persistEncryptedMessage(late, in: fixture.seeded, accountID: fixture.accountID)
 
             let conversation = try #require(fixture.conversation)
             #expect(conversation.encryptionEnabled)

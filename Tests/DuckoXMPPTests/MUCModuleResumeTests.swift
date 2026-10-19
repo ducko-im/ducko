@@ -44,16 +44,23 @@ private struct ModuleHarness {
     let module: MUCModule
     private let recorded = OSAllocatedUnfairLock(initialState: [XMPPEvent]())
     private let refusesSends = OSAllocatedUnfairLock(initialState: false)
+    private let sentStanzas = OSAllocatedUnfairLock(initialState: [String]())
 
     var events: [XMPPEvent] {
         recorded.withLock { $0 }
     }
 
+    /// The stanzas the client took, as XML.
+    var sent: [String] {
+        sentStanzas.withLock { $0 }
+    }
+
     init(selfPingInterval: Duration = .seconds(900), resuming: MUCResumeState? = nil, sendIQ: @escaping ModuleContext.IQSender = { _, _ in nil }) {
         self.module = MUCModule(selfPingInterval: selfPingInterval, resuming: resuming)
         module.setUp(makeStubModuleContext(
-            sendStanza: { [refusesSends] _, onAccepted in
+            sendStanza: { [refusesSends, sentStanzas] stanza, onAccepted in
                 if refusesSends.withLock({ $0 }) { throw XMPPClientError.notConnected }
+                sentStanzas.withLock { $0.append(stanza.element.xmlString) }
                 onAccepted?()
             },
             sendIQ: sendIQ,
@@ -177,6 +184,7 @@ enum MUCModuleResumeTests {
             #expect(Set(occupancy.occupants.map(\.nickname)) == ["me", "other"])
             #expect(occupancy.subject == "Topic")
             #expect(occupancy.flags == [.nonAnonymous])
+            #expect(resumed.module.confirmedNickname(in: testRoomJID) == "me")
 
             try resumed.receiveMessage(groupMessage)
             try resumed.receivePresence(occupantPresence("newcomer"))
@@ -212,7 +220,7 @@ enum MUCModuleResumeTests {
             resumed.module.handleSessionEstablished(resumed: true)
             try resumed.receivePresence(occupantPresence("renamed"))
 
-            guard case let .roomOccupantNickChanged(_, oldNickname, occupant) = resumed.events.last else {
+            guard case let .roomOccupantNickChanged(_, oldNickname, occupant, _) = resumed.events.last else {
                 Issue.record("Expected roomOccupantNickChanged, got \(resumed.events)")
                 return
             }
@@ -353,6 +361,111 @@ enum MUCModuleResumeTests {
         }
     }
 
+    /// The room's own confirmation, not a matching nickname, tells the user from another occupant.
+    struct SelfIdentity {
+        @Test
+        func `Another occupant holding the nickname a join asked for leaves without ending the join`() async throws {
+            let harness = ModuleHarness()
+            try await harness.module.joinRoom(testRoomJID, nickname: "me")
+            try harness.receivePresence(occupantPresence("me"))
+            try harness.receivePresence(unavailablePresence(from: "me", statusCodes: []))
+            #expect(harness.module.nickname(in: testRoomJID) == "me")
+
+            try harness.receivePresence(selfPresence)
+
+            #expect(harness.module.confirmedNickname(in: testRoomJID) == "me")
+            #expect(selfFlags(of: harness.events) == [false])
+        }
+
+        @Test
+        func `The room ending a pending join with the user's own departure stops tracking it`() async throws {
+            let harness = ModuleHarness()
+            try await harness.module.joinRoom(testRoomJID, nickname: "me")
+
+            try harness.receivePresence(unavailablePresence(from: "me", statusCodes: ["110", "332"]))
+
+            #expect(harness.module.nickname(in: testRoomJID) == nil)
+            #expect(selfFlags(of: harness.events) == [true])
+        }
+
+        /// XEP-0045's ban and affiliation examples carry no status 110 for the user's own removal.
+        @Test(arguments: [["307", "110"], ["301"], ["321"]])
+        func `The user's own removal ends the stay, with or without status 110`(statusCodes: [String]) async throws {
+            let harness = try await ModuleHarness.joinedSession()
+
+            try harness.receivePresence(unavailablePresence(from: "me", statusCodes: statusCodes))
+
+            #expect(harness.module.nickname(in: testRoomJID) == nil)
+            #expect(selfFlags(of: harness.events) == [true])
+        }
+
+        @Test
+        func `A join under a new nickname to a room the user is in is a nickname change that keeps the room`() async throws {
+            let harness = try await ModuleHarness.joinedSession()
+            #expect(try await harness.module.joinRoom(testRoomJID, nickname: "me2") == .changingNickname)
+            #expect(harness.module.confirmedNickname(in: testRoomJID) == "me")
+            #expect(harness.module.roomOccupancies[testRoomJID]?.subject == "Topic")
+
+            try harness.receivePresence("""
+            <presence type='unavailable' from='room@conference.example.com/me'><x xmlns='http://jabber.org/protocol/muc#user'>\
+            <item affiliation='member' role='participant' nick='me2'/><status code='303'/><status code='110'/></x></presence>
+            """)
+            try harness.receivePresence("""
+            <presence from='room@conference.example.com/me2'><x xmlns='http://jabber.org/protocol/muc#user'>\
+            <item affiliation='member' role='participant'/><status code='110'/></x></presence>
+            """)
+            #expect(harness.module.confirmedNickname(in: testRoomJID) == "me2")
+            #expect(MUCModule(resuming: harness.module.resumeState).confirmedNickname(in: testRoomJID) == "me2")
+            #expect(harness.events.contains { if case .roomOccupantNickChanged(_, _, _, true) = $0 { true } else { false } })
+
+            // A nickname change the room refuses later leaves the joined room as it was.
+            try harness.receivePresence(errorPresence(from: "me3", condition: .conflict))
+            #expect(harness.module.nickname(in: testRoomJID) == "me2")
+        }
+
+        @Test
+        func `A join under the same nickname to a room the user is in keeps it, so the user's own ban is still told`() async throws {
+            let harness = try await ModuleHarness.joinedSession()
+            #expect(try await harness.module.joinRoom(testRoomJID, nickname: "me") == .alreadyJoined)
+            #expect(harness.module.roomOccupancies[testRoomJID]?.occupants.count == 2)
+
+            try harness.receivePresence(unavailablePresence(from: "me", statusCodes: ["301"]))
+
+            #expect(harness.module.nickname(in: testRoomJID) == nil)
+            #expect(selfFlags(of: harness.events) == [true])
+        }
+
+        @Test(arguments: ["me", "me2"])
+        func `A join to a room the user is in keeps a new password for a later fresh rejoin`(nickname: String) async throws {
+            let harness = try await ModuleHarness.joinedSession()
+            try await harness.module.joinRoom(testRoomJID, nickname: nickname, password: "new-secret")
+
+            try await harness.module.rejoinRoom(testRoomJID, nickname: "me")
+
+            #expect(harness.sent.last?.contains("<password>new-secret</password>") == true)
+        }
+
+        @Test
+        func `A fresh rejoin drops what the module kept for the room`() async throws {
+            let harness = try await ModuleHarness.joinedSession()
+
+            try await harness.module.rejoinRoom(testRoomJID, nickname: "me")
+
+            #expect(harness.module.confirmedNickname(in: testRoomJID) == nil)
+            #expect(harness.module.roomOccupancies[testRoomJID]?.occupants.isEmpty == true)
+        }
+
+        private func selfFlags(of events: [XMPPEvent]) -> [Bool] {
+            events.compactMap { if case let .roomOccupantLeft(_, _, _, isSelf) = $0 { isSelf } else { nil } }
+        }
+
+        private func unavailablePresence(from nickname: String, statusCodes: [String]) -> String {
+            let statuses = statusCodes.map { "<status code='\($0)'/>" }.joined()
+            return "<presence type='unavailable' from='room@conference.example.com/\(nickname)'>"
+                + "<x xmlns='http://jabber.org/protocol/muc#user'><item affiliation='none' role='none'/>\(statuses)</x></presence>"
+        }
+    }
+
     struct RefusedPresence {
         @Test
         func `A join the room refuses is no longer tracked and is not carried to a resumed session`() async throws {
@@ -364,6 +477,17 @@ enum MUCModuleResumeTests {
             #expect(harness.module.nickname(in: testRoomJID) == nil)
             #expect(MUCModule(resuming: harness.module.resumeState).nickname(in: testRoomJID) == nil)
             #expect(harness.events.isEmpty)
+        }
+
+        @Test
+        func `A refused join is no longer tracked though another occupant holds the nickname asked for`() async throws {
+            let harness = ModuleHarness()
+            try await harness.module.joinRoom(testRoomJID, nickname: "me")
+            try harness.receivePresence(occupantPresence("me"))
+
+            try harness.receivePresence(errorPresence(from: "me", condition: .registrationRequired))
+
+            #expect(harness.module.nickname(in: testRoomJID) == nil)
         }
 
         @Test

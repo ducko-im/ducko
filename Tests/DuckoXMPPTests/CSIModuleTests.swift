@@ -165,6 +165,26 @@ enum CSIModuleTests {
             try await module.sendInactive()
             #expect(sendCount.withLock { $0 } == 1)
         }
+
+        /// The module built for the resumed stream does not know what the server last heard, so it says active again.
+        @Test
+        func `Sends active after a resume, whatever the state before the drop`() async throws {
+            let module = CSIModule()
+            var features = XMLElement(name: "features", namespace: "http://etherx.jabber.org/streams")
+            features.addChild(XMLElement(name: "csi", namespace: XMPPNamespaces.csi))
+            let csiFeatures = features
+            let sent = OSAllocatedUnfairLock<[String]>(initialState: [])
+            module.setUp(makeStubModuleContext(
+                sendElement: { element in sent.withLock { $0.append(element.name) } },
+                serverStreamFeatures: { csiFeatures }
+            ))
+
+            try await module.handleResume()
+            try await module.sendActive()
+            try await module.sendActive()
+
+            #expect(sent.withLock { $0 } == ["active"])
+        }
     }
 
     struct DiscoFeature {

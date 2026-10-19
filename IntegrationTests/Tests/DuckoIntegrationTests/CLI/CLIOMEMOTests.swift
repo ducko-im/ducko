@@ -1,4 +1,5 @@
 import DuckoCore
+import DuckoXMPP
 import Foundation
 import Testing
 
@@ -94,6 +95,62 @@ extension DuckoIntegrationTests.CLILayer {
                 let output = try await cli.run(["omemo", "untrust", bob, "\(Self.sentinelDeviceID)"])
                 #expect(output.exitCode == 0)
                 #expect(output.stdout.contains("Untrusted device \(Self.sentinelDeviceID) for \(bob)."))
+            }
+        }
+
+        /// Bob writes from the in-process harness, so only alice's side runs in the CLI.
+        @Test(.timeLimit(.minutes(3)))
+        @MainActor func `decrypted message has no undecryptable twin after the next sign-in`() async throws {
+            try await TestHarness.withHarness { harness in
+                try await harness.setUp(accounts: ["bob": TestCredentials.bob], loadOMEMOFixtures: true)
+                let priorTOFU = OMEMOPreferences.shared.trustOnFirstUse
+                OMEMOPreferences.shared.trustOnFirstUse = true
+                harness.addCleanup { await MainActor.run { OMEMOPreferences.shared.trustOnFirstUse = priorTOFU } }
+
+                // Hoisted: the sending `withProcess` closure cannot reach the harness itself.
+                let bob = try #require(harness.accounts["bob"])
+                let bobOMEMO = try await harness.module(OMEMOModule.self, for: "bob")
+                let aliceJID = try harness.jid(for: TestCredentials.alice)
+                let bobJID = TestCredentials.bob.jid
+                let chatService = harness.environment.chatService
+                let knownDevices = try await bobOMEMO.fetchDeviceList(for: aliceJID, forceRefresh: true)
+
+                try await CLIProcess.withProcess { aliceCLI in
+                    // Signed out before the next sign-in, so its teardown runs here rather than at cleanup.
+                    let first = try await REPLSession.start(cli: aliceCLI, credentials: TestCredentials.alice)
+                    let live = "omemo-live-\(UUID().uuidString.prefix(8))"
+                    do {
+                        // The fresh profile published a new device for alice. Bob's encryption reaches it once he knows it.
+                        try await bob.waitForCondition({
+                            let devices = await (try? bobOMEMO.fetchDeviceList(for: aliceJID, forceRefresh: true)) ?? []
+                            return !Set(devices).subtracting(knownDevices).isEmpty
+                        }, timeout: TestTimeout.omemoSession)
+                        let conversation = try await chatService.openConversation(for: aliceJID, accountID: bob.accountID)
+                        try await chatService.setEncryptionEnabled(true, for: conversation.id, accountID: bob.accountID)
+
+                        try await chatService.sendMessage(to: aliceJID, body: live, accountID: bob.accountID)
+                        _ = try await first.waitForOutput(containing: live, timeout: TestTimeout.omemoSession)
+                    } catch {
+                        await first.terminate()
+                        throw error
+                    }
+                    await first.terminate()
+
+                    // Signing in again starts the archive sync, which reads the message back from the archive.
+                    let second = try await REPLSession.start(cli: aliceCLI, credentials: TestCredentials.alice, seedsAccount: false)
+                    await aliceCLI.addCleanup { await second.terminate() }
+                    // Nothing marks the end of the sync, which starts with the initial roster, so it gets a moment to
+                    // settle.
+                    try await Task.sleep(for: .seconds(5))
+
+                    let history = try await aliceCLI.run(["history", bobJID, "--output", "json"])
+                    #expect(history.exitCode == 0)
+                    let rows = history.stdout.split(whereSeparator: \.isNewline).compactMap { line in
+                        try? JSONDecoder().decode([String: String].self, from: Data(line.utf8))
+                    }.filter { $0["type"] == "message" }
+                    #expect(rows.count { $0["body"] == live } == 1)
+                    #expect(!rows.contains { $0["undecryptable"] == "true" })
+                }
             }
         }
 

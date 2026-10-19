@@ -9,14 +9,15 @@ struct IncomingAttention: Equatable {
     var notifies = false
 
     /// Only a roster contact's message in a chat with them alone opens that chat: a stranger, a room and a room's
-    /// occupant do not. `isInView` says the user is looking at the chat, which needs no notification.
+    /// occupant do not. `isInView` says the user is looking at the chat, which needs no notification. The user's own
+    /// message from another device needs none either.
     static func forMessage(
         _ message: ChatMessage, in conversation: Conversation, isFromRosterContact: Bool, isInView: Bool
     ) -> IncomingAttention {
         guard !conversation.isMuted else { return IncomingAttention() }
         return IncomingAttention(
             opensChatQuietly: !message.isOutgoing && conversation.isDirectChat && isFromRosterContact,
-            notifies: !isInView
+            notifies: !message.isOutgoing && !isInView
         )
     }
 

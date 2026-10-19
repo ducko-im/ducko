@@ -63,9 +63,6 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             guard let self else { throw CancellationError() }
             _ = try await findOrCreateGroupConversation(for: room, nickname: nickname, accountID: accountID)
         },
-        conversation: { [weak self] room, accountID in
-            self?.openConversations.first { $0.jid == room && $0.type == .groupchat && $0.accountID == accountID }
-        },
         didUpdateConversation: { [weak self] conversation in self?.updateCachedConversation(conversation) }
     )
 
@@ -148,11 +145,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// A full `from` locks (re-locking when the resource differs; `FullJID` guarantees a non-empty resource);
     /// a bare `from` releases the lock (RFC 6121 §5.1: a message from the bare JID releases it). `sequence` is
     /// the inbound's arrival tick — an arrival-older learn (lower sequence) is dropped so it can't overwrite a
-    /// newer lock. Internal so `OMEMOService` can call it, mirroring `persistEncryptedMessage`.
+    /// newer lock. Internal so `OMEMOService` can call it, mirroring `ingestEncryptedMessage`.
     func learnResourceLock(from: JID, accountID: UUID, sequence: UInt64) {
         // A groupchat/MUC sender (room@conference/nick) must never move the 1:1 lock. The plaintext path
-        // routes room messages to separate handlers, but the OMEMO event carries no message type, so guard
-        // here with the same groupchat-conversation check `shouldSkipRawMessage` uses.
+        // routes room messages to separate handlers, but OMEMO messages all reach this one, so guard here
+        // with the same groupchat-conversation check `shouldSkipRawMessage` uses.
         let bareJID = from.bareJID
         if openConversations.contains(where: { $0.jid == bareJID && $0.type == .groupchat && $0.accountID == accountID }) { return }
         if let owning = lockSequenceByPeer[accountID]?[bareJID], sequence < owning { return }
@@ -415,9 +412,68 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         bumpRevision(for: conversationID)
     }
 
-    /// Persists an encrypted message received via OMEMO. Called by OMEMOService.
-    func persistEncryptedMessage(_ message: ChatMessage, in conversation: Conversation, accountID: UUID) async {
-        await persistAndNotify(message, in: conversation, accountID: accountID)
+    /// Whether an encrypted message is the user's own, sent from another of their devices. Internal so `OMEMOService`
+    /// can call it.
+    func isOwnEncryptedMessage(from: JID, in conversation: Conversation, accountID: UUID) async -> Bool {
+        switch conversation.type {
+        case .groupchat:
+            guard case let .full(occupant) = from else { return false }
+            return await isOwnRoomMessage(nickname: occupant.resourcePart, room: conversation.jid, accountID: accountID)
+        case .chat:
+            return from.bareJID == resolvedAccountJID(for: accountID)
+        }
+    }
+
+    /// Stores an encrypted message received via OMEMO unless a copy of it is stored already, and gives a new one the
+    /// attention a received message gets. Returns nil when the message could not be stored.
+    @discardableResult
+    func ingestEncryptedMessage(
+        message xmppMessage: XMPPMessage, decryptedBody: String?, isOutgoing: Bool,
+        in conversation: Conversation, accountID: UUID
+    ) async -> EncryptedMessageStoreOutcome? {
+        guard let sender = xmppMessage.from?.bareJID else { return nil }
+        let metadata = InboundMessageMetadata(xmppMessage)
+        let trustedBy = conversation.type == .groupchat ? conversation.jid : resolvedAccountJID(for: accountID)
+        var message = ChatMessage(
+            id: UUID(),
+            conversationID: conversation.id,
+            stanzaID: metadata.stanzaID,
+            serverID: trustedServerID(in: metadata, trustedBy: trustedBy),
+            fromJID: sender.description,
+            body: decryptedBody ?? "",
+            timestamp: Date(),
+            isOutgoing: isOutgoing,
+            isDelivered: false,
+            isEdited: false,
+            type: "chat",
+            // The reply reference and attachments travel outside the encryption, and are read from the stanza as the
+            // archive's copy is.
+            replyToID: metadata.replyToID,
+            isEncrypted: true,
+            isUndecryptable: decryptedBody == nil,
+            attachments: metadata.attachments
+        )
+        let outcome: EncryptedMessageStoreOutcome
+        do {
+            outcome = try await transcripts.storeEncryptedMessage(message, fromArchive: false)
+        } catch {
+            log.warning("Could not store an encrypted message: \(error)")
+            return nil
+        }
+        switch outcome {
+        case .inserted:
+            await persistAndNotify(message, in: conversation, accountID: accountID, isStored: true)
+        case let .upgraded(placeholderID, timestamp):
+            // The archive's undecryptable copy now reads as this message, which is new to the user. The row is read
+            // back, because a correction that reached the copy first keeps its text.
+            message.id = placeholderID
+            message.timestamp = timestamp
+            let stored = try? await transcripts.findMessage(id: placeholderID, conversationID: conversation.id)
+            await persistAndNotify(stored ?? message, in: conversation, accountID: accountID, isStored: true)
+        case .duplicate:
+            break
+        }
+        return outcome
     }
 
     public func sendMessage(toJIDString jidString: String, body: String, accountID: UUID) async throws {
@@ -862,10 +918,12 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         try await roomService.joinRoom(jid: jid, nickname: nickname, password: password, accountID: accountID)
     }
 
-    /// Joins `jid` and awaits the matching `.roomJoined` self-presence echo. Notifier registers BEFORE join is sent so the echo cannot race ahead.
-    /// Throws `.timeout(jid)` if the echo doesn't arrive within `timeout`; rethrows `joinRoom` errors after cleanup.
-    /// With `remember`, the room is joined again on later connects. Without it, whether the room is rejoined stays
-    /// as it was.
+    /// Joins `jid` and awaits the room's answer. That is the `.roomJoined` self-presence echo, or the user's own
+    /// `.roomOccupantNickChanged` for a room the user is in under another nickname. A room the user is in under that
+    /// nickname returns at once. Notifier registers BEFORE join is sent so the answer cannot race ahead.
+    /// Throws `.timeout(jid)` if the answer doesn't arrive within `timeout`; rethrows `joinRoom` errors after cleanup.
+    /// With `remember`, the room is joined again on later connects. Without it, whether the room is rejoined stays as
+    /// it was.
     public func joinRoomAwaitingEcho(
         jid: BareJID,
         nickname: String,
@@ -893,8 +951,9 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         )
     }
 
-    /// Atomically registers a one-shot notifier for the next `.roomJoined` matching `(accountID, jid)`. Synchronous + MainActor
-    /// so registration lands BEFORE any await — the self-presence echo cannot race ahead.
+    /// Atomically registers a one-shot notifier for the room's next answer to a join matching `(accountID, jid)`: a
+    /// `.roomJoined`, or the user's own `.roomOccupantNickChanged`. Synchronous + MainActor so registration lands BEFORE any
+    /// await — the answer cannot race ahead.
     func registerRoomJoinNotifier(jid: BareJID, accountID: UUID) -> (id: UUID, stream: AsyncStream<Void>) {
         roomService.registerRoomJoinNotifier(jid: jid, accountID: accountID)
     }
@@ -1235,8 +1294,10 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             handlePresenceForResourceLock(from: from, presence: presence, accountID: accountID)
         case let .roomJoined(room, occupancy, created): await roomService.handleRoomJoined(room: room, occupancy: occupancy, isNewlyCreated: created, accountID: accountID)
         case let .roomOccupantJoined(room, occupant): roomService.handleRoomOccupantJoined(room: room, occupant: occupant, accountID: accountID)
-        case let .roomOccupantLeft(room, occupant, reason): await roomService.handleRoomOccupantLeft(room: room, occupant: occupant, reason: reason, accountID: accountID)
-        case let .roomOccupantNickChanged(room, old, occupant): roomService.handleRoomOccupantNickChanged(room: room, oldNickname: old, occupant: occupant, accountID: accountID)
+        case let .roomOccupantLeft(room, occupant, reason, isSelf):
+            await roomService.handleRoomOccupantLeft(room: room, occupant: occupant, reason: reason, isSelf: isSelf, accountID: accountID)
+        case let .roomOccupantNickChanged(room, old, occupant, isSelf):
+            roomService.handleRoomOccupantNickChanged(room: room, oldNickname: old, occupant: occupant, isSelf: isSelf, accountID: accountID)
         case let .roomSubjectChanged(room, subject, _): await handleRoomSubjectChanged(room: room, subject: subject, accountID: accountID)
         case let .roomInviteReceived(invite): roomService.handleRoomInviteReceived(invite, accountID: accountID)
         case let .roomMessageReceived(message): await handleRoomMessageReceived(message, accountID: accountID)
@@ -1460,10 +1521,19 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     private func isOwnRoomMessage(nickname: String?, room: BareJID, accountID: UUID) async -> Bool {
-        guard let nickname,
-              let client = accountService?.connectedClient(for: accountID),
-              let mucModule = await client.module(ofType: MUCModule.self) else { return false }
-        return nickname == mucModule.nickname(in: room)
+        guard let nickname else { return false }
+        return await nickname == ownNickname(inRoom: room, accountID: accountID)
+    }
+
+    /// The user's nickname in `room`. Every check for the user's own room messages, live or archived, compares with it,
+    /// so both copies of a message agree on its direction. It is always one the room confirmed. The room module's
+    /// confirmed nickname comes first, and the stored one stands in, such as while a join waits. Only the room's
+    /// confirmations write the stored nickname: a join and the user's own nickname change.
+    private func ownNickname(inRoom room: BareJID, accountID: UUID) async -> String? {
+        let mucModule = await accountService?.client(for: accountID)?.module(ofType: MUCModule.self)
+        if let nickname = mucModule?.confirmedNickname(in: room) { return nickname }
+        let stored = try? await store.fetchConversation(jid: room.description, type: .groupchat, accountID: accountID, importSourceJID: nil)
+        return stored?.roomNickname
     }
 
     private func handleRoomMessageReceived(_ xmppMessage: XMPPMessage, accountID: UUID) async {
@@ -1643,21 +1713,27 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         await messagesChanged(in: conversationID)
     }
 
-    private func persistAndNotify(_ message: ChatMessage, in conversation: Conversation, accountID: UUID) async {
-        let countsAsUnread = conversation.id != activeConversationID
-        let isKept = await (try? persistMessage(message, in: conversation, incrementUnread: countsAsUnread, accountID: accountID))
+    /// `isStored` tells that the transcript holds the message already.
+    private func persistAndNotify(_ message: ChatMessage, in conversation: Conversation, accountID: UUID, isStored: Bool = false) async {
+        // The user's own message from another device is new here but was read where they wrote it.
+        let countsAsUnread = !message.isOutgoing && conversation.id != activeConversationID
+        let isKept = await (try? isStored
+            ? recordStoredMessage(message, in: conversation, incrementUnread: countsAsUnread, accountID: accountID)
+            : persistMessage(message, in: conversation, incrementUnread: countsAsUnread, accountID: accountID))
         guard isKept != false else { return }
 
         // Storing the message took a while, and the chat can have come into view or gone out of it meanwhile, so
         // whether it is looked at is read again here, for the marker and the read count together. A room's marker
         // checks once more after its nickname lookup.
         if conversation.id == activeConversationID {
-            await sendDisplayedMarkerIfNeeded(for: message, in: conversation, accountID: accountID)
+            if !message.isOutgoing {
+                await sendDisplayedMarkerIfNeeded(for: message, in: conversation, accountID: accountID)
+            }
             try? await store.markConversationRead(conversation.id)
             if countsAsUnread {
                 await republishConversations(for: accountID)
             }
-        } else if !countsAsUnread {
+        } else if !message.isOutgoing, !countsAsUnread {
             _ = try? await store.updateConversation(conversation.id) { $0.unreadCount += 1 }
             await republishConversations(for: accountID)
         }
@@ -2097,16 +2173,25 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         accountID: UUID
     ) async throws -> Bool {
         try await transcripts.appendMessage(message)
+        return try await recordStoredMessage(message, in: conversation, incrementUnread: incrementUnread, accountID: accountID)
+    }
 
+    /// Updates the conversation for a message the transcript already holds. Returns `false` when the message was not
+    /// kept because its room is gone.
+    private func recordStoredMessage(
+        _ message: ChatMessage,
+        in conversation: Conversation,
+        incrementUnread: Bool,
+        accountID: UUID
+    ) async throws -> Bool {
         // Only what this message changes is written to the conversation's row. The caller's copy was taken before its
         // own awaits, and writing all of it back would undo what another handler stored meanwhile, such as encryption
-        // that the contact's previous message switched on.
-        let (date, preview) = (message.timestamp, String(message.previewText.prefix(100)))
-        let record: @Sendable (inout Conversation) -> Void = {
-            $0.lastMessageDate = date
-            $0.lastMessagePreview = preview
+        // that the contact's previous message switched on. The row's last message stays when this one is older, and the
+        // check runs inside the store's update, so no other writer can slip in between.
+        let record: @Sendable (inout Conversation) -> Void = { conversation in
+            conversation.recordLastMessage(message, winsTies: true)
             if incrementUnread {
-                $0.unreadCount += 1
+                conversation.unreadCount += 1
             }
         }
         if try await store.updateConversation(conversation.id, record) == nil {
@@ -2284,7 +2369,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
                 MAMModule.Query(to: to, with: with, end: endISO, before: page, max: limit)
             )
             let newMessages = try await convertAndDedup(
-                archived: archived, conversation: conversation, accountJID: accountJID
+                archived: archived, conversation: conversation, accountJID: accountJID, accountID: accountID
             )
             guard newMessages.isEmpty, !fin.complete, let first = fin.first else {
                 return (newMessages, !fin.complete)
@@ -2334,7 +2419,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
                     to: to, with: with, start: startISO, max: 50
                 )
                 let newMessages = try await convertAndDedup(
-                    archived: archived, conversation: conversation, accountJID: accountJID
+                    archived: archived, conversation: conversation, accountJID: accountJID, accountID: accountID
                 )
                 // `convertAndDedup` appended the archived rows to the transcript across
                 // several awaits. If the room was destroyed during the MAM round-trip or
@@ -2349,11 +2434,10 @@ public final class ChatService { // swiftlint:disable:this type_body_length
                 if let lastMessage = newMessages.last {
                     // Updates an existing row only, since the conversation may have been destroyed during this MAM
                     // round-trip. It writes only the last message's date and preview, because `conversation` was read
-                    // before the round-trip and the rest of it may have changed since.
-                    let (date, preview) = (lastMessage.timestamp, String(lastMessage.previewText.prefix(100)))
-                    try await store.updateConversation(conversation.id) {
-                        $0.lastMessageDate = date
-                        $0.lastMessagePreview = preview
+                    // before the round-trip and the rest of it may have changed since. A live message as new as this
+                    // one keeps its preview, which can be the decrypted text of the archive's undecryptable copy.
+                    try await store.updateConversation(conversation.id) { conversation in
+                        conversation.recordLastMessage(lastMessage, winsTies: false)
                     }
                 }
             }
@@ -2367,9 +2451,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     private func convertAndDedup(
         archived: [ArchivedMessage],
         conversation: Conversation,
-        accountJID: BareJID
+        accountJID: BareJID,
+        accountID: UUID
     ) async throws -> [ChatMessage] {
         var newMessages: [ChatMessage] = []
+        let ownNickname = conversation.type == .groupchat ? await ownNickname(inRoom: conversation.jid, accountID: accountID) : nil
 
         // Trust anchor for XEP-0359 `<stanza-id>`: 1:1 archives are stamped by
         // the user's bare JID; groupchat archives are stamped by the room.
@@ -2382,61 +2468,92 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             let body = forwarded.message.body ?? metadata.attachments.first?.url ?? (isOMEMO ? "" : nil)
             guard let body else { continue }
 
-            let meta = resolveMessageMeta(forwarded: forwarded, conversation: conversation, accountJID: accountJID)
+            let meta = resolveMessageMeta(forwarded: forwarded, conversation: conversation, ownNickname: ownNickname, accountJID: accountJID)
 
             // Re-derive serverID with the trust filter — `entry.serverID` is
             // raw, before XEP-0359 §3 `by`-validation.
             let trustedServerID = trustedServerID(in: metadata, trustedBy: trustedBy)
 
-            if let trustedServerID {
-                if try await transcripts.messageExists(serverID: trustedServerID, conversationID: conversation.id) {
-                    continue
+            if isOMEMO {
+                let archivedEntry = ArchivedEntry(
+                    forwarded: forwarded, body: "", isOMEMO: true, meta: meta,
+                    serverID: trustedServerID ?? entry.messageID, metadata: metadata
+                )
+                if let message = try await storeArchivedEncryptedMessage(archivedEntry, in: conversation, accountJID: accountJID) {
+                    newMessages.append(message)
                 }
-                // Our own MUC echo is dropped by nickname in `handleRoomMessageReceived` before any
-                // serverID is recorded, so the optimistically-persisted row keeps `serverID == nil` and
-                // the serverID check above can't see it. Without this guard, the MAM copy (which carries a
-                // trusted serverID) re-imports as a second row. Match the un-reconciled optimistic row by
-                // stanzaID so the replay dedups against it.
-                if conversation.type == .groupchat, meta.isOutgoing, let stanzaID = metadata.stanzaID,
-                   try await ownOptimisticGroupRowExists(
-                       stanzaID: stanzaID, isOMEMOArchive: isOMEMO, body: body, conversation: conversation
-                   ) {
-                    continue
-                }
-            } else if let stanzaID = metadata.stanzaID {
-                // No trusted serverID — fall back to stanza-id-scoped dedup.
-                // Direction matters: outgoing archived rows would compare
-                // against locally-persisted outgoing rows whose `fromJID` is
-                // the recipient (so the inbound-only overload couldn't match
-                // them). Use the stanzaID-only path for outgoing and the
-                // sender-scoped path for inbound.
-                let isDup: Bool = if meta.isOutgoing {
-                    try await transcripts.messageExists(stanzaID: stanzaID, conversationID: conversation.id)
-                } else if let senderJID = forwarded.message.from?.bareJID {
-                    try await transcripts.messageExists(
-                        stanzaID: stanzaID, fromJID: senderJID.description, conversationID: conversation.id
-                    )
-                } else {
-                    try await transcripts.messageExists(stanzaID: stanzaID, conversationID: conversation.id)
-                }
-                if isDup { continue }
-            } else if try await transcripts.messageExists(serverID: entry.messageID, conversationID: conversation.id) {
                 continue
             }
 
             // An entry that carries no id of its own is known by the archive's id for it, or it would be added again
             // each time its range is read.
-            let serverID = trustedServerID ?? (metadata.stanzaID == nil ? entry.messageID : nil)
-            let entry = ArchivedEntry(
-                forwarded: forwarded, body: body, isOMEMO: isOMEMO, meta: meta,
-                serverID: serverID, metadata: metadata
+            let archivedEntry = ArchivedEntry(
+                forwarded: forwarded, body: body, isOMEMO: false, meta: meta,
+                serverID: trustedServerID ?? (metadata.stanzaID == nil ? entry.messageID : nil), metadata: metadata
             )
-            let message = await makeArchivedMessage(entry, in: conversation, accountJID: accountJID)
+            if try await archivedPlaintextExists(archivedEntry, trustedServerID: trustedServerID, archiveID: entry.messageID, in: conversation) {
+                continue
+            }
+            let message = await makeArchivedMessage(archivedEntry, in: conversation, accountJID: accountJID)
             try await transcripts.appendMessage(message)
             newMessages.append(message)
         }
 
         return newMessages.sorted { $0.timestamp < $1.timestamp }
+    }
+
+    /// Stores an archived OMEMO entry unless a copy of it is stored already, and returns it when this call stored it.
+    /// The entry is known by its trusted server id, or else the archive's id for it: under `urn:xmpp:mam:2` the
+    /// stanza-id stamped on a live message is its archive id (XEP-0313), so a live copy and its archived copy share one
+    /// server id.
+    private func storeArchivedEncryptedMessage(
+        _ entry: ArchivedEntry, in conversation: Conversation, accountJID: BareJID
+    ) async throws -> ChatMessage? {
+        // Our own room message is stored before it is sent, with no server id, so the store's server-id match cannot see
+        // it.
+        if conversation.type == .groupchat, entry.meta.isOutgoing, let stanzaID = entry.metadata.stanzaID,
+           try await ownOptimisticGroupRowExists(stanzaID: stanzaID, isOMEMOArchive: true, body: "", conversation: conversation) {
+            return nil
+        }
+        let message = await makeArchivedMessage(entry, in: conversation, accountJID: accountJID)
+        guard try await transcripts.storeEncryptedMessage(message, fromArchive: true) == .inserted else { return nil }
+        return message
+    }
+
+    /// Whether a plaintext archive entry is stored already. An entry with a trusted server id is matched by it, and its
+    /// stanza id serves only to find the user's own optimistic room row.
+    private func archivedPlaintextExists(
+        _ entry: ArchivedEntry, trustedServerID: String?, archiveID: String, in conversation: Conversation
+    ) async throws -> Bool {
+        if let trustedServerID {
+            if try await transcripts.messageExists(serverID: trustedServerID, conversationID: conversation.id) {
+                return true
+            }
+            // Our own MUC echo is dropped by nickname in `handleRoomMessageReceived` before any
+            // serverID is recorded, so the optimistically-persisted row keeps `serverID == nil` and
+            // the serverID check above can't see it. Without this guard, the MAM copy (which carries a
+            // trusted serverID) re-imports as a second row. Match the un-reconciled optimistic row by
+            // stanzaID so the replay dedups against it.
+            guard conversation.type == .groupchat, entry.meta.isOutgoing, let stanzaID = entry.metadata.stanzaID else { return false }
+            return try await ownOptimisticGroupRowExists(
+                stanzaID: stanzaID, isOMEMOArchive: false, body: entry.body, conversation: conversation
+            )
+        }
+        guard let stanzaID = entry.metadata.stanzaID else {
+            return try await transcripts.messageExists(serverID: archiveID, conversationID: conversation.id)
+        }
+        // No trusted serverID — fall back to stanza-id-scoped dedup.
+        // Direction matters: outgoing archived rows would compare
+        // against locally-persisted outgoing rows whose `fromJID` is
+        // the recipient (so the inbound-only overload couldn't match
+        // them). Use the stanzaID-only path for outgoing and the
+        // sender-scoped path for inbound.
+        if !entry.meta.isOutgoing, let senderJID = entry.forwarded.message.from?.bareJID {
+            return try await transcripts.messageExists(
+                stanzaID: stanzaID, fromJID: senderJID.description, conversationID: conversation.id
+            )
+        }
+        return try await transcripts.messageExists(stanzaID: stanzaID, conversationID: conversation.id)
     }
 
     /// Per-entry inputs for building an archived `ChatMessage`.
@@ -2521,6 +2638,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     private func resolveMessageMeta(
         forwarded: ForwardedMessage,
         conversation: Conversation,
+        ownNickname: String?,
         accountJID: BareJID
     ) -> MessageMeta {
         switch conversation.type {
@@ -2533,7 +2651,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             }
             return MessageMeta(
                 fromJID: senderNickname ?? conversation.jid.description,
-                isOutgoing: senderNickname != nil && senderNickname == conversation.roomNickname,
+                isOutgoing: senderNickname != nil && senderNickname == ownNickname,
                 messageType: conversation.type.rawValue
             )
         case .chat:
@@ -2574,8 +2692,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     ) async throws -> Conversation {
         let conversations = try await store.fetchConversations(for: accountID)
         if let existing = conversations.first(where: { $0.jid == room && $0.type == .groupchat }) {
-            guard let nickname, existing.roomNickname != nickname else { return existing }
-            return try await store.updateConversation(existing.id) { $0.roomNickname = nickname } ?? existing
+            guard let nickname, existing.roomNickname != nickname, let updated = try await store.updateConversation(existing.id, { $0.roomNickname = nickname }) else { return existing }
+            // An open room window reads the cached copy, which under the old nickname would not find the user among the
+            // occupants.
+            updateCachedConversation(updated)
+            return updated
         }
 
         let conversation = Conversation(

@@ -72,7 +72,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
         private static func isArrivalOrDeparture(_ event: XMPPEvent, of nickname: String, in roomJID: BareJID) -> Bool {
             if case let .roomOccupantJoined(room, occupant) = event { return room == roomJID && occupant.nickname == nickname }
-            if case let .roomOccupantLeft(room, occupant, _) = event { return room == roomJID && occupant.nickname == nickname }
+            if case let .roomOccupantLeft(room, occupant, _, _) = event { return room == roomJID && occupant.nickname == nickname }
             return false
         }
 

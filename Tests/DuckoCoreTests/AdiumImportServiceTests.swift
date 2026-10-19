@@ -102,6 +102,57 @@ enum AdiumImportServiceTests {
         }
     }
 
+    struct ConversationPreview {
+        /// With `liveWrite`, a newer message is stored while the import holds its conversation write, and keeps the
+        /// preview.
+        @Test(arguments: [false, true])
+        func `The import shows its newest line unless a newer message came in meanwhile`(liveWrite: Bool) async throws {
+            let store = MockPersistenceStore()
+            let service = AdiumImportService(store: store, transcripts: MockTranscriptStore())
+            let xml = """
+            <?xml version="1.0" encoding="UTF-8" ?>
+            <chat xmlns="http://purl.org/net/ulf/ns/0.4-02" account="saibot@exnet.me" service="Jabber">
+            <message sender="saibot@exnet.me" time="2016-01-12T00:31:17+0100"><div>hello</div></message>
+            <message sender="buddy@exnet.me" time="2016-01-12T00:31:34+0100"><div>hi</div></message>
+            </chat>
+            """
+            // Already there, so the metadata update is the import's only conversation write.
+            let conversation = try Conversation(
+                id: UUID(), importSourceJID: "saibot@exnet.me", jid: #require(BareJID.parse("buddy@exnet.me")), type: .chat,
+                isPinned: false, isMuted: false, unreadCount: 0, createdAt: Date()
+            )
+            await store.addConversation(conversation)
+            let live = Date(timeIntervalSince1970: 2_000_000_000)
+
+            try await withTemporaryDirectory { tmpDir in
+                let chatlogDir = tmpDir.appendingPathComponent("Jabber.saibot@exnet.me/buddy@exnet.me/test.chatlog")
+                try FileManager.default.createDirectory(at: chatlogDir, withIntermediateDirectories: true)
+                try xml.write(to: chatlogDir.appendingPathComponent("test.xml"), atomically: true, encoding: .utf8)
+                let sources = try AdiumLogDiscovery.discoverSources(at: tmpDir)
+
+                let entered = AsyncSemaphore()
+                let release = AsyncSemaphore()
+                if liveWrite {
+                    await store.installConversationWriteGate(entered: entered, release: release)
+                }
+                let importing = Task { try await service.importLogs(from: sources) { _ in } }
+                if liveWrite {
+                    await entered.wait()
+                    try await store.updateConversation(conversation.id) {
+                        $0.lastMessageDate = live
+                        $0.lastMessagePreview = "live"
+                    }
+                    await release.signal()
+                }
+                _ = try await importing.value
+            }
+
+            let stored = try #require(await store.conversations.first)
+            #expect(stored.lastMessagePreview == (liveWrite ? "live" : "hi"))
+            #expect(stored.lastMessageDate == (liveWrite ? live : Date(timeIntervalSince1970: 1_452_555_094)))
+        }
+    }
+
     struct ImportSourceJID {
         @Test
         func `Sets importSourceJID on imported conversations`() async throws {

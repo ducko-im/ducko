@@ -156,9 +156,8 @@ enum ChatServiceFilterTests {
         @MainActor
         func `the room's echo of our own correction is filtered, so its amendment keeps htmlBody`() async throws {
             let harness = try await makeFilterHarness(modules: [MUCModule()], filters: [StylingFilter(), EmojiFilter()])
+            // The room's stored nickname "alice" tells `verifySender` the echo is our own.
             let conversation = try await seedPlaintextRoom(harness)
-            // Join so `verifySender` recognizes the "alice" echo as our own via `mucModule.nickname(in:)`.
-            try await harness.chatService.joinRoom(jid: roomJID, nickname: "alice", accountID: harness.accountID)
 
             let original = ChatMessage(
                 id: UUID(), conversationID: conversation.id, stanzaID: "orig-1",

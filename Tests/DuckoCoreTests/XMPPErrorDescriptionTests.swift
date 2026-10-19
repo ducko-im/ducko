@@ -93,6 +93,8 @@ struct XMPPErrorDescriptionTests {
         (OMEMOModuleError.bundleNotFound, "The recipient's encryption keys were not found"),
         (OMEMOModuleError.noSession, "No encryption session exists for the sending device"),
         (OMEMOModuleError.notForThisDevice, "The message was not encrypted for this device"),
+        (OMEMOModuleError.unknownPreKey, "The encrypted message uses a key this device no longer has"),
+        (OMEMOModuleError.replayedKeyExchange, "The encrypted message repeats one already received"),
         (OMEMOModuleError.invalidKeyData, "The encrypted message contains invalid key data"),
         (OMEMOModuleError.invalidHeader, "The encrypted message has an invalid header"),
         (OMEMOModuleError.invalidPayload, "The encrypted message has an invalid payload"),

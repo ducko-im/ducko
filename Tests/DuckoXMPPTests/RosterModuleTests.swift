@@ -1,4 +1,5 @@
 import DuckoTestSupport
+import struct os.OSAllocatedUnfairLock
 import Testing
 @testable import DuckoXMPP
 
@@ -291,6 +292,26 @@ enum RosterModuleTests {
             #expect(sentData.isEmpty)
 
             await disconnectFast(client)
+        }
+
+        /// A resumed stream runs no `handleConnect`, and keeps the stream features of the session it resumes.
+        @Test
+        func `preApprove works on a resumed stream whose features advertise pre-approval`() async throws {
+            let module = RosterModule()
+            let features = try stanza(testFeaturesBindWithPreApproval)
+            let sent = OSAllocatedUnfairLock<[String]>(initialState: [])
+            module.setUp(makeStubModuleContext(
+                sendStanza: { stanza, onAccepted in
+                    onAccepted?()
+                    sent.withLock { $0.append(stanza.element.xmlString) }
+                },
+                serverStreamFeatures: { features }
+            ))
+
+            try await module.preApprove(jid: #require(BareJID.parse("contact@example.com")))
+
+            #expect(module.supportsPreApproval)
+            #expect(sent.withLock { $0 }.contains { $0.contains("type=\"subscribed\"") && $0.contains("to=\"contact@example.com\"") })
         }
 
         @Test

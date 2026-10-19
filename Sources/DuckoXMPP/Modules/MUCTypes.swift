@@ -13,6 +13,17 @@ public enum RoomHistoryFetch: Sendable {
     case skip
 }
 
+/// What a join asked of a room, so a caller waiting on it knows which confirmation to wait for.
+public enum RoomJoinOutcome: Sendable, Equatable {
+    /// The join presence went out; the room confirms it with `.roomJoined`.
+    case joining
+    /// The user is in the room under that nickname already, so nothing was sent.
+    case alreadyJoined
+    /// The user is in the room under another nickname, so a nickname change went out; the room confirms it with the
+    /// user's own `.roomOccupantNickChanged`.
+    case changingNickname
+}
+
 /// An item from an affiliation list query (muc#admin).
 public struct MUCAffiliationItem: Sendable {
     public let jid: BareJID

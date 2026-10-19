@@ -87,7 +87,7 @@ enum ChatServiceMUCTests {
 
         @Test
         @MainActor
-        func `Own groupchat echo is persisted without a wired-up client`() async throws {
+        func `Own groupchat echo is told by the stored nickname without a wired-up client`() async throws {
             let store = makeStore()
             let transcripts = makeTranscripts()
             let service = makeChatService(store: store, transcripts: transcripts)
@@ -96,15 +96,16 @@ enum ChatServiceMUCTests {
             let occupancy = RoomOccupancy(nickname: "me", occupants: [], subject: nil)
             await service.handleEvent(.roomJoined(room: testRoomJID, occupancy: occupancy, isNewlyCreated: false), accountID: testAccountID)
 
-            // Receive echo of own message — without an accountService/client wired up,
-            // the MUCModule nickname lookup will fail, so the message will be persisted.
-            // In integration tests with a real client, own messages would be skipped.
-            let xmppMessage = makeGroupMessage(from: testRoomJID, senderNickname: "me", body: "My echo")
-            await service.handleEvent(.roomMessageReceived(xmppMessage), accountID: testAccountID)
+            // Without a client there is no room module to ask, so the stored nickname tells the echo of the user's own
+            // message from another occupant's.
+            for nickname in ["me", "other"] {
+                let xmppMessage = makeGroupMessage(from: testRoomJID, senderNickname: nickname, body: "From \(nickname)")
+                await service.handleEvent(.roomMessageReceived(xmppMessage), accountID: testAccountID)
+            }
 
             let conversations = try await store.fetchConversations(for: testAccountID)
             let messages = try await transcripts.fetchMessages(for: conversations[0].id, before: nil, limit: 50)
-            #expect(messages.count == 1)
+            #expect(messages.map(\.body) == ["From other"])
         }
     }
 
@@ -270,6 +271,55 @@ enum ChatServiceMUCTests {
             #expect(afterMessages.isEmpty)
         }
 
+        /// Only the room's word that a nickname change is the user's updates the stored nickname. Another occupant can
+        /// hold the stored nickname while a join under another one is pending, so an old nickname matching the stored
+        /// one ("earlier") proves nothing. The update reaches the store even though the room is not among the listed
+        /// conversations.
+        @Test(arguments: [(true, "me"), (false, "me"), (false, "earlier")])
+        @MainActor
+        func `Only the user's own nickname change updates the stored nickname`(isSelf: Bool, oldNickname: String) async throws {
+            let store = makeStore()
+            let service = makeChatService(store: store, transcripts: makeTranscripts())
+            await store.addConversation(Conversation(
+                id: UUID(), accountID: testAccountID, jid: testRoomJID, type: .groupchat, isPinned: false, isMuted: false,
+                unreadCount: 0, roomNickname: "earlier", createdAt: Date()
+            ))
+
+            await service.handleEvent(
+                .roomOccupantNickChanged(
+                    room: testRoomJID, oldNickname: oldNickname,
+                    occupant: RoomOccupant(nickname: "carol", affiliation: .member, role: .participant), isSelf: isSelf
+                ),
+                accountID: testAccountID
+            )
+            for task in service.takePendingTasks() {
+                await task.value
+            }
+
+            let stored = try await store.fetchConversations(for: testAccountID).first { $0.jid == testRoomJID }
+            #expect(stored?.roomNickname == (isSelf ? "carol" : "earlier"))
+        }
+
+        /// An open room window reads the cached room, so the nickname a room confirms on a join reaches it too.
+        @Test
+        @MainActor
+        func `The nickname a room confirms on a join reaches the open room`() async throws {
+            let store = makeStore()
+            let service = makeChatService(store: store, transcripts: makeTranscripts())
+            await store.addConversation(Conversation(
+                id: UUID(), accountID: testAccountID, jid: testRoomJID, type: .groupchat, isPinned: false, isMuted: false,
+                unreadCount: 0, roomNickname: "me", createdAt: Date()
+            ))
+            try await service.loadConversations(for: testAccountID)
+            try #require(service.openConversations.first { $0.jid == testRoomJID }?.roomNickname == "me")
+
+            let occupant = RoomOccupant(nickname: "me2", affiliation: .member, role: .participant)
+            let occupancy = RoomOccupancy(nickname: "me2", occupants: [occupant], subject: nil)
+            await service.handleEvent(.roomJoined(room: testRoomJID, occupancy: occupancy, isNewlyCreated: false), accountID: testAccountID)
+
+            #expect(service.openConversations.first { $0.jid == testRoomJID }?.roomNickname == "me2")
+        }
+
         /// Deletion while the captured nickname write is suspended must not re-insert the room.
         @Test
         @MainActor
@@ -301,7 +351,8 @@ enum ChatServiceMUCTests {
                 .roomOccupantNickChanged(
                     room: testRoomJID,
                     oldNickname: "me",
-                    occupant: RoomOccupant(nickname: "me2", affiliation: .owner, role: .moderator)
+                    occupant: RoomOccupant(nickname: "me2", affiliation: .owner, role: .moderator),
+                    isSelf: true
                 ),
                 accountID: testAccountID
             )
@@ -341,12 +392,11 @@ enum ChatServiceMUCTests {
             )
             var notified = false
             service.onIncomingMessage = { _, _ in notified = true }
-            let message = ChatMessage(
-                id: UUID(), conversationID: conversation.id, stanzaID: "late-1", fromJID: testRoomJID.description, body: "late",
-                timestamp: Date(), isOutgoing: false, isDelivered: false, isEdited: false, type: type.rawValue
-            )
 
-            await service.persistEncryptedMessage(message, in: conversation, accountID: testAccountID)
+            await service.ingestEncryptedMessage(
+                message: makeEncryptedStanza(from: .bare(testRoomJID), id: "late-1"), decryptedBody: "late",
+                isOutgoing: false, in: conversation, accountID: testAccountID
+            )
 
             let isStored = try await store.fetchConversations(for: testAccountID).contains { $0.id == conversation.id }
             let isTranscriptDeleted = await transcripts.deletedTranscriptConversationIDs.contains(conversation.id)

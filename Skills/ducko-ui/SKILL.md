@@ -23,6 +23,8 @@ The Chat History window has three parts. A left list holds accounts and imported
 
 The Chat window's tabs survive a relaunch, in their order and with the same tab selected. The window itself reopens at launch only when it was open at quit. Otherwise it stays closed, and the tabs come back once a chat is next opened. `ducko-stop.sh` followed by `ducko-launch.sh` is such a relaunch. A test run can therefore start with tabs from an earlier run, and incoming messages can add tabs it did not open. A restored chat window opens in front of Contacts, which leaves the Contacts-only menu commands (Join Room…, Bookmarks…, Add Contact…) disabled, so run `ducko-focus-contacts.sh` after `ducko-launch.sh` before any Contacts step.
 
+`ducko-stop.sh` ends the app without the disconnect a normal quit sends, so the server keeps the old resource for a while and a contact's first messages after the relaunch can go to it and be lost. When a test exchanges messages after a relaunch, send from the relaunched instance first.
+
 A room joined through the Join Room sheet, an accepted invitation or the REPL's `/join` is joined again on every connect until Leave Room, `/leave`, or being kicked or banned. A profile that ended a run inside a room therefore starts the next one in it. To end a run clean, run `ducko-leave-room.sh` for each joined room and `ducko-chat-tabs.sh close-all` before `ducko-stop.sh`.
 
 The Contacts window has **no toolbar**. Its actions live in the app menu bar. File holds New Chat (⌘N), Join Room… (⌘⇧N), Bookmarks… (⌘⇧B) and Close All Chats (⌥⌘W). The Contact menu holds Add Contact… (⌘D) and My Profile…. Its Get Info (⌘⇧I), History (⌘L) and Send File… (⌘⇧F) act on the selected Contacts row or the active chat, while Remove Contact… (⌘⌫) acts only on the selected Contacts row. The Status menu sets presence (⌘⇧Y Available, ⌘Y toggle, Custom…). View holds sort order and Hide Offline (⌘⇧H). Window holds Show/Hide Contact List (⌘/) and chat tab cycling (⌃⇥/⌃⇧⇥). `⌘F` reveals the roster search field (`contact-search-field`). Scripts drive these via keyboard shortcuts or menu-bar clicks (`menu bar item ... of menu bar 1`), not window buttons.
@@ -332,7 +334,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-room-config-save.sh` | Save room config in Room Settings sheet (best-effort; System Events cannot read the Save button's label on macOS 27) | `ROOM_JID` |
 | `ducko-room-settings-tab.sh` | Switch to a tab in the Room Settings sheet | `<General\|Members>` |
 | `ducko-add-affiliation.sh` | Add a JID to a room's affiliation list | `ROOM_JID JID` |
-| `ducko-stop.sh` | Quit the `DuckoUITest` copy this checkout launched, forcing it after 10 seconds, and fail when it survives. Leaves every other Ducko running, including a `/preview` instance and the integration suites' bundle | none |
+| `ducko-stop.sh` | End the `DuckoUITest` copy this checkout launched with a signal, forcing it after 10 seconds, and fail when it survives. Leaves every other Ducko running, including a `/preview` instance and the integration suites' bundle | none |
 | `ducko-window-id.sh` | Print the window ID of the frontmost `DuckoUITest` window, read from the window list by PID (`DUCKO_PID` when set). Used by other scripts | none |
 
 ## Workflow

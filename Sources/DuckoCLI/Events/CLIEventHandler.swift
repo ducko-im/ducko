@@ -1,3 +1,4 @@
+import DuckoCore
 import DuckoXMPP
 import Foundation
 
@@ -16,7 +17,6 @@ actor CLIEventHandler {
             if message.hasClassifiedEvent { return }
             ringBell()
         case .messageCarbonReceived, .messageCarbonSent,
-             .omemoEncryptedMessageReceived,
              .roomMessageReceived, .mucPrivateMessageReceived, .roomInviteReceived,
              .jingleFileTransferReceived,
              .oobIQOfferReceived:
@@ -43,12 +43,19 @@ actor CLIEventHandler {
              .jingleFileTransferCompleted, .jingleFileTransferFailed,
              .jingleChecksumReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked,
-             .omemoRecipientsPartial,
+             // An encrypted message is presented once it is stored (`handleEncryptedMessage`), so a copy already
+             // stored neither prints nor rings.
+             .omemoEncryptedMessageReceived, .omemoRecipientsPartial,
              .serviceOutageReceived:
             break
         }
         guard let output = formatter.formatEvent(event, accountID: accountID) else { return }
         print(output)
+    }
+
+    func handleEncryptedMessage(_ message: ChatMessage, accountID: UUID) {
+        ringBell()
+        print(formatter.formatEncryptedMessage(message, accountID: accountID))
     }
 
     private func handleChatState(from: BareJID, state: ChatState) {

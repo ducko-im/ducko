@@ -30,7 +30,7 @@ struct FormatterEventContractTests {
                   ["type": "jingle_transfer_completed", "sid": "transfer", "transport": "ibb", "account": account]),
             .init(.omemoDeviceListReceived(jid: peer, devices: [12, 34]), "OMEMO devices for alice@example.com: 12, 34", "\u{001B}[2mOMEMO devices for alice@example.com: 12, 34\(reset)",
                   ["type": "omemo_device_list", "jid": peer.description, "devices": "12,34", "account": account]),
-            .init(.omemoSessionEstablished(jid: peer, deviceID: 12, identityKey: [0, 0xAB, 0xFF]), "OMEMO session established with alice@example.com device 12", "\u{001B}[32mOMEMO session established with alice@example.com device 12\(reset)",
+            .init(.omemoSessionEstablished(jid: peer, deviceID: 12, identityKey: [0, 0xAB, 0xFF], consumedPreKeyID: 7), "OMEMO session established with alice@example.com device 12", "\u{001B}[32mOMEMO session established with alice@example.com device 12\(reset)",
                   ["type": "omemo_session_established", "jid": peer.description, "deviceID": "12", "fingerprint": "00abff", "account": account]),
             .init(.serviceOutageReceived(ServiceOutageInfo(description: "Maintenance", expectedEnd: "tomorrow", alternativeDomain: "other.example.com")), "Service outage: Maintenance (expected end: tomorrow) [alternative: other.example.com]", "\u{001B}[33mService outage: Maintenance (expected end: tomorrow) [alternative: other.example.com]\(reset)",
                   ["type": "service_outage", "description": "Maintenance", "expected_end": "tomorrow", "alternative_domain": "other.example.com", "account": account])
@@ -53,7 +53,9 @@ struct FormatterEventContractTests {
             .vcardAvatarHashReceived(from: peer, hash: "hash"),
             .blockListLoaded([peer]), .contactBlocked(peer), .contactUnblocked(peer),
             .mucSelfPingFailed(room: peer, reason: .notJoined),
-            .omemoSessionAdvanced(jid: peer, deviceID: 12)
+            .omemoSessionAdvanced(jid: peer, deviceID: 12),
+            // Printed once stored, through `formatEncryptedMessage`, so a copy already stored prints nothing.
+            .omemoEncryptedMessageReceived(message: XMPPMessage(type: .chat, id: "m1"), decryptedBody: "hello", senderDeviceID: 12)
         ]
         for event in events {
             #expect(PlainFormatter().formatEvent(event, accountID: accountID) == nil)
@@ -101,13 +103,15 @@ struct FormatterEventContractTests {
             human = "<- room@conference.example.com: hello"
             color = "32"
         }
-        try expectMessage(event, json: json, human: human, color: color)
+        try expectMessage({ $0.formatEvent(event, accountID: accountID) }, json: json, human: human, color: color)
     }
 
     @Test(arguments: [String?.some("hello"), nil])
-    func `encrypted messages print as they arrive, marked encrypted`(body: String?) throws {
-        let full = try #require(FullJID.parse("alice@example.com/laptop"))
-        let event = XMPPEvent.omemoEncryptedMessageReceived(from: .full(full), decryptedBody: body, senderDeviceID: 12, stanzaID: "m1")
+    func `encrypted messages print as they are stored, marked encrypted`(body: String?) throws {
+        let message = ChatMessage(
+            id: UUID(), conversationID: UUID(), stanzaID: "m1", fromJID: peer.description, body: body ?? "", timestamp: Date(),
+            isOutgoing: false, isDelivered: false, isEdited: false, type: "chat", isEncrypted: true, isUndecryptable: body == nil
+        )
         var json = [
             "type": "message", "direction": "incoming", "from": peer.description, "body": body ?? "",
             "encrypted": "true", "account": accountID.uuidString
@@ -115,19 +119,20 @@ struct FormatterEventContractTests {
         if body == nil { json["undecryptable"] = "true" }
         let sender = "<- \(peer): "
         try expectMessage(
-            event, json: json, human: sender + (body ?? "error: \(ChatMessage.undecryptableText)") + " [encrypted]", color: "32",
+            { $0.formatEncryptedMessage(message, accountID: accountID) }, json: json, human: sender + (body ?? "error: \(ChatMessage.undecryptableText)") + " [encrypted]", color: "32",
             ansiHuman: sender + (body ?? "\u{001B}[31merror: \(ChatMessage.undecryptableText)"),
             ansiTail: " \u{001B}[32m\u{001B}[2m[encrypted]\u{001B}[0m"
         )
     }
 
     private func expectMessage(
-        _ event: XMPPEvent, json: [String: String], human: String, color: String, ansiHuman: String? = nil, ansiTail: String = ""
+        _ format: (any CLIFormatter) -> String?, json: [String: String], human: String, color: String,
+        ansiHuman: String? = nil, ansiTail: String = ""
     ) throws {
         let before = Date().addingTimeInterval(-1)
-        let plain = try #require(PlainFormatter().formatEvent(event, accountID: accountID))
-        let ansi = try #require(ANSIFormatter().formatEvent(event, accountID: accountID))
-        let encoded = try #require(JSONFormatter().formatEvent(event, accountID: accountID))
+        let plain = try #require(format(PlainFormatter()))
+        let ansi = try #require(format(ANSIFormatter()))
+        let encoded = try #require(format(JSONFormatter()))
         let after = Date()
         var actual = try JSONDecoder().decode([String: String].self, from: Data(encoded.utf8))
         let timestamp = try #require(actual["timestamp"])

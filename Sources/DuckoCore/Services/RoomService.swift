@@ -35,19 +35,16 @@ final class RoomService {
     private let store: any PersistenceStore
     private weak var accountService: AccountService?
     private let ensureConversation: (BareJID, String?, UUID) async throws -> Void
-    private let conversation: (BareJID, UUID) -> Conversation?
     private let didUpdateConversation: (Conversation) -> Void
     private var pendingTasks: [UUID: Task<Void, Never>] = [:]
 
     init(
         store: any PersistenceStore,
         ensureConversation: @escaping (BareJID, String?, UUID) async throws -> Void,
-        conversation: @escaping (BareJID, UUID) -> Conversation?,
         didUpdateConversation: @escaping (Conversation) -> Void
     ) {
         self.store = store
         self.ensureConversation = ensureConversation
-        self.conversation = conversation
         self.didUpdateConversation = didUpdateConversation
     }
 
@@ -69,13 +66,24 @@ final class RoomService {
         pendingLeaves = pendingLeaves.filter { $0.accountID != accountID }
     }
 
-    func joinRoom(jid: BareJID, nickname: String, password: String? = nil, accountID: UUID) async throws {
+    /// Joins `jid`, or with `afresh` joins it again from scratch, as after the room let the user go unnoticed.
+    @discardableResult
+    func joinRoom(jid: BareJID, nickname: String, password: String? = nil, accountID: UUID, afresh: Bool = false) async throws -> RoomJoinOutcome {
         guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
-        guard let mucModule = await client.module(ofType: MUCModule.self) else { return }
+        guard let mucModule = await client.module(ofType: MUCModule.self) else { return .joining }
         guard let nickname = FullJID.normalizeResourcePart(nickname) else { throw ChatServiceError.invalidJID(nickname) }
 
-        try await mucModule.joinRoom(jid, nickname: nickname, password: password)
-        try await ensureConversation(jid, nickname, accountID)
+        let outcome: RoomJoinOutcome
+        if afresh {
+            try await mucModule.rejoinRoom(jid, nickname: nickname, password: password)
+            outcome = .joining
+        } else {
+            outcome = try await mucModule.joinRoom(jid, nickname: nickname, password: password)
+        }
+        // The nickname is stored once the room confirms it (`handleRoomJoined`): until then it may be refused,
+        // rewritten, or another occupant's.
+        try await ensureConversation(jid, nil, accountID)
+        return outcome
     }
 
     func joinRoomAwaitingEcho(
@@ -92,10 +100,9 @@ final class RoomService {
         // times out) without duplicating cleanup at each return site.
         defer { clearRoomJoinNotifier(jid: jid, accountID: accountID, id: notifierID) }
 
-        try await joinRoom(jid: jid, nickname: nickname, password: password, accountID: accountID)
-
-        let yielded = await awaitRoomJoinedEcho(stream: stream, timeout: timeout)
-        if !yielded {
+        // A room the user is in already needs no answer; a nickname change is answered by the user's own rename.
+        let outcome = try await joinRoom(jid: jid, nickname: nickname, password: password, accountID: accountID)
+        if outcome != .alreadyJoined, await !awaitRoomJoinedEcho(stream: stream, timeout: timeout) {
             throw ChatServiceError.timeout(jid)
         }
         if remember {
@@ -213,6 +220,7 @@ final class RoomService {
         try? await store.fetchConversation(jid: room.description, type: .groupchat, accountID: accountID, importSourceJID: nil)
     }
 
+    /// Reads the stored room, not the cached one: the cache is only filled where conversations are listed.
     private func setRejoinsOnConnect(_ rejoins: Bool, room: BareJID, accountID: UUID) async {
         guard let conversation = await storedRoom(room, accountID: accountID) else { return }
         await setRejoinsOnConnect(rejoins, for: conversation)
@@ -513,7 +521,7 @@ final class RoomService {
             log.debug("The room being rejoined is \(room)")
             let nickname = await storedRoom(room, accountID: accountID)?.roomNickname ?? room.localPart ?? "user"
             do {
-                try await joinRoom(jid: room, nickname: nickname, accountID: accountID)
+                try await joinRoom(jid: room, nickname: nickname, accountID: accountID, afresh: true)
             } catch {
                 log.warning("MUC self-ping rejoin failed: \(error)")
                 log.debug("The room that could not be rejoined is \(room)")
@@ -567,17 +575,18 @@ final class RoomService {
             if let notifierID { clearRoomJoinNotifier(jid: room, accountID: accountID, id: notifierID) }
             return
         }
-        guard roomJoinNotifiers[key]?.id == notifierID else { return }
+        guard let notifierID else { return }
+        completeRoomJoin(key, notifierID: notifierID)
+    }
 
-        // Atomic registry-removal-first + yield-then-finish: yield is what
-        // signals success to `awaitRoomJoinedEcho`; finish closes the stream
-        // so the consume task exits. The post-await `clearRoomJoinNotifier`
-        // call is a no-op on the same key after this (the slot is gone).
-        let waiterKey = RoomJoinKey(accountID: accountID, room: room)
-        if let notifier = roomJoinNotifiers.removeValue(forKey: waiterKey) {
-            notifier.continuation.yield()
-            notifier.continuation.finish()
-        }
+    /// Signals the join waiting on `key` when it is still the one registered as `notifierID`. The notifier leaves the
+    /// registry before its stream yields and finishes. The yield signals success to `awaitRoomJoinedEcho`, and
+    /// finishing lets the consume task exit. The later `clearRoomJoinNotifier` call then finds the slot gone and does
+    /// nothing.
+    private func completeRoomJoin(_ key: RoomJoinKey, notifierID: UUID) {
+        guard roomJoinNotifiers[key]?.id == notifierID, let notifier = roomJoinNotifiers.removeValue(forKey: key) else { return }
+        notifier.continuation.yield()
+        notifier.continuation.finish()
     }
 
     func handleRoomOccupantJoined(room: BareJID, occupant: RoomOccupant, accountID: UUID) {
@@ -589,15 +598,14 @@ final class RoomService {
         roomParticipants[key] = list
     }
 
-    func handleRoomOccupantLeft(room: BareJID, occupant: RoomOccupant, reason: OccupantLeaveReason?, accountID: UUID) async {
+    func handleRoomOccupantLeft(room: BareJID, occupant: RoomOccupant, reason: OccupantLeaveReason?, isSelf: Bool, accountID: UUID) async {
         let key = RoomJoinKey(accountID: accountID, room: room)
         roomParticipants[key]?.removeAll { $0.nickname == occupant.nickname }
 
         switch reason {
         case .kicked, .banned, .affiliationChanged:
-            // The stored room, not the cached one: the cache is only filled where conversations are listed.
-            guard let stored = await storedRoom(room, accountID: accountID), stored.roomNickname == occupant.nickname else { return }
-            await setRejoinsOnConnect(false, for: stored)
+            guard isSelf else { return }
+            await setRejoinsOnConnect(false, room: room, accountID: accountID)
         case .serviceShutdown, nil:
             // Only being thrown out ends the user's stay. A service that shuts down comes back.
             break
@@ -620,7 +628,7 @@ final class RoomService {
         pendingInvites.append(pending)
     }
 
-    func handleRoomOccupantNickChanged(room: BareJID, oldNickname: String, occupant: RoomOccupant, accountID: UUID) {
+    func handleRoomOccupantNickChanged(room: BareJID, oldNickname: String, occupant: RoomOccupant, isSelf: Bool, accountID: UUID) {
         let key = RoomJoinKey(accountID: accountID, room: room)
         var list = roomParticipants[key] ?? []
         let participant = mapOccupant(occupant)
@@ -628,21 +636,28 @@ final class RoomService {
         list.append(participant)
         roomParticipants[key] = list
 
-        // If self-nick changed, update conversation
-        if let conversation = conversation(room, accountID),
-           conversation.roomNickname == oldNickname {
+        if isSelf {
+            let notifierID = roomJoinNotifiers[key]?.id
             let taskID = UUID()
             pendingTasks[taskID] = Task { [weak self] in
                 defer { self?.pendingTasks[taskID] = nil }
                 guard let self else { return }
-                let nickname = occupant.nickname
-                // Conditional update, not upsert: a `.roomDestroyed` could have
-                // deleted this room while we awaited — never resurrect it.
-                guard let updated = try? await store.updateConversation(conversation.id, { $0.roomNickname = nickname }) else { return }
-                // Mirror the store guard in the cache: `updateCachedConversation`
-                // no-ops when the slot is already gone, so a wholesale republish
-                // can't re-insert a concurrently destroyed room into `openConversations`.
-                didUpdateConversation(updated)
+                // The stored room, not the cached one: the cache is only filled where conversations are listed.
+                if let stored = await storedRoom(room, accountID: accountID) {
+                    let nickname = occupant.nickname
+                    // Conditional update, not upsert: a `.roomDestroyed` could have
+                    // deleted this room while we awaited — never resurrect it.
+                    if let updated = try? await store.updateConversation(stored.id, { $0.roomNickname = nickname }) {
+                        // Mirror the store guard in the cache: `updateCachedConversation`
+                        // no-ops when the slot is already gone, so a wholesale republish
+                        // can't re-insert a concurrently destroyed room into `openConversations`.
+                        didUpdateConversation(updated)
+                    }
+                }
+                // A join to the room under another nickname is a nickname change, which the user's own rename answers.
+                if let notifierID {
+                    completeRoomJoin(key, notifierID: notifierID)
+                }
             }
         }
     }

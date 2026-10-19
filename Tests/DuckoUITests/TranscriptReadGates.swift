@@ -90,6 +90,10 @@ struct GatedTranscriptStore: TranscriptStore {
         try await mock.appendNote(note)
     }
 
+    func storeEncryptedMessage(_ message: ChatMessage, fromArchive: Bool) async throws -> EncryptedMessageStoreOutcome {
+        try await mock.storeEncryptedMessage(message, fromArchive: fromArchive)
+    }
+
     func fetchMessages(for conversationID: UUID, before: Date?, limit: Int) async throws -> [ChatMessage] {
         try await mock.fetchMessages(for: conversationID, before: before, limit: limit)
     }

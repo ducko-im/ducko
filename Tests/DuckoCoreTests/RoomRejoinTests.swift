@@ -75,6 +75,27 @@ private func makeRejoinHarness() async throws -> RejoinHarness {
     )
 }
 
+/// Joins `roomJID` as "alice" and has the room confirm it, to the module and to the chat service.
+@MainActor
+private func joinConfirmed(_ harness: RejoinHarness, remember: Bool = true) async throws {
+    let chatService = harness.chatService
+    let accountID = harness.accountID
+    let join = Task { @MainActor in
+        try await chatService.joinRoomAwaitingEcho(jid: roomJID, nickname: "alice", accountID: accountID, remember: remember)
+    }
+    _ = await harness.transport.waitForSent(matching: isJoinPresence)
+    try await eventually { try await storedRoom(roomJID, in: harness.store, accountID: accountID) != nil }
+    await harness.transport.simulateReceive(
+        "<presence from='\(roomJID)/alice'><x xmlns='http://jabber.org/protocol/muc#user'>"
+            + "<item affiliation='member' role='participant'/><status code='110'/></x></presence>"
+    )
+    let muc = try #require(await harness.accountService.client(for: accountID)?.module(ofType: MUCModule.self))
+    try await eventually { muc.confirmedNickname(in: roomJID) == "alice" }
+    let occupancy = RoomOccupancy(nickname: "alice", occupants: [RoomOccupant(nickname: "alice", affiliation: .member, role: .participant)], subject: nil)
+    await chatService.handleEvent(.roomJoined(room: roomJID, occupancy: occupancy, isNewlyCreated: false), accountID: accountID)
+    try await join.value
+}
+
 enum RoomRejoinTests {
     struct Remembering {
         @Test(arguments: [true, false])
@@ -88,15 +109,20 @@ enum RoomRejoinTests {
                 try await chatService.joinRoomAwaitingEcho(jid: roomJID, nickname: "alice", accountID: accountID, remember: remember)
             }
             _ = await harness.transport.waitForSent(matching: isJoinPresence)
+            // The room's answer takes a round trip, so the join has stored its conversation by then.
+            try await eventually { try await storedRoom(roomJID, in: harness.store, accountID: accountID) != nil }
+            // The room gives another nickname than the one asked for.
             let occupancy = RoomOccupancy(
-                nickname: "alice",
-                occupants: [RoomOccupant(nickname: "alice", affiliation: .member, role: .participant)],
+                nickname: "alice_",
+                occupants: [RoomOccupant(nickname: "alice_", affiliation: .member, role: .participant)],
                 subject: nil
             )
             await chatService.handleEvent(.roomJoined(room: roomJID, occupancy: occupancy, isNewlyCreated: false), accountID: accountID)
             try await join.value
 
             #expect(try await harness.rejoinsOnConnect(roomJID) == remember)
+            // Rejoining on a later connect asks for the nickname the room confirmed.
+            #expect(try await storedRoom(roomJID, in: harness.store, accountID: accountID)?.roomNickname == "alice_")
 
             await harness.accountService.disconnect(accountID: accountID)
         }
@@ -137,29 +163,91 @@ enum RoomRejoinTests {
         ] as [(OccupantLeaveReason?, Bool)])
         @MainActor
         func `only being thrown out of a room forgets it`(reason: OccupantLeaveReason?, staysRemembered: Bool) async throws {
-            let room = try await roomAfterOccupantLeft(nickname: "alice", reason: reason)
+            // A nickname other than the stored one: the room's word alone says the removal is the user's.
+            let room = try await roomAfterOccupantLeft(nickname: "alice_", reason: reason, isSelf: true)
 
             #expect(room.rejoinsOnConnect == staysRemembered)
         }
 
-        @Test
+        /// "alice" is the stored nickname, which another occupant may hold while a join under another one is pending.
+        @Test(arguments: ["bob", "alice"])
         @MainActor
-        func `someone else being removed changes nothing`() async throws {
-            let room = try await roomAfterOccupantLeft(nickname: "bob", reason: .kicked(reason: nil))
+        func `someone else being removed changes nothing`(nickname: String) async throws {
+            let room = try await roomAfterOccupantLeft(nickname: nickname, reason: .kicked(reason: nil), isSelf: false)
 
             #expect(room.rejoinsOnConnect)
         }
 
         @MainActor
-        private func roomAfterOccupantLeft(nickname: String, reason: OccupantLeaveReason?) async throws -> Conversation {
+        private func roomAfterOccupantLeft(nickname: String, reason: OccupantLeaveReason?, isSelf: Bool) async throws -> Conversation {
             let store = MockPersistenceStore()
             let service = makeChatService(store: store)
             await store.addConversation(makeRoom(roomJID, accountID: testAccountID, rejoinsOnConnect: true))
 
             let occupant = RoomOccupant(nickname: nickname, affiliation: .none, role: .none)
-            await service.handleEvent(.roomOccupantLeft(room: roomJID, occupant: occupant, reason: reason), accountID: testAccountID)
+            await service.handleEvent(.roomOccupantLeft(room: roomJID, occupant: occupant, reason: reason, isSelf: isSelf), accountID: testAccountID)
 
             return try #require(try await storedRoom(roomJID, in: store, accountID: testAccountID))
+        }
+    }
+
+    /// A join to a room the user is in keeps the room. Under the same nickname it sends nothing, and under another one
+    /// XEP-0045 treats it as a nickname change. Only the self-ping rejoin joins afresh.
+    struct JoinedRoom {
+        @Test
+        @MainActor
+        func `joining a room the user is in under the same nickname completes at once`() async throws {
+            let harness = try await makeRejoinHarness()
+            // Joined without remembering, as an auto-join bookmark does.
+            try await joinConfirmed(harness, remember: false)
+            try #require(try await harness.rejoinsOnConnect(roomJID) == false)
+            let sentBefore = await harness.transport.sentBytes.count
+
+            try await harness.chatService.joinRoomAwaitingEcho(jid: roomJID, nickname: "alice", accountID: harness.accountID, timeout: .milliseconds(200))
+
+            #expect(await harness.transport.sentBytes.count == sentBefore)
+            #expect(try await harness.rejoinsOnConnect(roomJID) == true)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        @Test
+        @MainActor
+        func `joining a room the user is in under another nickname completes on the room's rename`() async throws {
+            let harness = try await makeRejoinHarness()
+            try await joinConfirmed(harness)
+            let chatService = harness.chatService
+            let accountID = harness.accountID
+
+            let join = Task { @MainActor in
+                try await chatService.joinRoomAwaitingEcho(jid: roomJID, nickname: "alice2", accountID: accountID)
+            }
+            _ = await harness.transport.waitForSent { $0.contains("<presence") && $0.contains("/alice2") }
+            // Another occupant's rename does not answer the join.
+            let bob = RoomOccupant(nickname: "bobby", affiliation: .member, role: .participant)
+            await chatService.handleEvent(.roomOccupantNickChanged(room: roomJID, oldNickname: "bob", occupant: bob, isSelf: false), accountID: accountID)
+            for task in chatService.takePendingTasks() {
+                await task.value
+            }
+            #expect(chatService.roomJoinNotifiers[RoomJoinKey(accountID: accountID, room: roomJID)] != nil)
+            let renamed = RoomOccupant(nickname: "alice2", affiliation: .member, role: .participant)
+            await chatService.handleEvent(.roomOccupantNickChanged(room: roomJID, oldNickname: "alice", occupant: renamed, isSelf: true), accountID: accountID)
+            try await join.value
+
+            #expect(try await storedRoom(roomJID, in: harness.store, accountID: accountID)?.roomNickname == "alice2")
+            await harness.accountService.disconnect(accountID: accountID)
+        }
+
+        @Test
+        @MainActor
+        func `the self-ping rejoin joins afresh though the module still holds the room`() async throws {
+            let harness = try await makeRejoinHarness()
+            try await joinConfirmed(harness)
+            let joinsBefore = await harness.joinPresences().count
+
+            await harness.chatService.handleEvent(.mucSelfPingFailed(room: roomJID, reason: .notJoined), accountID: harness.accountID)
+
+            #expect(await harness.joinPresences().count == joinsBefore + 1)
+            await harness.accountService.disconnect(accountID: harness.accountID)
         }
     }
 

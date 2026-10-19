@@ -101,7 +101,7 @@ enum ChatServiceMUCUITests {
 
             // Other leaves
             let leftOccupant = RoomOccupant(nickname: "other", affiliation: .member, role: .participant)
-            await service.handleEvent(.roomOccupantLeft(room: testRoomJID, occupant: leftOccupant, reason: nil), accountID: testAccountID)
+            await service.handleEvent(.roomOccupantLeft(room: testRoomJID, occupant: leftOccupant, reason: nil, isSelf: false), accountID: testAccountID)
 
             let participants = service.participants(forRoomJIDString: testRoomJID.description, accountID: testAccountID)
             #expect(participants.count == 1)

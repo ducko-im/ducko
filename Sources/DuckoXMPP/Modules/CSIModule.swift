@@ -8,7 +8,8 @@ private let log = Logger(label: "im.ducko.xmpp.csi")
 public final class CSIModule: XMPPModule, Sendable {
     private struct State {
         var context: ModuleContext?
-        var isActive: Bool = true
+        /// `nil` when the state the server holds is unknown, as on a resumed stream, so the next change is always sent.
+        var isActive: Bool? = true
         var serverSupported: Bool = false
     }
 
@@ -25,11 +26,12 @@ public final class CSIModule: XMPPModule, Sendable {
     // MARK: - Lifecycle
 
     public func handleConnect() async throws {
-        detectServerSupport()
+        // XEP-0352: a new session starts out active.
+        detectServerSupport(isActive: true)
     }
 
     public func handleResume() async throws {
-        detectServerSupport()
+        detectServerSupport(isActive: nil)
     }
 
     public func handleDisconnect() async {
@@ -39,7 +41,7 @@ public final class CSIModule: XMPPModule, Sendable {
         }
     }
 
-    private func detectServerSupport() {
+    private func detectServerSupport(isActive: Bool?) {
         guard let context = state.withLock({ $0.context }) else { return }
 
         guard let features = context.serverStreamFeatures(),
@@ -51,7 +53,7 @@ public final class CSIModule: XMPPModule, Sendable {
 
         state.withLock {
             $0.serverSupported = true
-            $0.isActive = true
+            $0.isActive = isActive
         }
         log.info("Server supports Client State Indication")
     }
@@ -61,7 +63,7 @@ public final class CSIModule: XMPPModule, Sendable {
     /// Sends `<active/>` to indicate the client is in the foreground.
     public func sendActive() async throws {
         let (context, shouldSend) = state.withLock { s -> (ModuleContext?, Bool) in
-            guard s.serverSupported, !s.isActive else { return (nil, false) }
+            guard s.serverSupported, s.isActive != true else { return (nil, false) }
             s.isActive = true
             return (s.context, true)
         }
@@ -75,7 +77,7 @@ public final class CSIModule: XMPPModule, Sendable {
     /// Sends `<inactive/>` to indicate the client is in the background.
     public func sendInactive() async throws {
         let (context, shouldSend) = state.withLock { s -> (ModuleContext?, Bool) in
-            guard s.serverSupported, s.isActive else { return (nil, false) }
+            guard s.serverSupported, s.isActive != false else { return (nil, false) }
             s.isActive = false
             return (s.context, true)
         }

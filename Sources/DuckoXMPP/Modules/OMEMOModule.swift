@@ -28,8 +28,16 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
         var deviceLists: [BareJID: [UInt32]] = [:]
         var ownIdentity: OwnIdentity?
         var pendingIdentity: OMEMOIdentityData?
+        /// Set when the stored keys could not be read, so this connection neither generates a device nor publishes.
+        var identityUnavailable = false
         var sessions: [SessionKey: SessionEntry] = [:]
         var usedPreKeyIDs: Set<UInt32> = []
+        /// The key exchanges this connection took up, so a replayed one cannot build a session again.
+        var acceptedKeyExchanges: Set<[UInt8]> = []
+        /// The pre-key ids of this module's last successful bundle publish.
+        var publishedPreKeyIDs: Set<UInt32>?
+        /// The latest bundle publish. Each publish waits for the one before it.
+        var bundlePublish: Task<Void, any Error>?
         var identityKeyValidator: (@Sendable (BareJID, UInt32, [UInt8]) async throws -> Void)?
         /// See `OMEMOService.seenDeviceCacheByAccount` for the cache-survival rationale and the opaque-`accountID` contract.
         var seenDeviceClassificationProvider: (any SeenDeviceClassificationProviding)?
@@ -71,11 +79,11 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
     /// Installs the configured identity, because the session's stanzas can reach `handleMessage` before `handleConnect`
     /// runs, and a resumed session never runs it.
     public func handleSessionEstablished(resumed: Bool) {
+        guard !state.withLock({ $0.identityUnavailable }) else { return }
         do {
             try installPendingIdentity()
         } catch {
-            // A fresh session retries in `handleConnect`, which reports the failure. A resumed session runs without
-            // an identity.
+            markIdentityUnavailable()
             log.warning("OMEMO identity could not be restored")
             log.debug("OMEMO identity could not be restored: \(error)")
         }
@@ -85,16 +93,11 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
         let identity: OwnIdentity
         let ownListKnown: Bool
         do {
-            if let installed = state.withLock({ $0.ownIdentity }) {
-                identity = installed
-            } else if let restored = try installPendingIdentity() {
-                identity = restored
-            } else {
-                identity = try generateOwnIdentity()
-                state.withLock { $0.ownIdentity = identity }
-            }
+            // A nil identity means the stored keys were unreadable, which whoever found that has logged.
+            guard let connectIdentity = try connectIdentity() else { return }
+            identity = connectIdentity
             ownListKnown = try await ensureOwnDeviceInList(identity.deviceID)
-            try await publishOwnBundle(identity)
+            try await republishBundle()
         } catch {
             throw OMEMOModuleError.translatingCryptoFailure(error)
         }
@@ -127,9 +130,12 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
         registrationRetryTask?.cancel()
         state.withLock {
             $0.ownIdentity = nil
+            $0.identityUnavailable = false
             $0.deviceLists.removeAll()
             $0.sessions.removeAll()
             $0.usedPreKeyIDs.removeAll()
+            $0.acceptedKeyExchanges.removeAll()
+            $0.publishedPreKeyIDs = nil
             $0.identityKeyValidator = nil
             $0.seenDeviceClassificationProvider = nil
             $0.seenDeviceClassificationAccountID = nil
@@ -165,6 +171,15 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
     /// Sets the identity to install when the next session is established, instead of generating a fresh one.
     public func configureIdentity(_ data: OMEMOIdentityData) {
         state.withLock { $0.pendingIdentity = data }
+    }
+
+    /// Keeps this connection from generating a new device when the stored keys could not be read. Encryption stays
+    /// unavailable until a later connect loads them.
+    package func markIdentityUnavailable() {
+        state.withLock {
+            $0.identityUnavailable = true
+            $0.pendingIdentity = nil
+        }
     }
 
     /// Verifies the peer's identity key during session establishment (before X3DH key agreement).
@@ -204,17 +219,66 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
         state.withLock { $0.usedPreKeyIDs }
     }
 
-    /// Restores previously persisted sessions into the module's in-memory state.
-    public func restoreSessions(_ entries: [StoredSessionEntry]) {
+    /// Adds one-time pre-keys to the installed identity. They go out with the next bundle publish.
+    package func addPreKeys(_ preKeys: [OMEMOPreKey]) {
+        state.withLock { $0.ownIdentity?.preKeys += preKeys }
+    }
+
+    /// Drops pre-keys used up elsewhere, such as by an earlier connection, from the bundle and from the keys a key
+    /// exchange can take up. This connection holds no record of their key exchanges, so it could not tell a replay of
+    /// one. Keys this connection used itself stay open to a new key exchange, such as one from a second contact who
+    /// took the same key from the bundle, because this connection's record tells a replay of the first.
+    package func retirePreKeys(_ keyIDs: Set<UInt32>) {
         state.withLock { state in
+            let retired = keyIDs.subtracting(state.usedPreKeyIDs)
+            state.ownIdentity?.preKeys.removeAll { retired.contains($0.keyID) }
+        }
+    }
+
+    /// Whether the bundle this connection last published lags behind the pre-keys this device can hand out, as when
+    /// nothing was published yet or keys were used up or added since. A failed publish leaves the last published set in
+    /// place.
+    package var bundleNeedsPublish: Bool {
+        state.withLock { state in
+            guard let identity = state.ownIdentity else { return false }
+            return state.publishedPreKeyIDs != Self.publishablePreKeyIDs(of: identity, used: state.usedPreKeyIDs)
+        }
+    }
+
+    /// Publishes the bundle as the identity stands when the publish starts. Publishes never overlap: one asked for
+    /// during another starts once it ends. Each runs in a task of its own, so a caller's cancellation fails no publish.
+    package func republishBundle() async throws {
+        let publish = state.withLock { state in
+            let previous = state.bundlePublish
+            let publish = Task {
+                _ = await previous?.result
+                try await publishCurrentBundle()
+            }
+            state.bundlePublish = publish
+            return publish
+        }
+        try await publish.value
+    }
+
+    /// Restores previously persisted sessions into the module's in-memory state. A session that fails to decode is
+    /// skipped.
+    public func restoreSessions(_ entries: [StoredSessionEntry]) {
+        let undecodable = state.withLock { state in
+            var undecodable = 0
             for entry in entries {
                 let key = SessionKey(jid: entry.jid, deviceID: entry.deviceID)
                 if let session = try? OMEMODoubleRatchetSession(serialized: entry.sessionData) {
                     state.sessions[key] = SessionEntry(
                         session: session, associatedData: entry.associatedData
                     )
+                } else {
+                    undecodable += 1
                 }
             }
+            return undecodable
+        }
+        if undecodable > 0 {
+            log.warning("OMEMO skipped \(undecodable) stored session(s) that could not be decoded")
         }
     }
 
@@ -472,6 +536,25 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
 
     // MARK: - Identity Generation
 
+    /// The identity a fresh connect works with. Generates a new device only when none was configured. Returns `nil`
+    /// when the configured keys could not be read, since replacing them would lose the device.
+    private func connectIdentity() throws -> OwnIdentity? {
+        let (installed, unavailable) = state.withLock { ($0.ownIdentity, $0.identityUnavailable) }
+        if unavailable { return nil }
+        if let installed { return installed }
+        do {
+            if let restored = try installPendingIdentity() { return restored }
+        } catch {
+            markIdentityUnavailable()
+            log.warning("OMEMO identity could not be restored")
+            log.debug("OMEMO identity could not be restored: \(error)")
+            return nil
+        }
+        let generated = try generateOwnIdentity()
+        state.withLock { $0.ownIdentity = generated }
+        return generated
+    }
+
     /// Returns `nil` when no identity is pending.
     @discardableResult
     private func installPendingIdentity() throws -> OwnIdentity? {
@@ -613,14 +696,32 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
     /// IDs (a wrong itemID is a silent no-op on most PEP servers).
     private static let bundleItemID = "current"
 
+    /// Pre-keys a contact used stay in the identity for decryption until the connection ends, but leave the bundle.
+    private static func publishablePreKeyIDs(of identity: OwnIdentity, used: Set<UInt32>) -> Set<UInt32> {
+        Set(identity.preKeys.map(\.keyID)).subtracting(used)
+    }
+
+    private func publishCurrentBundle() async throws {
+        let current = state.withLock { state in
+            state.ownIdentity.map { ($0, Self.publishablePreKeyIDs(of: $0, used: state.usedPreKeyIDs)) }
+        }
+        guard let (identity, preKeyIDs) = current else { throw OMEMOModuleError.notSetUp }
+        try await publishOwnBundle(identity, preKeyIDs: preKeyIDs)
+        state.withLock { state in
+            // A disconnect during the publish reset this module, so what it published no longer counts.
+            guard state.ownIdentity != nil else { return }
+            state.publishedPreKeyIDs = preKeyIDs
+        }
+    }
+
     private func publishOwnBundle(
-        _ identity: OwnIdentity
+        _ identity: OwnIdentity, preKeyIDs: Set<UInt32>
     ) async throws {
         let bundle = OMEMOPreKeyManager.buildBundle(
             deviceID: identity.deviceID,
             identityKeyPair: identity.identityKeyPair,
             signedPreKey: identity.signedPreKey,
-            preKeys: identity.preKeys
+            preKeys: identity.preKeys.filter { preKeyIDs.contains($0.keyID) }
         )
         let payload = buildBundleElement(bundle)
         let node = bundleNodeName(identity.deviceID.value)
@@ -705,11 +806,6 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
             named: "encrypted", namespace: XMPPNamespaces.omemo
         ), let from = message.from else { return }
 
-        // Extract XEP-0359 stanza-id for dedup and marker correlation
-        let stanzaID = message.element
-            .child(named: "stanza-id", namespace: XMPPNamespaces.stanzaID)?
-            .attribute("id")
-
         do {
             let result = try decryptIncomingMessage(
                 encrypted, from: from
@@ -741,26 +837,39 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
 
             // Regular encrypted message
             context?.emitEvent(.omemoEncryptedMessageReceived(
-                from: from,
+                message: message,
                 decryptedBody: body,
-                senderDeviceID: result.senderDeviceID,
-                stanzaID: stanzaID
+                senderDeviceID: result.senderDeviceID
             ))
         } catch OMEMOModuleError.notForThisDevice {
             // Not addressed to us — ignore silently
+        } catch OMEMOModuleError.replayedKeyExchange {
+            // XEP-0384: a copy of a message already read is ignored, so it shows no undecryptable row either.
+            log.warning("OMEMO key exchange ignored: it repeats one already taken up")
         } catch {
-            log.warning("OMEMO decryption failed: \(error)")
-            let context = state.withLock { $0.context }
-            context?.emitEvent(.omemoEncryptedMessageReceived(
-                from: from, decryptedBody: nil, senderDeviceID: 0,
-                stanzaID: stanzaID
-            ))
+            if case OMEMOModuleError.unknownPreKey = error {
+                log.warning("OMEMO key exchange rejected: it names a pre-key this device does not have")
+            } else {
+                log.warning("OMEMO decryption failed: \(error)")
+            }
+            emitUndecryptableMessage(message, encrypted: encrypted)
         }
+    }
+
+    /// A correction, a retraction or a message carrying only key material never produced a row of its own, so a failed
+    /// one has nothing to show and nothing to match a replay against.
+    private func emitUndecryptableMessage(_ message: XMPPMessage, encrypted: XMLElement) {
+        guard encrypted.child(named: "payload") != nil,
+              message.element.child(named: "replace", namespace: XMPPNamespaces.messageCorrect) == nil,
+              message.element.child(named: "retract", namespace: XMPPNamespaces.messageRetract) == nil
+        else { return }
+        let context = state.withLock { $0.context }
+        context?.emitEvent(.omemoEncryptedMessageReceived(message: message, decryptedBody: nil, senderDeviceID: 0))
     }
 
     // MARK: - Decryption
 
-    private func decryptIncomingMessage(
+    func decryptIncomingMessage(
         _ encrypted: XMLElement, from: JID
     ) throws -> DecryptionResult {
         let header = try parseHeader(encrypted)
@@ -786,9 +895,7 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
             jid: senderJID, deviceID: header.sid
         )
         let contentKey: [UInt8] = if isKex {
-            try decryptKexKey(
-                keyData, sessionKey: sessionKey, header: header
-            )
+            try decryptKexKey(keyData, sessionKey: sessionKey)
         } else {
             try decryptExistingSessionKey(
                 keyData, sessionKey: sessionKey
@@ -800,17 +907,22 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
         )
     }
 
-    private func decryptKexKey(
-        _ data: [UInt8], sessionKey: SessionKey,
-        header: ParsedHeader
-    ) throws -> [UInt8] {
+    private func decryptKexKey(_ data: [UInt8], sessionKey: SessionKey) throws -> [UInt8] {
         let kex = try deserializeKeyExchange(data)
         let identity = try requireOwnIdentity()
         guard kex.signedPreKeyID == identity.signedPreKey.keyID else {
             throw OMEMOModuleError.invalidKeyData
         }
-        let preKey = identity.preKeys.first {
-            $0.keyID == kex.preKeyID
+        // XEP-0384: a key exchange without a pre-key must be rejected.
+        guard let preKeyID = kex.preKeyID else { throw OMEMOModuleError.unknownPreKey }
+        // A sender repeats its key exchange until it hears back (XEP-0384 §4.3), so one from a device with a session
+        // here is first read through that session. A copy of a message read before fails there and changes nothing.
+        if let plaintext = try? decrypt(kex.ratchetMessage, through: sessionKey) {
+            return plaintext
+        }
+        // Checked before anything is assigned, so an existing session stays as it was.
+        guard let preKey = identity.preKeys.first(where: { $0.keyID == preKeyID }) else {
+            throw OMEMOModuleError.unknownPreKey
         }
         let x3dhResult = try OMEMOX3DH.responderKeyAgreement(
             identityKeyPair: identity.identityKeyPair,
@@ -827,34 +939,51 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
             message: kex.ratchetMessage,
             associatedData: x3dhResult.associatedData
         )
-        let updatedSession = session
-        let ad = x3dhResult.associatedData
-        let consumedPreKeyID = preKey?.keyID
-        let context = state.withLock {
-            $0.sessions[sessionKey] = SessionEntry(
-                session: updatedSession, associatedData: ad
-            )
-            if let consumedPreKeyID {
-                $0.usedPreKeyIDs.insert(consumedPreKeyID)
-            }
-            if let knownDevices = $0.deviceLists[sessionKey.jid],
-               !knownDevices.contains(header.sid) {
-                log.warning("KEX from unannounced device \(header.sid)")
-                log.debug("The unannounced device belongs to \(sessionKey.jid)")
-            }
-            return $0.context
-        }
+        let context = try installKeyExchangeSession(
+            SessionEntry(session: session, associatedData: x3dhResult.associatedData),
+            exchange: Self.keyExchangeFingerprint(sharedSecret: x3dhResult.sharedSecret, associatedData: x3dhResult.associatedData),
+            preKeyID: preKey.keyID, sessionKey: sessionKey
+        )
         context?.emitEvent(.omemoSessionEstablished(
             jid: sessionKey.jid, deviceID: sessionKey.deviceID,
-            identityKey: kex.identityKey
+            identityKey: kex.identityKey, consumedPreKeyID: preKey.keyID
         ))
         return plaintext
+    }
+
+    /// Installs a session a key exchange built, replacing any earlier one with that device (XEP-0384 §5.6). A key
+    /// exchange taken up once comes again only as a replay, whichever device or contact it claims.
+    private func installKeyExchangeSession(
+        _ entry: SessionEntry, exchange: [UInt8], preKeyID: UInt32, sessionKey: SessionKey
+    ) throws -> ModuleContext? {
+        try state.withLock { state in
+            guard state.acceptedKeyExchanges.insert(exchange).inserted else {
+                throw OMEMOModuleError.replayedKeyExchange
+            }
+            state.sessions[sessionKey] = entry
+            state.usedPreKeyIDs.insert(preKeyID)
+            if let knownDevices = state.deviceLists[sessionKey.jid],
+               !knownDevices.contains(sessionKey.deviceID) {
+                log.warning("KEX from unannounced device \(sessionKey.deviceID)")
+                log.debug("The unannounced device belongs to \(sessionKey.jid)")
+            }
+            return state.context
+        }
+    }
+
+    /// Identifies a key exchange by what it derives rather than by its bytes, since one X25519 key has several encodings.
+    private static func keyExchangeFingerprint(sharedSecret: [UInt8], associatedData: [UInt8]) -> [UInt8] {
+        Array(SHA256.hash(data: Array("OMEMO key exchange".utf8) + sharedSecret + associatedData))
     }
 
     private func decryptExistingSessionKey(
         _ data: [UInt8], sessionKey: SessionKey
     ) throws -> [UInt8] {
-        let ratchetMessage = try deserializeRatchetMessage(data)
+        try decrypt(deserializeRatchetMessage(data), through: sessionKey)
+    }
+
+    /// The session advances only when the message decrypts.
+    private func decrypt(_ ratchetMessage: OMEMORatchetMessage, through sessionKey: SessionKey) throws -> [UInt8] {
         guard var entry = state.withLock({ $0.sessions[sessionKey] }) else {
             throw OMEMOModuleError.noSession
         }
@@ -966,12 +1095,15 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
                 sessionKey.jid, sessionKey.deviceID, bundle.identityKey
             )
         }
-        let selectedPreKey = bundle.preKeys.randomElement()
+        // XEP-0384 rejects a key exchange without a pre-key, so a bundle that lists none is as good as missing.
+        guard let selectedPreKey = bundle.preKeys.randomElement() else {
+            throw OMEMOModuleError.bundleNotFound
+        }
         let peerBundle = OMEMOX3DHPeerBundle(
             identityKey: bundle.identityKey,
             signedPreKey: bundle.signedPreKey,
             signedPreKeySignature: bundle.signedPreKeySignature,
-            oneTimePreKey: selectedPreKey?.publicKey
+            oneTimePreKey: selectedPreKey.publicKey
         )
         let x3dhResult = try OMEMOX3DH.initiatorKeyAgreement(
             identityKeyPair: identity.identityKeyPair,
@@ -989,7 +1121,7 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
         }
         context?.emitEvent(.omemoSessionEstablished(
             jid: sessionKey.jid, deviceID: sessionKey.deviceID,
-            identityKey: bundle.identityKey
+            identityKey: bundle.identityKey, consumedPreKeyID: nil
         ))
         return SessionResult(
             session: session,
@@ -997,7 +1129,7 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
             kexInfo: InitiatorKexInfo(
                 ephemeralPublicKey: x3dhResult.ephemeralPublicKey,
                 peerSignedPreKeyID: bundle.signedPreKeyID,
-                peerPreKeyID: selectedPreKey?.id
+                peerPreKeyID: selectedPreKey.id
             )
         )
     }
@@ -1229,8 +1361,7 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
     ) -> [UInt8] {
         var result: [UInt8] = []
         appendBigEndian(kexInfo.peerSignedPreKeyID, to: &result)
-        let pkID = kexInfo.peerPreKeyID ?? 0xFFFF_FFFF
-        appendBigEndian(pkID, to: &result)
+        appendBigEndian(kexInfo.peerPreKeyID, to: &result)
         result.append(
             contentsOf: identity.identityKeyPair.publicKeyBytes
         )
@@ -1447,16 +1578,25 @@ public extension OMEMOModule {
 
 // MARK: - Identity Provider Protocol
 
-/// Read-only access to an OMEMO identity source. Lets `OMEMOService` consume
-/// the surfaces it needs from `OMEMOModule` (`ownIdentityData`,
-/// `consumedPreKeyIDs()`) without holding a concrete module reference, so the
-/// connect-time first-time-persistence path can be exercised under unit tests.
+/// Read-only access to an OMEMO identity source. Lets `OMEMOService` read `ownIdentityData` and `consumedPreKeyIDs()`
+/// without holding a concrete module, so first-time persistence and pre-key upkeep can be exercised under unit tests.
 package protocol OMEMOIdentityProviding: Sendable {
     var ownIdentityData: OMEMOModule.OMEMOIdentityData? { get }
     func consumedPreKeyIDs() -> Set<UInt32>
 }
 
 extension OMEMOModule: OMEMOIdentityProviding {}
+
+/// What `OMEMOService` uses to keep the module's pre-keys and published bundle in step, as a protocol so unit tests can
+/// drive that upkeep through a stub.
+package protocol OMEMOPreKeyMaintaining: OMEMOIdentityProviding {
+    var bundleNeedsPublish: Bool { get }
+    func addPreKeys(_ preKeys: [OMEMOPreKey])
+    func retirePreKeys(_ keyIDs: Set<UInt32>)
+    func republishBundle() async throws
+}
+
+extension OMEMOModule: OMEMOPreKeyMaintaining {}
 
 // MARK: - Seen Device Classification
 
@@ -1544,6 +1684,10 @@ public enum OMEMOModuleError: Error, Equatable {
     case bundleNotFound
     case noSession
     case notForThisDevice
+    /// A key exchange named no one-time pre-key, or one this device no longer holds.
+    case unknownPreKey
+    /// A key exchange this connection already took up arrived again.
+    case replayedKeyExchange
     case invalidKeyData
     case invalidHeader
     case invalidPayload
@@ -1579,7 +1723,7 @@ private struct OwnIdentity {
     let deviceID: OMEMODeviceID
     let identityKeyPair: OMEMOIdentityKeyPair
     let signedPreKey: OMEMOSignedPreKey
-    let preKeys: [OMEMOPreKey]
+    var preKeys: [OMEMOPreKey]
     let connectedJID: FullJID
 }
 
@@ -1593,7 +1737,7 @@ private struct SessionResult {
 private struct InitiatorKexInfo {
     let ephemeralPublicKey: [UInt8]
     let peerSignedPreKeyID: UInt32
-    let peerPreKeyID: UInt32?
+    let peerPreKeyID: UInt32
 }
 
 private struct ParsedHeader {
@@ -1601,7 +1745,7 @@ private struct ParsedHeader {
     let sid: UInt32
 }
 
-private struct DecryptionResult {
+struct DecryptionResult {
     let body: String?
     let senderDeviceID: UInt32
 }

@@ -45,12 +45,16 @@ actor REPLSession {
     /// otherwise time out. Returns once the connection banner appears; on a
     /// failed banner wait, the partial session is terminated before rethrow
     /// so callers don't have to.
+    /// `seedsAccount: false` signs in again on a profile an earlier session seeded.
     static func start(
         cli: CLIProcess,
         credentials: TestCredentials.Credential,
-        arguments: [String] = []
+        arguments: [String] = [],
+        seedsAccount: Bool = true
     ) async throws -> REPLSession {
-        try await cli.seedAccount(credentials)
+        if seedsAccount {
+            try await cli.seedAccount(credentials)
+        }
 
         let session = try await spawn(cli: cli, arguments: arguments)
         do {

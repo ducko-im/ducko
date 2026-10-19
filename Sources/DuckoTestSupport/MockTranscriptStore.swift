@@ -54,6 +54,32 @@ public actor MockTranscriptStore: TranscriptStore {
         notes.append(note)
     }
 
+    /// Mirrors `FileTranscriptStore.storeEncryptedMessage(_:fromArchive:)`.
+    public func storeEncryptedMessage(_ message: ChatMessage, fromArchive: Bool) async throws -> EncryptedMessageStoreOutcome {
+        let stored = applyAmendments(to: messages.filter { $0.conversationID == message.conversationID })
+        if let serverID = message.serverID, let match = stored.first(where: { $0.serverID == serverID }) {
+            guard match.isUndecryptable, !match.isRetracted, !message.isUndecryptable, match.isOutgoing == message.isOutgoing
+            else { return .duplicate }
+            amendments.append((
+                TranscriptAmendment(
+                    action: .decrypted, targetMessageID: match.id, timestamp: Date(),
+                    body: message.body, htmlBody: message.htmlBody
+                ),
+                message.conversationID
+            ))
+            return .upgraded(placeholderID: match.id, timestamp: match.timestamp)
+        }
+        if message.serverID == nil || fromArchive, let stanzaID = message.stanzaID {
+            let isDuplicate = stored.contains { row in
+                guard row.stanzaID == stanzaID, !fromArchive || row.serverID == nil else { return false }
+                return message.isOutgoing ? row.isOutgoing : !row.isOutgoing && row.fromJID == message.fromJID
+            }
+            if isDuplicate { return .duplicate }
+        }
+        messages.append(message)
+        return .inserted
+    }
+
     // MARK: - Read
 
     public func fetchMessages(for conversationID: UUID, before: Date?, limit: Int) async throws -> [ChatMessage] {
@@ -209,6 +235,12 @@ public actor MockTranscriptStore: TranscriptStore {
                 case .error:
                     if let errorText = amendment.errorText {
                         result[index].errorText = errorText
+                    }
+                case .decrypted:
+                    result[index].isUndecryptable = false
+                    if !result[index].isRetracted, !result[index].isEdited {
+                        result[index].body = amendment.body ?? ""
+                        result[index].htmlBody = amendment.htmlBody
                     }
                 }
             }

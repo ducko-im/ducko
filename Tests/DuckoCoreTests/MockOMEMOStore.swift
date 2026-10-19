@@ -19,11 +19,33 @@ actor MockOMEMOStore: OMEMOStore {
     private var seenDevices: [String: [UInt32: OMEMOStoredSeenDevice]] = [:]
 
     private(set) var saveIdentityCalls = 0
+    private(set) var loadPreKeysCalls = 0
     private(set) var savePreKeysCalls = 0
     private(set) var saveSignedPreKeyCalls = 0
     private(set) var loadSeenDevicesCalls = 0
     private(set) var deleteTrustCalls = 0
     private(set) var deleteSessionCalls = 0
+
+    /// Failure switches: each load or save named here throws instead of touching the store.
+    enum FailingCall: Hashable {
+        case loadIdentity, loadPreKeys, loadSignedPreKey, loadSessions, saveIdentity, savePreKeys, saveSignedPreKey
+    }
+
+    struct InjectedFailure: Error {}
+
+    private var failingCalls: Set<FailingCall> = []
+
+    func setFailing(_ call: FailingCall, _ failing: Bool = true) {
+        if failing {
+            failingCalls.insert(call)
+        } else {
+            failingCalls.remove(call)
+        }
+    }
+
+    private func failIfSwitched(_ call: FailingCall) throws {
+        if failingCalls.contains(call) { throw InjectedFailure() }
+    }
 
     func seedIdentity(_ identity: OMEMOStoredIdentity) {
         self.identity[identity.accountJID] = identity
@@ -66,57 +88,59 @@ actor MockOMEMOStore: OMEMOStore {
     // MARK: - Identity
 
     func loadIdentity(for accountJID: String) async throws -> OMEMOStoredIdentity? {
-        identity[accountJID]
+        try failIfSwitched(.loadIdentity)
+        return identity[accountJID]
     }
 
     func saveIdentity(_ identity: OMEMOStoredIdentity) async throws {
         saveIdentityCalls += 1
+        try failIfSwitched(.saveIdentity)
         self.identity[identity.accountJID] = identity
     }
 
     // MARK: - Pre-Keys
 
     func loadPreKeys(for accountJID: String) async throws -> [OMEMOStoredPreKey] {
-        preKeys[accountJID] ?? []
+        loadPreKeysCalls += 1
+        try failIfSwitched(.loadPreKeys)
+        return preKeys[accountJID] ?? []
     }
 
     func savePreKeys(_ preKeys: [OMEMOStoredPreKey]) async throws {
         savePreKeysCalls += 1
+        try failIfSwitched(.savePreKeys)
         for key in preKeys {
             self.preKeys[key.accountJID, default: []].append(key)
         }
     }
 
     func consumePreKey(id: UInt32, accountJID: String) async throws {
-        guard var keys = preKeys[accountJID] else { return }
-        // Match production `SwiftDataOMEMOStore.consumePreKey` semantics: only
-        // the first row matching `(accountJID, keyID)` is marked used. Both
-        // stores allow duplicate rows via `savePreKeys` append semantics, so a
-        // mock that marked all duplicates would silently diverge.
-        if let index = keys.firstIndex(where: { $0.keyID == id }) {
-            keys[index] = OMEMOStoredPreKey(
-                accountJID: accountJID, keyID: keys[index].keyID,
-                keyData: keys[index].keyData, isUsed: true
-            )
-            preKeys[accountJID] = keys
+        // Match production `SwiftDataOMEMOStore.consumePreKey` semantics: every row matching `(accountJID, keyID)`,
+        // duplicates from `savePreKeys`'s append included, becomes a used tombstone without key data.
+        preKeys[accountJID] = preKeys[accountJID]?.map { key in
+            guard key.keyID == id else { return key }
+            return OMEMOStoredPreKey(accountJID: accountJID, keyID: key.keyID, keyData: Data(), isUsed: true)
         }
     }
 
     // MARK: - Signed Pre-Key
 
     func loadSignedPreKey(for accountJID: String) async throws -> OMEMOStoredSignedPreKey? {
-        signedPreKey[accountJID]
+        try failIfSwitched(.loadSignedPreKey)
+        return signedPreKey[accountJID]
     }
 
     func saveSignedPreKey(_ key: OMEMOStoredSignedPreKey) async throws {
         saveSignedPreKeyCalls += 1
+        try failIfSwitched(.saveSignedPreKey)
         signedPreKey[key.accountJID] = key
     }
 
     // MARK: - Sessions
 
     func loadSessions(for accountJID: String) async throws -> [OMEMOStoredSession] {
-        sessions[accountJID] ?? []
+        try failIfSwitched(.loadSessions)
+        return sessions[accountJID] ?? []
     }
 
     func saveSession(_ session: OMEMOStoredSession) async throws {

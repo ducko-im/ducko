@@ -36,7 +36,6 @@ struct RoomServiceOwnershipTests {
         let service = RoomService(
             store: MockPersistenceStore(),
             ensureConversation: { _, _, _ in await entered.signal(); await release.wait() },
-            conversation: { _, _ in nil },
             didUpdateConversation: { _ in }
         )
         let (_, originalStream) = service.registerRoomJoinNotifier(jid: room, accountID: accountID)
@@ -71,7 +70,6 @@ struct RoomServiceOwnershipTests {
         let service = RoomService(
             store: MockPersistenceStore(),
             ensureConversation: { _, _, _ in await entered.signal(); await release.wait() },
-            conversation: { _, _ in nil },
             didUpdateConversation: { _ in }
         )
         let (notifierID, stream) = service.registerRoomJoinNotifier(jid: room, accountID: accountID)

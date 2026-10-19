@@ -41,7 +41,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 _ = try await ctx.alice.waitForEvent(
                     matching: { event in
-                        if case let .omemoSessionEstablished(jid, _, _) = event, jid == ctx.bobJID { return true }
+                        if case let .omemoSessionEstablished(jid, _, _, _) = event, jid == ctx.bobJID { return true }
                         return false
                     },
                     timeout: TestTimeout.omemoSession
@@ -49,7 +49,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 _ = try await ctx.bob.waitForEvent(
                     matching: { event in
-                        if case let .omemoEncryptedMessageReceived(_, decrypted, _, _) = event,
+                        if case let .omemoEncryptedMessageReceived(_, decrypted, _) = event,
                            decrypted == body {
                             return true
                         }
@@ -69,7 +69,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 let decryptedBody = try await ctx.bob.waitForEvent(
                     extracting: { event in
-                        if case let .omemoEncryptedMessageReceived(_, decrypted?, _, _) = event,
+                        if case let .omemoEncryptedMessageReceived(_, decrypted?, _) = event,
                            decrypted == body {
                             return decrypted
                         }
@@ -107,7 +107,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 _ = try await bob.waitForEvent(
                     matching: { event in
-                        if case let .omemoEncryptedMessageReceived(_, decrypted, _, _) = event,
+                        if case let .omemoEncryptedMessageReceived(_, decrypted, _) = event,
                            decrypted == bobBody {
                             return true
                         }
@@ -117,7 +117,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 )
                 _ = try await carol.waitForEvent(
                     matching: { event in
-                        if case let .omemoEncryptedMessageReceived(_, decrypted, _, _) = event,
+                        if case let .omemoEncryptedMessageReceived(_, decrypted, _) = event,
                            decrypted == carolBody {
                             return true
                         }

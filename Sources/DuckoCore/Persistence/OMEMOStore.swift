@@ -137,6 +137,8 @@ public protocol OMEMOStore: Sendable {
 
     func loadPreKeys(for accountJID: String) async throws -> [OMEMOStoredPreKey]
     func savePreKeys(_ preKeys: [OMEMOStoredPreKey]) async throws
+    /// Marks every stored row of the pre-key used and erases its private key data (XEP-0384). The rows stay, so new
+    /// pre-keys are numbered past them.
     func consumePreKey(id: UInt32, accountJID: String) async throws
 
     // MARK: - Signed Pre-Key

@@ -266,8 +266,8 @@ enum ChatServiceResourceLockTests {
             // OMEMOService → ChatService.learnResourceLock wiring rather than calling the hook directly.
             await omemoService.handleEvent(
                 .omemoEncryptedMessageReceived(
-                    from: full(contactJID, "phone"), decryptedBody: "secret",
-                    senderDeviceID: 1, stanzaID: "omemo-1"
+                    message: makeEncryptedStanza(from: full(contactJID, "phone"), id: "omemo-1"),
+                    decryptedBody: "secret", senderDeviceID: 1
                 ),
                 accountID: harness.accountID
             )
@@ -293,8 +293,8 @@ enum ChatServiceResourceLockTests {
             // A nil decryptedBody is a failed/unauthenticated decrypt — it must not steer routing.
             await omemoService.handleEvent(
                 .omemoEncryptedMessageReceived(
-                    from: full(contactJID, "phone"), decryptedBody: nil,
-                    senderDeviceID: 0, stanzaID: "omemo-bad"
+                    message: makeEncryptedStanza(from: full(contactJID, "phone"), id: "omemo-bad"),
+                    decryptedBody: nil, senderDeviceID: 0
                 ),
                 accountID: harness.accountID
             )
@@ -322,8 +322,8 @@ enum ChatServiceResourceLockTests {
             omemoService.setChatService(harness.chatService)
             await omemoService.handleEvent(
                 .omemoEncryptedMessageReceived(
-                    from: full(roomJID, "nick"), decryptedBody: "group msg",
-                    senderDeviceID: 1, stanzaID: "omemo-group"
+                    message: makeEncryptedStanza(from: full(roomJID, "nick"), id: "omemo-group"),
+                    decryptedBody: "group msg", senderDeviceID: 1
                 ),
                 accountID: harness.accountID
             )
@@ -554,6 +554,32 @@ extension ChatServiceResourceLockTests {
                 let stanza = String(decoding: $0, as: UTF8.self)
                 return stanza.contains("<displayed") && stanza.contains("id=\"\(messageID)\"")
             }
+        }
+
+        @Test
+        @MainActor
+        func `The user's own message from another device gets no displayed marker in the open chat`() async throws {
+            let harness = try await makeConnectedHarness(modules: [ReceiptsModule()])
+            await harness.chatService.handleEvent(
+                .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "hi", id: "a-1")), accountID: harness.accountID
+            )
+            let conversation = try #require(harness.chatService.openConversations.first { $0.jid == contactJID })
+            await harness.chatService.selectConversation(conversation.id, accountID: harness.accountID)
+
+            for (from, id, isOutgoing) in [(full(accountJID, "laptop"), "own-1", true), (full(contactJID, "phone"), "a-2", false)] {
+                var message = XMPPMessage(type: .chat, id: id)
+                message.from = from
+                message.element.addChild(DuckoXMPP.XMLElement(name: "encrypted", namespace: XMPPNamespaces.omemo))
+                await harness.chatService.ingestEncryptedMessage(
+                    message: message, decryptedBody: "x", isOutgoing: isOutgoing, in: conversation, accountID: harness.accountID
+                )
+            }
+
+            // Armed: the contact's message, read where it arrived, got its marker after the user's own one was stored.
+            try await eventually { await markers(harness.transport, naming: "a-2") == 1 }
+            #expect(await markers(harness.transport, naming: "own-1") == 0)
+            #expect(publishedUnreadCount(harness, conversation.id) == 0)
+            await harness.accountService.disconnect(accountID: harness.accountID)
         }
 
         @Test

@@ -26,8 +26,10 @@ public enum XMPPEvent: Sendable {
     // MUC (XEP-0045)
     case roomJoined(room: BareJID, occupancy: RoomOccupancy, isNewlyCreated: Bool)
     case roomOccupantJoined(room: BareJID, occupant: RoomOccupant)
-    case roomOccupantLeft(room: BareJID, occupant: RoomOccupant, reason: OccupantLeaveReason?)
-    case roomOccupantNickChanged(room: BareJID, oldNickname: String, occupant: RoomOccupant)
+    /// `isSelf` tells the user's own departure, as the room confirmed it, from another occupant's.
+    case roomOccupantLeft(room: BareJID, occupant: RoomOccupant, reason: OccupantLeaveReason?, isSelf: Bool)
+    /// `isSelf` tells the user's own nickname change, as the room confirmed it, from another occupant's.
+    case roomOccupantNickChanged(room: BareJID, oldNickname: String, occupant: RoomOccupant, isSelf: Bool)
     case roomSubjectChanged(room: BareJID, subject: String?, setter: JID?)
     case roomInviteReceived(RoomInvite)
     case roomMessageReceived(XMPPMessage)
@@ -55,9 +57,14 @@ public enum XMPPEvent: Sendable {
     case contactUnblocked(BareJID)
 
     // OMEMO (XEP-0384)
+
     case omemoDeviceListReceived(jid: BareJID, devices: [UInt32])
-    case omemoEncryptedMessageReceived(from: JID, decryptedBody: String?, senderDeviceID: UInt32, stanzaID: String?)
-    case omemoSessionEstablished(jid: BareJID, deviceID: UInt32, identityKey: [UInt8])
+    /// `message` is the stanza as received. Only `decryptedBody` comes from the encrypted envelope, so the stanza's
+    /// ids, attachments, delay and reply are not covered by the encryption.
+    case omemoEncryptedMessageReceived(message: XMPPMessage, decryptedBody: String?, senderDeviceID: UInt32)
+    /// `consumedPreKeyID` names the one-time pre-key of this device that a contact's key exchange used up, or nil when
+    /// this device started the session.
+    case omemoSessionEstablished(jid: BareJID, deviceID: UInt32, identityKey: [UInt8], consumedPreKeyID: UInt32?)
     case omemoSessionAdvanced(jid: BareJID, deviceID: UInt32)
     /// Per-message diagnostic: an OMEMO send completed with at least one recipient device skipped (missing bundle).
     /// Fires for peer AND own devices. The outgoing stanza ID is omitted because encrypt runs before the stanza is built —

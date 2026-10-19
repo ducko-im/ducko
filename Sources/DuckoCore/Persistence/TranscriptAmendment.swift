@@ -3,6 +3,8 @@ import Foundation
 public struct TranscriptAmendment: Sendable {
     public enum Action: String, Sendable, Codable {
         case edit, retract, delivery, displayed, error
+        /// Fills in the text of a message stored as undecryptable, once another copy of it was decrypted.
+        case decrypted
     }
 
     public var action: Action
