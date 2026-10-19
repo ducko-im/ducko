@@ -37,24 +37,36 @@ struct VMScriptTests {
         #expect(result.stdout == "/stubs\n")
     }
 
+    @Test func `a changed helper source runs under a new binary name`() throws {
+        let swiftc = """
+        #!/bin/zsh -f
+        while (( $# )); do [[ $1 == -o ]] && { : > $2; chmod +x $2; }; shift; done
+        """
+        let commands = try ScriptRunner.withCheckout(skill: "lume-vm", scripts: ["vm.sh", "axbuttons.swift"]) { checkout in
+            let log = checkout.root.appendingPathComponent("guest.log")
+            try ScriptRunner.withStubs(["lume": lumeStub, "swiftc": swiftc]) { stubs in
+                let environment = ["PATH": "\(stubs.path):/usr/bin:/bin", "LUME_LOG": log.path, "LUME_CHECKOUT": checkout.resolved]
+                let first = try ScriptRunner.zsh([checkout.script("vm.sh"), "ax", "list"], environment: environment)
+                #expect(first.exitCode == 0, "ax failed: \(first.stderr)")
+                let source = try FileHandle(forWritingTo: URL(fileURLWithPath: checkout.script("axbuttons.swift")))
+                try source.seekToEnd()
+                try source.write(contentsOf: Data("// changed\n".utf8))
+                try source.close()
+                let second = try ScriptRunner.zsh([checkout.script("vm.sh"), "ax", "list"], environment: environment)
+                #expect(second.exitCode == 0, "ax failed: \(second.stderr)")
+            }
+            return try String(contentsOf: log, encoding: .utf8).split(separator: "\n").map(String.init)
+        }
+        try #require(commands.count == 2)
+        #expect(commands[0] != commands[1])
+    }
+
     /// Runs a copy of `vm.sh` placed in a stand-in checkout, so the paths it
     /// derives from its own location stay inside the temporary folder.
     private func runVM(_ arguments: [String], servesThisCheckout: Bool) throws -> (result: ScriptResult, guestCommands: [String]) {
-        // `ssh <vm> --storage <storage> -t <timeout> <command>` puts the guest command seventh.
-        let lume = """
-        #!/bin/zsh -f
-        case $1 in
-        ls) print "ducko macOS running" ;;
-        ssh)
-            print -r -- "$7" >> "$LUME_LOG"
-            [[ $7 == cat*vm-checkout* ]] && print -r -- "$LUME_CHECKOUT"
-            ;;
-        esac
-        exit 0
-        """
-        return try ScriptRunner.withCheckout(skill: "lume-vm", scripts: ["vm.sh"]) { checkout in
+        try ScriptRunner.withCheckout(skill: "lume-vm", scripts: ["vm.sh"]) { checkout in
             let log = checkout.root.appendingPathComponent("guest.log")
-            let result = try ScriptRunner.withStubs(["lume": lume]) { stubs in
+            let result = try ScriptRunner.withStubs(["lume": lumeStub]) { stubs in
                 try ScriptRunner.zsh(
                     [checkout.script("vm.sh")] + arguments,
                     environment: [
@@ -69,3 +81,16 @@ struct VMScriptTests {
         }
     }
 }
+
+/// `ssh <vm> --storage <storage> -t <timeout> <command>` puts the guest command seventh.
+private let lumeStub = """
+#!/bin/zsh -f
+case $1 in
+ls) print "ducko macOS running" ;;
+ssh)
+    print -r -- "$7" >> "$LUME_LOG"
+    [[ $7 == cat*vm-checkout* ]] && print -r -- "$LUME_CHECKOUT"
+    ;;
+esac
+exit 0
+"""

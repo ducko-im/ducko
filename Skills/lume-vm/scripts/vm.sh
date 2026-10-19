@@ -39,14 +39,18 @@ guest() { lume ssh "$VM" --storage "$STORAGE" -t "${DUCKO_VM_TIMEOUT:-0}" "$1"; 
 # `launchctl asuser` runs the command in the user's Aqua session; a plain SSH command runs in a Background session.
 gui() { guest "sudo -n launchctl asuser 501 sudo -n -u lume -H zsh -lc ${(qq)1}"; }
 
-# Compiles a Swift helper from this folder into the exchange folder, and prints its path inside the VM.
+# Compiles a Swift helper from this folder into the exchange folder, and prints its path inside the VM. The binary is
+# named after its source's hash, because the share can answer the first lookup of a just-replaced path with the old file.
 tool() {
-    local src=$SCRIPTS/$1.swift bin=$EXCHANGE/bin/$1
-    if [[ ! -x $bin || $src -nt $bin ]]; then
+    local src=$SCRIPTS/$1.swift hash
+    hash=$(shasum -a 256 <"$src")
+    local name=$1-${hash[1,12]}
+    if [[ ! -x $EXCHANGE/bin/$name ]]; then
         mkdir -p "$EXCHANGE/bin"
-        swiftc -O -o "$bin" "$src"
+        /bin/rm -f "$EXCHANGE/bin/$1" "$EXCHANGE/bin/$1"-*(N)
+        swiftc -O -o "$EXCHANGE/bin/$name" "$src"
     fi
-    print -r -- "$GUEST_EXCHANGE/bin/$1"
+    print -r -- "$GUEST_EXCHANGE/bin/$name"
 }
 
 # Folders and bundles cross the exchange folder as one ditto archive: the guest cannot resolve relative symlinks
