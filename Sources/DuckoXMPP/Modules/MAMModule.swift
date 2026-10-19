@@ -84,11 +84,8 @@ public final class MAMModule: XMPPModule, Sendable {
         }
 
         /// An archive answers from its own address (XEP-0313). The account's own may also leave the sender out.
-        /// Takes the raw attribute, so a sender that does not parse is turned away instead of passing as left out.
         func isAnswered(by rawSender: String?) -> Bool {
-            guard let rawSender else { return isOwnArchive }
-            guard case let .bare(bareJID)? = JID.parse(rawSender) else { return false }
-            return bareJID == archive
+            isSender(rawSender, exactly: archive, orAbsent: isOwnArchive)
         }
     }
 

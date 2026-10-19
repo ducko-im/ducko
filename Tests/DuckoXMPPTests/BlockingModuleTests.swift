@@ -233,6 +233,22 @@ enum BlockingModuleTests {
 
             await disconnectFast(client)
         }
+
+        /// Another client can unblock an address with a resource, which this module does not track. That is not an
+        /// unblock of everyone.
+        @Test
+        func `An unblock naming only full JIDs leaves the block list alone`() throws {
+            let module = BlockingModule()
+            let events = OSAllocatedUnfairLock<[XMPPEvent]>(initialState: [])
+            module.setUp(makeStubModuleContext(emitEvent: { event in events.withLock { $0.append(event) } }))
+
+            _ = try module.handleIQ(XMPPIQ(element: stanza(
+                "<iq type='set' id='push-1'><unblock xmlns='urn:xmpp:blocking'><item jid='spam@example.com/bot'/></unblock></iq>"
+            )))
+
+            let emitted = events.withLock { $0 }
+            #expect(emitted.isEmpty)
+        }
     }
 
     struct StreamResume {

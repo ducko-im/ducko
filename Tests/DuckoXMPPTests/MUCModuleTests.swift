@@ -509,6 +509,106 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
 
             await disconnectFast(client)
         }
+
+        @Test
+        func `Empty subject message clears the subject`() async throws {
+            let mock = MockTransport()
+            let client = try await makeConnectedClient(mock: mock)
+            let module = try #require(await client.module(ofType: MUCModule.self))
+
+            try await module.joinRoom(testRoomJID, nickname: "me")
+
+            let eventsTask = Task {
+                try await collectEvents(from: client) { event in
+                    if case .roomSubjectChanged = event { return true }
+                    return false
+                }
+            }
+
+            await mock.simulateReceive("""
+            <message type='groupchat' from='room@conference.example.com/admin'>\
+            <subject/>\
+            </message>
+            """)
+
+            let events = try await eventsTask.value
+            guard case let .roomSubjectChanged(_, subject, _) = events.last else {
+                throw XMPPClientError.unexpectedStreamState("Expected roomSubjectChanged event")
+            }
+            #expect(subject == nil)
+
+            await disconnectFast(client)
+        }
+
+        @Test
+        func `A subject sent with a thread is not a subject change`() async throws {
+            let mock = MockTransport()
+            let client = try await makeConnectedClient(mock: mock)
+            let module = try #require(await client.module(ofType: MUCModule.self))
+
+            try await module.joinRoom(testRoomJID, nickname: "me")
+
+            let eventsTask = Task {
+                try await collectEvents(from: client) { event in
+                    if case .roomSubjectChanged = event { return true }
+                    return false
+                }
+            }
+
+            await mock.simulateReceive("""
+            <message type='groupchat' from='room@conference.example.com/admin'>\
+            <subject>Threaded</subject><thread>t1</thread>\
+            </message>
+            """)
+            await mock.simulateReceive("""
+            <message type='groupchat' from='room@conference.example.com/admin'>\
+            <subject>Plain</subject>\
+            </message>
+            """)
+
+            let subjects = try await eventsTask.value.compactMap { event -> String?? in
+                if case let .roomSubjectChanged(_, subject, _) = event { return subject }
+                return nil
+            }
+            #expect(subjects == ["Plain"])
+
+            await disconnectFast(client)
+        }
+
+        @Test
+        func `Message with a subject and a body is a room message, not a subject change`() async throws {
+            let mock = MockTransport()
+            let client = try await makeConnectedClient(mock: mock)
+            let module = try #require(await client.module(ofType: MUCModule.self))
+
+            try await module.joinRoom(testRoomJID, nickname: "me")
+
+            let eventsTask = Task {
+                try await collectEvents(from: client) { event in
+                    if case .roomMessageReceived = event { return true }
+                    return false
+                }
+            }
+
+            await mock.simulateReceive("""
+            <message type='groupchat' from='room@conference.example.com/admin'>\
+            <subject>Topic</subject><body>Hello</body>\
+            </message>
+            """)
+
+            let events = try await eventsTask.value
+            guard case let .roomMessageReceived(message) = events.last else {
+                throw XMPPClientError.unexpectedStreamState("Expected roomMessageReceived event")
+            }
+            #expect(message.body == "Hello")
+            let changedSubject = events.contains { event in
+                if case .roomSubjectChanged = event { return true }
+                return false
+            }
+            #expect(!changedSubject)
+
+            await disconnectFast(client)
+        }
     }
 
     struct MediatedInvite {

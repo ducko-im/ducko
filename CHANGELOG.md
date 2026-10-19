@@ -24,6 +24,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Change your nickname when you join a room you are already in under another one, instead of timing out, and finish at once when the nickname is the same
 - Stop another occupant who holds your earlier nickname from changing which room messages count as yours, or from turning off rejoining when they are kicked or renamed
 - Show your role controls in an open room window right after you rejoin under another nickname
+- Color room nicknames the way other XMPP clients do
+- Find channel search services that follow the published standard, and show rooms they mark as open as open
+- Show a room message that also carries a topic as a message instead of a topic change, and clear the room's topic when someone clears it
+- Tell the contact when a file link they offered cannot be downloaded, which ends the offer instead of leaving it open for another try
+- Keep your block list when another of your clients unblocks an address that names a device
+
+### Security
+
+- Refuse to save a bookmark, which can hold a room password, on a server that cannot keep it private
+- Send only the authorization, cookie and expiry headers an upload server asks for, with line breaks removed
+- Ignore published bookmarks, avatars and encryption device lists that come from a single device or room occupant instead of the account they belong to
 
 ## [0.9.0] - 2026-10-18
 

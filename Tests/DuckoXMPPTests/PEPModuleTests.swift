@@ -136,6 +136,73 @@ enum PEPModuleTests {
         }
 
         @Test
+        func `A notification without a sender comes from the account itself`() async throws {
+            let mock = MockTransport()
+            let pepModule = makePEPModule()
+            let client = try await makeConnectedClient(mock: mock, pepModule: pepModule)
+
+            let eventsTask = Task {
+                try await collectEvents(from: client) { event in
+                    if case .pepItemsPublished = event { return true }
+                    return false
+                }
+            }
+
+            await mock.simulateReceive("""
+            <message to='user@example.com'>
+            <event xmlns='http://jabber.org/protocol/pubsub#event'>
+            <items node='\(testNode)'>
+            <item id='item-1'><metadata xmlns='\(testNode)'/></item>
+            </items>
+            </event>
+            </message>
+            """)
+
+            let events = try await eventsTask.value
+            guard case let .pepItemsPublished(from, _, _) = events.last else {
+                throw XMPPClientError.unexpectedStreamState("Expected pepItemsPublished event")
+            }
+            #expect(from.description == "user@example.com")
+
+            await disconnectFast(client)
+        }
+
+        @Test(arguments: ["alice@example.com/phone", "@@"])
+        func `A notification from anything but a bare JID is ignored`(sender: String) async throws {
+            let mock = MockTransport()
+            let pepModule = makePEPModule()
+            let client = try await makeConnectedClient(mock: mock, pepModule: pepModule)
+
+            await mock.simulateReceive("""
+            <message from='\(sender)' to='user@example.com'>
+            <event xmlns='http://jabber.org/protocol/pubsub#event'>
+            <items node='\(testNode)'>
+            <item id='item-1'><metadata xmlns='\(testNode)'/></item>
+            <retract id='item-2'/>
+            </items>
+            </event>
+            </message>
+            """)
+
+            let eventsTask = Task {
+                try await collectEvents(from: client) { event in
+                    if case .disconnected = event { return true }
+                    return false
+                }
+            }
+
+            await disconnectFast(client)
+            let events = try await eventsTask.value
+
+            let hasPEP = events.contains { event in
+                if case .pepItemsPublished = event { return true }
+                if case .pepItemsRetracted = event { return true }
+                return false
+            }
+            #expect(!hasPEP)
+        }
+
+        @Test
         func `Unregistered node notification is silently ignored`() async throws {
             let mock = MockTransport()
             let pepModule = makePEPModule(nodes: [testNode])

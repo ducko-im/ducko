@@ -83,6 +83,25 @@ private func respondToSlotRequest(
     """)
 }
 
+/// Requests a slot from a connected client whose server answers with `headers` on the PUT URL.
+private func requestSlot(headers: [(name: String, value: String)] = []) async throws -> HTTPUploadModule.UploadSlot {
+    let mock = MockTransport()
+    let client = try await makeConnectedClient(mock: mock)
+    let module = try #require(await client.module(ofType: HTTPUploadModule.self))
+
+    await mock.clearSentBytes()
+
+    let slot = try await withIQOperation(client: client, operation: {
+        try await module.requestSlot(filename: "doc.pdf", size: 5000, contentType: "application/pdf")
+    }, respond: {
+        try await respondToDiscoItems(mock: mock)
+        try await respondToDiscoInfo(mock: mock)
+        try await respondToSlotRequest(mock: mock, headers: headers)
+    })
+    await disconnectFast(client)
+    return slot
+}
+
 // MARK: - Tests
 
 enum HTTPUploadModuleTests {
@@ -134,50 +153,38 @@ enum HTTPUploadModuleTests {
     struct RequestSlot {
         @Test
         func `Requests and parses upload slot`() async throws {
-            let mock = MockTransport()
-            let client = try await makeConnectedClient(mock: mock)
-            let module = try #require(await client.module(ofType: HTTPUploadModule.self))
-
-            await mock.clearSentBytes()
-
-            let slot = try await withIQOperation(client: client, operation: {
-                try await module.requestSlot(filename: "cat.jpg", size: 12345, contentType: "image/jpeg")
-            }, respond: {
-                try await respondToDiscoItems(mock: mock)
-                try await respondToDiscoInfo(mock: mock)
-                try await respondToSlotRequest(mock: mock)
-            })
+            let slot = try await requestSlot()
             #expect(slot.putURL == "https://upload.example.com/put/abc")
             #expect(slot.getURL == "https://upload.example.com/get/abc")
             #expect(slot.putHeaders.isEmpty)
-
-            await disconnectFast(client)
         }
     }
 
     struct RequestSlotWithHeaders {
         @Test
-        func `Parses PUT headers from slot response`() async throws {
-            let mock = MockTransport()
-            let client = try await makeConnectedClient(mock: mock)
-            let module = try #require(await client.module(ofType: HTTPUploadModule.self))
+        func `Keeps only the allowed PUT headers, matched without regard to case`() async throws {
+            let slot = try await requestSlot(headers: [
+                ("authorization", "Basic dXNlcjpwYXNz"), ("eXpires", "Fri, 03 Mar 2017 11:28:38 GMT"),
+                ("X-Custom", "value123"), ("Host", "evil.example.com")
+            ])
+            #expect(slot.putHeaders == [
+                "Authorization": "Basic dXNlcjpwYXNz",
+                "Expires": "Fri, 03 Mar 2017 11:28:38 GMT"
+            ])
+        }
 
-            await mock.clearSentBytes()
+        @Test
+        func `Strips newlines from PUT header names and values`() async throws {
+            let slot = try await requestSlot(headers: [("Auth&#13;&#10;orization", "Basic&#13;&#10;X-Injected: 1")])
+            #expect(slot.putHeaders == ["Authorization": "BasicX-Injected: 1"])
+        }
 
-            let slot = try await withIQOperation(client: client, operation: {
-                try await module.requestSlot(filename: "doc.pdf", size: 5000, contentType: "application/pdf")
-            }, respond: {
-                try await respondToDiscoItems(mock: mock)
-                try await respondToDiscoInfo(mock: mock)
-                try await respondToSlotRequest(
-                    mock: mock,
-                    headers: [("Authorization", "Basic dXNlcjpwYXNz"), ("X-Custom", "value123")]
-                )
-            })
-            #expect(slot.putHeaders["Authorization"] == "Basic dXNlcjpwYXNz")
-            #expect(slot.putHeaders["X-Custom"] == "value123")
-
-            await disconnectFast(client)
+        @Test
+        func `Joins repeated PUT header values in their order`() async throws {
+            let slot = try await requestSlot(headers: [
+                ("Cookie", "foo=bar"), ("Cookie", "user=romeo"), ("Expires", "a"), ("Expires", "b")
+            ])
+            #expect(slot.putHeaders == ["Cookie": "foo=bar; user=romeo", "Expires": "a, b"])
         }
     }
 

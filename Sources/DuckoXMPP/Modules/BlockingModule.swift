@@ -84,14 +84,15 @@ public final class BlockingModule: XMPPModule, Sendable {
     }
 
     private func processBlockingPush(child: XMLElement, isBlock: Bool, context: ModuleContext) {
-        let jids = child.children(named: "item").compactMap { item -> BareJID? in
+        let items = child.children(named: "item")
+        let jids = items.compactMap { item -> BareJID? in
             guard let jidStr = item.attribute("jid") else { return nil }
             return BareJID.parse(jidStr)
         }
 
-        // XEP-0191 §3.6: Empty <unblock/> clears the entire block list. Announced as an empty list rather than per contact,
-        // since a module built for a resumed stream never loaded the list it would name them from.
-        if !isBlock, jids.isEmpty {
+        // XEP-0191 §3.5: An <unblock/> with no items clears the entire block list. Announced as an empty list rather than
+        // per contact, since a module built for a resumed stream never loaded the list it would name them from.
+        if !isBlock, items.isEmpty {
             state.withLock { $0.blockedJIDs.removeAll() }
             log.info("Block list cleared")
             context.emitEvent(.blockListLoaded([]))

@@ -25,7 +25,7 @@ public final class CapsModule: XMPPModule, Sendable {
 
     public init(
         identity: ServiceDiscoveryModule.Identity = ServiceDiscoveryModule.Identity(category: "client", type: "pc", name: "Ducko"),
-        node: String = "https://ducko.app"
+        node: String = "https://ducko.im"
     ) {
         self.identity = identity
         self.node = node

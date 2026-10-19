@@ -1414,36 +1414,24 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             }
         }
 
-        // A download that fails leaves the offer where the user can accept it again, answers nothing, and lets that retry
-        // finish: the row returns to waiting rather than to a failure a later success could not replace.
+        /// XEP-0066 §2: the item-not-found answer ends the offer, so it does not return to the banner.
         @Test
-        func `A refused OOB download keeps the offer, answers nothing, and a retry succeeds`() async throws {
-            let server = try #require(LoopbackHTTPServer(responses: [.init(status: 404, body: Array("gone".utf8)), .init(status: 200, body: [7, 8])]))
+        func `A refused OOB download fails the transfer and answers item-not-found`() async throws {
+            let server = try #require(LoopbackHTTPServer(responses: [.init(status: 404, body: Array("gone".utf8))]))
             defer { server.stop() }
             try await withTemporaryDirectory { directory in
                 let harness = try await Self.connect(downloadsDirectory: directory)
-                await harness.transport.simulateReceive(Self.oobOfferXML(id: "oob-retry", url: server.url()))
-                let offerID = try await Self.waitForOffer(harness, wireID: "oob-retry")
+                await harness.transport.simulateReceive(Self.oobOfferXML(id: "oob-gone", url: server.url()))
+                let offerID = try await Self.waitForOffer(harness, wireID: "oob-gone")
 
                 await #expect(throws: FileTransferService.FileTransferError.self) {
                     try await harness.service.acceptIncomingTransfer(offerID, accountID: harness.accountID)
                 }
-                #expect(harness.service.viewIncomingOffers.contains { $0.offerID == offerID })
-                #expect(await !Self.answeredOffer(harness, id: "oob-retry"))
+                #expect(!harness.service.viewIncomingOffers.contains { $0.offerID == offerID })
                 #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
-                guard case .awaitingAcceptance? = harness.service.activeTransfers.first(where: { $0.sid == "oob-retry" })?.state else {
-                    Issue.record("Expected the row to wait again after the refused download")
-                    await Self.tearDown(harness)
-                    return
-                }
-
-                try await harness.service.acceptIncomingTransfer(offerID, accountID: harness.accountID)
-                guard case let .received(fileURL)? = harness.service.activeTransfers.first(where: { $0.sid == "oob-retry" })?.state else {
-                    Issue.record("Expected the retried download to be received")
-                    await Self.tearDown(harness)
-                    return
-                }
-                #expect(try Data(contentsOf: fileURL) == Data([7, 8]))
+                let answer = await Self.sentStanzas(harness).first { $0.contains("id=\"oob-gone\"") && $0.contains("type=\"error\"") }
+                #expect(answer?.contains("item-not-found") == true)
+                #expect(failureReason(harness.service, sid: "oob-gone") == "Could not download the file: The file is not available at that link")
                 await Self.tearDown(harness)
             }
         }
@@ -1999,7 +1987,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             await Self.tearDown(harness)
         }
 
-        /// A download is plain HTTP, so its own failure is the reason; the dropped offer only takes away the retry.
+        /// A download is plain HTTP, so its own failure is the reason, not the disconnect that dropped the offer.
         @Test
         func `A link download failing after its offers were dropped fails with the download's error`() async throws {
             let server = try #require(LoopbackHTTPServer(responses: [.init(status: 404, body: Array("gone".utf8))]))

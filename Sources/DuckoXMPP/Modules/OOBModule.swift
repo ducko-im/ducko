@@ -106,14 +106,25 @@ public final class OOBModule: XMPPModule, Sendable {
 
     /// Rejects an OOB IQ offer by responding with a not-acceptable error.
     public func rejectOffer(offerID: String) async throws {
-        guard let taken = takeOffer(offerID) else { return }
-        let (context, pending) = taken
-
-        let errorIQ = XMPPIQ.errorReply(
-            id: pending.iqID, to: pending.from, payload: pending.originalQuery, type: .modify, condition: .notAcceptable
-        )
-        try await send(errorIQ, offerID: offerID, keepOnFailure: true, context: context)
+        guard try await answerWithError(offerID: offerID, type: .modify, condition: .notAcceptable, keepOnFailure: true) else { return }
         log.info("Rejected OOB IQ offer \(offerID)")
+    }
+
+    /// Answers an OOB IQ offer whose file could not be retrieved with an item-not-found error (XEP-0066 §2).
+    public func failOffer(offerID: String) async throws {
+        // Nothing retries an item-not-found answer, so an offer whose answer failed is not kept for one.
+        guard try await answerWithError(offerID: offerID, type: .cancel, condition: .itemNotFound, keepOnFailure: false) else { return }
+        log.info("Reported OOB IQ offer \(offerID) as not retrieved")
+    }
+
+    /// Answers the offer with an error, returning whether it was still waiting for an answer.
+    private func answerWithError(
+        offerID: String, type: XMPPStanzaError.ErrorType, condition: XMPPStanzaError.Condition, keepOnFailure: Bool
+    ) async throws -> Bool {
+        guard let (context, pending) = takeOffer(offerID) else { return false }
+        let errorIQ = XMPPIQ.errorReply(id: pending.iqID, to: pending.from, payload: pending.originalQuery, type: type, condition: condition)
+        try await send(errorIQ, offerID: offerID, keepOnFailure: keepOnFailure, context: context)
+        return true
     }
 
     /// Marks the offer as being answered, so a second answer cannot start while this one is sent.

@@ -276,7 +276,8 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
 
     public var features: [String] {
         [XMPPNamespaces.jingle, XMPPNamespaces.jingleFileTransfer,
-         XMPPNamespaces.jingleS5B, XMPPNamespaces.jingleIBB]
+         XMPPNamespaces.jingleS5B, XMPPNamespaces.jingleIBB,
+         XMPPNamespaces.hashes2, XMPPNamespaces.hashFunctionSHA256]
     }
 
     public convenience init(timing: JingleTiming = .init()) {

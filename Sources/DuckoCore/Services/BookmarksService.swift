@@ -5,6 +5,7 @@ import Logging
 enum BookmarksError: Error, LocalizedError {
     case invalidJID(String)
     case notConnected(UUID)
+    case privateStorageUnsupported
 
     var errorDescription: String? {
         switch self {
@@ -12,6 +13,8 @@ enum BookmarksError: Error, LocalizedError {
             return "Invalid JID: \(jid)"
         case .notConnected:
             return notConnectedDescription
+        case .privateStorageUnsupported:
+            return "The server cannot keep bookmarks private, so the bookmark was not saved"
         }
     }
 }
@@ -88,12 +91,16 @@ public final class BookmarksService {
     }
 
     public func addBookmark(_ bookmark: RoomBookmark, accountID: UUID) async throws {
-        guard let client = accountService?.connectedClient(for: accountID), let pepModule = await client.module(ofType: PEPModule.self) else {
+        guard let client = accountService?.connectedClient(for: accountID), let pepModule = await client.module(ofType: PEPModule.self), let discoModule = await client.module(ofType: ServiceDiscoveryModule.self), let account = accountService?.accounts.first(where: { $0.id == accountID }) else {
             throw BookmarksError.notConnected(accountID)
         }
 
         guard let jid = BareJID.parse(bookmark.jidString) else {
             throw BookmarksError.invalidJID(bookmark.jidString)
+        }
+        // Bookmarks carry room passwords, so they are stored only where the server keeps them private.
+        guard try await discoModule.queryInfo(for: .bare(account.jid)).supportsPrivatePEPStorage else {
+            throw BookmarksError.privateStorageUnsupported
         }
         let xmppBookmark = Bookmark(
             jid: jid,

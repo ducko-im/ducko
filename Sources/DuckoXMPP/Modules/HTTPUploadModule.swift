@@ -208,11 +208,18 @@ public final class HTTPUploadModule: XMPPModule, Sendable {
 
         var putHeaders: [String: String] = [:]
         for header in putElement.children(named: "header") {
-            if let name = header.attribute("name"), let value = header.textContent {
-                putHeaders[name] = value
-            }
+            guard let rawName = header.attribute("name"), let rawValue = header.textContent else { continue }
+            let lowercasedName = rawName.filter { !$0.isNewline }.lowercased()
+            guard let name = Self.allowedPutHeaders.first(where: { $0.lowercased() == lowercasedName }) else { continue }
+            let value = rawValue.filter { !$0.isNewline }
+            // Cookie pairs join with "; " (RFC 6265 §5.4); other repeated fields join as a list (RFC 9110 §5.3).
+            let separator = name == "Cookie" ? "; " : ", "
+            putHeaders[name] = putHeaders[name].map { $0 + separator + value } ?? value
         }
 
         return UploadSlot(putURL: putURL, getURL: getURL, putHeaders: putHeaders)
     }
+
+    /// The only slot headers XEP-0363 lets a client apply to the PUT request.
+    private static let allowedPutHeaders = ["Authorization", "Cookie", "Expires"]
 }

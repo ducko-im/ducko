@@ -125,7 +125,7 @@ enum CapsModuleTests {
             let capsPresence = sentStrings.first { $0.contains("http://jabber.org/protocol/caps") }
             #expect(capsPresence != nil)
             #expect(capsPresence?.contains("hash=\"sha-1\"") == true)
-            #expect(capsPresence?.contains("node=\"https://ducko.app\"") == true)
+            #expect(capsPresence?.contains("node=\"https://ducko.im\"") == true)
             #expect(capsPresence?.contains("ver=") == true)
 
             await disconnectFast(client)

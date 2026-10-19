@@ -341,11 +341,13 @@ public final class MUCModule: XMPPModule, Sendable {
         let isTracked = state.withLock { $0.rooms[roomJID] != nil }
         guard isTracked else { return }
 
-        // Subject change
-        if let subject = message.subject {
+        // XEP-0045 §8.1: only a subject with neither a body nor a thread is a subject change. An empty subject clears it.
+        if let subjectElement = message.element.child(named: "subject"), message.body == nil,
+           message.element.child(named: "thread") == nil {
+            let subject = subjectElement.textContent
             state.withLock { $0.rooms[roomJID]?.subject = subject }
             let context = state.withLock { $0.context }
-            context?.emitEvent(.roomSubjectChanged(room: roomJID, subject: subject.isEmpty ? nil : subject, setter: from))
+            context?.emitEvent(.roomSubjectChanged(room: roomJID, subject: subject, setter: from))
             return
         }
 

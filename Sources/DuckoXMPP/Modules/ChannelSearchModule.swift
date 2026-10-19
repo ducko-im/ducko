@@ -75,10 +75,6 @@ public final class ChannelSearchModule: XMPPModule, Sendable {
 
     private let state: OSAllocatedUnfairLock<State>
 
-    public var features: [String] {
-        [XMPPNamespaces.channelSearch]
-    }
-
     public init() {
         self.state = OSAllocatedUnfairLock(initialState: State())
     }
@@ -139,7 +135,7 @@ public final class ChannelSearchModule: XMPPModule, Sendable {
         var searchElement = XMLElement(name: "search", namespace: XMPPNamespaces.channelSearch)
 
         var fields: [DataFormField] = [
-            DataFormField(variable: "FORM_TYPE", type: "hidden", values: [XMPPNamespaces.channelSearchQuery])
+            DataFormField(variable: "FORM_TYPE", type: "hidden", values: [XMPPNamespaces.channelSearchParams])
         ]
         if !query.keyword.isEmpty {
             fields.append(DataFormField(variable: "q", values: [query.keyword]))
@@ -211,7 +207,10 @@ public final class ChannelSearchModule: XMPPModule, Sendable {
 
             let name = item.childText(named: "name")
             let userCount = item.childText(named: "nusers").flatMap(Int.init)
-            let isOpen = item.childText(named: "is-open").map { $0 == "true" || $0 == "1" }
+            // XEP-0433's examples send <is-open/> as an empty flag element, while its field table calls it boolean text.
+            let isOpen = item.child(named: "is-open").map { element in
+                element.textContent.map { $0 == "true" || $0 == "1" } ?? true
+            }
             let description = item.childText(named: "description")
 
             return ChannelInfo(

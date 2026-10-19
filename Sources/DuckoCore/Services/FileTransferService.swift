@@ -504,15 +504,12 @@ public final class FileTransferService {
     }
 
     /// Accepts a link a peer offered: the file is downloaded and saved as an accepted Jingle transfer is, and the offer
-    /// is answered only once it is on disk (XEP-0066 §2). The offer leaves the banner for the length of the download, so
-    /// a second accept or a decline cannot act on it meanwhile. A download that fails puts it back for another try,
-    /// unless the account's offers were dropped meanwhile.
+    /// is answered only once it is on disk (XEP-0066 §2). The offer leaves the banner when the download starts, so a
+    /// second accept or a decline cannot act on it. A link that cannot be retrieved fails the transfer and is answered
+    /// with item-not-found, which ends the offer.
     private func acceptOOBOffer(_ pending: PendingOOBOffer) async throws {
         let offerID = pending.offer.offerID
         let accountID = pending.accountID
-        guard let url = URL(string: pending.offer.url) else {
-            throw FileTransferError.downloadFailed("The link could not be read")
-        }
         let oobModule = try await oobModule(for: accountID)
         // Claimed only if still waiting once the module is resolved: a second accept or a decline can have taken it.
         guard pendingOOBOffer(offerID: offerID, accountID: accountID) != nil else {
@@ -521,17 +518,19 @@ public final class FileTransferService {
         removeOOBOffer(offerID: offerID)
         updateTransferState(id: pending.rowID, state: .transferring(progress: 0))
 
-        let generation = offerGeneration[accountID, default: 0]
         let download: (fileURL: URL, byteCount: Int64)
         do {
+            guard let url = URL(string: pending.offer.url) else {
+                throw FileTransferError.downloadFailed("The link could not be read")
+            }
             download = try await Self.downloadRemoteFile(from: url, named: pending.displayFileName, into: downloadsDirectory)
         } catch {
-            if offerGenerationUnchanged(generation, for: accountID) {
-                updateTransferState(id: pending.rowID, state: .awaitingAcceptance)
-                incomingOOBOffers.append(pending)
-            } else {
-                // The disconnect meanwhile left nothing to retry against, so the download's own failure is final.
-                updateTransferState(id: pending.rowID, state: .failed(error.localizedDescription))
+            updateTransferState(id: pending.rowID, state: .failed(error.localizedDescription))
+            do {
+                try await oobModule.failOffer(offerID: offerID)
+            } catch {
+                // The failure is recorded regardless; an answer that cannot be sent leaves the peer's request to time out.
+                log.warning("Could not report a link that failed to download: \(error)")
             }
             throw error
         }

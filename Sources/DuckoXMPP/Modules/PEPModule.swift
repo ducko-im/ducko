@@ -133,7 +133,9 @@ public final class PEPModule: XMPPModule, Sendable {
         }
 
         let (registeredNodes, context) = state.withLock { ($0.notifyNodes, $0.context) }
-        guard registeredNodes.contains(node), let from = message.from?.bareJID, let context else { return }
+        // A notification comes from the publisher's bare JID (XEP-0163), so any other sender publishes nothing.
+        guard registeredNodes.contains(node), let context,
+              let from = message.bareSender(orOwn: context.connectedJID()?.bareJID) else { return }
 
         let (published, retracted) = parseItems(itemsElement)
 
@@ -165,5 +167,14 @@ public final class PEPModule: XMPPModule, Sendable {
             }
             return nil
         }
+    }
+}
+
+public extension ServiceDiscoveryModule.InfoResult {
+    /// Whether the account whose disco#info this is may keep private data in PEP: XEP-0223 §5 requires the server
+    /// to offer PEP and publish-options, which is what keeps the data private.
+    var supportsPrivatePEPStorage: Bool {
+        identities.contains { $0.category == "pubsub" && $0.type == "pep" }
+            && features.contains(XMPPNamespaces.pubsubPublishOptions)
     }
 }

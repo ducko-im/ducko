@@ -61,7 +61,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0045.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">No voice requests, room registration or mediated invitations; a message with both subject and body is taken as a subject change</xmpp:note>
+                <xmpp:note xml:lang="en">No voice requests, room registration or mediated invitations</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -101,8 +101,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0066.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">A link offer that fails to download is offered again instead of answered with item-not-found</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -194,8 +193,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0223.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Server support for publish-options is not checked before private data is published</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -253,8 +251,8 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0300.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">SHA-256 for file checksums, SHA-256 and SHA-512 for Entity Capabilities 2.0; neither urn:xmpp:hashes:2 nor the supported hash functions are advertised</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">Advertises SHA-256, which file checksums are verified with; Entity Capabilities 2.0 also uses SHA-512</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -299,8 +297,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0363.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Slot headers are not limited to Authorization, Cookie and Expires, and newlines in them are not stripped</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -340,8 +337,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0392.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Hues are taken from the wrong bytes of the hash, so colors differ from other clients</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -387,6 +383,13 @@
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0428.html"/>
                 <xmpp:status>partial</xmpp:status>
                 <xmpp:note xml:lang="en">Only marks the fallback body of retractions; incoming fallback markers are not processed</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0433.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">A rate-limit error's retry-after is not honored</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>

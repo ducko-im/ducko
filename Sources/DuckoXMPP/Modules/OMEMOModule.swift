@@ -782,20 +782,20 @@ public final class OMEMOModule: XMPPModule, Sendable { // swiftlint:disable:this
     private func handleDeviceListNotification(
         _ message: XMPPMessage
     ) {
+        let context = state.withLock { $0.context }
+        // A device list is published from its owner's bare JID (XEP-0163), so any other sender publishes nothing.
         guard let event = message.element.child(
             named: "event", namespace: XMPPNamespaces.pubsubEvent
         ), let itemsEl = event.child(named: "items"),
-        itemsEl.attribute("node") == XMPPNamespaces.omemoDevices, let from = message.from?.bareJID, let item = itemsEl.child(named: "item"),
+        itemsEl.attribute("node") == XMPPNamespaces.omemoDevices,
+        let from = message.bareSender(orOwn: context?.connectedJID()?.bareJID), let item = itemsEl.child(named: "item"),
         let payload = item.children.compactMap({
             if case let .element(el) = $0 { return el }
             return nil
         }).first
         else { return }
         let devices = parseDeviceList(payload)
-        let context = state.withLock {
-            $0.deviceLists[from] = devices
-            return $0.context
-        }
+        state.withLock { $0.deviceLists[from] = devices }
         context?.emitEvent(
             .omemoDeviceListReceived(jid: from, devices: devices)
         )

@@ -264,7 +264,7 @@ enum Caps2HashTests {
 
             // XEP-0115 classic caps
             #expect(capsPresence?.contains("hash=\"sha-1\"") == true)
-            #expect(capsPresence?.contains("node=\"https://ducko.app\"") == true)
+            #expect(capsPresence?.contains("node=\"https://ducko.im\"") == true)
 
             // XEP-0390 caps 2.0
             #expect(capsPresence?.contains("urn:xmpp:caps") == true)
