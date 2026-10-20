@@ -7,6 +7,7 @@ public struct XMPPClientBuilder {
     private var modules: [any XMPPModule] = []
     private var requireTLS: Bool = true
     private var preferredResource: String?
+    private var userAgent = SASL2UserAgent()
 
     public init(domain: String, username: String, password: String) {
         self.domain = domain
@@ -21,6 +22,11 @@ public struct XMPPClientBuilder {
     /// Sets a preferred resource for binding. Server may ignore it.
     public mutating func withPreferredResource(_ resource: String?) {
         preferredResource = resource
+    }
+
+    /// Sets the user agent a SASL2 sign-in names.
+    public mutating func withUserAgent(_ userAgent: SASL2UserAgent) {
+        self.userAgent = userAgent
     }
 
     /// Sets a custom transport (e.g. for testing with ``MockTransport``).
@@ -43,7 +49,8 @@ public struct XMPPClientBuilder {
             credentials: credentials,
             transport: transport,
             requireTLS: requireTLS,
-            preferredResource: preferredResource
+            preferredResource: preferredResource,
+            userAgent: userAgent
         )
 
         for interceptor in interceptors {

@@ -20,28 +20,22 @@ struct SASLAuthenticator {
         features: XMLElement,
         authcid: String,
         password: String,
-        channelBindingData: [UInt8]? = nil,
-        hasClientCertificate: Bool = false
+        channelBindingData: [UInt8]? = nil
     ) throws(SASLAuthError) -> XMLElement {
         let offeredNames = parseMechanisms(features)
-        let preferenceOrder = buildSASLPreferenceOrder(
-            channelBindingData: channelBindingData,
-            hasClientCertificate: hasClientCertificate
+        let channelBinding = try chooseChannelBinding(
+            bindingData: channelBindingData,
+            advertisedTypes: parseChannelBindingTypes(features),
+            offeredMechanisms: offeredNames,
+            isSASL2: false
         )
+        let preferenceOrder = buildSASLPreferenceOrder(channelBinding: channelBinding)
 
         guard let selected = preferenceOrder.first(where: { offeredNames.contains($0) }) else {
             throw SASLAuthError.noSupportedMechanism
         }
 
-        var mechanism = createMechanism(selected, channelBindingData: channelBindingData)
-
-        // EXTERNAL doesn't use authcid/password
-        if case var .external(m) = mechanism {
-            let auth = m.start(authzid: nil)
-            activeMechanism = .external(m)
-            return auth
-        }
-
+        var mechanism = createMechanism(selected, channelBinding: channelBinding)
         let auth = mechanism.start(authcid: authcid, password: password)
         activeMechanism = mechanism
         return auth
@@ -70,25 +64,13 @@ struct SASLAuthenticator {
 
     private func createMechanism(
         _ name: String,
-        channelBindingData: [UInt8]?
+        channelBinding: ChannelBindingMode
     ) -> ActiveMechanism {
         switch name {
-        case SCRAMMechanismName.sha256Plus:
-            return .scram256(SCRAM<SHA256>(
-                mechanismName: name, channelBindingData: channelBindingData!
-            ))
-        case SCRAMMechanismName.sha256:
-            let cbMode: ChannelBindingMode = channelBindingData != nil ? .clientSupportsButNotUsed : .none
-            return .scram256(SCRAM<SHA256>(mechanismName: name, channelBindingMode: cbMode))
-        case SCRAMMechanismName.sha1Plus:
-            return .scram1(SCRAM<Insecure.SHA1>(
-                mechanismName: name, channelBindingData: channelBindingData!
-            ))
-        case SCRAMMechanismName.sha1:
-            let cbMode: ChannelBindingMode = channelBindingData != nil ? .clientSupportsButNotUsed : .none
-            return .scram1(SCRAM<Insecure.SHA1>(mechanismName: name, channelBindingMode: cbMode))
-        case SASLExternal.mechanismName:
-            return .external(SASLExternal())
+        case SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha256:
+            return .scram256(SCRAM<SHA256>(mechanismName: name, channelBindingMode: channelBinding))
+        case SCRAMMechanismName.sha1Plus, SCRAMMechanismName.sha1:
+            return .scram1(SCRAM<Insecure.SHA1>(mechanismName: name, channelBindingMode: channelBinding))
         case SASLPlain.mechanismName:
             return .plain(SASLPlain())
         default:
@@ -110,7 +92,6 @@ struct SASLAuthenticator {
     enum ActiveMechanism {
         case scram256(SCRAM<SHA256>)
         case scram1(SCRAM<Insecure.SHA1>)
-        case external(SASLExternal)
         case plain(SASLPlain)
 
         mutating func start(authcid: String, password: String) -> XMLElement {
@@ -122,11 +103,6 @@ struct SASLAuthenticator {
             case var .scram1(m):
                 let result = m.start(authcid: authcid, password: password)
                 self = .scram1(m)
-                return result
-            case var .external(m):
-                // Server determines identity from TLS client certificate
-                let result = m.start(authzid: nil)
-                self = .external(m)
                 return result
             case var .plain(m):
                 let result = m.start(authcid: authcid, password: password)
@@ -145,10 +121,6 @@ struct SASLAuthenticator {
                 let result = m.handleChallenge(challenge)
                 self = .scram1(m)
                 return result
-            case var .external(m):
-                let result = m.handleChallenge(challenge)
-                self = .external(m)
-                return result
             case var .plain(m):
                 let result = m.handleChallenge(challenge)
                 self = .plain(m)
@@ -165,10 +137,6 @@ struct SASLAuthenticator {
             case var .scram1(m):
                 let result = m.handleSuccess(success)
                 self = .scram1(m)
-                return result
-            case var .external(m):
-                let result = m.handleSuccess(success)
-                self = .external(m)
                 return result
             case var .plain(m):
                 let result = m.handleSuccess(success)

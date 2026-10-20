@@ -100,13 +100,15 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
     private let requireTLS: Bool
     private let preferredResource: String?
+    private let userAgent: SASL2UserAgent
 
     public init(
         domain: String,
         credentials: Credentials,
         transport: (any XMPPTransport)? = nil,
         requireTLS: Bool = true,
-        preferredResource: String? = nil
+        preferredResource: String? = nil,
+        userAgent: SASL2UserAgent = SASL2UserAgent()
     ) {
         let (stream, continuation) = AsyncStream.makeStream(of: XMPPEvent.self)
         self.events = stream
@@ -119,6 +121,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         self.connection = XMPPConnection(transport: transport ?? makeDefaultXMPPTransport())
         self.requireTLS = requireTLS
         self.preferredResource = preferredResource
+        self.userAgent = userAgent
     }
 
     // MARK: - Module Registration
@@ -366,10 +369,10 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         let features1 = try await reader.awaitFeatures()
 
         // 2. TLS — skip STARTTLS if direct TLS is already active
-        let postTLSFeatures = try await negotiateTLSIfNeeded(features1, reader: reader)
+        let (postTLSFeatures, isTLSActive) = try await negotiateTLSIfNeeded(features1, reader: reader)
 
-        // 3. Prefer SASL2 + Bind 2 when both available
-        if let sasl2Features = SASL2Authenticator.parseFeatures(postTLSFeatures),
+        // 3. Prefer SASL2 + Bind 2 when both available, and only over TLS (XEP-0388 §3)
+        if isTLSActive, let sasl2Features = SASL2Authenticator.parseFeatures(postTLSFeatures),
            sasl2Features.supportsBind2 {
             return try await performSASL2Flow(postTLSFeatures, sasl2Features: sasl2Features, reader: reader)
         }
@@ -378,13 +381,13 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         return try await performSASL1Flow(postTLSFeatures, reader: reader)
     }
 
-    /// Handles TLS negotiation (STARTTLS or direct TLS). Returns post-TLS features.
-    private func negotiateTLSIfNeeded(_ features: XMLElement, reader: EventReader) async throws -> XMLElement {
+    /// Handles TLS negotiation (STARTTLS or direct TLS). Returns post-TLS features and whether TLS is active.
+    private func negotiateTLSIfNeeded(_ features: XMLElement, reader: EventReader) async throws -> (XMLElement, Bool) {
         if await connection.isDirectTLS {
             log.info("Direct TLS active")
             let info = await connection.tlsInfo
             tlsInfoLock.withLock { $0 = info }
-            return features
+            return (features, true)
         } else if features.child(named: "starttls", namespace: XMPPNamespaces.tls) != nil || requireTLS {
             let isForced = features.child(named: "starttls", namespace: XMPPNamespaces.tls) == nil
             if isForced {
@@ -413,9 +416,9 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             let info = await connection.tlsInfo
             tlsInfoLock.withLock { $0 = info }
             try await openStream()
-            return try await reader.awaitFeatures()
+            return try await (reader.awaitFeatures(), true)
         } else {
-            return features
+            return (features, false)
         }
     }
 
@@ -429,32 +432,69 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     ) async throws -> Bool {
         state = .authenticating
 
-        // Attempt ISR if token is available and server supports it
-        if sasl2Features.supportsISR,
-           let sm = modules[ObjectIdentifier(StreamManagementModule.self)] as? StreamManagementModule,
-           sm.hasISRToken {
-            if try await attemptISRResume(sm: sm, reader: reader) {
-                try await awaitSASL2PostAuthFeatures(reader: reader)
-                return true
-            }
-            // ISR failed — SASL2 allows re-authentication, fall through to normal auth
+        let sm = modules[ObjectIdentifier(StreamManagementModule.self)] as? StreamManagementModule
+        let resumeElement: XMLElement? = if let sm, sm.isResumable, sasl2Features.supportsSM {
+            sm.buildResumeElement()
+        } else {
+            nil
         }
-
-        let requestedCarbons = sasl2Features.supportsBind2
-            && modules[ObjectIdentifier(CarbonsModule.self)] != nil
-        let authResult = try await authenticateSASL2(features: features, sasl2Features: sasl2Features, reader: reader)
+        let requestsSM = sm != nil && sasl2Features.bind2InlineFeatures.contains(XMPPNamespaces.sm)
+        let requestsCarbons = modules[ObjectIdentifier(CarbonsModule.self)] != nil
+            && sasl2Features.bind2InlineFeatures.contains(XMPPNamespaces.carbons)
+        let authResult = try await authenticateSASL2(
+            features: features, resumeElement: resumeElement, requestsSM: requestsSM, requestsCarbons: requestsCarbons,
+            reader: reader
+        )
         log.info("Authenticated via SASL2")
+
+        let fullJID: FullJID
+        let bound: XMLElement?
+        switch authResult {
+        case let .resumed(resumed):
+            return try await completeInlineResume(resumed, sm: sm)
+        case let .session(jid, boundElement):
+            fullJID = jid
+            bound = boundElement
+        }
+        // The resume failed or went unanswered, so the session `<bound/>` started takes over.
+        if resumeElement != nil {
+            log.info("Stream resumption failed, continuing with a new session")
+            sm?.resetResumption()
+        }
         try await awaitSASL2PostAuthFeatures(reader: reader)
 
-        // Process inline results (SM enabled, carbons, etc.)
-        let fullJID = authResult.fullJID
         connectedJIDLock.withLock { $0 = fullJID }
-        processBind2Results(authResult, requestedCarbons: requestedCarbons)
+        processBind2Results(bound: bound, requestsSM: requestsSM, requestsCarbons: requestsCarbons)
 
         log.notice("Connected via SASL2 + Bind 2")
         log.debug("The connected JID is \(fullJID)")
         state = .connected(fullJID)
         return false
+    }
+
+    /// Continues the session an inline `<resume/>` brought back. The server sends no stream features after it
+    /// (XEP-0198 §9.2), so the features that session got after sign-in are restored. A server that sends them anyway
+    /// (Prosody does, after the replayed stanzas) has them dropped by the dispatch loop, which ignores top-level
+    /// elements it doesn't know.
+    private func completeInlineResume(_ resumed: XMLElement, sm: StreamManagementModule?) async throws -> Bool {
+        guard let sm, case let .resumed(jid, retransmitQueue) = sm.processResumeResponse(resumed) else {
+            throw authenticationFailure(.invalidState("Resumed a session that was not requested"))
+        }
+        let sessionFeatures = sm.sessionFeatures
+        serverFeaturesLock.withLock { $0 = sessionFeatures }
+        try await adoptResumedStream(jid: jid, retransmitQueue: retransmitQueue)
+        return true
+    }
+
+    /// Resends what the server had not acknowledged before the drop and carries the stream on as `jid`.
+    private func adoptResumedStream(jid: FullJID, retransmitQueue: [XMLElement]) async throws {
+        for stanza in retransmitQueue {
+            try await connection.send(XMPPStreamWriter.stanza(stanza))
+        }
+        log.notice("Stream resumed")
+        log.debug("The resumed stream's JID is \(jid)")
+        connectedJIDLock.withLock { $0 = jid }
+        state = .connected(jid)
     }
 
     /// XEP-0388 §2.6.1: SASL2 has no stream restart. `<success>` is immediately followed by the
@@ -703,76 +743,10 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
         switch result {
         case let .resumed(jid, retransmitQueue):
-            for stanza in retransmitQueue {
-                try await connection.send(XMPPStreamWriter.stanza(stanza))
-            }
-            log.notice("Stream resumed")
-            log.debug("The resumed stream's JID is \(jid)")
-            connectedJIDLock.withLock { $0 = jid }
-            state = .connected(jid)
+            try await adoptResumedStream(jid: jid, retransmitQueue: retransmitQueue)
             return true
         case .failed:
-            log.info("Stream resumption failed, falling back to normal bind")
-            return false
-        }
-    }
-
-    // MARK: - Private: ISR (Instant Stream Resumption)
-
-    /// Attempts ISR (Instant Stream Resumption) via SASL2. Returns `true` if resumed.
-    private func attemptISRResume(sm: StreamManagementModule, reader: EventReader) async throws -> Bool {
-        guard let token = sm.isrToken else { return false }
-
-        let resumeElement = sm.buildResumeElement()
-        let isrAuth = buildISRAuthenticate(token: token, smResumeElement: resumeElement)
-        try await connection.send(XMPPStreamWriter.stanza(isrAuth))
-
-        let response = try await reader.awaitStanza()
-
-        if response.name == "success", response.namespace == XMPPNamespaces.sasl2 {
-            return try await processISRSuccess(response, sm: sm)
-        }
-
-        if response.name == "failure", response.namespace == XMPPNamespaces.sasl2 {
-            log.info("ISR failed, falling back to normal SASL2 auth")
-            sm.resetResumption()
-            return false
-        }
-
-        let name = response.name
-        log.warning("Unexpected ISR response: \(name)")
-        sm.resetResumption()
-        return false
-    }
-
-    /// Processes an ISR `<success>` response containing `<resumed>` and optional refreshed token.
-    private func processISRSuccess(_ success: XMLElement, sm: StreamManagementModule) async throws -> Bool {
-        guard let resumed = success.child(named: "resumed", namespace: XMPPNamespaces.sm) else {
-            log.warning("ISR success without <resumed>")
-            sm.resetResumption()
-            return false
-        }
-
-        let result = sm.processResumeResponse(resumed)
-
-        switch result {
-        case let .resumed(jid, retransmitQueue):
-            // Extract refreshed ISR token if present
-            if let isrEnabled = success.child(named: "isr-enabled", namespace: XMPPNamespaces.isr) {
-                sm.updateISRToken(isrEnabled.attribute("token"))
-            }
-
-            for stanza in retransmitQueue {
-                try await connection.send(XMPPStreamWriter.stanza(stanza))
-            }
-            log.notice("ISR resumed")
-            log.debug("The ISR-resumed stream's JID is \(jid)")
-            connectedJIDLock.withLock { $0 = jid }
-            state = .connected(jid)
-            return true
-        case .failed:
-            // processResumeResponse already calls resetResumption() on failure
-            log.info("ISR resumed element processing failed")
+            log.info("Stream resumption failed, continuing with a new session")
             return false
         }
     }
@@ -780,13 +754,13 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     // MARK: - Private: Authentication
 
     private func authenticate(features: XMLElement, reader: EventReader) async throws {
-        // SASL1 has no XEP-0440 to confirm the server's supported channel binding types.
-        // Don't pass CB data — PLUS mechanisms require XEP-0440 negotiation (SASL2 path).
         var authenticator = SASLAuthenticator()
+        let cbData = await connection.channelBindingData
         let authElement: XMLElement
         do {
             authElement = try authenticator.begin(
-                features: features, authcid: credentials.username, password: credentials.password
+                features: features, authcid: credentials.username, password: credentials.password,
+                channelBindingData: cbData
             )
         } catch {
             throw authenticationFailure(error)
@@ -812,23 +786,21 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
     // MARK: - Private: SASL2 Authentication
 
+    /// The Bind 2 tag is the client's software name rather than the account's resource, which can be a host name that
+    /// XEP-0386 §4 keeps out of the tag. The resource still goes to RFC 6120 binding on servers without Bind 2.
     private func authenticateSASL2(
         features: XMLElement,
-        sasl2Features: SASL2Features,
+        resumeElement: XMLElement?,
+        requestsSM: Bool,
+        requestsCarbons: Bool,
         reader: EventReader
     ) async throws -> SASL2Authenticator.AuthResult {
         var authenticator = SASL2Authenticator()
         var inlinePayloads: [XMLElement] = []
-        if sasl2Features.supportsBind2 {
-            let hasSM = modules[ObjectIdentifier(StreamManagementModule.self)] != nil
-            let hasCarbons = modules[ObjectIdentifier(CarbonsModule.self)] != nil
-            inlinePayloads.append(buildBind2Request(
-                tag: preferredResource ?? "Ducko",
-                enableSM: hasSM && sasl2Features.supportsSM,
-                enableISR: hasSM && sasl2Features.supportsISR,
-                enableCarbons: hasCarbons
-            ))
+        if let resumeElement {
+            inlinePayloads.append(resumeElement)
         }
+        inlinePayloads.append(buildBind2Request(tag: userAgent.software, enableSM: requestsSM, enableCarbons: requestsCarbons))
 
         let cbData = await connection.channelBindingData
         let authElement: XMLElement
@@ -838,6 +810,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
                 authcid: credentials.username,
                 password: credentials.password,
                 inlinePayloads: inlinePayloads,
+                userAgent: userAgent,
                 channelBindingData: cbData
             )
         } catch {
@@ -856,6 +829,10 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
                 try await connection.send(XMPPStreamWriter.stanza(reply))
             case let .success(result):
                 return result
+            case .failure(.unsupportedSignInStep):
+                // XEP-0388 §2.4: only `<response/>` or `<abort/>` may answer mid-exchange.
+                try await connection.send(XMPPStreamWriter.stanza(XMLElement(name: "abort", namespace: XMPPNamespaces.sasl2)))
+                throw authenticationFailure(.unsupportedSignInStep)
             case let .failure(error):
                 throw authenticationFailure(error)
             }
@@ -869,16 +846,20 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     }
 
     /// Processes inline feature results from Bind 2 (SM enabled, carbons, etc.).
-    private func processBind2Results(_ authResult: SASL2Authenticator.AuthResult, requestedCarbons: Bool) {
-        if let bound = authResult.bound,
-           // SM was enabled inline — server echoes <enabled> inside <bound>
-           let smEnabled = bound.child(named: "enabled", namespace: XMPPNamespaces.sm),
-           let sm = modules[ObjectIdentifier(StreamManagementModule.self)] as? StreamManagementModule {
-            sm.processInlineEnabled(smEnabled)
+    private func processBind2Results(bound: XMLElement?, requestsSM: Bool, requestsCarbons: Bool) {
+        if let sm = modules[ObjectIdentifier(StreamManagementModule.self)] as? StreamManagementModule {
+            // Only an `<enabled>` inside `<bound>` starts the session. An inline enable counts as the stream's one
+            // attempt even when it failed or went unanswered.
+            if requestsSM {
+                sm.markInlineEnableSent()
+            }
+            if let smEnabled = bound?.child(named: "enabled", namespace: XMPPNamespaces.sm) {
+                sm.processInlineEnabled(smEnabled)
+            }
         }
 
-        // Carbons are activated by inclusion in the bind request — server doesn't echo back
-        if requestedCarbons,
+        // The server sends no answer to an inline carbons request, so sending it enables them.
+        if requestsCarbons,
            let carbons = modules[ObjectIdentifier(CarbonsModule.self)] as? CarbonsModule {
             carbons.markInlineEnabled()
         }

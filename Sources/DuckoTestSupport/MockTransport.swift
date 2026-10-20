@@ -19,6 +19,7 @@ public actor MockTransport: XMPPTransport {
     /// The most recent TLS server name (SNI) passed to `connectWithTLS`/`upgradeTLS`.
     public private(set) var tlsServerName: String?
 
+    private var channelBinding: [UInt8]?
     private var disconnectGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private let connectError: (any Error)?
     private var nextConnectError: (any Error)?
@@ -158,7 +159,16 @@ public actor MockTransport: XMPPTransport {
         disconnectGate = (entered, release)
     }
 
+    /// What `setChannelBindingData(_:)` stored, as TLS would supply it.
+    public func channelBindingData() -> [UInt8]? {
+        channelBinding
+    }
+
     // MARK: - Test Helpers
+
+    public func setChannelBindingData(_ data: [UInt8]?) {
+        channelBinding = data
+    }
 
     /// Makes the next `connect`/`connectWithTLS` throw `error`; the following attempt succeeds. Lets a test drive
     /// a same-instance reconnect: the failed attempt throws before `isConnected` is set, so the transport stays

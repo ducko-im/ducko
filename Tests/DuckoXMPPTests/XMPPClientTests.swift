@@ -329,6 +329,38 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
         }
     }
 
+    struct SASL1ChannelBinding {
+        @Test
+        func `SASL1 binds sign-in to the TLS channel the server lists`() async throws {
+            let mock = MockTransport()
+            await mock.setChannelBindingData(Array(repeating: 0xCD, count: 32))
+            let client = XMPPClient(
+                domain: "example.com",
+                credentials: .init(username: "user", password: "pass"),
+                transport: mock
+            )
+
+            let connectTask = Task { try await client.connectWithTLS(host: "example.com", port: 5223) }
+            await mock.waitForSent(count: 1) // stream opening
+            await mock.simulateReceive(testServerStreamOpen)
+            await mock.simulateReceive("""
+            <features xmlns='http://etherx.jabber.org/streams'>\
+            <mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>SCRAM-SHA-1-PLUS</mechanism><mechanism>PLAIN</mechanism></mechanisms>\
+            <sasl-channel-binding xmlns='urn:xmpp:sasl-cb:0'><channel-binding type='tls-server-end-point'/></sasl-channel-binding>\
+            </features>
+            """)
+            await mock.waitForSent(count: 2) // auth element
+
+            let auth = try await stanza(String(decoding: mock.sentBytes[1], as: UTF8.self))
+            #expect(auth.attribute("mechanism") == "SCRAM-SHA-1-PLUS")
+            let firstMessage = try #require(auth.textContent.flatMap(Base64.decodeString))
+            #expect(firstMessage.hasPrefix("p=tls-server-end-point,,"))
+
+            await mock.simulateDisconnect()
+            _ = try? await connectTask.value
+        }
+    }
+
     struct IQTracking {
         @Test
         func `sendIQ returns result child element`() async throws {

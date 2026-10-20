@@ -7,7 +7,7 @@ import Testing
 // MARK: - XML Constants
 
 // The stream-open and features constants shared with DuckoCoreTests live in
-// `DuckoTestSupport/HandshakeFixtures.swift`. The SASL2/ISR constants below are XMPP-only, so they stay here.
+// `DuckoTestSupport/HandshakeFixtures.swift`. The SASL2 constants below are XMPP-only, so they stay here.
 
 /// Features offering STARTTLS and PLAIN auth.
 let testFeaturesWithTLS = """
@@ -188,19 +188,26 @@ func collectEvents(
 
 // MARK: - SASL2 Constants
 
-/// Features offering SASL2 with PLAIN and inline Bind 2 + SM.
+/// Features offering SASL2 with PLAIN, inline resume, and Bind 2 that can enable carbons and SM inline.
 /// Uses PLAIN only for simpler test handshakes (no challenge/response needed).
-let testFeaturesSASL2 = """
-<features xmlns='http://etherx.jabber.org/streams'>\
-<authentication xmlns='urn:xmpp:sasl:2'>\
-<mechanism>PLAIN</mechanism>\
-<inline>\
-<bind xmlns='urn:xmpp:bind:0'/>\
-<sm xmlns='urn:xmpp:sm:3'/>\
-</inline>\
-</authentication>\
-</features>
-"""
+let testFeaturesSASL2 = testSASL2Features(bind2Inline: [XMPPNamespaces.carbons, XMPPNamespaces.sm])
+
+/// SASL2 features with PLAIN whose Bind 2 can enable the `bind2Inline` features, and which take an inline
+/// `<resume/>` when `inlineSM` is set.
+func testSASL2Features(bind2Inline: [String], inlineSM: Bool = true) -> String {
+    let inlineFeatures = bind2Inline.map { "<feature var='\($0)'/>" }.joined()
+    return """
+    <features xmlns='http://etherx.jabber.org/streams'>\
+    <authentication xmlns='urn:xmpp:sasl:2'>\
+    <mechanism>PLAIN</mechanism>\
+    <inline>\
+    <bind xmlns='urn:xmpp:bind:0'><inline>\(inlineFeatures)</inline></bind>\
+    \(inlineSM ? "<sm xmlns='urn:xmpp:sm:3'/>" : "")\
+    </inline>\
+    </authentication>\
+    </features>
+    """
+}
 
 /// SASL2 success with Bind 2 and inline SM enabled.
 let testSASL2SuccessWithBind = """
@@ -212,6 +219,28 @@ let testSASL2SuccessWithBind = """
 </success>
 """
 
+/// SASL2 success resuming the stream `sm-resume-1`, acknowledging `h` client stanzas, under the account's
+/// `authorizationIdentifier`.
+func testSASL2SuccessResumed(authorizationIdentifier: String = "user@example.com", h: UInt32 = 0) -> String {
+    """
+    <success xmlns='urn:xmpp:sasl:2'>\
+    <authorization-identifier>\(authorizationIdentifier)</authorization-identifier>\
+    <resumed xmlns='urn:xmpp:sm:3' h='\(h)' previd='sm-resume-1'/>\
+    </success>
+    """
+}
+
+/// SASL2 success that refuses the inline resume and starts a fresh Bind 2 session with inline SM.
+let testSASL2SuccessResumeFailed = """
+<success xmlns='urn:xmpp:sasl:2'>\
+<authorization-identifier>user@example.com/ducko</authorization-identifier>\
+<failed xmlns='urn:xmpp:sm:3'><item-not-found xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></failed>\
+<bound xmlns='urn:xmpp:bind:0'>\
+<enabled xmlns='urn:xmpp:sm:3' id='sm-resume-2' max='300'/>\
+</bound>\
+</success>
+"""
+
 /// Post-auth features after SASL2 (bind already done, only informational).
 let testPostSASL2Features = """
 <features xmlns='http://etherx.jabber.org/streams'>\
@@ -219,9 +248,12 @@ let testPostSASL2Features = """
 </features>
 """
 
-/// Drives a SASL2 handshake, answering each client `<authenticate>` with the next reply. XEP-0388 has no
-/// stream restart, so the final `<success>` is followed only by the authenticated stream's `<features>`.
-func simulateSASL2Handshake(_ mock: MockTransport, features: String, replies: [String]) async {
+/// Drives a SASL2 handshake over a client connected with TLS, answering each client `<authenticate>` with the next
+/// reply. XEP-0388 has no stream restart, so the final `<success>` is followed only by the authenticated stream's
+/// `postAuthFeatures`. Pass `nil` for a resumed stream, which gets none.
+func simulateSASL2Handshake(
+    _ mock: MockTransport, features: String, replies: [String], postAuthFeatures: String? = testPostSASL2Features
+) async {
     await mock.waitForSent(count: 1) // stream opening sent
     await mock.simulateReceive(testServerStreamOpen)
     await mock.simulateReceive(features)
@@ -229,71 +261,14 @@ func simulateSASL2Handshake(_ mock: MockTransport, features: String, replies: [S
         await mock.waitForSent(count: 2 + index) // <authenticate> sent
         await mock.simulateReceive(reply)
     }
-    await mock.simulateReceive(testPostSASL2Features)
+    if let postAuthFeatures {
+        await mock.simulateReceive(postAuthFeatures)
+    }
 }
 
 /// Simulates a SASL2 + Bind 2 connect handshake using PLAIN mechanism.
 func simulateSASL2Connect(_ mock: MockTransport) async {
     await simulateSASL2Handshake(mock, features: testFeaturesSASL2, replies: [testSASL2SuccessWithBind])
-}
-
-// MARK: - ISR Constants
-
-/// SASL2 features with ISR support in inline.
-let testFeaturesSASL2WithISR = """
-<features xmlns='http://etherx.jabber.org/streams'>\
-<authentication xmlns='urn:xmpp:sasl:2'>\
-<mechanism>PLAIN</mechanism>\
-<inline>\
-<bind xmlns='urn:xmpp:bind:0'/>\
-<sm xmlns='urn:xmpp:sm:3'/>\
-<isr xmlns='https://xmpp.org/extensions/isr/0'/>\
-</inline>\
-</authentication>\
-</features>
-"""
-
-/// SASL2 success with Bind 2, inline SM enabled, and ISR token.
-let testSASL2SuccessWithBindAndISR = """
-<success xmlns='urn:xmpp:sasl:2'>\
-<authorization-identifier>user@example.com/ducko</authorization-identifier>\
-<bound xmlns='urn:xmpp:bind:0'>\
-<enabled xmlns='urn:xmpp:sm:3' id='sm-resume-1' max='300'>\
-<isr-enabled xmlns='https://xmpp.org/extensions/isr/0' token='initial-isr-token' mechanism='HT-SHA-256-ENDP'/>\
-</enabled>\
-</bound>\
-</success>
-"""
-
-/// ISR success: contains `<resumed>` instead of `<bound>`, plus refreshed token.
-let testISRSuccess = """
-<success xmlns='urn:xmpp:sasl:2'>\
-<authorization-identifier>user@example.com/ducko</authorization-identifier>\
-<resumed xmlns='urn:xmpp:sm:3' h='0' previd='sm-resume-1'/>\
-<isr-enabled xmlns='https://xmpp.org/extensions/isr/0' token='refreshed-token' mechanism='HT-SHA-256-ENDP'/>\
-</success>
-"""
-
-/// ISR failure (token expired).
-let testISRFailure = """
-<failure xmlns='urn:xmpp:sasl:2'>\
-<credentials-expired/>\
-</failure>
-"""
-
-/// Simulates a SASL2 + Bind 2 connect that acquires an ISR token.
-func simulateSASL2ConnectWithISR(_ mock: MockTransport) async {
-    await simulateSASL2Handshake(mock, features: testFeaturesSASL2WithISR, replies: [testSASL2SuccessWithBindAndISR])
-}
-
-/// Simulates an ISR resume connect (server responds with ISR success).
-func simulateISRResumeConnect(_ mock: MockTransport) async {
-    await simulateSASL2Handshake(mock, features: testFeaturesSASL2WithISR, replies: [testISRSuccess])
-}
-
-/// Simulates ISR failure followed by normal SASL2 fallback.
-func simulateISRFailAndFallback(_ mock: MockTransport) async {
-    await simulateSASL2Handshake(mock, features: testFeaturesSASL2WithISR, replies: [testISRFailure, testSASL2SuccessWithBind])
 }
 
 // MARK: - Sent-Response Waiting

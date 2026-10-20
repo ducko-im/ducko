@@ -152,7 +152,6 @@ struct ANSIFormatter: CLIFormatter {
         case let .omemoSessionEstablished(jid, deviceID, _, _): "\(Color.green)OMEMO session established with \(jid) device \(deviceID)\(Color.reset)"
         case let .omemoRecipientsPartial(conversation, dropped): "\(Color.yellow)⚠ OMEMO: skipped \(dropped.count) device(s) for \(conversation) — bundles missing\(Color.reset)"
         case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
-        case let .serviceOutageReceived(info): formatOutageEvent(info)
         case .presenceReceived, .iqReceived,
              .rosterUpdated,
              .presenceUpdated,
@@ -190,21 +189,6 @@ struct ANSIFormatter: CLIFormatter {
             fileName: fileName, fileSize: 0,
             from: offer.from.bareJID.description, offerID: offer.offerID
         )
-    }
-
-    private func formatOutageEvent(_ info: ServiceOutageInfo) -> String {
-        var line = "\(Color.yellow)Service outage"
-        if let desc = info.description {
-            line += ": \(desc)"
-        }
-        if let end = info.expectedEnd {
-            line += " (expected end: \(end))"
-        }
-        if let alt = info.alternativeDomain {
-            line += " [alternative: \(alt)]"
-        }
-        line += "\(Color.reset)"
-        return line
     }
 
     // MARK: - Room Formatting

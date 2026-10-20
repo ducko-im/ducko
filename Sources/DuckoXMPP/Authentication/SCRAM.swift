@@ -11,15 +11,11 @@ enum SCRAMMechanismName {
 /// Generic SCRAM mechanism (RFC 5802 / RFC 7677).
 ///
 /// Parameterized by hash function (`SHA256` or `Insecure.SHA1`).
-/// Handles both non-PLUS and PLUS variants via different initializers.
 struct SCRAM<H: HashFunction> where H.Digest: Sendable {
     let mechanismName: String
     private var state: SCRAMState<H>
 
-    /// Non-PLUS initializer — uses `n,,` or `y,,` GS2 header.
-    ///
-    /// When the client supports channel binding but the server didn't offer a `-PLUS` mechanism,
-    /// pass `.clientSupportsButNotUsed` as `channelBindingMode` to use the `y,,` downgrade indication.
+    /// A `-PLUS` mechanism takes `.bound`; the others take `.none` or `.clientSupportsButNotUsed`.
     init(
         mechanismName: String,
         channelBindingMode: ChannelBindingMode = .none,
@@ -27,19 +23,6 @@ struct SCRAM<H: HashFunction> where H.Digest: Sendable {
     ) {
         self.mechanismName = mechanismName
         self.state = SCRAMState(channelBindingMode: channelBindingMode, nonceGenerator: nonceGenerator)
-    }
-
-    /// PLUS initializer — uses `p=tls-server-end-point,,` GS2 header with channel binding data.
-    init(
-        mechanismName: String,
-        channelBindingData: [UInt8],
-        nonceGenerator: @Sendable @escaping () -> String = SCRAMState<H>.randomNonce
-    ) {
-        self.mechanismName = mechanismName
-        self.state = SCRAMState(
-            channelBindingMode: .bound(type: tlsServerEndPointCBType, data: channelBindingData),
-            nonceGenerator: nonceGenerator
-        )
     }
 
     mutating func start(authcid: String, password: String) -> XMLElement {

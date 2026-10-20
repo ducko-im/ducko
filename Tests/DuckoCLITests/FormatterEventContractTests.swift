@@ -31,9 +31,7 @@ struct FormatterEventContractTests {
             .init(.omemoDeviceListReceived(jid: peer, devices: [12, 34]), "OMEMO devices for alice@example.com: 12, 34", "\u{001B}[2mOMEMO devices for alice@example.com: 12, 34\(reset)",
                   ["type": "omemo_device_list", "jid": peer.description, "devices": "12,34", "account": account]),
             .init(.omemoSessionEstablished(jid: peer, deviceID: 12, identityKey: [0, 0xAB, 0xFF], consumedPreKeyID: 7), "OMEMO session established with alice@example.com device 12", "\u{001B}[32mOMEMO session established with alice@example.com device 12\(reset)",
-                  ["type": "omemo_session_established", "jid": peer.description, "deviceID": "12", "fingerprint": "00abff", "account": account]),
-            .init(.serviceOutageReceived(ServiceOutageInfo(description: "Maintenance", expectedEnd: "tomorrow", alternativeDomain: "other.example.com")), "Service outage: Maintenance (expected end: tomorrow) [alternative: other.example.com]", "\u{001B}[33mService outage: Maintenance (expected end: tomorrow) [alternative: other.example.com]\(reset)",
-                  ["type": "service_outage", "description": "Maintenance", "expected_end": "tomorrow", "alternative_domain": "other.example.com", "account": account])
+                  ["type": "omemo_session_established", "jid": peer.description, "deviceID": "12", "fingerprint": "00abff", "account": account])
         ]
         for item in cases {
             #expect(PlainFormatter().formatEvent(item.event, accountID: accountID) == item.plain)

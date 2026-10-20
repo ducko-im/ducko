@@ -269,7 +269,7 @@ public final class RosterService {
              .jingleFileTransferFailed, .jingleFileTransferProgress,
              .jingleChecksumReceived,
              .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial,
-             .oobIQOfferReceived, .serviceOutageReceived:
+             .oobIQOfferReceived:
             break
         }
     }

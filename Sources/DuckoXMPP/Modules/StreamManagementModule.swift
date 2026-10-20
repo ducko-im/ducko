@@ -11,8 +11,8 @@ public struct SMResumeState: Sendable {
     public let outgoingQueue: [XMLElement]
     public let connectedJID: FullJID
     public let location: String?
-    public let isrToken: String?
-    public let isrMechanism: String?
+    /// The stream features the server sent after sign-in to the session, which a resume brings back.
+    public let serverFeatures: XMLElement?
 
     public init(
         resumptionId: String,
@@ -21,8 +21,7 @@ public struct SMResumeState: Sendable {
         outgoingQueue: [XMLElement],
         connectedJID: FullJID,
         location: String?,
-        isrToken: String? = nil,
-        isrMechanism: String? = nil
+        serverFeatures: XMLElement? = nil
     ) {
         self.resumptionId = resumptionId
         self.incomingCounter = incomingCounter
@@ -30,8 +29,7 @@ public struct SMResumeState: Sendable {
         self.outgoingQueue = outgoingQueue
         self.connectedJID = connectedJID
         self.location = location
-        self.isrToken = isrToken
-        self.isrMechanism = isrMechanism
+        self.serverFeatures = serverFeatures
     }
 }
 
@@ -41,6 +39,11 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
     private struct State {
         var context: ModuleContext?
         var enabled: Bool = false
+        /// True from sending `<enable/>` until it is answered or fails. The server counts from the `<enable/>`
+        /// (XEP-0198 §4), so stanzas sent in between are counted and queued too.
+        var countsOutgoing: Bool = false
+        /// Set once an enable was attempted on this stream, inline or not, since a stream gets only one.
+        var enableAttempted: Bool = false
         var incomingCounter: UInt32 = 0
         var outgoingCounter: UInt32 = 0
         var outgoingQueue: [XMLElement] = []
@@ -50,8 +53,7 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
         var resumptionId: String?
         var location: String?
         var connectedJID: FullJID?
-        var isrToken: String?
-        var isrMechanism: String?
+        var serverFeatures: XMLElement?
     }
 
     /// Single in-flight `<r/>` → `<a h='N'/>` waiter. Resumed by exactly one
@@ -83,8 +85,7 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
             initial.outgoingQueue = previousState.outgoingQueue
             initial.connectedJID = previousState.connectedJID
             initial.location = previousState.location
-            initial.isrToken = previousState.isrToken
-            initial.isrMechanism = previousState.isrMechanism
+            initial.serverFeatures = previousState.serverFeatures
             self.state = OSAllocatedUnfairLock(initialState: initial)
         } else {
             self.state = OSAllocatedUnfairLock(initialState: State())
@@ -109,8 +110,7 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
                 outgoingQueue: state.outgoingQueue,
                 connectedJID: connectedJID,
                 location: state.location,
-                isrToken: state.isrToken,
-                isrMechanism: state.isrMechanism
+                serverFeatures: state.serverFeatures
             )
         }
     }
@@ -126,16 +126,30 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
         state.withLock { $0.enabled }
     }
 
+    /// The post-sign-in stream features of the session that a resume continues.
+    public nonisolated var sessionFeatures: XMLElement? {
+        state.withLock { $0.serverFeatures }
+    }
+
     // MARK: - Lifecycle
 
+    /// A fresh session drops the resume fields carried in from the previous session, so a later reconnect does not try
+    /// to resume that one. An inline enable has already replaced them by now, so those stay.
+    public func handleSessionEstablished(resumed: Bool) {
+        guard !resumed else { return }
+        state.withLock { state in
+            guard !state.enabled else { return }
+            Self.clearResumeFields(&state)
+        }
+    }
+
     public func handleConnect() async throws {
-        let alreadyEnabled = state.withLock { $0.enabled }
+        let (alreadyEnabled, attempted) = state.withLock { ($0.enabled, $0.enableAttempted) }
         if alreadyEnabled {
             log.info("Stream Management already enabled via inline negotiation")
             return
         }
-
-        guard let context = state.withLock({ $0.context }) else { return }
+        guard !attempted, let context = state.withLock({ $0.context }) else { return }
 
         guard let features = context.serverStreamFeatures(),
               features.child(named: "sm", namespace: XMPPNamespaces.sm) != nil else {
@@ -143,25 +157,20 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
             return
         }
 
-        var enableElement = XMLElement(
+        let element = XMLElement(
             name: "enable",
             namespace: XMPPNamespaces.sm,
             attributes: ["resume": "true"]
         )
-
-        // Request ISR token if server supports it
-        if features.child(named: "isr", namespace: XMPPNamespaces.isr) != nil {
-            enableElement.addChild(XMLElement(
-                name: "isr-enable",
-                namespace: XMPPNamespaces.isr,
-                attributes: ["mechanism": XMPPNamespaces.isrMechanism]
-            ))
-        }
-
-        let element = enableElement
         do {
             try await withCheckedThrowingContinuation { cont in
-                state.withLock { $0.enableContinuation = cont }
+                state.withLock { state in
+                    state.enableContinuation = cont
+                    state.enableAttempted = true
+                    state.outgoingCounter = 0
+                    state.outgoingQueue.removeAll()
+                    state.countsOutgoing = true
+                }
                 Task {
                     do {
                         try await context.sendElement(element)
@@ -176,6 +185,7 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
                 }
             }
         } catch {
+            state.withLock { $0.countsOutgoing = false }
             log.warning("Stream Management enable failed: \(error)")
         }
     }
@@ -187,6 +197,7 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
             let pending = state.pendingSyncAck
             state.pendingSyncAck = nil
             state.enabled = false
+            state.countsOutgoing = false
             // Preserve resume-related state across disconnect
             return (cont, pending)
         }
@@ -198,49 +209,53 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
     /// Clears all state including resume fields. Called on explicit disconnect or resume failure.
     public func resetResumption() {
         state.withLock { state in
-            state.resumptionId = nil
-            state.location = nil
-            state.connectedJID = nil
-            state.incomingCounter = 0
-            state.outgoingCounter = 0
-            state.outgoingQueue.removeAll()
+            Self.clearResumeFields(&state)
             state.enabled = false
-            state.isrToken = nil
-            state.isrMechanism = nil
         }
+    }
+
+    private static func clearResumeFields(_ state: inout State) {
+        state.resumptionId = nil
+        state.location = nil
+        state.connectedJID = nil
+        state.incomingCounter = 0
+        state.outgoingCounter = 0
+        state.outgoingQueue.removeAll()
+        state.serverFeatures = nil
     }
 
     // MARK: - Inline Enable (Bind 2)
 
     /// Processes an inline `<enabled>` element from Bind 2 / SASL2 success.
-    /// Called synchronously during handshake — does not use the continuation pattern.
+    /// Called synchronously during handshake — does not use the continuation pattern. The `<enable/>` went out
+    /// inside `<authenticate/>` and no stanza has been sent since, so both counters start here.
     public func processInlineEnabled(_ element: XMLElement) {
         state.withLock { state in
-            state.enabled = true
-            state.resumptionId = element.attribute("id")
-            state.location = element.attribute("location")
-            if let context = state.context {
-                state.connectedJID = context.connectedJID()
-            }
-            Self.parseISRToken(from: element, into: &state)
+            state.enableAttempted = true
+            state.outgoingCounter = 0
+            state.outgoingQueue.removeAll()
+            Self.applyEnabled(element, to: &state)
         }
     }
 
-    // MARK: - ISR
-
-    /// Whether this module has an ISR token for instant stream resumption.
-    public nonisolated var hasISRToken: Bool {
-        state.withLock { $0.isrToken != nil && $0.resumptionId != nil }
+    /// Records that an inline enable went out, so no second `<enable/>` goes out on this stream whatever the server
+    /// answered (XEP-0198 §3).
+    public func markInlineEnableSent() {
+        state.withLock { $0.enableAttempted = true }
     }
 
-    /// Returns the ISR token, or `nil` if no token is available.
-    public nonisolated var isrToken: String? {
-        state.withLock { $0.isrToken }
-    }
-
-    /// Stores a new ISR token after successful ISR resume.
-    public func updateISRToken(_ token: String?) {
-        state.withLock { $0.isrToken = token }
+    /// Starts the session `<enabled/>` names. The inbound counter starts on receiving it (XEP-0198 §4), and the
+    /// post-sign-in features in effect now are kept for a resume.
+    private static func applyEnabled(_ element: XMLElement, to state: inout State) {
+        state.enabled = true
+        state.countsOutgoing = false
+        state.incomingCounter = 0
+        state.resumptionId = element.attribute("id")
+        state.location = element.attribute("location")
+        if let context = state.context {
+            state.connectedJID = context.connectedJID()
+            state.serverFeatures = context.serverStreamFeatures()
+        }
     }
 
     // MARK: - Resume
@@ -412,7 +427,7 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
     public func processOutgoing(_ element: XMLElement) {
         if isStanza(element) {
             state.withLock { state in
-                if state.enabled {
+                if state.enabled || state.countsOutgoing {
                     state.outgoingCounter &+= 1
                     state.outgoingQueue.append(element)
                 }
@@ -424,13 +439,7 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
         switch element.name {
         case "enabled":
             let continuation = state.withLock { state -> CheckedContinuation<Void, any Error>? in
-                state.enabled = true
-                state.resumptionId = element.attribute("id")
-                state.location = element.attribute("location")
-                if let context = state.context {
-                    state.connectedJID = context.connectedJID()
-                }
-                Self.parseISRToken(from: element, into: &state)
+                Self.applyEnabled(element, to: &state)
                 let cont = state.enableContinuation
                 state.enableContinuation = nil
                 return cont
@@ -499,13 +508,6 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
             state.outgoingQueue.removeFirst(toRemove)
         }
         return true
-    }
-
-    private static func parseISRToken(from element: XMLElement, into state: inout State) {
-        if let isrEnabled = element.child(named: "isr-enabled", namespace: XMPPNamespaces.isr) {
-            state.isrToken = isrEnabled.attribute("token")
-            state.isrMechanism = isrEnabled.attribute("mechanism")
-        }
     }
 
     private func isStanza(_ element: XMLElement) -> Bool {

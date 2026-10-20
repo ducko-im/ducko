@@ -1319,7 +1319,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
              .jingleChecksumReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked,
              .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial,
-             .oobIQOfferReceived, .serviceOutageReceived:
+             .oobIQOfferReceived:
             break
         }
     }

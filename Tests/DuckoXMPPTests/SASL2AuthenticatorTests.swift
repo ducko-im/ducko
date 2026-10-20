@@ -8,8 +8,7 @@ private func sasl2Features(
     mechanisms: [String],
     supportsBind2: Bool = false,
     supportsSM: Bool = false,
-    supportsISR: Bool = false,
-    channelBindingTypes: [String] = []
+    bind2InlineFeatures: [String] = []
 ) -> XMLElement {
     var auth = XMLElement(name: "authentication", namespace: XMPPNamespaces.sasl2)
     for name in mechanisms {
@@ -18,26 +17,21 @@ private func sasl2Features(
         auth.addChild(mechanism)
     }
 
-    if supportsBind2 || supportsSM || supportsISR {
+    if supportsBind2 || supportsSM {
         var inline = XMLElement(name: "inline")
         if supportsBind2 {
-            inline.addChild(XMLElement(name: "bind", namespace: XMPPNamespaces.bind2))
+            var bind = XMLElement(name: "bind", namespace: XMPPNamespaces.bind2)
+            var bindInline = XMLElement(name: "inline")
+            for feature in bind2InlineFeatures {
+                bindInline.addChild(XMLElement(name: "feature", attributes: ["var": feature]))
+            }
+            bind.addChild(bindInline)
+            inline.addChild(bind)
         }
         if supportsSM {
             inline.addChild(XMLElement(name: "sm", namespace: XMPPNamespaces.sm))
         }
-        if supportsISR {
-            inline.addChild(XMLElement(name: "isr", namespace: XMPPNamespaces.isr))
-        }
         auth.addChild(inline)
-    }
-
-    if !channelBindingTypes.isEmpty {
-        var cbElement = XMLElement(name: "sasl-channel-binding", namespace: XMPPNamespaces.saslChannelBinding)
-        for cbType in channelBindingTypes {
-            cbElement.addChild(XMLElement(name: "channel-binding", attributes: ["type": cbType]))
-        }
-        auth.addChild(cbElement)
     }
 
     var features = XMLElement(name: "stream:features")
@@ -47,14 +41,17 @@ private func sasl2Features(
 
 /// Builds a SASL2 `<success>` element.
 private func sasl2Success(
-    jid: String,
+    jid: String?,
     additionalData: String? = nil,
-    bound: XMLElement? = nil
+    bound: XMLElement? = nil,
+    streamManagement: XMLElement? = nil
 ) -> XMLElement {
     var success = XMLElement(name: "success", namespace: XMPPNamespaces.sasl2)
-    var authID = XMLElement(name: "authorization-identifier")
-    authID.addText(jid)
-    success.addChild(authID)
+    if let jid {
+        var authID = XMLElement(name: "authorization-identifier")
+        authID.addText(jid)
+        success.addChild(authID)
+    }
     if let additionalData {
         var ad = XMLElement(name: "additional-data")
         ad.addText(additionalData)
@@ -63,7 +60,22 @@ private func sasl2Success(
     if let bound {
         success.addChild(bound)
     }
+    if let streamManagement {
+        success.addChild(streamManagement)
+    }
     return success
+}
+
+/// Starts a PLAIN exchange and feeds it `success`.
+private func plainResponse(to success: XMLElement) throws -> SASL2Authenticator.Response {
+    var auth = SASL2Authenticator()
+    _ = try auth.begin(
+        features: sasl2Features(mechanisms: ["PLAIN"]),
+        authcid: "user",
+        password: "pencil",
+        inlinePayloads: []
+    )
+    return auth.receive(success)
 }
 
 // MARK: - Tests
@@ -85,12 +97,12 @@ enum SASL2AuthenticatorTests {
                 mechanisms: ["PLAIN"],
                 supportsBind2: true,
                 supportsSM: true,
-                supportsISR: true
+                bind2InlineFeatures: [XMPPNamespaces.carbons, XMPPNamespaces.sm]
             )
             let parsed = SASL2Authenticator.parseFeatures(features)
             #expect(parsed?.supportsBind2 == true)
             #expect(parsed?.supportsSM == true)
-            #expect(parsed?.supportsISR == true)
+            #expect(parsed?.bind2InlineFeatures == [XMPPNamespaces.carbons, XMPPNamespaces.sm])
         }
 
         @Test
@@ -108,45 +120,6 @@ enum SASL2AuthenticatorTests {
             features.addChild(auth)
             let parsed = SASL2Authenticator.parseFeatures(features)
             #expect(parsed == nil)
-        }
-
-        @Test
-        func `Parses channel binding types from XEP-0440`() {
-            var auth = XMLElement(name: "authentication", namespace: XMPPNamespaces.sasl2)
-            var mech = XMLElement(name: "mechanism")
-            mech.addText("SCRAM-SHA-256")
-            auth.addChild(mech)
-
-            var cbElement = XMLElement(
-                name: "sasl-channel-binding",
-                namespace: XMPPNamespaces.saslChannelBinding
-            )
-            cbElement.addChild(XMLElement(
-                name: "channel-binding",
-                attributes: ["type": "tls-server-end-point"]
-            ))
-            cbElement.addChild(XMLElement(
-                name: "channel-binding",
-                attributes: ["type": "tls-exporter"]
-            ))
-            auth.addChild(cbElement)
-
-            var features = XMLElement(name: "stream:features")
-            features.addChild(auth)
-
-            let parsed = SASL2Authenticator.parseFeatures(features)
-            #expect(parsed?.channelBindingTypes.contains("tls-server-end-point") == true)
-            #expect(parsed?.channelBindingTypes.contains("tls-exporter") == true)
-            let cbCount = parsed?.channelBindingTypes.count ?? 0
-            #expect(cbCount == 2)
-        }
-
-        @Test
-        func `Channel binding types empty when element absent`() {
-            let features = sasl2Features(mechanisms: ["SCRAM-SHA-256"])
-            let parsed = SASL2Authenticator.parseFeatures(features)
-            let isEmpty = parsed?.channelBindingTypes.isEmpty ?? true
-            #expect(isEmpty)
         }
     }
 
@@ -190,50 +163,6 @@ enum SASL2AuthenticatorTests {
     }
 
     struct PLUSMechanismSelection {
-        private static let mockCBData: [UInt8] = Array(repeating: 0xAB, count: 32)
-
-        @Test
-        func `Selects SCRAM-SHA-256-PLUS when CB data available and server advertises type`() throws {
-            var auth = SASL2Authenticator()
-            let element = try auth.begin(
-                features: sasl2Features(
-                    mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256", "PLAIN"],
-                    channelBindingTypes: ["tls-server-end-point"]
-                ),
-                authcid: "user",
-                password: "pencil",
-                inlinePayloads: [],
-                channelBindingData: Self.mockCBData
-            )
-            #expect(element.attribute("mechanism") == "SCRAM-SHA-256-PLUS")
-        }
-
-        @Test
-        func `Falls back to non-PLUS when server does not advertise CB types`() throws {
-            var auth = SASL2Authenticator()
-            let element = try auth.begin(
-                features: sasl2Features(mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256", "PLAIN"]),
-                authcid: "user",
-                password: "pencil",
-                inlinePayloads: [],
-                channelBindingData: Self.mockCBData
-            )
-            #expect(element.attribute("mechanism") == "SCRAM-SHA-256")
-        }
-
-        @Test
-        func `Falls back to SCRAM-SHA-256 when no PLUS offered`() throws {
-            var auth = SASL2Authenticator()
-            let element = try auth.begin(
-                features: sasl2Features(mechanisms: ["SCRAM-SHA-256", "PLAIN"]),
-                authcid: "user",
-                password: "pencil",
-                inlinePayloads: [],
-                channelBindingData: Self.mockCBData
-            )
-            #expect(element.attribute("mechanism") == "SCRAM-SHA-256")
-        }
-
         @Test
         func `Does not offer PLUS when no CB data`() throws {
             var auth = SASL2Authenticator()
@@ -247,42 +176,13 @@ enum SASL2AuthenticatorTests {
         }
 
         @Test
-        func `Selects EXTERNAL when client certificate available`() throws {
-            var auth = SASL2Authenticator()
-            let element = try auth.begin(
-                features: sasl2Features(mechanisms: ["EXTERNAL", "SCRAM-SHA-256"]),
-                authcid: "user",
-                password: "pencil",
-                inlinePayloads: [],
-                hasClientCertificate: true
-            )
-            #expect(element.attribute("mechanism") == "EXTERNAL")
-        }
-
-        @Test
-        func `Skips EXTERNAL when no client certificate`() throws {
+        func `Skips the unsupported EXTERNAL mechanism`() throws {
             var auth = SASL2Authenticator()
             let element = try auth.begin(
                 features: sasl2Features(mechanisms: ["EXTERNAL", "SCRAM-SHA-256"]),
                 authcid: "user",
                 password: "pencil",
                 inlinePayloads: []
-            )
-            #expect(element.attribute("mechanism") == "SCRAM-SHA-256")
-        }
-
-        @Test
-        func `Falls back to non-PLUS when server CB types exclude tls-server-end-point`() throws {
-            var auth = SASL2Authenticator()
-            let element = try auth.begin(
-                features: sasl2Features(
-                    mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"],
-                    channelBindingTypes: ["tls-exporter"]
-                ),
-                authcid: "user",
-                password: "pencil",
-                inlinePayloads: [],
-                channelBindingData: Self.mockCBData
             )
             #expect(element.attribute("mechanism") == "SCRAM-SHA-256")
         }
@@ -305,11 +205,11 @@ enum SASL2AuthenticatorTests {
 
             let success = sasl2Success(jid: "user@example.com/res1")
             let response = auth.receive(success)
-            guard case let .success(result) = response else {
-                Issue.record("Expected success, got \(response)")
+            guard case let .success(.session(fullJID, _)) = response else {
+                Issue.record("Expected a new session, got \(response)")
                 return
             }
-            #expect(result.fullJID.description == "user@example.com/res1")
+            #expect(fullJID.description == "user@example.com/res1")
         }
     }
 
@@ -326,13 +226,49 @@ enum SASL2AuthenticatorTests {
 
             let success = sasl2Success(jid: "user@example.com/ducko-abc")
             let response = auth.receive(success)
-            guard case let .success(result) = response else {
-                Issue.record("Expected success, got \(response)")
+            guard case let .success(.session(fullJID, _)) = response else {
+                Issue.record("Expected a new session, got \(response)")
                 return
             }
-            #expect(result.fullJID.bareJID.localPart == "user")
-            #expect(result.fullJID.bareJID.domainPart == "example.com")
-            #expect(result.fullJID.resourcePart == "ducko-abc")
+            #expect(fullJID.bareJID.localPart == "user")
+            #expect(fullJID.bareJID.domainPart == "example.com")
+            #expect(fullJID.resourcePart == "ducko-abc")
+        }
+
+        @Test
+        func `Parses the answer to an inline resume`() throws {
+            let resumed = XMLElement(name: "resumed", namespace: XMPPNamespaces.sm, attributes: ["previd": "sm-1", "h": "3"])
+            let response = try plainResponse(to: sasl2Success(jid: "user@example.com/res", streamManagement: resumed))
+            guard case let .success(.resumed(element)) = response else {
+                Issue.record("Expected a resumed stream, got \(response)")
+                return
+            }
+            #expect(element.attribute("h") == "3")
+        }
+
+        /// A resumed success may name only the bare JID (XEP-0388 Example 9), but it must name a valid one.
+        @Test(arguments: [
+            ("user@example.com", true), ("user@example.com/res", true), (nil, false), ("", false), ("@@", false)
+        ] as [(String?, Bool)])
+        func `A resumed success needs a valid bare or full JID`(jid: String?, resumes: Bool) throws {
+            let resumed = XMLElement(name: "resumed", namespace: XMPPNamespaces.sm, attributes: ["previd": "sm-1", "h": "0"])
+            let response = try plainResponse(to: sasl2Success(jid: jid, streamManagement: resumed))
+            if case .success(.resumed) = response {
+                #expect(resumes)
+            } else if case .failure(.invalidState) = response {
+                #expect(!resumes)
+            } else {
+                Issue.record("Expected a resumed stream or invalidState, got \(response)")
+            }
+        }
+
+        @Test
+        func `A fresh session must name its full JID`() throws {
+            let response = try plainResponse(to: sasl2Success(jid: "user@example.com"))
+            guard case .failure(.invalidState) = response else {
+                Issue.record("Expected invalidState, got \(response)")
+                return
+            }
         }
 
         @Test
@@ -348,12 +284,11 @@ enum SASL2AuthenticatorTests {
             let bound = XMLElement(name: "bound", namespace: XMPPNamespaces.bind2)
             let success = sasl2Success(jid: "user@example.com/res", bound: bound)
             let response = auth.receive(success)
-            guard case let .success(result) = response else {
-                Issue.record("Expected success, got \(response)")
+            guard case let .success(.session(_, bound)) = response else {
+                Issue.record("Expected a new session, got \(response)")
                 return
             }
-            #expect(result.bound != nil)
-            #expect(result.bound?.name == "bound")
+            #expect(bound?.name == "bound")
         }
 
         @Test
@@ -368,11 +303,11 @@ enum SASL2AuthenticatorTests {
 
             let success = sasl2Success(jid: "user@example.com/res")
             let response = auth.receive(success)
-            guard case let .success(result) = response else {
-                Issue.record("Expected success, got \(response)")
+            guard case let .success(.session(_, bound)) = response else {
+                Issue.record("Expected a new session, got \(response)")
                 return
             }
-            #expect(result.bound == nil)
+            #expect(bound == nil)
         }
     }
 
@@ -396,6 +331,15 @@ enum SASL2AuthenticatorTests {
                 return
             }
             #expect(condition == "not-authorized")
+        }
+
+        @Test
+        func `A continue asks for a sign-in step that is not supported`() throws {
+            let response = try plainResponse(to: XMLElement(name: "continue", namespace: XMPPNamespaces.sasl2))
+            guard case .failure(.unsupportedSignInStep) = response else {
+                Issue.record("Expected unsupportedSignInStep, got \(response)")
+                return
+            }
         }
 
         @Test
@@ -428,6 +372,23 @@ enum SASL2AuthenticatorTests {
             #expect(bindChild?.child(named: "enable", namespace: XMPPNamespaces.sm) != nil)
             #expect(bindChild?.child(named: "enable", namespace: XMPPNamespaces.carbons) != nil)
         }
+
+        @Test(arguments: [String?.some("Tobias's MacBook"), nil])
+        func `Authenticate names the user agent without an id`(device: String?) throws {
+            var auth = SASL2Authenticator()
+            let element = try auth.begin(
+                features: sasl2Features(mechanisms: ["PLAIN"]),
+                authcid: "user",
+                password: "pencil",
+                inlinePayloads: [],
+                userAgent: SASL2UserAgent(software: "Ducko", device: device)
+            )
+
+            let userAgent = try #require(element.child(named: "user-agent"))
+            #expect(userAgent.attribute("id") == nil)
+            #expect(userAgent.childText(named: "software") == "Ducko")
+            #expect(userAgent.childText(named: "device") == device)
+        }
     }
 
     struct Bind2Request {
@@ -456,29 +417,6 @@ enum SASL2AuthenticatorTests {
             let bind = buildBind2Request(enableSM: false, enableCarbons: false)
             #expect(bind.child(named: "enable", namespace: XMPPNamespaces.sm) == nil)
             #expect(bind.child(named: "enable", namespace: XMPPNamespaces.carbons) == nil)
-        }
-    }
-
-    struct ISRAuthenticate {
-        @Test
-        func `Builds correct ISR authenticate element`() {
-            let smResume = XMLElement(
-                name: "resume",
-                namespace: XMPPNamespaces.sm,
-                attributes: ["previd": "sm-id-1", "h": "42"]
-            )
-            let auth = buildISRAuthenticate(token: "secret-token", smResumeElement: smResume)
-
-            #expect(auth.name == "authenticate")
-            #expect(auth.namespace == XMPPNamespaces.sasl2)
-            #expect(auth.attribute("mechanism") == "HT-SHA-256-ENDP")
-
-            let instResume = auth.child(named: "inst-resume", namespace: XMPPNamespaces.isr)
-            #expect(instResume != nil)
-
-            let resume = instResume?.child(named: "resume", namespace: XMPPNamespaces.sm)
-            #expect(resume?.attribute("previd") == "sm-id-1")
-            #expect(resume?.attribute("h") == "42")
         }
     }
 }

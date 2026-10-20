@@ -36,13 +36,14 @@ def authenticate(connection, reader, leaf_der, plain, post_auth=b'', completed=N
     if plain:
         features = "<mechanisms xmlns='" + SASL + "'><mechanism>PLAIN</mechanism></mechanisms>"
     else:
-        features = "<authentication xmlns='" + SASL2 + "'><mechanism>SCRAM-SHA-256-PLUS</mechanism><sasl-channel-binding xmlns='urn:xmpp:sasl-cb:0'><channel-binding type='tls-server-end-point'/></sasl-channel-binding><inline><bind xmlns='" + BIND2 + "'/></inline></authentication>"
+        features = "<authentication xmlns='" + SASL2 + "'><mechanism>SCRAM-SHA-256-PLUS</mechanism><inline><bind xmlns='" + BIND2 + "'/></inline></authentication><sasl-channel-binding xmlns='urn:xmpp:sasl-cb:0'><channel-binding type='tls-server-end-point'/></sasl-channel-binding>"
     connection.sendall(OPEN + b'<stream:features>' + features.encode() + b'</stream:features>')
     auth = reader.stanza()
     assert auth.tag == '{' + namespace + '}' + ('auth' if plain else 'authenticate')
     assert auth.attrib['mechanism'] == mechanism
     if not plain:
         assert auth.find('{' + BIND2 + '}bind') is not None
+        assert auth.find('{' + SASL2 + '}user-agent/{' + SASL2 + '}software').text == 'Ducko'
     first = base64.b64decode(auth.text if plain else auth.find('{' + SASL2 + '}initial-response').text)
     if plain:
         assert first == b'\0alice\0local-fixture'

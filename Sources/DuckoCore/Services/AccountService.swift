@@ -8,7 +8,6 @@ public final class AccountService {
     public private(set) var accounts: [Account] = []
     public private(set) var connectionStates: [UUID: ConnectionState] = [:]
     public private(set) var certificateWarnings: [UUID: CertificateWarning] = [:]
-    public private(set) var outageInfos: [UUID: ServiceOutageInfo] = [:]
 
     public struct CertificateWarning: Sendable {
         public let accountJID: String
@@ -611,12 +610,9 @@ public final class AccountService {
                 Task { await applyCSIState(to: client) }
             }
         case let .disconnected(reason):
-            outageInfos[accountID] = nil
             handleDisconnect(reason, accountID: accountID)
         case let .authenticationFailed(message):
             connectionStates[accountID] = .error(message)
-        case let .serviceOutageReceived(info):
-            outageInfos[accountID] = info
         case .messageReceived, .presenceReceived, .iqReceived,
              .rosterUpdated,
              .presenceUpdated, .presenceSubscriptionRequest,

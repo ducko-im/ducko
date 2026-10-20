@@ -202,7 +202,6 @@ struct JSONFormatter: CLIFormatter {
         case let .jingleFileTransferCompleted(sid, transport): encode(["type": "jingle_transfer_completed", "sid": sid, "transport": transport.rawValue, "account": account])
         case let .jingleFileTransferFailed(sid, reason): encode(["type": "jingle_transfer_failed", "sid": sid, "reason": reason.rawValue, "account": account])
         case let .oobIQOfferReceived(offer): formatOOBIQOfferEvent(offer, account: account)
-        case let .serviceOutageReceived(info): formatOutageEvent(info, account: account)
         case .presenceReceived, .iqReceived,
              .rosterUpdated,
              .presenceUpdated,
@@ -372,14 +371,6 @@ struct JSONFormatter: CLIFormatter {
             "account": account
         ]
         if let desc = offer.desc { dict["desc"] = desc }
-        return encode(dict)
-    }
-
-    private func formatOutageEvent(_ info: ServiceOutageInfo, account: String) -> String {
-        var dict: [String: String] = ["type": "service_outage", "account": account]
-        if let desc = info.description { dict["description"] = desc }
-        if let end = info.expectedEnd { dict["expected_end"] = end }
-        if let alt = info.alternativeDomain { dict["alternative_domain"] = alt }
         return encode(dict)
     }
 

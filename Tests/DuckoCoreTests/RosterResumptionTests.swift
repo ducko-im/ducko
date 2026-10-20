@@ -6,11 +6,11 @@ import Testing
 
 @MainActor
 struct RosterResumptionTests {
-    @Test(arguments: [false, true], ["success", "query-error", "save-recovery", "save-recovery-error"])
-    func `SM and ISR repair a transport acknowledged but unsaved push`(isr: Bool, resolution: String) async throws {
+    @Test(arguments: ["success", "query-error", "save-recovery", "save-recovery-error"])
+    func `A resumed stream repairs a transport acknowledged but unsaved push`(resolution: String) async throws {
         let fixture = RosterResumptionFixture()
         try await fixture.disconnectWithUnsavedPush()
-        let queryID = try await fixture.resumeWithReplay(isr: isr)
+        let queryID = try await fixture.resumeWithReplay()
         try await fixture.resolveReadback(queryID: queryID, resolution: resolution)
         await fixture.close()
     }
@@ -73,11 +73,11 @@ private final class RosterResumptionFixture {
         #expect(try await store.fetchContacts(for: id).count == 1)
     }
 
-    func resumeWithReplay(isr: Bool) async throws -> String {
+    func resumeWithReplay() async throws -> String {
         let reconnect = Task { try await self.accounts.connect(accountID: self.id, password: "secret") }
         let resumedState = try await factory.resumeForSecondClient()
         #expect(resumedState.incomingCounter == 2)
-        try await resume(second, isr: isr, state: resumedState, features: features)
+        try await resume(second, state: resumedState, features: features)
         try #require(try await boundedOutcome { await self.resumeGate.entered.wait() } != nil)
         // Replay reaches the session owner before streamResumed and must stay fenced.
         await second.simulateReceive("<iq type='set' id='replay'><query xmlns='jabber:iq:roster' ver='replay'><item jid='carol@example.com'/></query></iq>")
@@ -148,27 +148,17 @@ private final class RosterResumptionFixture {
         try await exchange(first, "<auth", "<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
         try await exchange(first, "<stream:stream", testServerStreamOpen + features)
         try await exchange(first, "<iq", testBindResult)
-        try await exchange(first, "<enable", "<enabled xmlns='urn:xmpp:sm:3' id='roster-session' max='300'><isr-enabled xmlns='https://xmpp.org/extensions/isr/0' token='test-token' mechanism='HT-SHA-256-ENDP'/></enabled>")
+        try await exchange(first, "<enable", "<enabled xmlns='urn:xmpp:sm:3' id='roster-session' max='300'/>")
     }
 
-    private func resume(_ second: MockTransport, isr: Bool, state: SMResumeState, features: String) async throws {
-        if isr {
-            let sasl2 = "<features xmlns='http://etherx.jabber.org/streams'><authentication xmlns='urn:xmpp:sasl:2'><mechanism>PLAIN</mechanism><inline><bind xmlns='urn:xmpp:bind:0'/><sm xmlns='urn:xmpp:sm:3'/><isr xmlns='https://xmpp.org/extensions/isr/0'/></inline></authentication></features>"
-            try await exchange(second, "<stream:stream", testServerStreamOpen + sasl2)
-            let auth = try await sentStanza(on: second, containing: "<authenticate")
-            #expect(auth.contains("HT-SHA-256-ENDP"))
-            #expect(auth.contains("h=\"2\""))
-            await second.clearSentBytes()
-            await second.simulateReceive("<success xmlns='urn:xmpp:sasl:2'><authorization-identifier>alice@example.com/ducko</authorization-identifier><resumed xmlns='urn:xmpp:sm:3' previd='roster-session' h='\(state.outgoingCounter)'/></success><features xmlns='http://etherx.jabber.org/streams'/>")
-        } else {
-            try await exchange(second, "<stream:stream", testServerStreamOpen + testFeaturesNoTLS)
-            try await exchange(second, "<auth", "<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
-            try await exchange(second, "<stream:stream", testServerStreamOpen + features)
-            let resume = try await sentStanza(on: second, containing: "<resume")
-            #expect(resume.contains("h=\"2\""))
-            await second.clearSentBytes()
-            await second.simulateReceive("<resumed xmlns='urn:xmpp:sm:3' previd='roster-session' h='\(state.outgoingCounter)'/>")
-        }
+    private func resume(_ second: MockTransport, state: SMResumeState, features: String) async throws {
+        try await exchange(second, "<stream:stream", testServerStreamOpen + testFeaturesNoTLS)
+        try await exchange(second, "<auth", "<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
+        try await exchange(second, "<stream:stream", testServerStreamOpen + features)
+        let resume = try await sentStanza(on: second, containing: "<resume")
+        #expect(resume.contains("h=\"2\""))
+        await second.clearSentBytes()
+        await second.simulateReceive("<resumed xmlns='urn:xmpp:sm:3' previd='roster-session' h='\(state.outgoingCounter)'/>")
     }
 
     private func exchange(_ transport: MockTransport, _ fragment: String, _ response: String) async throws {

@@ -1,4 +1,6 @@
 import DuckoXMPP
+import Foundation
+import SystemConfiguration
 
 public struct DefaultXMPPClientFactory: XMPPClientFactory {
     public init() {}
@@ -17,6 +19,7 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
         )
         builder.withRequireTLS(requireTLSOverride ?? account.requireTLS)
         builder.withPreferredResource(account.resource)
+        builder.withUserAgent(SASL2UserAgent(device: SCDynamicStoreCopyComputerName(nil, nil) as String?))
         let rosterModule = RosterModule()
         let rosterVersion = account.rosterVersion
         rosterModule.setRosterVersionProvider { rosterVersion }
@@ -50,7 +53,6 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
         builder.withModule(ChannelSearchModule())
         builder.withModule(RegistrationModule())
         builder.withModule(OOBModule())
-        builder.withModule(ServiceOutageModule())
         builder.withModule(CSIModule())
         let sm = StreamManagementModule(previousState: resuming?.streamManagement)
         builder.withModule(sm)

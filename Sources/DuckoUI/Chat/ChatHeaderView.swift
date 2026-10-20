@@ -13,10 +13,6 @@ struct ChatHeaderView: View {
         conversation.accountID.flatMap { environment.accountService.connectionStates[$0] } ?? .disconnected
     }
 
-    private var hasOutage: Bool {
-        conversation.accountID.flatMap { environment.accountService.outageInfos[$0] } != nil
-    }
-
     private var isOffline: Bool {
         switch connectionState {
         case .connected, .connecting: false
@@ -98,11 +94,6 @@ struct ChatHeaderView: View {
                         Text("·")
                         Text("logged")
                     }
-                    if hasOutage {
-                        Text("·")
-                        Text("service outage")
-                            .foregroundStyle(.orange)
-                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -161,15 +152,6 @@ struct ChatHeaderView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .singleLine()
-
-                    if hasOutage {
-                        Text("·")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("service outage")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
                 }
             }
         }

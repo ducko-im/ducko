@@ -4,11 +4,35 @@ import CryptoKit
 struct SASL2Features {
     let mechanisms: Set<String>
     let supportsBind2: Bool
+    /// Whether the server takes a stream-management `<resume/>` inside `<authenticate/>`.
     let supportsSM: Bool
-    let supportsISR: Bool
-    /// XEP-0440 server-advertised channel binding types.
-    /// When non-empty, PLUS mechanisms are only offered if the server supports `tls-server-end-point`.
-    let channelBindingTypes: Set<String>
+    /// The features Bind 2 can enable inline (XEP-0386 §3.1).
+    let bind2InlineFeatures: Set<String>
+}
+
+/// The `<user-agent/>` a SASL2 `<authenticate/>` carries (XEP-0388 §2.3). It has no id, so the server gives every
+/// connection its own resource rather than one that a second connection to the account would take over.
+public struct SASL2UserAgent: Sendable {
+    public let software: String
+    public let device: String?
+
+    public init(software: String = "Ducko", device: String? = nil) {
+        self.software = software
+        self.device = device
+    }
+
+    var element: XMLElement {
+        var userAgent = XMLElement(name: "user-agent")
+        var softwareElement = XMLElement(name: "software")
+        softwareElement.addText(software)
+        userAgent.addChild(softwareElement)
+        if let device {
+            var deviceElement = XMLElement(name: "device")
+            deviceElement.addText(device)
+            userAgent.addChild(deviceElement)
+        }
+        return userAgent
+    }
 }
 
 /// Negotiation coordinator for SASL2 authentication (XEP-0388).
@@ -17,10 +41,10 @@ struct SASL2Features {
 /// using the SASL2 namespace with inline Bind 2 (XEP-0386) feature negotiation.
 struct SASL2Authenticator {
     /// Result of a successful SASL2 authentication.
-    struct AuthResult {
-        let fullJID: FullJID
-        /// The `<bound>` element from Bind 2, if present.
-        let bound: XMLElement?
+    enum AuthResult {
+        /// The `<resumed/>` answering an inline `<resume/>`. The stream keeps the JID of the session it resumes.
+        case resumed(XMLElement)
+        case session(FullJID, bound: XMLElement?)
     }
 
     /// Result of a SASL2 exchange step.
@@ -46,23 +70,16 @@ struct SASL2Authenticator {
         guard !mechanisms.isEmpty else { return nil }
 
         let inline = auth.child(named: "inline")
-        let supportsBind2 = inline?.child(named: "bind", namespace: XMPPNamespaces.bind2) != nil
-        let supportsSM = inline?.child(named: "sm", namespace: XMPPNamespaces.sm) != nil
-        let supportsISR = inline?.child(named: "isr", namespace: XMPPNamespaces.isr) != nil
-
-        // XEP-0440: SASL Channel-Binding Type Capability
-        let cbTypes = Set(
-            auth.child(named: "sasl-channel-binding", namespace: XMPPNamespaces.saslChannelBinding)?
-                .children(named: "channel-binding")
-                .compactMap { $0.attribute("type") } ?? []
+        let bind2 = inline?.child(named: "bind", namespace: XMPPNamespaces.bind2)
+        let bind2InlineFeatures = Set(
+            bind2?.child(named: "inline")?.children(named: "feature").compactMap { $0.attribute("var") } ?? []
         )
 
         return SASL2Features(
             mechanisms: mechanisms,
-            supportsBind2: supportsBind2,
-            supportsSM: supportsSM,
-            supportsISR: supportsISR,
-            channelBindingTypes: cbTypes
+            supportsBind2: bind2 != nil,
+            supportsSM: inline?.child(named: "sm", namespace: XMPPNamespaces.sm) != nil,
+            bind2InlineFeatures: bind2InlineFeatures
         )
     }
 
@@ -75,35 +92,27 @@ struct SASL2Authenticator {
         authcid: String,
         password: String,
         inlinePayloads: [XMLElement],
-        channelBindingData: [UInt8]? = nil,
-        hasClientCertificate: Bool = false
+        userAgent: SASL2UserAgent = SASL2UserAgent(),
+        channelBindingData: [UInt8]? = nil
     ) throws(SASLAuthError) -> XMLElement {
         guard let sasl2Features = Self.parseFeatures(features) else {
             throw SASLAuthError.noSupportedMechanism
         }
 
-        // XEP-0440: Only use CB data if the server explicitly advertises tls-server-end-point.
-        // When the server omits <sasl-channel-binding> entirely (isEmpty), it does not support
-        // channel binding — do NOT fall back to PLUS mechanisms.
-        let effectiveCBData: [UInt8]? = if let channelBindingData,
-                                           !sasl2Features.channelBindingTypes.isEmpty,
-                                           sasl2Features.channelBindingTypes.contains(tlsServerEndPointCBType) {
-            channelBindingData
-        } else {
-            nil
-        }
-
-        let preferenceOrder = buildSASLPreferenceOrder(
-            channelBindingData: effectiveCBData,
-            hasClientCertificate: hasClientCertificate
+        let channelBinding = try chooseChannelBinding(
+            bindingData: channelBindingData,
+            advertisedTypes: parseChannelBindingTypes(features),
+            offeredMechanisms: sasl2Features.mechanisms,
+            isSASL2: true
         )
+        let preferenceOrder = buildSASLPreferenceOrder(channelBinding: channelBinding)
 
         guard let selected = preferenceOrder.first(where: { sasl2Features.mechanisms.contains($0) }) else {
             throw SASLAuthError.noSupportedMechanism
         }
 
         let (mechanism, initialPayload) = startMechanism(
-            selected, authcid: authcid, password: password, channelBindingData: effectiveCBData
+            selected, authcid: authcid, password: password, channelBinding: channelBinding
         )
         activeMechanism = mechanism
 
@@ -114,9 +123,9 @@ struct SASL2Authenticator {
         )
 
         var initialResponse = XMLElement(name: "initial-response")
-        // EXTERNAL sends "=" for empty initial response per RFC 6120 §6.4.2
-        initialResponse.addText(initialPayload.isEmpty ? "=" : Base64.encode(initialPayload))
+        initialResponse.addText(Base64.encode(initialPayload))
         authenticate.addChild(initialResponse)
+        authenticate.addChild(userAgent.element)
 
         for payload in inlinePayloads {
             authenticate.addChild(payload)
@@ -138,6 +147,8 @@ struct SASL2Authenticator {
             handleSuccess(stanza, mechanism: &mechanism)
         case "failure":
             .failure(.parse(failure: stanza))
+        case "continue":
+            .failure(.unsupportedSignInStep)
         default:
             .failure(.invalidState("Unexpected SASL2 element: \(stanza.name)"))
         }
@@ -152,33 +163,17 @@ struct SASL2Authenticator {
         _ name: String,
         authcid: String,
         password: String,
-        channelBindingData: [UInt8]?
+        channelBinding: ChannelBindingMode
     ) -> (ActiveMechanism, String) {
         switch name {
-        case SCRAMMechanismName.sha256Plus:
-            var scram = SCRAMState<SHA256>(
-                channelBindingMode: .bound(type: tlsServerEndPointCBType, data: channelBindingData!)
-            )
+        case SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha256:
+            var scram = SCRAMState<SHA256>(channelBindingMode: channelBinding)
             let payload = scram.clientFirstMessage(authcid: authcid, password: password)
             return (.scram256(scram), payload)
-        case SCRAMMechanismName.sha256:
-            let cbMode: ChannelBindingMode = channelBindingData != nil ? .clientSupportsButNotUsed : .none
-            var scram = SCRAMState<SHA256>(channelBindingMode: cbMode)
-            let payload = scram.clientFirstMessage(authcid: authcid, password: password)
-            return (.scram256(scram), payload)
-        case SCRAMMechanismName.sha1Plus:
-            var scram = SCRAMState<Insecure.SHA1>(
-                channelBindingMode: .bound(type: tlsServerEndPointCBType, data: channelBindingData!)
-            )
+        case SCRAMMechanismName.sha1Plus, SCRAMMechanismName.sha1:
+            var scram = SCRAMState<Insecure.SHA1>(channelBindingMode: channelBinding)
             let payload = scram.clientFirstMessage(authcid: authcid, password: password)
             return (.scram1(scram), payload)
-        case SCRAMMechanismName.sha1:
-            let cbMode: ChannelBindingMode = channelBindingData != nil ? .clientSupportsButNotUsed : .none
-            var scram = SCRAMState<Insecure.SHA1>(channelBindingMode: cbMode)
-            let payload = scram.clientFirstMessage(authcid: authcid, password: password)
-            return (.scram1(scram), payload)
-        case SASLExternal.mechanismName:
-            return (.external, "")
         case SASLPlain.mechanismName:
             let payload = "\0\(authcid)\0\(password)"
             return (.plain, payload)
@@ -202,8 +197,6 @@ struct SASL2Authenticator {
             let response = scramChallengeResponse(decoded, scram: &scram)
             mechanism = .scram1(scram)
             return response
-        case .external:
-            return .failure(.invalidState("EXTERNAL does not expect challenges"))
         case .plain:
             return .failure(.invalidState("PLAIN does not expect challenges"))
         }
@@ -218,11 +211,11 @@ struct SASL2Authenticator {
         case var .scram1(scram):
             if let error = verifyScramSignature(stanza, scram: &scram) { return error }
             mechanism = .scram1(scram)
-        case .external, .plain:
+        case .plain:
             break
         }
 
-        return parseSuccessJID(stanza)
+        return parseSuccess(stanza)
     }
 
     /// Processes a SCRAM challenge and produces the response element.
@@ -255,15 +248,18 @@ struct SASL2Authenticator {
         return nil
     }
 
-    /// Parses the authorization-identifier and bound element from a SASL2 success.
-    private func parseSuccessJID(_ stanza: XMLElement) -> Response {
-        guard let jidStr = stanza.childText(named: "authorization-identifier"),
-              let fullJID = FullJID.parse(jidStr) else {
-            return .failure(.invalidState("No JID in SASL2 success"))
+    /// Parses a SASL2 success into a resumed stream or a new session. A resumed stream may name only the bare JID
+    /// (XEP-0388 Example 9); a new session must name its full JID.
+    private func parseSuccess(_ stanza: XMLElement) -> Response {
+        let jid = stanza.childText(named: "authorization-identifier")
+        if let resumed = stanza.child(named: "resumed", namespace: XMPPNamespaces.sm),
+           let jid, JID.parse(jid) != nil {
+            return .success(.resumed(resumed))
         }
-
-        let bound = stanza.child(named: "bound", namespace: XMPPNamespaces.bind2)
-        return .success(AuthResult(fullJID: fullJID, bound: bound))
+        guard let fullJID = jid.flatMap(FullJID.parse) else {
+            return .failure(.invalidState("No valid account address in the success reply"))
+        }
+        return .success(.session(fullJID, bound: stanza.child(named: "bound", namespace: XMPPNamespaces.bind2)))
     }
 
     // MARK: - Active Mechanism
@@ -271,7 +267,6 @@ struct SASL2Authenticator {
     private enum ActiveMechanism {
         case scram256(SCRAMState<SHA256>)
         case scram1(SCRAMState<Insecure.SHA1>)
-        case external
         case plain
     }
 }
@@ -282,7 +277,6 @@ struct SASL2Authenticator {
 func buildBind2Request(
     tag: String = "Ducko",
     enableSM: Bool = false,
-    enableISR: Bool = false,
     enableCarbons: Bool = false
 ) -> XMLElement {
     var bind = XMLElement(name: "bind", namespace: XMPPNamespaces.bind2)
@@ -292,19 +286,11 @@ func buildBind2Request(
     bind.addChild(tagElement)
 
     if enableSM {
-        var smEnable = XMLElement(
+        bind.addChild(XMLElement(
             name: "enable",
             namespace: XMPPNamespaces.sm,
             attributes: ["resume": "true"]
-        )
-        if enableISR {
-            smEnable.addChild(XMLElement(
-                name: "isr-enable",
-                namespace: XMPPNamespaces.isr,
-                attributes: ["mechanism": XMPPNamespaces.isrMechanism]
-            ))
-        }
-        bind.addChild(smEnable)
+        ))
     }
 
     if enableCarbons {
@@ -312,25 +298,4 @@ func buildBind2Request(
     }
 
     return bind
-}
-
-// MARK: - ISR
-
-/// Builds an ISR resume authenticate element for SASL2.
-func buildISRAuthenticate(token: String, smResumeElement: XMLElement) -> XMLElement {
-    var auth = XMLElement(
-        name: "authenticate",
-        namespace: XMPPNamespaces.sasl2,
-        attributes: ["mechanism": XMPPNamespaces.isrMechanism]
-    )
-
-    var initialResponse = XMLElement(name: "initial-response")
-    initialResponse.addText(Base64.encode(Array(token.utf8)))
-    auth.addChild(initialResponse)
-
-    var instResume = XMLElement(name: "inst-resume", namespace: XMPPNamespaces.isr)
-    instResume.addChild(smResumeElement)
-    auth.addChild(instResume)
-
-    return auth
 }

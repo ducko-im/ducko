@@ -12,7 +12,7 @@ enum SASLAuthResponse {
 }
 
 /// Errors that can occur during SASL authentication.
-enum SASLAuthError: Error {
+enum SASLAuthError: Error, Equatable {
     case noSupportedMechanism
     case invalidBase64
     case malformedChallenge(String)
@@ -21,6 +21,8 @@ enum SASLAuthError: Error {
     case serverFailure(condition: String, text: String?)
     case invalidState(String)
     case iterationCountTooLow(Int)
+    case channelBindingDowngrade
+    case unsupportedSignInStep
 
     /// A `.serverFailure` prefers the server's non-blank `text`, then a phrase for a known condition, then the raw
     /// condition name.
@@ -35,6 +37,8 @@ enum SASLAuthError: Error {
             if let text, !text.allSatisfy(\.isWhitespace) { text } else { Condition(rawValue: condition)?.displayText ?? condition }
         case let .invalidState(reason): "Unexpected authentication state: \(reason)"
         case let .iterationCountTooLow(count): "The server's password hashing is too weak (\(count) iterations)"
+        case .channelBindingDowngrade: "The server's authentication options contradict each other, which can mean the connection is being tampered with"
+        case .unsupportedSignInStep: "The server asked for an extra authentication step that is not supported"
         }
     }
 
@@ -83,19 +87,52 @@ enum SASLAuthError: Error {
     }
 }
 
-/// Builds SASL mechanism preference order based on available capabilities.
+/// The channel-binding types the server lists in `<sasl-channel-binding>` directly under the stream features
+/// (XEP-0440 §2). An absent element and an empty one both list none.
+func parseChannelBindingTypes(_ features: XMLElement) -> Set<String> {
+    Set(
+        features.child(named: "sasl-channel-binding", namespace: XMPPNamespaces.saslChannelBinding)?
+            .children(named: "channel-binding")
+            .compactMap { $0.attribute("type") } ?? []
+    )
+}
+
+/// Chooses how SCRAM binds to the TLS channel, per XEP-0440 §3, or throws when the offer looks downgraded.
+///
+/// "`-PLUS` offered" means any offered name ending in `-PLUS`, implemented or not, because a server offering any
+/// `-PLUS` mechanism rejects `y,,` as a downgrade.
+///
+/// Three cases deliberately sign in unbound rather than abort, against rules 5 and 6 and RFC 5802 §6:
+/// - Types listed without any `-PLUS`. Prosody does this with PLAIN-only auth backends, and it rejects `y,,`
+///   whenever it lists types.
+/// - Only types this client can't compute.
+/// - SASL1 offering `-PLUS` without listing any type.
+func chooseChannelBinding(
+    bindingData: [UInt8]?,
+    advertisedTypes: Set<String>,
+    offeredMechanisms: Set<String>,
+    isSASL2: Bool
+) throws(SASLAuthError) -> ChannelBindingMode {
+    guard let bindingData else { return .none }
+    let plusOffered = offeredMechanisms.contains { $0.hasSuffix("-PLUS") }
+    if isSASL2, plusOffered, advertisedTypes.isEmpty { throw .channelBindingDowngrade }
+    let implementedPlusOffered = !offeredMechanisms.isDisjoint(with: [SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha1Plus])
+    if advertisedTypes.contains(tlsServerEndPointCBType), implementedPlusOffered {
+        return .bound(type: tlsServerEndPointCBType, data: bindingData)
+    }
+    if advertisedTypes.isEmpty, !plusOffered { return .clientSupportsButNotUsed }
+    return .none
+}
+
+/// Builds SASL mechanism preference order for the chosen channel binding: only `-PLUS` mechanisms when bound, so a
+/// stronger unbound mechanism never wins over binding, and none of them otherwise.
 ///
 /// Shared between ``SASLAuthenticator`` (SASL1) and ``SASL2Authenticator`` (SASL2).
-func buildSASLPreferenceOrder(
-    channelBindingData: [UInt8]?,
-    hasClientCertificate: Bool
-) -> [String] {
-    var order: [String] = []
-    if hasClientCertificate { order.append(SASLExternal.mechanismName) }
-    if channelBindingData != nil { order.append(SCRAMMechanismName.sha256Plus) }
-    order.append(SCRAMMechanismName.sha256)
-    if channelBindingData != nil { order.append(SCRAMMechanismName.sha1Plus) }
-    order.append(SCRAMMechanismName.sha1)
-    order.append(SASLPlain.mechanismName)
-    return order
+func buildSASLPreferenceOrder(channelBinding: ChannelBindingMode) -> [String] {
+    switch channelBinding {
+    case .bound:
+        [SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha1Plus]
+    case .none, .clientSupportsButNotUsed:
+        [SCRAMMechanismName.sha256, SCRAMMechanismName.sha1, SASLPlain.mechanismName]
+    }
 }

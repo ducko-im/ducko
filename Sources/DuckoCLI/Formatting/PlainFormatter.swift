@@ -123,7 +123,6 @@ struct PlainFormatter: CLIFormatter {
         case let .jingleFileTransferCompleted(sid, transport): formatJingleTransferCompleted(sid: sid, transport: transport)
         case let .jingleFileTransferFailed(sid, reason): formatJingleTransferFailed(sid: sid, reason: reason)
         case let .oobIQOfferReceived(offer): formatOOBOffer(offer: offer)
-        case let .serviceOutageReceived(info): formatOutageEvent(info)
         case .presenceReceived, .iqReceived,
              .rosterUpdated,
              .presenceUpdated,
@@ -165,20 +164,6 @@ struct PlainFormatter: CLIFormatter {
             fileName: fileName, fileSize: 0,
             from: offer.from.bareJID.description, offerID: offer.offerID
         )
-    }
-
-    private func formatOutageEvent(_ info: ServiceOutageInfo) -> String {
-        var line = "Service outage"
-        if let desc = info.description {
-            line += ": \(desc)"
-        }
-        if let end = info.expectedEnd {
-            line += " (expected end: \(end))"
-        }
-        if let alt = info.alternativeDomain {
-            line += " [alternative: \(alt)]"
-        }
-        return line
     }
 
     private func formatCarbonEvent(_ forwarded: ForwardedMessage, isOutgoing: Bool) -> String? {

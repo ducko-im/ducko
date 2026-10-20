@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Shared Handshake XML Constants
 
 // Byte-identical across DuckoCoreTests and DuckoXMPPTests, so they live here rather than being duplicated
-// per target. Target-specific fixtures (the SASL2/ISR set, the divergent `testBindResult`) stay in their own
+// per target. Target-specific fixtures (the SASL2 set, the divergent `testBindResult`) stay in their own
 // target's helpers.
 
 /// Standard stream opening from server.

@@ -200,7 +200,7 @@ public final class OMEMOService {
              .jingleChecksumReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked,
              .omemoRecipientsPartial,
-             .oobIQOfferReceived, .serviceOutageReceived:
+             .oobIQOfferReceived:
             break
         }
     }

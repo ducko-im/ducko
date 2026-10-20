@@ -173,8 +173,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0198.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">With SASL2 and Bind 2, streams are resumed only through Instant Stream Resumption</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -317,14 +316,13 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0386.html"/>
                 <xmpp:status>complete</xmpp:status>
-                <xmpp:note xml:lang="en">The server's list of inline features is not read; Carbons are always requested inline</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0388.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Only used together with Bind 2; no user-agent element and no task continuation</xmpp:note>
+                <xmpp:note xml:lang="en">XEP-0440, which this requires, is only partially supported; a SASL2 offer removed in transit leads to the SASL1 sign-in</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -396,7 +394,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0440.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Channel-binding types are read from inside the SASL2 authentication element instead of the stream features; not used with SASL1; tls-server-end-point only</xmpp:note>
+                <xmpp:note xml:lang="en">Only tls-server-end-point is supported; sign-in proceeds unbound, with the GS2 flag "n" against RFC 5802 §6, when the server lists types but no -PLUS mechanism, lists only types Ducko cannot compute, or offers -PLUS over SASL1 without listing types; an attacker holding a trusted certificate for the server can use this to switch binding off</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>

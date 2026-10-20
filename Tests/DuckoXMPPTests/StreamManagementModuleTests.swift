@@ -472,6 +472,92 @@ enum StreamManagementModuleTests {
         }
     }
 
+    struct NewSession {
+        private static func carriedState() throws -> SMResumeState {
+            try SMResumeState(
+                resumptionId: "sm-old", incomingCounter: 7, outgoingCounter: 3,
+                outgoingQueue: [stanza("<message to='contact@example.com'><body>Queued</body></message>")],
+                connectedJID: #require(FullJID.parse("user@example.com/old")), location: nil
+            )
+        }
+
+        private static let enabled = XMLElement(name: "enabled", namespace: XMPPNamespaces.sm, attributes: ["id": "sm-new"])
+
+        @Test
+        func `Inline enabled starts both counters at zero and drops the earlier queue`() throws {
+            let sm = try StreamManagementModule(previousState: Self.carriedState())
+            sm.setUp(makeStubModuleContext())
+
+            sm.processInlineEnabled(Self.enabled)
+
+            let state = try #require(sm.resumeState)
+            #expect(state.resumptionId == "sm-new")
+            #expect(state.incomingCounter == 0)
+            #expect(state.outgoingCounter == 0)
+            #expect(state.outgoingQueue.isEmpty)
+        }
+
+        @Test
+        func `Post-bind enable counts stanzas sent before enabled and starts h on enabled`() async throws {
+            let sm = try StreamManagementModule(previousState: Self.carriedState())
+            let enableSent = AsyncSemaphore()
+            let features = try stanza("<features xmlns='http://etherx.jabber.org/streams'><sm xmlns='urn:xmpp:sm:3'/></features>")
+            sm.setUp(makeStubModuleContext(
+                sendElement: { element in
+                    if element.name == "enable" { await enableSent.signal() }
+                },
+                serverStreamFeatures: { features }
+            ))
+
+            let connect = Task { try await sm.handleConnect() }
+            await enableSent.wait()
+            try sm.processOutgoing(stanza("<iq type='error' id='server-1' to='example.com'/>"))
+            _ = sm.processIncoming(Self.enabled)
+            try await connect.value
+
+            let state = try #require(sm.resumeState)
+            #expect(state.outgoingCounter == 1)
+            #expect(state.outgoingQueue.map(\.name) == ["iq"])
+            #expect(state.incomingCounter == 0)
+        }
+
+        @Test
+        func `A fresh session without stream management drops the carried resume state`() throws {
+            let sm = try StreamManagementModule(previousState: Self.carriedState())
+            sm.setUp(makeStubModuleContext())
+
+            sm.handleSessionEstablished(resumed: false)
+
+            #expect(sm.resumeState == nil)
+        }
+
+        @Test
+        func `A fresh session keeps the session an inline enable started`() throws {
+            let sm = try StreamManagementModule(previousState: Self.carriedState())
+            sm.setUp(makeStubModuleContext())
+
+            sm.processInlineEnabled(Self.enabled)
+            sm.handleSessionEstablished(resumed: false)
+
+            #expect(sm.resumeState?.resumptionId == "sm-new")
+        }
+
+        @Test
+        func `Enabled keeps the session's post-sign-in features across a resume`() throws {
+            let features = try stanza("<features xmlns='http://etherx.jabber.org/streams'><csi xmlns='urn:xmpp:csi:0'/></features>")
+            let sm = StreamManagementModule()
+            sm.setUp(makeStubModuleContext(serverStreamFeatures: { features }))
+
+            sm.processInlineEnabled(Self.enabled)
+
+            #expect(sm.sessionFeatures?.child(named: "csi", namespace: XMPPNamespaces.csi) != nil)
+            let snapshot = try #require(sm.resumeState)
+            #expect(snapshot.serverFeatures?.child(named: "csi", namespace: XMPPNamespaces.csi) != nil)
+            let resumed = StreamManagementModule(previousState: snapshot)
+            #expect(resumed.sessionFeatures?.child(named: "csi", namespace: XMPPNamespaces.csi) != nil)
+        }
+    }
+
     struct SyncAckHandshake {
         @Test
         func `disconnect order: unavailable then <r/> then <a/> then stream close`() async throws {
@@ -518,7 +604,7 @@ enum StreamManagementModuleTests {
             await client.register(sm)
             await client.addInterceptor(sm)
 
-            let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
+            let connectTask = Task { try await client.connectWithTLS(host: "example.com", port: 5223) }
             await simulateSASL2Connect(mock)
             try await connectTask.value
 

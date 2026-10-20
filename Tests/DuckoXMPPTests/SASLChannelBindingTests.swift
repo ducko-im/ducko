@@ -134,7 +134,7 @@ enum SCRAMPLUSTests {
         func `Start produces correct auth element`() throws {
             var mechanism = SCRAM<SHA256>(
                 mechanismName: SCRAMMechanismName.sha256Plus,
-                channelBindingData: Self.mockCBData,
+                channelBindingMode: .bound(type: tlsServerEndPointCBType, data: Self.mockCBData),
                 nonceGenerator: { Self.clientNonce }
             )
             let auth = mechanism.start(authcid: "user", password: "pencil")
@@ -158,7 +158,7 @@ enum SCRAMPLUSTests {
         func `Start produces correct auth element`() throws {
             var mechanism = SCRAM<Insecure.SHA1>(
                 mechanismName: SCRAMMechanismName.sha1Plus,
-                channelBindingData: Self.mockCBData,
+                channelBindingMode: .bound(type: tlsServerEndPointCBType, data: Self.mockCBData),
                 nonceGenerator: { Self.clientNonce }
             )
             let auth = mechanism.start(authcid: "user", password: "pencil")
@@ -175,56 +175,143 @@ enum SCRAMPLUSTests {
     }
 }
 
-// MARK: - SASL EXTERNAL Tests
+// MARK: - Channel Binding Choice Tests
 
-struct SASLExternalTests {
-    @Test
-    func `Start with nil authzid produces empty initial response`() {
-        var mechanism = SASLExternal()
-        let auth = mechanism.start(authzid: nil)
-
-        #expect(auth.name == "auth")
-        #expect(auth.namespace == saslNamespace)
-        #expect(auth.attribute("mechanism") == "EXTERNAL")
-        #expect(auth.textContent == "=")
+/// Each way a server can offer channel binding (XEP-0440 §3), through both authenticators, with binding data from TLS
+/// unless an offer says otherwise.
+struct ChannelBindingChoiceTests {
+    enum Outcome: Sendable, Equatable {
+        /// `header` is the GS2 header, which PLAIN doesn't have.
+        case mechanism(String, header: String?)
+        case abort
     }
 
-    @Test
-    func `Start with empty authzid produces empty initial response`() {
-        var mechanism = SASLExternal()
-        let auth = mechanism.start(authzid: "")
-        #expect(auth.textContent == "=")
+    struct Offer: Sendable, CustomTestStringConvertible {
+        let testDescription: String
+        let mechanisms: [String]
+        /// `nil` leaves out `<sasl-channel-binding>`; an empty list sends it empty.
+        let types: [String]?
+        let sasl1: Outcome
+        let sasl2: Outcome
+        var hasBindingData = true
     }
 
-    @Test
-    func `Start with authzid produces base64-encoded value`() throws {
-        var mechanism = SASLExternal()
-        let auth = mechanism.start(authzid: "user@example.com")
+    private static let bound = Outcome.mechanism(SCRAMMechanismName.sha256Plus, header: "p=tls-server-end-point,,")
 
-        let payload = try #require(auth.textContent)
-        let decoded = try #require(Base64.decodeString(payload))
-        #expect(decoded == "user@example.com")
+    static let offers: [Offer] = [
+        Offer(
+            testDescription: "listed type with PLUS binds", mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"],
+            types: ["tls-server-end-point"], sasl1: bound, sasl2: bound
+        ),
+        Offer(
+            testDescription: "listed type binds over a stronger unbound mechanism", mechanisms: ["SCRAM-SHA-256", "SCRAM-SHA-1-PLUS"],
+            types: ["tls-server-end-point"],
+            sasl1: .mechanism("SCRAM-SHA-1-PLUS", header: "p=tls-server-end-point,,"),
+            sasl2: .mechanism("SCRAM-SHA-1-PLUS", header: "p=tls-server-end-point,,")
+        ),
+        Offer(
+            testDescription: "no types and no PLUS says the client supports binding", mechanisms: ["SCRAM-SHA-256"],
+            types: nil, sasl1: .mechanism("SCRAM-SHA-256", header: "y,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "y,,")
+        ),
+        Offer(
+            testDescription: "an empty type list counts as none", mechanisms: ["SCRAM-SHA-256"],
+            types: [], sasl1: .mechanism("SCRAM-SHA-256", header: "y,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "y,,")
+        ),
+        Offer(
+            testDescription: "types without PLUS signs in unbound", mechanisms: ["SCRAM-SHA-256"],
+            types: ["tls-server-end-point"],
+            sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "n,,")
+        ),
+        Offer(
+            testDescription: "types with only PLAIN signs in with PLAIN", mechanisms: ["PLAIN"],
+            types: ["tls-exporter"], sasl1: .mechanism("PLAIN", header: nil), sasl2: .mechanism("PLAIN", header: nil)
+        ),
+        Offer(
+            testDescription: "PLUS with an empty type list", mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"],
+            types: [], sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .abort
+        ),
+        Offer(
+            testDescription: "PLUS without types leaves the PLUS mechanism out", mechanisms: ["SCRAM-SHA-1-PLUS", "SCRAM-SHA-1", "PLAIN"],
+            types: nil, sasl1: .mechanism("SCRAM-SHA-1", header: "n,,"), sasl2: .abort
+        ),
+        Offer(
+            testDescription: "an unimplemented PLUS without types", mechanisms: ["SCRAM-SHA-512-PLUS", "SCRAM-SHA-256"],
+            types: nil, sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .abort
+        ),
+        Offer(
+            testDescription: "a listed type with only an unimplemented PLUS signs in unbound",
+            mechanisms: ["SCRAM-SHA-512-PLUS", "SCRAM-SHA-256"], types: ["tls-server-end-point"],
+            sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "n,,")
+        ),
+        Offer(
+            testDescription: "only types the client can't compute signs in unbound", mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"],
+            types: ["tls-exporter"], sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "n,,")
+        ),
+        Offer(
+            testDescription: "no binding data signs in unbound", mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"],
+            types: ["tls-server-end-point"],
+            sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "n,,"),
+            hasBindingData: false
+        )
+    ]
+
+    private static let bindingData: [UInt8] = Array(repeating: 0xCD, count: 32)
+
+    @Test(arguments: offers)
+    func `Chooses the binding the offer calls for`(offer: Offer) {
+        let features = Self.features(for: offer)
+        let bindingData = offer.hasBindingData ? Self.bindingData : nil
+
+        var sasl1 = SASLAuthenticator()
+        let sasl1Outcome = Self.outcome(Result { () throws(SASLAuthError) -> XMLElement in
+            try sasl1.begin(features: features, authcid: "user", password: "pencil", channelBindingData: bindingData)
+        }, initialResponse: \.textContent)
+        #expect(sasl1Outcome == offer.sasl1)
+
+        var sasl2 = SASL2Authenticator()
+        let sasl2Outcome = Self.outcome(Result { () throws(SASLAuthError) -> XMLElement in
+            try sasl2.begin(
+                features: features, authcid: "user", password: "pencil", inlinePayloads: [], channelBindingData: bindingData
+            )
+        }, initialResponse: { $0.childText(named: "initial-response") })
+        #expect(sasl2Outcome == offer.sasl2)
     }
 
-    @Test
-    func `Handle challenge returns failure`() {
-        var mechanism = SASLExternal()
-        _ = mechanism.start(authzid: nil)
-        let response = mechanism.handleChallenge(XMLElement(name: "challenge", namespace: saslNamespace))
-        guard case .failure(.invalidState) = response else {
-            Issue.record("Expected invalidState failure, got \(response)")
-            return
+    /// Offers the mechanisms over both SASL1 and SASL2, with the types directly under the stream features.
+    private static func features(for offer: Offer) -> XMLElement {
+        var sasl1 = XMLElement(name: "mechanisms", namespace: saslNamespace)
+        var sasl2 = XMLElement(name: "authentication", namespace: XMPPNamespaces.sasl2)
+        for name in offer.mechanisms {
+            var mechanism = XMLElement(name: "mechanism")
+            mechanism.addText(name)
+            sasl1.addChild(mechanism)
+            sasl2.addChild(mechanism)
         }
+        var features = XMLElement(name: "stream:features")
+        features.addChild(sasl1)
+        features.addChild(sasl2)
+        if let types = offer.types {
+            var binding = XMLElement(name: "sasl-channel-binding", namespace: XMPPNamespaces.saslChannelBinding)
+            for type in types {
+                binding.addChild(XMLElement(name: "channel-binding", attributes: ["type": type]))
+            }
+            features.addChild(binding)
+        }
+        return features
     }
 
-    @Test
-    func `Handle success returns success`() {
-        var mechanism = SASLExternal()
-        _ = mechanism.start(authzid: nil)
-        let response = mechanism.handleSuccess(XMLElement(name: "success", namespace: saslNamespace))
-        guard case .success = response else {
-            Issue.record("Expected success, got \(response)")
-            return
+    private static func outcome(
+        _ result: Result<XMLElement, SASLAuthError>, initialResponse: (XMLElement) -> String?
+    ) -> Outcome? {
+        switch result {
+        case let .success(element):
+            guard let mechanism = element.attribute("mechanism"),
+                  let decoded = initialResponse(element).flatMap(Base64.decodeString) else { return nil }
+            return .mechanism(mechanism, header: decoded.firstRange(of: ",,").map { String(decoded[..<$0.upperBound]) })
+        case .failure(.channelBindingDowngrade):
+            return .abort
+        case .failure:
+            return nil
         }
     }
 }

@@ -88,47 +88,6 @@ enum SASLAuthenticatorTests {
     }
 
     struct PLUSMechanismSelection {
-        private static let mockCBData: [UInt8] = Array(repeating: 0xAB, count: 32)
-
-        @Test
-        func `Selects SCRAM-SHA-256-PLUS when CB data available`() throws {
-            var auth = SASLAuthenticator()
-            let element = try auth.begin(
-                features: features(mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256", "PLAIN"]),
-                authcid: "user",
-                password: "pencil",
-                channelBindingData: Self.mockCBData
-            )
-            #expect(element.attribute("mechanism") == "SCRAM-SHA-256-PLUS")
-        }
-
-        @Test
-        func `Falls back to SCRAM-SHA-256 when no PLUS offered but CB available`() throws {
-            var auth = SASLAuthenticator()
-            let element = try auth.begin(
-                features: features(mechanisms: ["SCRAM-SHA-256", "PLAIN"]),
-                authcid: "user",
-                password: "pencil",
-                channelBindingData: Self.mockCBData
-            )
-            #expect(element.attribute("mechanism") == "SCRAM-SHA-256")
-        }
-
-        @Test
-        func `SCRAM-SHA-256 uses y,, when CB available but PLUS not offered`() throws {
-            var auth = SASLAuthenticator()
-            let element = try auth.begin(
-                features: features(mechanisms: ["SCRAM-SHA-256"]),
-                authcid: "user",
-                password: "pencil",
-                channelBindingData: Self.mockCBData
-            )
-            // Verify the client-first-message starts with y,,
-            let payload = try #require(element.textContent)
-            let decoded = try #require(Base64.decodeString(payload))
-            #expect(decoded.hasPrefix("y,,"))
-        }
-
         @Test
         func `Does not offer PLUS when no CB data`() throws {
             var auth = SASLAuthenticator()
@@ -142,19 +101,7 @@ enum SASLAuthenticatorTests {
         }
 
         @Test
-        func `Selects EXTERNAL when client certificate available`() throws {
-            var auth = SASLAuthenticator()
-            let element = try auth.begin(
-                features: features(mechanisms: ["EXTERNAL", "SCRAM-SHA-256", "PLAIN"]),
-                authcid: "user",
-                password: "pencil",
-                hasClientCertificate: true
-            )
-            #expect(element.attribute("mechanism") == "EXTERNAL")
-        }
-
-        @Test
-        func `Skips EXTERNAL when no client certificate`() throws {
+        func `Skips the unsupported EXTERNAL mechanism`() throws {
             var auth = SASLAuthenticator()
             let element = try auth.begin(
                 features: features(mechanisms: ["EXTERNAL", "SCRAM-SHA-256", "PLAIN"]),
@@ -165,7 +112,7 @@ enum SASLAuthenticatorTests {
         }
 
         @Test
-        func `Throws when only EXTERNAL offered without client certificate`() {
+        func `Throws when only EXTERNAL is offered`() {
             var auth = SASLAuthenticator()
             #expect(throws: SASLAuthError.self) {
                 try auth.begin(
@@ -174,18 +121,6 @@ enum SASLAuthenticatorTests {
                     password: "pencil"
                 )
             }
-        }
-
-        @Test
-        func `Selects SCRAM-SHA-1-PLUS over SCRAM-SHA-1`() throws {
-            var auth = SASLAuthenticator()
-            let element = try auth.begin(
-                features: features(mechanisms: ["SCRAM-SHA-1-PLUS", "SCRAM-SHA-1", "PLAIN"]),
-                authcid: "user",
-                password: "pencil",
-                channelBindingData: Self.mockCBData
-            )
-            #expect(element.attribute("mechanism") == "SCRAM-SHA-1-PLUS")
         }
     }
 

@@ -73,9 +73,6 @@ public enum XMPPEvent: Sendable {
 
     /// OOB IQ (XEP-0066)
     case oobIQOfferReceived(OOBIQOffer)
-
-    /// Service Outage (XEP-0455)
-    case serviceOutageReceived(ServiceOutageInfo)
 }
 
 /// Reason the client disconnected.
@@ -131,17 +128,4 @@ public struct OOBIQOffer: Sendable {
 /// from different peers or of different kinds, can carry the same one.
 func makeOfferID() -> String {
     hexString((0 ..< 8).map { _ in UInt8.random(in: .min ... .max) })
-}
-
-/// Parsed service outage information per XEP-0455.
-public struct ServiceOutageInfo: Sendable {
-    public let description: String?
-    public let expectedEnd: String?
-    public let alternativeDomain: String?
-
-    public init(description: String?, expectedEnd: String?, alternativeDomain: String?) {
-        self.description = description
-        self.expectedEnd = expectedEnd
-        self.alternativeDomain = alternativeDomain
-    }
 }

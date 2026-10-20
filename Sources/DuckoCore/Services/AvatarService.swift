@@ -127,7 +127,7 @@ public final class AvatarService {
              .jingleChecksumReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked,
              .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial,
-             .oobIQOfferReceived, .serviceOutageReceived:
+             .oobIQOfferReceived:
             break
         }
     }

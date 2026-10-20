@@ -68,8 +68,6 @@ public enum XMPPNamespaces {
     public static let sasl2 = "urn:xmpp:sasl:2"
     public static let saslChannelBinding = "urn:xmpp:sasl-cb:0"
     public static let bind2 = "urn:xmpp:bind:0"
-    public static let isr = "https://xmpp.org/extensions/isr/0"
-    public static let isrMechanism = "HT-SHA-256-ENDP"
     public static let csi = "urn:xmpp:csi:0"
 
     // OMEMO (XEP-0384)
@@ -81,7 +79,4 @@ public enum XMPPNamespaces {
 
     /// Stanza Content Encryption (XEP-0420)
     public static let sce = "urn:xmpp:sce:1"
-
-    /// Service Outage Status (XEP-0455)
-    public static let serviceOutage = "urn:xmpp:service-outage:0"
 }

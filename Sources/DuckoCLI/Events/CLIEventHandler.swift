@@ -45,8 +45,7 @@ actor CLIEventHandler {
              .blockListLoaded, .contactBlocked, .contactUnblocked,
              // An encrypted message is presented once it is stored (`handleEncryptedMessage`), so a copy already
              // stored neither prints nor rings.
-             .omemoEncryptedMessageReceived, .omemoRecipientsPartial,
-             .serviceOutageReceived:
+             .omemoEncryptedMessageReceived, .omemoRecipientsPartial:
             break
         }
         guard let output = formatter.formatEvent(event, accountID: accountID) else { return }

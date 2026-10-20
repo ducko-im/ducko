@@ -178,7 +178,7 @@ public final class BookmarksService {
              .vcardAvatarHashReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked,
              .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial,
-             .oobIQOfferReceived, .serviceOutageReceived:
+             .oobIQOfferReceived:
             break
         }
     }

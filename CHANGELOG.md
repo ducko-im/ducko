@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Add a `self` field to the CLI's JSON output when a room departure or nickname change is your own
 
+### Changed
+
+- Send your Mac's name to the server when signing in with the newer sign-in method, so the server can name the device a session belongs to
+
+### Removed
+
+- Remove the service outage warning, which never appeared because it relied on an announcement servers don't send
+
 ### Fixed
 
 - Fix an encrypted message that decrypted on arrival gaining an undecryptable twin after the next archive sync, and show the text of a message stored as undecryptable once another copy of it decrypts
@@ -29,12 +37,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Show a room message that also carries a topic as a message instead of a topic change, and clear the room's topic when someone clears it
 - Tell the contact when a file link they offered cannot be downloaded, which ends the offer instead of leaving it open for another try
 - Keep your block list when another of your clients unblocks an address that names a device
+- Resume your session after a lost connection on servers that use the newer sign-in method, instead of starting a new one
+- Show messages you send or receive on another device even when the server can't turn on their copies during sign-in
 
 ### Security
 
 - Refuse to save a bookmark, which can hold a room password, on a server that cannot keep it private
 - Send only the authorization, cookie and expiry headers an upload server asks for, with line breaks removed
 - Ignore published bookmarks, avatars and encryption device lists that come from a single device or room occupant instead of the account they belong to
+- Tie sign-in to the encrypted connection when the server lists a way of doing so that Ducko supports, though someone holding a certificate your Mac trusts for the server can still make Ducko sign in without it
+- Never use the newer sign-in method over an unencrypted connection
 
 ## [0.9.0] - 2026-10-18
 
