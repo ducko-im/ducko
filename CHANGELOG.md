@@ -6,12 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-21
+
 ### Added
 
 - Add a `self` field to the CLI's JSON output when a room departure or nickname change is your own
 - Add Blocked Contacts to each account's Actions menu in Preferences ▸ Accounts, listing every blocked address, including one that blocks a single device of a contact, with a field to block any address and a button to unblock each one
 - Add `ducko blocklist list`, `add` and `remove`, and the REPL commands `/block`, `/unblock` and `/blocklist`
-- Send replies that other XMPP apps show with their context: a reply starts with a quote of the message it answers, which apps that understand replies hide, and replies now work in rooms and in private chats within a room
+- Send replies that other XMPP apps show with their context: a reply starts with a quote of the message it answers, which apps that understand replies hide, and replies now work in rooms
 - Allow correcting, retracting and replying to messages in a private chat within a room, in the chat window and with `/edit`, `/retract` and `/reply` in the REPL
 - Create accounts on servers that ask for more than a username and password: Ducko fetches the server's form first and shows its further fields and instructions with what you typed filled in, or the web page the server sends you to, and registers only once every field the server asks for has a value. `ducko account register` and the REPL's `/submit-registration` prompt for those fields until each has a value, and name the web page instead of submitting an empty form
 - Show a form's title, instructions, fixed text, field descriptions and required fields in registration and room settings forms, in the app and the CLI, and keep Register, Submit and Save unavailable until every required field has a value
@@ -424,7 +426,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release.
 
-[Unreleased]: https://github.com/ducko-im/ducko/compare/0.9.0...HEAD
+[Unreleased]: https://github.com/ducko-im/ducko/compare/0.10.0...HEAD
+[0.10.0]: https://github.com/ducko-im/ducko/compare/0.9.0...0.10.0
 [0.9.0]: https://github.com/ducko-im/ducko/compare/0.8.0...0.9.0
 [0.8.0]: https://github.com/ducko-im/ducko/compare/0.7.0...0.8.0
 [0.7.0]: https://github.com/ducko-im/ducko/compare/0.6.0...0.7.0
