@@ -29,48 +29,12 @@ sleep 0.5
 
 RESULT=$(osascript - "$NEW_PASSWORD" << APPLESCRIPT
 $(ducko_as_handlers)
-on findAccountRow(el, depth, maxDepth)
-    tell application "System Events"
-        if depth > maxDepth then return missing value
-        try
-            repeat with c in (UI elements of el)
-                try
-                    set v to value of c
-                    if v is not missing value and v contains "@" then return c
-                end try
-                set found to my findAccountRow(c, depth + 1, maxDepth)
-                if found is not missing value then return found
-            end repeat
-        end try
-    end tell
-    return missing value
-end findAccountRow
-
 on run argv
     set newPw to item 1 of argv
     tell application "System Events"
         set frontmost of process "DuckoUITest" to true
         delay 0.3
-        set prefsWin to missing value
-        repeat with win in (windows of process "DuckoUITest")
-            set acctRow to my findAccountRow(win, 0, 30)
-            if acctRow is not missing value then
-                set prefsWin to win
-                try
-                    click acctRow
-                end try
-                exit repeat
-            end if
-        end repeat
-        if prefsWin is missing value then return "ERROR: account row not found"
-        delay 0.4
-
-        -- A SwiftUI Menu bridges as a menu/pop-up button, not AXButton, so match by identifier alone.
-        set actionsMenu to my findByAttr(prefsWin, "AXIdentifier", "account-actions-menu", 0, 30)
-        if actionsMenu is missing value then return "ERROR: Actions menu not found (is an account row selected and connected?)"
-        tell process "DuckoUITest"
-$(ducko_as_click_context_menu_item "Change Password…" 'actionsMenu' 'prefsWin' "" continue)
-        end tell
+$(ducko_as_click_account_action "Change Password…")
         delay 0.5
 
         set newField to my findByAttr(prefsWin, "AXIdentifier", "new-password-field", 0, 30)

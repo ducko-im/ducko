@@ -102,6 +102,9 @@ public final class AppEnvironment {
         accountService.onRosterSessionEnded = { [weak rosterService] accountID, sessionID in
             rosterService?.endSession(accountID: accountID, sessionID: sessionID)
         }
+        accountService.onSessionStarting = { [weak chatService] accountID in
+            await chatService?.captureCatchUpStart(accountID: accountID)
+        }
         accountService.onRequestedDisconnect = { [weak self] accountID in
             guard let self else { return }
             cancelDispatchTasks(for: accountID)
@@ -117,6 +120,7 @@ public final class AppEnvironment {
             guard let self else { return }
             rosterService.forgetAccount(accountID)
             profileService.forgetAccount(accountID)
+            chatService.forgetAccount(accountID)
             // The OMEMO seen-device cache outlives a disconnect, so only a delete drops it.
             omemoService.purgeSeenDeviceClassifications(accountID: accountID)
         }

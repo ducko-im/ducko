@@ -34,7 +34,11 @@ struct JSONFormatterTests {
             isOutgoing: true, isDelivered: false, isEdited: false, type: "chat", isEncrypted: true
         )
         let accountID = UUID()
-        let data = try #require(formatter.formatEncryptedMessage(message, accountID: accountID).data(using: .utf8))
+        let chat = try Conversation(
+            id: message.conversationID, accountID: accountID, jid: #require(BareJID.parse("alice@example.com")), type: .chat,
+            isPinned: false, isMuted: false, unreadCount: 0, createdAt: Date()
+        )
+        let data = try #require(formatter.formatEncryptedMessage(message, in: chat, accountID: accountID).data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["direction"] == "outgoing")
         #expect(json["account"] == accountID.uuidString)
@@ -376,21 +380,27 @@ struct JSONFormatterTests {
             formType: .legacy,
             instructions: "Please register",
             isRegistered: false,
-            hasUsername: true,
-            hasPassword: true,
-            hasEmail: true,
-            dataFormFields: []
+            legacyFields: [
+                RegistrationModule.LegacyField(name: "username"),
+                RegistrationModule.LegacyField(name: "password", value: "secret"),
+                RegistrationModule.LegacyField(name: "nick")
+            ],
+            redirectURL: "https://example.com/register"
         ))
         let output = formatter.formatRegistrationForm(form)
         let data = try #require(output.data(using: .utf8))
-        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
-        #expect(json["type"] == "registration_form")
-        #expect(json["form_kind"] == "legacy")
-        #expect(json["is_registered"] == "false")
-        #expect(json["instructions"] == "Please register")
-        #expect(json["has_username"] == "true")
-        #expect(json["has_password"] == "true")
-        #expect(json["has_email"] == "true")
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(json["type"] as? String == "registration_form")
+        #expect(json["form_kind"] as? String == "legacy")
+        #expect(json["is_registered"] as? String == "false")
+        #expect(json["instructions"] as? String == "Please register")
+        #expect(json["redirect_url"] as? String == "https://example.com/register")
+        let fields = try #require(json["fields"] as? [[String: String]])
+        #expect(fields == [
+            ["name": "username", "value": ""],
+            ["name": "password", "value": "********"],
+            ["name": "nick", "value": ""]
+        ])
     }
 
     @Test func `format data form registration as JSON`() throws {
@@ -398,20 +408,20 @@ struct JSONFormatterTests {
             formType: .dataForm,
             instructions: nil,
             isRegistered: true,
-            hasUsername: false,
-            hasPassword: false,
-            hasEmail: false,
-            dataFormFields: [
+            dataForm: DataForm(fields: [
                 DataFormField(variable: "nick", type: "text-single", label: "Nickname", values: ["bob"])
-            ]
+            ])
         ))
         let output = formatter.formatRegistrationForm(form)
         let data = try #require(output.data(using: .utf8))
-        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
-        #expect(json["type"] == "registration_form")
-        #expect(json["form_kind"] == "data_form")
-        #expect(json["is_registered"] == "true")
-        #expect(json["field_nick"] == "bob")
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(json["type"] as? String == "registration_form")
+        #expect(json["form_kind"] as? String == "data_form")
+        #expect(json["is_registered"] as? String == "true")
+        let dataForm = try #require(json["form"] as? [String: Any])
+        let fields = try #require(dataForm["fields"] as? [[String: Any]])
+        #expect(fields.map { $0["var"] as? String } == ["nick"])
+        #expect(fields.first?["values"] as? [String] == ["bob"])
     }
 
     /// Locks the structured envelope shape for `omemoRecipientsPartial` —

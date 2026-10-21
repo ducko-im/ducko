@@ -214,6 +214,31 @@ enum ProfileServiceTests {
 
             await connected.accountService.disconnect(accountID: accountID)
         }
+
+        @Test
+        @MainActor
+        func `publishProfile keeps the vCard's current photo rather than the one the profile was loaded with`() async throws {
+            let connected = try await connectProfileService()
+            let current = Data("photo from another device".utf8)
+            let loaded = Data("photo the window loaded".utf8)
+            let serverVCard = "<vCard xmlns='vcard-temp'><PHOTO><TYPE>image/png</TYPE><BINVAL>\(current.base64EncodedString())</BINVAL></PHOTO></vCard>"
+
+            let publishTask = Task { @MainActor in
+                try await connected.service.publishProfile(
+                    ProfileInfo(fullName: "Alice", photoData: loaded, photoType: "image/jpeg"), accountID: connected.accountID
+                )
+            }
+            try await respondToVCardFetch(connected.transport, sentIndex: 4, serverVCard: serverVCard)
+            let publish = try await captureAndAckPublish(connected.transport, sentIndex: 5)
+            try await publishTask.value
+
+            #expect(publish.contains("<BINVAL>\(current.base64EncodedString())</BINVAL>"))
+            #expect(publish.contains("<TYPE>image/png</TYPE>"))
+            #expect(!publish.contains(loaded.base64EncodedString()))
+            #expect(connected.service.ownProfile(for: connected.accountID)?.photoData == current)
+
+            await connected.accountService.disconnect(accountID: connected.accountID)
+        }
     }
 
     struct PublishFetchErrorHandling {

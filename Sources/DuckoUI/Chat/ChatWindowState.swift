@@ -42,7 +42,7 @@ public final class ChatWindowState {
 
     /// The live conversation, falling back to the value-type copy when this tab's
     /// conversation is no longer open (e.g. closed/destroyed) so the last-known display
-    /// survives. For display reads only — routing uses the stable `conversation` copy directly.
+    /// survives. For display reads only — a send passes the stable `conversation` copy, which the service reads again as stored.
     var liveConversation: Conversation? {
         serviceConversation ?? conversation
     }
@@ -300,46 +300,17 @@ public final class ChatWindowState {
     }
 
     func sendMessage(_ body: String) async {
-        guard let accountID = resolvedAccountID else { return }
+        guard let accountID = resolvedAccountID, let conversation else { return }
         // A new message is read where it lands. A correction stays where its message is.
         if editingMessage == nil {
             scroller.scrollToNewest()
         }
 
         do {
-            if isGroupchat, let editing = editingMessage {
-                try await environment.chatService.sendGroupCorrection(
-                    original: editing,
-                    inRoomJIDString: jidString,
-                    newBody: body,
-                    accountID: accountID
-                )
-            } else if isGroupchat {
-                try await environment.chatService.sendGroupMessage(toJIDString: jidString, body: body, accountID: accountID)
-            } else if let conv = conversation, let nick = conv.occupantNickname {
-                // Routing reads the stable value-type copy, not `liveConversation`: the
-                // identity (room JID, occupant nick) doesn't change, and a live lookup
-                // could miss a conversation already removed from `openConversations`.
-                try await environment.chatService.sendMUCPrivateMessage(
-                    roomJIDString: conv.jid.description,
-                    nickname: nick, body: body, accountID: accountID
-                )
-            } else if let editing = editingMessage {
-                try await environment.chatService.sendCorrection(
-                    original: editing,
-                    toJIDString: jidString,
-                    newBody: body,
-                    accountID: accountID
-                )
-            } else if let replyTo = replyingTo, let stanzaID = replyTo.stanzaID {
-                try await environment.chatService.sendReply(
-                    toJIDString: jidString,
-                    body: body,
-                    replyToStanzaID: stanzaID,
-                    accountID: accountID
-                )
+            if let editing = editingMessage {
+                try await environment.chatService.sendCorrection(of: editing, newBody: body, in: conversation, accountID: accountID)
             } else {
-                try await environment.chatService.sendMessage(toJIDString: jidString, body: body, accountID: accountID)
+                try await environment.chatService.sendMessage(body, in: conversation, replyingTo: replyingTo, accountID: accountID)
             }
             clearSendError()
             draftText = ""
@@ -365,7 +336,12 @@ public final class ChatWindowState {
 
     func userIsTyping() async {
         guard let accountID = resolvedAccountID else { return }
-        await environment.chatService.userIsTyping(inJIDString: jidString, accountID: accountID)
+        if let conv = conversation, let nick = conv.occupantNickname {
+            // A private chat's tab is addressed by the occupant; the conversation names the room and the nickname.
+            await environment.chatService.userIsTyping(inJIDString: conv.jid.description, occupantNickname: nick, accountID: accountID)
+        } else {
+            await environment.chatService.userIsTyping(inJIDString: jidString, accountID: accountID)
+        }
     }
 
     // MARK: - Reply/Edit
@@ -390,15 +366,11 @@ public final class ChatWindowState {
     func retractMessage(_ message: ChatMessage) async {
         // Preflight skip when the bubble has no stanzaID — never reached
         // the server, so retraction is a no-op even with the service guard.
-        guard let accountID = resolvedAccountID,
+        guard let accountID = resolvedAccountID, let conversation,
               message.stanzaID != nil else { return }
 
         do {
-            if isGroupchat {
-                try await environment.chatService.retractGroupMessage(original: message, inRoomJIDString: jidString, accountID: accountID)
-            } else {
-                try await environment.chatService.retractMessage(original: message, toJIDString: jidString, accountID: accountID)
-            }
+            try await environment.chatService.retractMessage(message, in: conversation, accountID: accountID)
             await refreshMessages()
         } catch {
             log.warning("Failed to retract message: \(error)")
@@ -408,13 +380,11 @@ public final class ChatWindowState {
     // MARK: - Moderation
 
     func moderateMessage(_ message: ChatMessage, reason: String?) async {
-        guard let accountID = resolvedAccountID,
+        guard let accountID = resolvedAccountID, let conversation,
               let serverID = message.serverID else { return }
 
         do {
-            try await environment.chatService.moderateMessage(
-                serverID: serverID, inRoomJIDString: jidString, reason: reason, accountID: accountID
-            )
+            try await environment.chatService.moderateMessage(serverID: serverID, in: conversation, reason: reason, accountID: accountID)
             await refreshMessages()
         } catch {
             log.warning("Failed to moderate message: \(error)")

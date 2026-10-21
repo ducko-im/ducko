@@ -14,6 +14,8 @@ public final class RosterService {
     /// Each account's groups as the contact list showed them before its last disconnect. The list empties then, but an
     /// open chat still names the contact and shows their photo from here until the roster loads again.
     private var groupsBeforeDisconnect: [UUID: [ContactGroup]] = [:]
+    /// Each connected account's block list (XEP-0191), as the server last announced it.
+    private var blockListByAccount: [UUID: [JID]] = [:]
 
     /// Per-account groups merged into one section per name (Adium-style), so a
     /// multi-account setup doesn't show duplicate same-named sections. Each row
@@ -223,18 +225,38 @@ public final class RosterService {
 
     // MARK: - Blocking (XEP-0191)
 
-    public func blockContact(jidString: String, accountID: UUID) async throws {
-        guard let jid = BareJID.parse(jidString) else { throw RosterServiceError.invalidJID(jidString) }
-        guard let client = accountService?.connectedClient(for: accountID) else { throw RosterServiceError.notConnected(accountID) }
-        guard let blockingModule = await client.module(ofType: BlockingModule.self) else { return }
-        try await blockingModule.blockContact(jid: jid)
+    /// The account's blocked addresses, sorted. A contact reads as blocked only through the entry naming their bare JID.
+    public func blockList(for accountID: UUID) -> [BlockListEntry] {
+        (blockListByAccount[accountID] ?? []).map(BlockListEntry.init).sorted { $0.jidString < $1.jidString }
     }
 
+    /// Asks the server for the account's block list again.
+    @discardableResult
+    public func loadBlockList(accountID: UUID) async throws -> [BlockListEntry] {
+        let (client, blockingModule) = try await blockingModule(for: accountID)
+        let jids = try await blockingModule.loadBlockList()
+        if accountService?.connectedClient(for: accountID) === client {
+            blockListByAccount[accountID] = jids
+        }
+        return blockList(for: accountID)
+    }
+
+    /// Blocks an address, which may name one device of a contact.
+    public func blockContact(jidString: String, accountID: UUID) async throws {
+        guard let jid = JID.parse(jidString) else { throw RosterServiceError.invalidJID(jidString) }
+        try await blockingModule(for: accountID).module.blockContact(jid: jid)
+    }
+
+    /// Unblocks exactly the entry `jidString` names: a contact's bare JID leaves entries for their devices in place.
     public func unblockContact(jidString: String, accountID: UUID) async throws {
-        guard let jid = BareJID.parse(jidString) else { throw RosterServiceError.invalidJID(jidString) }
-        guard let client = accountService?.connectedClient(for: accountID) else { throw RosterServiceError.notConnected(accountID) }
-        guard let blockingModule = await client.module(ofType: BlockingModule.self) else { return }
-        try await blockingModule.unblockContact(jid: jid)
+        guard let jid = JID.parse(jidString) else { throw RosterServiceError.invalidJID(jidString) }
+        try await blockingModule(for: accountID).module.unblockContact(jid: jid)
+    }
+
+    private func blockingModule(for accountID: UUID) async throws -> (client: XMPPClient, module: BlockingModule) {
+        guard let client = accountService?.connectedClient(for: accountID),
+              let module = await client.module(ofType: BlockingModule.self) else { throw RosterServiceError.notConnected(accountID) }
+        return (client, module)
     }
 
     // MARK: - Event Handling
@@ -251,7 +273,7 @@ public final class RosterService {
             await handleBlockStateChanged(jid, isBlocked: false, accountID: accountID)
         case .disconnected:
             break
-        case .connected, .streamResumed, .authenticationFailed,
+        case .connected, .streamResumed, .authenticationFailed, .plainSignInRefused,
              .messageReceived, .presenceReceived, .iqReceived,
              .presenceUpdated, .presenceSubscriptionRequest,
              .presenceSubscriptionApproved, .presenceSubscriptionRevoked,
@@ -274,12 +296,13 @@ public final class RosterService {
         }
     }
 
-    private func handleBlockListLoaded(_ jids: [BareJID], accountID: UUID) async {
+    private func handleBlockListLoaded(_ jids: [JID], accountID: UUID) async {
+        blockListByAccount[accountID] = jids
         let generationBeforeAwait = groupsLoadGeneration[accountID, default: 0]
         let contacts = await (try? store.fetchContacts(for: accountID)) ?? []
         let blockedSet = Set(jids)
         for contact in contacts {
-            let shouldBeBlocked = blockedSet.contains(contact.jid)
+            let shouldBeBlocked = blockedSet.contains(.bare(contact.jid))
             if contact.isBlocked != shouldBeBlocked {
                 // Re-check before each write: a clear/purge during an earlier await tore the account down.
                 guard generationUnchanged(generationBeforeAwait, for: accountID) else { return }
@@ -291,10 +314,16 @@ public final class RosterService {
         try? await loadContacts(for: accountID)
     }
 
-    private func handleBlockStateChanged(_ jid: BareJID, isBlocked: Bool, accountID: UUID) async {
+    private func handleBlockStateChanged(_ jid: JID, isBlocked: Bool, accountID: UUID) async {
+        var blockList = blockListByAccount[accountID] ?? []
+        blockList.removeAll { $0 == jid }
+        if isBlocked { blockList.append(jid) }
+        blockListByAccount[accountID] = blockList
+        // An entry naming one device of a contact leaves the contact itself unblocked.
+        guard case let .bare(bareJID) = jid else { return }
         let generationBeforeAwait = groupsLoadGeneration[accountID, default: 0]
         let contacts = await (try? store.fetchContacts(for: accountID)) ?? []
-        guard let contact = contacts.first(where: { $0.jid == jid }), generationUnchanged(generationBeforeAwait, for: accountID) else { return }
+        guard let contact = contacts.first(where: { $0.jid == bareJID }), generationUnchanged(generationBeforeAwait, for: accountID) else { return }
         try? await store.updateContactIfExists(contact.id, accountID: accountID, update: .blocked(isBlocked))
         // Re-check before the republish so a purge during the metadata update can't resurrect the account via loadContacts.
         guard generationUnchanged(generationBeforeAwait, for: accountID) else { return }
@@ -345,6 +374,7 @@ public final class RosterService {
                 self?.retiredTasks[id] = nil
             }
         }
+        blockListByAccount.removeValue(forKey: accountID)
         clearGroups(for: accountID)
     }
 

@@ -340,6 +340,27 @@ enum FileTranscriptStoreTests {
             }
         }
 
+        @Test(arguments: [false, true], [0 ..< 8, nil] as [Range<Int>?])
+        func `An edit amendment replaces the reply quote range`(coldRead: Bool, replyFallbackRange: Range<Int>?) async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                let msg = ChatMessage(
+                    id: UUID(), conversationID: testConversationID, stanzaID: "reply-1", fromJID: "alice@example.com", body: "> Hi\nok",
+                    timestamp: Date(), isOutgoing: false, isDelivered: false, isEdited: false, type: "chat",
+                    replyToID: "q1", replyFallbackRange: 0 ..< 5
+                )
+                try await store.appendMessage(msg)
+                try await store.appendAmendment(TranscriptAmendment(
+                    action: .edit, targetMessageID: msg.id, timestamp: Date(), body: "> Hello\nfine", replyFallbackRange: replyFallbackRange
+                ), conversationID: testConversationID)
+
+                let reader = coldRead ? FileTranscriptStore(baseDirectory: dir) : store
+                let fetched = try #require(try await reader.fetchMessages(for: testConversationID, before: nil, limit: 50).first)
+                #expect(fetched.body == "> Hello\nfine")
+                #expect(fetched.replyFallbackRange == replyFallbackRange)
+            }
+        }
+
         @Test
         func `Amendment dated later than message lands in message's date file`() async throws {
             try await withTemporaryDirectory { dir in

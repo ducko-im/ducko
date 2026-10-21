@@ -5,8 +5,8 @@ import Testing
 
 // MARK: - Helpers
 
-/// Empty roster response for tests that don't need roster items pre-loaded.
-private let emptyRosterResponse = "<iq type='result' id='ducko-2'><query xmlns='jabber:iq:roster'/></iq>"
+/// Empty roster for tests that don't need roster items pre-loaded.
+private let emptyRosterQuery = "<query xmlns='jabber:iq:roster'/>"
 
 /// Post-auth features with bind and pre-approval.
 private let testFeaturesBindWithPreApproval = """
@@ -27,7 +27,7 @@ private func deltaJID(of event: XMPPEvent) -> String? {
 private func makeConnectedClient(
     mock: MockTransport,
     postAuthFeatures: String = testFeaturesBind,
-    rosterResponse: String = emptyRosterResponse
+    rosterQuery: String = emptyRosterQuery
 ) async throws -> XMPPClient {
     let client = XMPPClient(
         domain: "example.com",
@@ -38,8 +38,7 @@ private func makeConnectedClient(
 
     let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
     await simulateNoTLSConnect(mock, postAuthFeatures: postAuthFeatures)
-    await mock.waitForSent(count: 5) // roster GET IQ sent
-    await mock.simulateReceive(rosterResponse)
+    try await answerRosterGet(on: mock, with: rosterQuery)
     try await connectTask.value
 
     return client
@@ -53,7 +52,7 @@ enum RosterModuleTests {
         func `Roster GET on connect parses items and emits rosterLoaded`() async throws {
             let mock = MockTransport()
 
-            let rosterResponse = "<iq type='result' id='ducko-2'><query xmlns='jabber:iq:roster'><item jid='alice@example.com' name='Alice' subscription='both'/><item jid='bob@example.com' subscription='to'><group>Friends</group></item></query></iq>"
+            let rosterQuery = "<query xmlns='jabber:iq:roster'><item jid='alice@example.com' name='Alice' subscription='both'/><item jid='bob@example.com' subscription='to'><group>Friends</group></item></query>"
 
             let client = XMPPClient(
                 domain: "example.com",
@@ -70,7 +69,7 @@ enum RosterModuleTests {
             }
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
-            await simulateNoTLSConnect(mock, rosterResponse: rosterResponse)
+            try await simulateNoTLSConnect(mock, rosterQuery: rosterQuery)
             try await connectTask.value
 
             let events = try await eventsTask.value
@@ -122,8 +121,8 @@ enum RosterModuleTests {
         @Test
         func `Roster push with subscription=remove removes item`() async throws {
             let mock = MockTransport()
-            let rosterResponse = "<iq type='result' id='ducko-2'><query xmlns='jabber:iq:roster'><item jid='alice@example.com' subscription='both'/></query></iq>"
-            let client = try await makeConnectedClient(mock: mock, rosterResponse: rosterResponse)
+            let rosterQuery = "<query xmlns='jabber:iq:roster'><item jid='alice@example.com' subscription='both'/></query>"
+            let client = try await makeConnectedClient(mock: mock, rosterQuery: rosterQuery)
 
             let eventsTask = Task {
                 try await collectEvents(from: client) { event in
@@ -334,8 +333,8 @@ enum RosterModuleTests {
         @Test
         func `handleDisconnect clears roster`() async throws {
             let mock = MockTransport()
-            let rosterResponse = "<iq type='result' id='ducko-2'><query xmlns='jabber:iq:roster'><item jid='alice@example.com' subscription='both'/></query></iq>"
-            let client = try await makeConnectedClient(mock: mock, rosterResponse: rosterResponse)
+            let rosterQuery = "<query xmlns='jabber:iq:roster'><item jid='alice@example.com' subscription='both'/></query>"
+            let client = try await makeConnectedClient(mock: mock, rosterQuery: rosterQuery)
 
             await disconnectFast(client)
         }

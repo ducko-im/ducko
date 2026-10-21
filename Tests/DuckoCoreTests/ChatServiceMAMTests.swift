@@ -7,6 +7,8 @@ import Testing
 private let testAccountID = UUID()
 private let contactJID = BareJID(localPart: "contact", domainPart: "example.com")!
 private let roomJID = BareJID(localPart: "room", domainPart: "conference.example.com")!
+/// The body another client puts next to an OMEMO payload.
+private let otherClientFallbackBody = "This message is OMEMO encrypted"
 
 private func makeStore() -> MockPersistenceStore {
     MockPersistenceStore()
@@ -125,7 +127,7 @@ private struct GroupArchiveSpec {
 
 private func groupArchive(queryID: String, archiveID: String, _ spec: GroupArchiveSpec) -> String {
     let encryptedElement = spec.encrypted
-        ? "<encrypted xmlns='urn:xmpp:omemo:2'><header sid='1'/></encrypted>"
+        ? "<encrypted xmlns='urn:xmpp:omemo:2'><header sid='1'/><payload>AAAA</payload></encrypted>"
         : ""
     return "<message from='\(roomJID.description)'>"
         + "<result xmlns='urn:xmpp:mam:2' queryid='\(queryID)' id='\(archiveID)'>"
@@ -155,30 +157,18 @@ private func chatArchive(queryID: String, archiveID: String, _ spec: ChatArchive
         + "<forwarded xmlns='urn:xmpp:forward:0'>"
         + "<delay xmlns='urn:xmpp:delay' stamp='\(spec.stamp)'/>"
         + "<message from='\(spec.from)/res' type='chat' id='\(spec.stanzaID)'>"
-        + "<body>\(omemoFallbackBody)</body>"
-        + "<encrypted xmlns='urn:xmpp:omemo:2'><header sid='1'/></encrypted>"
+        + "<body>\(otherClientFallbackBody)</body>"
+        + "<encrypted xmlns='urn:xmpp:omemo:2'><header sid='1'/><payload>AAAA</payload></encrypted>"
         + stanzaIDElement
         + "</message></forwarded></result></message>"
 }
 
-/// The next archive query the service sends that `answered` does not hold yet.
+/// Answers catch-up's query of the account's own archive, which comes before the rooms', with an empty last page.
 @MainActor
-private func nextArchiveQuery(_ harness: MAMHarness, answered: inout Set<String>) async throws -> ArchiveQuery {
-    let seen = answered
-    let waiting = Task { [transport = harness.transport] in
-        await transport.waitForSent(matching: { $0.contains("urn:xmpp:mam:2") && !seen.contains(extractIQID(from: $0) ?? "") })
-    }
-    try #require(try await boundedOutcome { _ = await waiting.value } != nil)
-    let iq = try #require(await waiting.value)
-    let iqID = try #require(extractIQID(from: iq))
-    answered.insert(iqID)
-    return try ArchiveQuery(iq: iq, iqID: iqID, queryID: #require(extractQueryID(from: iq)))
-}
-
-private struct ArchiveQuery {
-    let iq: String
-    let iqID: String
-    let queryID: String
+private func answerAccountArchiveQuery(_ harness: MAMHarness) async throws {
+    let query = await harness.transport.waitForSent(matching: { $0.contains("urn:xmpp:mam:2") && !$0.contains(roomJID.description) })
+    let iqID = try #require(query.flatMap { extractIQID(from: $0) })
+    await harness.transport.simulateReceive("<iq type='result' id='\(iqID)'><fin xmlns='urn:xmpp:mam:2' complete='true'/></iq>")
 }
 
 /// The room archive's closing answer to a query. An incomplete one names the page's first entry.
@@ -280,7 +270,7 @@ enum ChatServiceMAMTests {
             }
             var answered: Set<String> = []
 
-            let query = try await nextArchiveQuery(harness, answered: &answered)
+            let query = try await nextArchiveQuery(on: harness.transport, answered: &answered)
 
             #expect(query.iq.contains("<before/>"))
             #expect(query.iq.contains("<max>50</max>"))
@@ -306,13 +296,13 @@ enum ChatServiceMAMTests {
             }
             var answered: Set<String> = []
 
-            let first = try await nextArchiveQuery(harness, answered: &answered)
+            let first = try await nextArchiveQuery(on: harness.transport, answered: &answered)
             await harness.transport.simulateReceive(groupArchive(queryID: first.queryID, archiveID: "arch-2", GroupArchiveSpec(
                 fromNick: "bob", serverID: "R1", stanzaID: "S1", body: "already here"
             )))
             await harness.transport.simulateReceive(roomFin(iqID: first.iqID, complete: false, first: "arch-2"))
 
-            let second = try await nextArchiveQuery(harness, answered: &answered)
+            let second = try await nextArchiveQuery(on: harness.transport, answered: &answered)
             #expect(second.iq.contains("<before>arch-2</before>"))
             #expect(second.iq.contains("<max>50</max>"))
             await harness.transport.simulateReceive(groupArchive(queryID: second.queryID, archiveID: "arch-1", GroupArchiveSpec(
@@ -336,7 +326,7 @@ enum ChatServiceMAMTests {
             var answered: Set<String> = []
 
             for page in 0 ..< 10 {
-                let query = try await nextArchiveQuery(harness, answered: &answered)
+                let query = try await nextArchiveQuery(on: harness.transport, answered: &answered)
                 await harness.transport.simulateReceive(roomFin(iqID: query.iqID, complete: false, first: "arch-\(page)"))
             }
 
@@ -358,7 +348,7 @@ enum ChatServiceMAMTests {
                 let fetchTask = Task { @MainActor in
                     try await harness.chatService.fetchServerHistory(jid: roomJID, accountID: harness.accountID, before: nil, limit: 50)
                 }
-                let query = try await nextArchiveQuery(harness, answered: &answered)
+                let query = try await nextArchiveQuery(on: harness.transport, answered: &answered)
                 await harness.transport.simulateReceive(
                     "<message from='\(roomJID.description)'>"
                         + "<result xmlns='urn:xmpp:mam:2' queryid='\(query.queryID)' id='arch-7'>"
@@ -398,9 +388,9 @@ enum ChatServiceMAMTests {
                 try await harness.chatService.fetchServerHistory(jid: roomJID, accountID: harness.accountID, before: nil, limit: 50)
             }
             var answered = Set<String>()
-            let query = try await nextArchiveQuery(harness, answered: &answered)
+            let query = try await nextArchiveQuery(on: harness.transport, answered: &answered)
             await harness.transport.simulateReceive(groupArchive(queryID: query.queryID, archiveID: "arch-1", GroupArchiveSpec(
-                fromNick: "alice_", serverID: "R", stanzaID: "S", body: omemoFallbackBody, encrypted: true
+                fromNick: "alice_", serverID: "R", stanzaID: "S", body: "", encrypted: true, omitsBody: true
             )))
             await harness.transport.simulateReceive(roomFin(iqID: query.iqID, complete: true))
             _ = try await fetch.value
@@ -413,9 +403,10 @@ enum ChatServiceMAMTests {
             live.element.addChild(DuckoXMPP.XMLElement(
                 name: "stanza-id", namespace: XMPPNamespaces.stanzaID, attributes: ["id": "R", "by": roomJID.description]
             ))
-            let isOwn = await harness.chatService.isOwnEncryptedMessage(from: sender, in: harness.conversation, accountID: harness.accountID)
+            let isOwn = await harness.chatService.isOwnMessage(from: sender, in: harness.conversation, accountID: harness.accountID)
             let outcome = await harness.chatService.ingestEncryptedMessage(
-                message: live, decryptedBody: "hi", isOutgoing: isOwn, in: harness.conversation, accountID: harness.accountID
+                EncryptedArrival(stanza: live, content: EncryptedContent(encryptedOutcome(of: live, body: "hi")), sender: "alice_", isOutgoing: isOwn, sentTime: Date()),
+                in: harness.conversation, accountID: harness.accountID
             )
             guard case .upgraded = outcome else {
                 Issue.record("Expected the archived copy to take the decrypted text, got \(String(describing: outcome))")
@@ -457,7 +448,7 @@ enum ChatServiceMAMTests {
                 try await harness.chatService.fetchServerHistory(jid: roomJID, accountID: harness.accountID, before: nil, limit: 50)
             }
             var answered = Set<String>()
-            let query = try await nextArchiveQuery(harness, answered: &answered)
+            let query = try await nextArchiveQuery(on: harness.transport, answered: &answered)
             for (index, nickname) in ["bob", "alice"].enumerated() {
                 await harness.transport.simulateReceive(groupArchive(queryID: query.queryID, archiveID: "arch-\(index)", GroupArchiveSpec(
                     fromNick: nickname, serverID: "R\(index)", stanzaID: "S\(index)", body: "from \(nickname)"
@@ -495,6 +486,47 @@ enum ChatServiceMAMTests {
             #expect(imported.isEmpty)
             let count = await harness.transcripts.messages.count
             #expect(count == 1)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        /// An encrypted copy cannot be read here, so it is matched by its id alone. A room that gives the copy an id of its
+        /// own keeps the sender's origin-id on it.
+        @Test(arguments: [false, true], [false, true])
+        @MainActor
+        func `The archived copy of the user's own room message records the room's stanza-id on it`(isEncrypted: Bool, isRenamed: Bool) async throws {
+            let harness = try await makeMAMHarness()
+            let ownID = UUID()
+            await harness.transcripts.addMessage(ChatMessage(
+                id: ownID, conversationID: harness.conversation.id, stanzaID: "S", serverID: nil,
+                fromJID: "alice", body: "hi room", timestamp: Date(),
+                isOutgoing: true, isDelivered: false, isEdited: false, type: "groupchat", isEncrypted: isEncrypted
+            ))
+
+            _ = try await ingestArchives(harness: harness, finCount: 1) { queryID in
+                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                    fromNick: "alice", serverID: "R", stanzaID: isRenamed ? "room-chosen" : "S", body: "hi room", encrypted: isEncrypted,
+                    omitsBody: isEncrypted, metadataXML: isRenamed ? "<origin-id xmlns='urn:xmpp:sid:0' id='S'/>" : ""
+                ))]
+            }
+
+            let recorded = try await harness.transcripts.findMessage(serverID: "R", conversationID: harness.conversation.id)
+            #expect(recorded?.id == ownID)
+            #expect(await harness.transcripts.messages.count == 1)
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        @Test
+        @MainActor
+        func `The newest message a history fetch stores becomes the room's last message`() async throws {
+            let harness = try await makeMAMHarness()
+
+            _ = try await ingestArchives(harness: harness, finCount: 1) { queryID in
+                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(fromNick: "bob", serverID: "R", stanzaID: "S", body: "latest"))]
+            }
+
+            let stored = try await harness.store.fetchConversations(for: harness.accountID).first { $0.id == harness.conversation.id }
+            #expect(stored?.lastMessageDate == Date(xmppTimestamp: "2026-02-28T10:00:00Z"))
+            #expect(stored?.lastMessagePreview == "latest")
             await harness.accountService.disconnect(accountID: harness.accountID)
         }
 
@@ -713,19 +745,15 @@ enum ChatServiceMAMTests {
     }
 
     struct EncryptedArchive {
-        @Test(arguments: [
-            (encrypted: true, omitsBody: false),
-            (encrypted: false, omitsBody: false),
-            (encrypted: true, omitsBody: true)
-        ])
+        @Test(arguments: [false, true])
         @MainActor
-        func `an archived OMEMO message is stored as undecryptable, not as its fallback text`(encrypted: Bool, omitsBody: Bool) async throws {
+        func `an archived OMEMO message is stored as undecryptable, not as its fallback text`(omitsBody: Bool) async throws {
             let harness = try await makeMAMHarness()
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
                 [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
                     fromNick: "bob", serverID: "R", stanzaID: "S",
-                    body: omemoFallbackBody, encrypted: encrypted, omitsBody: omitsBody
+                    body: otherClientFallbackBody, encrypted: true, omitsBody: omitsBody
                 ))]
             }
 
@@ -741,9 +769,10 @@ enum ChatServiceMAMTests {
     struct EncryptedChatArchive {
         @MainActor
         private func receiveLive(_ harness: MAMHarness, id: String, serverID: String?, body: String) async {
+            let stanza = makeEncryptedStanza(from: .bare(contactJID), id: id, serverID: serverID)
             await harness.chatService.ingestEncryptedMessage(
-                message: makeEncryptedStanza(from: .bare(contactJID), id: id, serverID: serverID), decryptedBody: body,
-                isOutgoing: false, in: harness.conversation, accountID: harness.accountID
+                EncryptedArrival(stanza: stanza, content: EncryptedContent(encryptedOutcome(of: stanza, body: body)), sender: contactJID.description, isOutgoing: false, sentTime: Date()),
+                in: harness.conversation, accountID: harness.accountID
             )
         }
 
@@ -875,6 +904,7 @@ enum ChatServiceMAMTests {
             await harness.chatService.handleEvent(.rosterUpdated(RosterUpdate(receipt: 1, origin: .initial, contents: .snapshot([]), version: nil)), accountID: harness.accountID)
             let tasks = harness.chatService.takePendingTasks()
             try #require(!tasks.isEmpty)
+            try await answerAccountArchiveQuery(harness)
             let drained = try await boundedOutcome {
                 for task in tasks {
                     await task.value
@@ -883,7 +913,7 @@ enum ChatServiceMAMTests {
             try #require(drained != nil)
 
             let sent = await harness.transport.sentBytes.map { String(decoding: $0, as: UTF8.self) }
-            #expect(!sent.contains { $0.contains("urn:xmpp:mam:2") })
+            #expect(!sent.contains { $0.contains("urn:xmpp:mam:2") && $0.contains(roomJID.description) })
             await harness.accountService.disconnect(accountID: harness.accountID)
         }
     }
@@ -900,7 +930,8 @@ enum ChatServiceMAMTests {
             await harness.chatService.handleEvent(.rosterUpdated(RosterUpdate(receipt: 1, origin: .initial, contents: .snapshot([]), version: nil)), accountID: harness.accountID)
 
             // Wait for the in-flight MAM query directly rather than coupling to the handshake stanza count.
-            let mamIQ = try #require(await harness.transport.waitForSent(matching: { $0.contains("urn:xmpp:mam:2") }))
+            try await answerAccountArchiveQuery(harness)
+            let mamIQ = try #require(await harness.transport.waitForSent(matching: { $0.contains("urn:xmpp:mam:2") && $0.contains(roomJID.description) }))
             let iqID = try #require(extractIQID(from: mamIQ))
             let queryID = try #require(extractQueryID(from: mamIQ))
 
@@ -1038,12 +1069,14 @@ extension ChatServiceMAMTests {
         await harness.chatService.handleEvent(initial, accountID: harness.accountID)
         let queryTask = Task { await harness.transport.waitForSent(matching: { $0.contains("urn:xmpp:mam:2") }) }
         try #require(try await boundedOutcome { _ = await queryTask.value } != nil)
-        let query = try #require(await queryTask.value)
-        let queryID = try #require(extractIQID(from: query))
+        _ = try #require(await queryTask.value)
         let tasks = harness.chatService.takePendingTasks()
         #expect(tasks.count == 1)
         await application?.value
         #expect(try await harness.store.fetchAccounts().first?.rosterVersion == nil)
+        try await answerAccountArchiveQuery(harness)
+        let roomQuery = await harness.transport.waitForSent(matching: { $0.contains("urn:xmpp:mam:2") && $0.contains(roomJID.description) })
+        let queryID = try #require(roomQuery.flatMap { extractIQID(from: $0) })
         await harness.transport.simulateReceive("<iq type='result' id='\(queryID)' from='\(roomJID)'><fin xmlns='urn:xmpp:mam:2' complete='true'/></iq>")
         for task in tasks {
             await task.value

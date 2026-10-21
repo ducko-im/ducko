@@ -235,9 +235,7 @@ enum ChatServiceResourceLockTests {
                 .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "hi", id: "in-1")),
                 accountID: harness.accountID
             )
-            try await harness.chatService.sendCorrection(
-                original: original, to: contactJID, newBody: "fixed", accountID: harness.accountID
-            )
+            try await harness.chatService.sendCorrection(of: original, newBody: "fixed", in: conversation, accountID: harness.accountID)
             #expect(await lastSent(harness.transport).contains("to=\"contact@example.com/phone\""))
 
             // Peer re-locks to /laptop before the retraction → retraction targets the *current* lock.
@@ -245,9 +243,7 @@ enum ChatServiceResourceLockTests {
                 .messageReceived(makeInbound(from: full(contactJID, "laptop"), body: "switched", id: "in-2")),
                 accountID: harness.accountID
             )
-            try await harness.chatService.retractMessage(
-                original: original, to: contactJID, accountID: harness.accountID
-            )
+            try await harness.chatService.retractMessage(original, in: conversation, accountID: harness.accountID)
             #expect(await lastSent(harness.transport).contains("to=\"contact@example.com/laptop\""))
 
             await harness.accountService.disconnect(accountID: harness.accountID)
@@ -265,10 +261,7 @@ enum ChatServiceResourceLockTests {
             // The event carries a decrypted body, so no real crypto is needed; this drives the real
             // OMEMOService → ChatService.learnResourceLock wiring rather than calling the hook directly.
             await omemoService.handleEvent(
-                .omemoEncryptedMessageReceived(
-                    message: makeEncryptedStanza(from: full(contactJID, "phone"), id: "omemo-1"),
-                    decryptedBody: "secret", senderDeviceID: 1
-                ),
+                encryptedMessageEvent(makeEncryptedStanza(from: full(contactJID, "phone"), id: "omemo-1"), body: "secret"),
                 accountID: harness.accountID
             )
             // The encrypted message switched the chat's encryption on. Switching it off again keeps the reply a
@@ -292,10 +285,7 @@ enum ChatServiceResourceLockTests {
 
             // A nil decryptedBody is a failed/unauthenticated decrypt — it must not steer routing.
             await omemoService.handleEvent(
-                .omemoEncryptedMessageReceived(
-                    message: makeEncryptedStanza(from: full(contactJID, "phone"), id: "omemo-bad"),
-                    decryptedBody: nil, senderDeviceID: 0
-                ),
+                encryptedMessageEvent(makeEncryptedStanza(from: full(contactJID, "phone"), id: "omemo-bad"), body: nil),
                 accountID: harness.accountID
             )
             try await harness.chatService.sendMessage(to: contactJID, body: "reply", accountID: harness.accountID)
@@ -321,10 +311,7 @@ enum ChatServiceResourceLockTests {
             let omemoService = OMEMOService(omemoStore: MockOMEMOStore())
             omemoService.setChatService(harness.chatService)
             await omemoService.handleEvent(
-                .omemoEncryptedMessageReceived(
-                    message: makeEncryptedStanza(from: full(roomJID, "nick"), id: "omemo-group"),
-                    decryptedBody: "group msg", senderDeviceID: 1
-                ),
+                encryptedMessageEvent(makeEncryptedStanza(from: full(roomJID, "nick"), id: "omemo-group"), body: "group msg"),
                 accountID: harness.accountID
             )
             // A subsequent send to the room JID stays bare — the groupchat sender never locked it.
@@ -518,11 +505,11 @@ enum ChatServiceResourceLockTests {
         @MainActor
         func `Standalone chat-state send targets the locked full JID`() async throws {
             let harness = try await makeConnectedHarness(modules: [ChatStatesModule()])
+            // A message without a chat state would stop chat states to the contact, so this one carries `<active/>`.
+            var inbound = makeInbound(from: full(contactJID, "phone"), body: "hi", id: "in-1")
+            inbound.element.addChild(DuckoXMPP.XMLElement(name: "active", namespace: XMPPNamespaces.chatStates))
 
-            await harness.chatService.handleEvent(
-                .messageReceived(makeInbound(from: full(contactJID, "phone"), body: "hi", id: "in-1")),
-                accountID: harness.accountID
-            )
+            await harness.chatService.handleEvent(.messageReceived(inbound), accountID: harness.accountID)
             await harness.chatService.userIsTyping(in: contactJID, accountID: harness.accountID)
 
             let raw = await lastSent(harness.transport)
@@ -571,7 +558,8 @@ extension ChatServiceResourceLockTests {
                 message.from = from
                 message.element.addChild(DuckoXMPP.XMLElement(name: "encrypted", namespace: XMPPNamespaces.omemo))
                 await harness.chatService.ingestEncryptedMessage(
-                    message: message, decryptedBody: "x", isOutgoing: isOutgoing, in: conversation, accountID: harness.accountID
+                    EncryptedArrival(stanza: message, content: EncryptedContent(encryptedOutcome(of: message, body: "x")), sender: contactJID.description, isOutgoing: isOutgoing, sentTime: Date()),
+                    in: conversation, accountID: harness.accountID
                 )
             }
 

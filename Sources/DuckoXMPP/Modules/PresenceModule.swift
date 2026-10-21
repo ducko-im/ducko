@@ -11,6 +11,9 @@ public final class PresenceModule: XMPPModule, Sendable {
         var presences: [BareJID: [String: XMPPPresence]] = [:]
         /// Own avatar for vCard-based avatar presence broadcasts (XEP-0153).
         var ownAvatar = OwnAvatar.notReady
+        /// The account's other resources whose presence carries no avatar update element. They could change the vCard
+        /// unseen, so while any is online the own avatar hash is not advertised (XEP-0153 §4.3).
+        var resourcesWithoutAvatarUpdate: Set<String> = []
     }
 
     private enum OwnAvatar {
@@ -20,8 +23,10 @@ public final class PresenceModule: XMPPModule, Sendable {
     }
 
     private let state: OSAllocatedUnfairLock<State>
+    private let capsModule: CapsModule?
 
-    public init() {
+    public init(capsModule: CapsModule? = nil) {
+        self.capsModule = capsModule
         self.state = OSAllocatedUnfairLock(initialState: State())
     }
 
@@ -34,13 +39,16 @@ public final class PresenceModule: XMPPModule, Sendable {
     public func handleConnect() async throws {
         guard let context = state.withLock({ $0.context }) else { return }
         var presence = XMPPPresence()
-        appendAvatarHash(to: &presence)
+        decorate(&presence)
         try await context.sendStanza(presence)
         log.info("Sent initial available presence")
     }
 
     public func handleDisconnect() async {
-        state.withLock { $0.presences.removeAll() }
+        state.withLock { state in
+            state.presences.removeAll()
+            state.resourcesWithoutAvatarUpdate.removeAll()
+        }
     }
 
     // MARK: - Dispatch
@@ -59,7 +67,19 @@ public final class PresenceModule: XMPPModule, Sendable {
         case .bare: ""
         }
 
+        let vcardUpdate = presence.element.child(named: "x", namespace: XMPPNamespaces.vcardAvatarUpdate)
+        let otherOwnResource = otherOwnResource(from, connectedJID: context?.connectedJID())
+
         state.withLock { state in
+            if let otherOwnResource {
+                if presence.presenceType == nil, vcardUpdate == nil {
+                    state.resourcesWithoutAvatarUpdate.insert(otherOwnResource)
+                } else if state.resourcesWithoutAvatarUpdate.remove(otherOwnResource) != nil, state.resourcesWithoutAvatarUpdate.isEmpty {
+                    // The last of them may have changed the vCard, so the hash is advertised again only once the vCard
+                    // is re-read (XEP-0153 §4.3).
+                    state.ownAvatar = .notReady
+                }
+            }
             if presence.presenceType == .unavailable {
                 state.presences[bareJID]?.removeValue(forKey: resource)
                 if state.presences[bareJID]?.isEmpty == true {
@@ -72,14 +92,14 @@ public final class PresenceModule: XMPPModule, Sendable {
         }
 
         // XEP-0153: Check for vcard-temp:x:update element
-        if let vcardUpdate = presence.element.child(named: "x", namespace: XMPPNamespaces.vcardAvatarUpdate),
+        if let vcardUpdate,
            presence.presenceType == nil,
            // Only process if <photo> child is present
            // Missing <photo> means "not ready to advertise" — skip
            vcardUpdate.child(named: "photo") != nil {
             let hash = vcardUpdate.childText(named: "photo")
             let photoHash = (hash?.isEmpty == true) ? nil : hash
-            context?.emitEvent(.vcardAvatarHashReceived(from: bareJID, hash: photoHash))
+            context?.emitEvent(.vcardAvatarHashReceived(from: from, hash: photoHash))
         }
 
         context?.emitEvent(.presenceUpdated(from: from, presence: presence))
@@ -91,6 +111,39 @@ public final class PresenceModule: XMPPModule, Sendable {
     /// that there is no avatar; until the first call, presence advertises neither.
     public func setOwnAvatarHash(_ hash: String?) {
         state.withLock { $0.ownAvatar = .known(hash: hash) }
+    }
+
+    /// Stops advertising the own avatar until ``setOwnAvatarHash(_:)`` gives the hash of a freshly read vCard. XEP-0153
+    /// §4.4 asks for this reset before that read.
+    public func resetOwnAvatarHash() {
+        state.withLock { $0.ownAvatar = .notReady }
+    }
+
+    /// Whether another resource of the account without vCard avatar support is online, so presence advertises no
+    /// avatar hash.
+    public var withholdsOwnAvatar: Bool {
+        state.withLock { !$0.resourcesWithoutAvatarUpdate.isEmpty }
+    }
+
+    /// Adds what every available presence carries: entity caps (XEP-0115, XEP-0390) and the XEP-0153 update element.
+    public func decorate(_ presence: inout XMPPPresence) {
+        for element in capsModule?.capsElements() ?? [] {
+            presence.element.addChild(element)
+        }
+        var x = XMLElement(name: "x", namespace: XMPPNamespaces.vcardAvatarUpdate)
+        switch state.withLock({ $0.ownAvatar }) {
+        case .notReady:
+            break
+        case .known where withholdsOwnAvatar:
+            break
+        case let .known(hash):
+            var photo = XMLElement(name: "photo")
+            if let hash {
+                photo.addText(hash)
+            }
+            x.addChild(photo)
+        }
+        presence.element.addChild(x)
     }
 
     /// Returns all known presences for a bare JID (one per resource).
@@ -108,7 +161,7 @@ public final class PresenceModule: XMPPModule, Sendable {
         presence.show = show
         presence.status = status
         if let priority { presence.priority = priority }
-        appendAvatarHash(to: &presence)
+        decorate(&presence)
         try await context.sendStanza(presence)
     }
 
@@ -119,8 +172,14 @@ public final class PresenceModule: XMPPModule, Sendable {
         presence.show = show
         presence.status = status
         if let priority { presence.priority = priority }
-        appendAvatarHash(to: &presence)
+        decorate(&presence)
         try await context.sendStanza(presence)
+    }
+
+    /// The resource of `jid` when it is another resource of the account, not the one this session is bound to.
+    private func otherOwnResource(_ jid: JID, connectedJID: FullJID?) -> String? {
+        guard case let .full(fullJID) = jid, let connectedJID, fullJID.bareJID == connectedJID.bareJID, fullJID != connectedJID else { return nil }
+        return fullJID.resourcePart
     }
 
     /// Handles subscription-related presence types. Returns `true` if the presence was handled.
@@ -148,20 +207,5 @@ public final class PresenceModule: XMPPModule, Sendable {
         case .unavailable, nil:
             return nil
         }
-    }
-
-    private func appendAvatarHash(to presence: inout XMPPPresence) {
-        var x = XMLElement(name: "x", namespace: XMPPNamespaces.vcardAvatarUpdate)
-        switch state.withLock({ $0.ownAvatar }) {
-        case .notReady:
-            break
-        case let .known(hash):
-            var photo = XMLElement(name: "photo")
-            if let hash {
-                photo.addText(hash)
-            }
-            x.addChild(photo)
-        }
-        presence.element.addChild(x)
     }
 }

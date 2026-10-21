@@ -64,6 +64,8 @@ public final class ChannelSearchModule: XMPPModule, Sendable {
     public enum ChannelSearchError: Error {
         case notConnected
         case noSearchServiceFound
+        /// The service asks to wait `retryAfter` seconds before searching again, or does not say how long.
+        case rateLimited(retryAfter: Int?)
     }
 
     // MARK: - State
@@ -169,11 +171,28 @@ public final class ChannelSearchModule: XMPPModule, Sendable {
 
         iq.element.addChild(searchElement)
 
-        guard let result = try await context.sendIQ(iq) else {
+        guard let result = try await sendSearch(iq, context: context) else {
             return SearchResult(items: [], totalCount: nil, lastID: nil)
         }
 
         return parseSearchResult(result)
+    }
+
+    /// Sends the search, reporting the service's rate limit as `ChannelSearchError.rateLimited`.
+    private func sendSearch(_ iq: XMPPIQ, context: ModuleContext) async throws -> XMLElement? {
+        do {
+            return try await context.sendIQ(iq)
+        } catch let error as XMPPStanzaError {
+            if let rateLimit = Self.rateLimit(in: error) { throw rateLimit }
+            throw error
+        }
+    }
+
+    private static func rateLimit(in error: XMPPStanzaError) -> ChannelSearchError? {
+        guard error.condition == .resourceConstraint,
+              let rateLimit = error.applicationCondition,
+              rateLimit.name == "rate-limit", rateLimit.namespace == XMPPNamespaces.channelSearchError else { return nil }
+        return .rateLimited(retryAfter: rateLimit.attribute("retry-after").flatMap { UInt($0) }.flatMap { Int(exactly: $0) })
     }
 
     private func findSearchService(items: [String], context: ModuleContext) async -> String? {

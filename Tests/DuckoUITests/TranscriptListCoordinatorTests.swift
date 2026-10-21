@@ -221,7 +221,7 @@ struct TranscriptListCoordinatorTests {
         }
         let change = try #require(waiting)
 
-        try await waitUntil { change.hasRun }
+        try await eventually { change.hasRun }
     }
 
     @Test func `another tab's rows and back restores the position`() throws {

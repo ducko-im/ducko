@@ -17,12 +17,18 @@ public struct ChatMessage: Sendable, Identifiable, Equatable {
     public var editedAt: Date?
     public var type: String
     public var replyToID: String?
+    /// The author of the message replied to, as the reply names them.
+    public var replyToJID: String?
+    /// The part of the body that quotes the message replied to, in Unicode scalars, for clients that show no reply.
+    public var replyFallbackRange: Range<Int>?
     public var errorText: String?
     public var isRetracted: Bool
     public var retractedAt: Date?
     public var isEncrypted: Bool
-    /// An encrypted message this device could not decrypt. It has no body: what it shows is `undecryptableText`.
+    /// An encrypted message this device could not decrypt. It has no body: what it shows is `undecryptableNotice`.
     public var isUndecryptable: Bool
+    /// Why an undecryptable message could not be decrypted, when more is known than that it failed.
+    public var undecryptableReason: UndecryptableReason?
     public var attachments: [Attachment]
 
     public init(
@@ -41,11 +47,14 @@ public struct ChatMessage: Sendable, Identifiable, Equatable {
         editedAt: Date? = nil,
         type: String,
         replyToID: String? = nil,
+        replyToJID: String? = nil,
+        replyFallbackRange: Range<Int>? = nil,
         errorText: String? = nil,
         isRetracted: Bool = false,
         retractedAt: Date? = nil,
         isEncrypted: Bool = false,
         isUndecryptable: Bool = false,
+        undecryptableReason: UndecryptableReason? = nil,
         attachments: [Attachment] = []
     ) {
         self.id = id
@@ -63,20 +72,26 @@ public struct ChatMessage: Sendable, Identifiable, Equatable {
         self.editedAt = editedAt
         self.type = type
         self.replyToID = replyToID
+        self.replyToJID = replyToJID
+        self.replyFallbackRange = replyFallbackRange
         self.errorText = errorText
         self.isRetracted = isRetracted
         self.retractedAt = retractedAt
         self.isEncrypted = isEncrypted
         self.isUndecryptable = isUndecryptable
+        self.undecryptableReason = undecryptableReason
         self.attachments = attachments
     }
 
-    public static let undecryptableText = "This message could not be decrypted"
+    /// What an undecryptable message shows in place of its text.
+    public var undecryptableNotice: String {
+        (undecryptableReason ?? .decryptionFailed).text
+    }
 
     /// What the message reads as wherever one line stands for it — a conversation's last-message preview, a
     /// notification. A received file arrives with no text, so the file's name is what it says.
     public var previewText: String {
-        if isUndecryptable { return Self.undecryptableText }
+        if isUndecryptable { return undecryptableNotice }
         return body.isEmpty ? attachments.first?.displayFileName ?? "" : body
     }
 

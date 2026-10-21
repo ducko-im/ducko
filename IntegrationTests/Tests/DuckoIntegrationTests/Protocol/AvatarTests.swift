@@ -28,7 +28,6 @@ extension DuckoIntegrationTests.ProtocolLayer {
                     if let originalAvatar {
                         try? await harness.environment.avatarService.publishAvatar(
                             imageData: originalAvatar.data,
-                            mimeType: originalAvatar.mimeType,
                             accountID: alice.accountID
                         )
                     } else {
@@ -36,11 +35,10 @@ extension DuckoIntegrationTests.ProtocolLayer {
                     }
                 }
 
-                let imageData = AvatarFixtures.minimalPNG()
-                let expectedHash = sha1Hex(Array(imageData))
-                try await harness.environment.avatarService.publishAvatar(
-                    imageData: imageData, mimeType: "image/png", accountID: alice.accountID
+                let published = try await harness.environment.avatarService.publishAvatar(
+                    imageData: AvatarFixtures.minimalPNG(), accountID: alice.accountID
                 )
+                let expectedHash = published.hash
 
                 // Prosody's mod_pep doesn't fan `+notify` events back to the
                 // publisher's own resources, so alice's own-account publish is
@@ -60,7 +58,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                         return true
                     }
                     if case let .vcardAvatarHashReceived(from, hash) = event,
-                       from == aliceJID, hash == expectedHash {
+                       from.bareJID == aliceJID, hash == expectedHash {
                         return true
                     }
                     return false
@@ -89,7 +87,6 @@ extension DuckoIntegrationTests.ProtocolLayer {
                     if let priorBobAvatar {
                         try? await harness.environment.avatarService.publishAvatar(
                             imageData: priorBobAvatar.data,
-                            mimeType: priorBobAvatar.mimeType,
                             accountID: bob.accountID
                         )
                     } else {
@@ -97,23 +94,21 @@ extension DuckoIntegrationTests.ProtocolLayer {
                     }
                 }
 
-                let imageData = AvatarFixtures.minimalPNG()
-                let expectedHash = sha1Hex(Array(imageData))
-                try await harness.environment.avatarService.publishAvatar(
-                    imageData: imageData, mimeType: "image/png", accountID: bob.accountID
+                let published = try await harness.environment.avatarService.publishAvatar(
+                    imageData: AvatarFixtures.minimalPNG(), accountID: bob.accountID
                 )
 
                 let result = try #require(await harness.environment.avatarService.fetchAvatar(for: bobJID, accountID: alice.accountID))
-                #expect(result.data == imageData)
-                #expect(result.hash == expectedHash)
+                #expect(result.data == published.data)
+                #expect(result.hash == published.hash)
             }
         }
 
         // MARK: - Fixture
 
         /// Pinned literal guards the cross-account hashing path against regressions:
-        /// the live tests above assert `result.hash == sha1Hex(Array(imageData))`,
-        /// which is self-referential because both sides use the same helper.
+        /// the live tests above compare hashes that `sha1Hex` computed on both sides,
+        /// which is self-referential.
         @Test func `Minimal PNG fixture hashes to pinned SHA-1`() {
             #expect(sha1Hex(Array(AvatarFixtures.minimalPNG())) == AvatarFixtures.minimalPNGSHA1)
         }

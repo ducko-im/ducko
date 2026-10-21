@@ -11,6 +11,7 @@ struct RoomSettingsView: View {
     @State private var selectedTab = Tab.general
     @State private var isDestroyConfirmPresented = false
     @State private var saveConfigRequested = false
+    @State private var canSaveConfig = true
 
     enum Tab: String, CaseIterable {
         case general = "General"
@@ -30,8 +31,13 @@ struct RoomSettingsView: View {
             Divider()
 
             ZStack {
-                RoomConfigView(roomJIDString: roomJIDString, accountID: accountID, saveRequested: $saveConfigRequested)
-                    .opacity(selectedTab == .general ? 1 : 0)
+                RoomConfigView(
+                    roomJIDString: roomJIDString,
+                    accountID: accountID,
+                    saveRequested: $saveConfigRequested,
+                    canSave: $canSaveConfig
+                )
+                .opacity(selectedTab == .general ? 1 : 0)
                 AffiliationListView(roomJIDString: roomJIDString, accountID: accountID)
                     .opacity(selectedTab == .members ? 1 : 0)
             }
@@ -57,6 +63,7 @@ struct RoomSettingsView: View {
                     saveConfigRequested = true
                 }
                 .keyboardShortcut(.defaultAction)
+                .disabled(!canSaveConfig)
             }
             .padding()
         }

@@ -28,48 +28,11 @@ esac
 
 RESULT=$(osascript << APPLESCRIPT
 $(ducko_as_handlers)
-on findAccountRow(el, depth, maxDepth)
-    tell application "System Events"
-        if depth > maxDepth then return missing value
-        try
-            repeat with c in (UI elements of el)
-                try
-                    set v to value of c
-                    if v is not missing value and v contains "@" then return c
-                end try
-                set found to my findAccountRow(c, depth + 1, maxDepth)
-                if found is not missing value then return found
-            end repeat
-        end try
-    end tell
-    return missing value
-end findAccountRow
-
 on run
     tell application "System Events"
         set frontmost of process "DuckoUITest" to true
         delay 0.5
-        -- Select the first account so the detail pane (with the Actions pull-down) renders.
-        set prefsWin to missing value
-        repeat with win in (windows of process "DuckoUITest")
-            set acctRow to my findAccountRow(win, 0, 30)
-            if acctRow is not missing value then
-                set prefsWin to contents of win
-                try
-                    click acctRow
-                end try
-                exit repeat
-            end if
-        end repeat
-        if prefsWin is missing value then return "ERROR: account row not found"
-        delay 0.4
-
-        -- A SwiftUI Menu bridges as a menu/pop-up button, not AXButton, so match by identifier alone.
-        set actionsMenu to my findByAttr(prefsWin, "AXIdentifier", "account-actions-menu", 0, 30)
-        if actionsMenu is missing value then return "ERROR: Actions menu not found (is an account row selected and connected?)"
-        tell process "DuckoUITest"
-$(ducko_as_click_context_menu_item "Connection Info…" 'actionsMenu' 'prefsWin' "Connection Info… menu item not found (does the account have TLS info?)" continue)
-        end tell
+$(ducko_as_click_account_action "Connection Info…" "Connection Info… menu item not found (does the account have TLS info?)")
         delay 0.5
         return "ok"
     end tell

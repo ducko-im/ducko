@@ -171,6 +171,26 @@ enum XMPPStreamParserTests {
             #expect(element.namespace == nil)
             #expect(element.child(named: "body")?.namespace == nil)
         }
+
+        /// A kept element, such as another client's bookmark extension, is written out on its own, away from the
+        /// ancestor that declared its attributes' prefix.
+        @Test
+        func `A subtree with prefixed attributes is written out well-formed and reads back unchanged`() throws {
+            let events = parseChunks([
+                streamOpenTag,
+                "<message xmlns:o='urn:example:other'><conference xmlns='urn:xmpp:bookmarks:1'><extensions>"
+                    + "<o:state o:pinned='true' xml:lang='en'><o:note>Hi</o:note></o:state>"
+                    + "</extensions></conference></message>"
+            ])
+            let stanza = try #require(events[1].stanzaElement)
+            let extensions = try #require(stanza.child(named: "conference")?.child(named: "extensions"))
+
+            let reread = parseChunks([streamOpenTag, extensions.xmlString])
+
+            #expect(!reread.contains { $0.isError })
+            #expect(reread.count == 2)
+            #expect(reread.last?.stanzaElement == extensions)
+        }
     }
 
     struct IncrementalParsing {

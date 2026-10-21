@@ -288,20 +288,15 @@ struct ProfileEditView: View {
 
         guard let imageData = try? Data(contentsOf: url) else { return }
 
-        let utType = UTType(filenameExtension: url.pathExtension)
-        let mimeType = utType?.preferredMIMEType ?? "image/png"
-
         isPublishingAvatar = true
         avatarErrorMessage = nil
         defer { isPublishingAvatar = false }
 
         do {
-            try await environment.avatarService.publishAvatar(
-                imageData: imageData, mimeType: mimeType, accountID: accountID
-            )
-            profile.photoData = imageData
-            profile.photoType = mimeType
-            avatarImage = AvatarImageDecoder.decode(imageData, maxPixelSize: 256)
+            let avatar = try await environment.avatarService.publishAvatar(imageData: imageData, accountID: accountID)
+            profile.photoData = avatar.data
+            profile.photoType = avatar.mimeType
+            avatarImage = AvatarImageDecoder.decode(avatar.data, maxPixelSize: 256)
         } catch {
             avatarErrorMessage = error.localizedDescription
         }

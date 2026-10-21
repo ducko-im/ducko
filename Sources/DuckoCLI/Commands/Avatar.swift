@@ -61,7 +61,7 @@ extension DuckoCLI {
 
             @OptionGroup var accountOption: AccountOption
 
-            @Argument(help: "Path to the image file (PNG recommended)")
+            @Argument(help: "Path to the image file, published as PNG")
             var path: String
 
             func run() async throws {
@@ -72,19 +72,14 @@ extension DuckoCLI {
                 let selectedAccount = prepared.account
                 let password = prepared.password
 
-                let url = URL(fileURLWithPath: path)
-                let imageData = try Data(contentsOf: url)
-
-                let ext = url.pathExtension
-                let mimeType = UTType(filenameExtension: ext)?.preferredMIMEType ?? "image/png"
+                let imageData = try Data(contentsOf: URL(fileURLWithPath: path))
 
                 try await ConnectedOperation.run(environment: env, account: selectedAccount, password: password) {
-                    try await env.avatarService.publishAvatar(imageData: imageData, mimeType: mimeType, accountID: selectedAccount.id)
+                    let avatar = try await env.avatarService.publishAvatar(imageData: imageData, accountID: selectedAccount.id)
 
-                    let hash = await MainActor.run { env.avatarService.ownAvatarHash(for: selectedAccount.id) ?? "unknown" }
                     print("Avatar published successfully.")
-                    print("Hash: \(hash)")
-                    print("Size: \(imageData.count) bytes")
+                    print("Hash: \(avatar.hash)")
+                    print("Size: \(avatar.data.count) bytes")
                 }
             }
         }

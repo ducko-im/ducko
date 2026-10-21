@@ -32,20 +32,26 @@ final class RoomService {
     private(set) var roomJoinNotifiers: [RoomJoinKey: RoomJoinNotifier] = [:]
     /// Rooms whose leave the client did not take for lack of a connection. A resumed stream is still in them.
     private var pendingLeaves: Set<RoomJoinKey> = []
+    /// Rooms replaying their history after a join. XEP-0045 sends it after the user's own presence and before the
+    /// subject.
+    private var roomsReplayingHistory: Set<RoomJoinKey> = []
     private let store: any PersistenceStore
     private weak var accountService: AccountService?
     private let ensureConversation: (BareJID, String?, UUID) async throws -> Void
     private let didUpdateConversation: (Conversation) -> Void
     private var pendingTasks: [UUID: Task<Void, Never>] = [:]
+    private let channelSearchNow: @Sendable () -> Date
 
     init(
         store: any PersistenceStore,
         ensureConversation: @escaping (BareJID, String?, UUID) async throws -> Void,
-        didUpdateConversation: @escaping (Conversation) -> Void
+        didUpdateConversation: @escaping (Conversation) -> Void,
+        channelSearchNow: @Sendable @escaping () -> Date = { Date() }
     ) {
         self.store = store
         self.ensureConversation = ensureConversation
         self.didUpdateConversation = didUpdateConversation
+        self.channelSearchNow = channelSearchNow
     }
 
     func setAccountService(_ service: AccountService) {
@@ -335,8 +341,26 @@ final class RoomService {
         guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
         guard let searchModule = await client.module(ofType: ChannelSearchModule.self) else { return ChannelSearchResult(channels: [], hasMore: false, lastCursor: nil) }
 
+        guard let service = try await searchModule.discoverSearchService() else {
+            throw ChannelSearchModule.ChannelSearchError.noSearchServiceFound
+        }
+        var gate = await ChannelSearchGate(limits: (try? store.fetchChannelSearchLimits(accountID: accountID)) ?? [:])
+        if let wait = gate.remainingWait(service: service, at: channelSearchNow()) {
+            throw ChannelSearchRateLimit(retryAfter: wait)
+        }
+
         let query = ChannelSearchModule.SearchQuery(keyword: keyword, after: after)
-        let result = try await searchModule.search(query)
+        let result: ChannelSearchModule.SearchResult
+        do {
+            result = try await searchModule.search(query)
+        } catch let ChannelSearchModule.ChannelSearchError.rateLimited(retryAfter) {
+            let wait = gate.recordRateLimit(retryAfter: retryAfter.map { .seconds($0) }, service: service, at: channelSearchNow())
+            try? await store.setChannelSearchLimits(gate.limits, accountID: accountID)
+            throw ChannelSearchRateLimit(retryAfter: wait)
+        }
+        if gate.recordSearch(service: service) {
+            try? await store.setChannelSearchLimits(gate.limits, accountID: accountID)
+        }
 
         let channels = result.items.map {
             SearchedChannel(
@@ -421,14 +445,13 @@ final class RoomService {
         try await mucModule.changeNickname(in: roomJID, to: newNickname)
     }
 
-    func getRoomConfig(jidString: String, accountID: UUID) async throws -> [RoomConfigField] {
+    func getRoomConfig(jidString: String, accountID: UUID) async throws -> DataFormInfo {
         guard let roomJID = BareJID.parse(jidString) else {
             throw ChatServiceError.invalidJID(jidString)
         }
         guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
-        guard let mucModule = await client.module(ofType: MUCModule.self) else { return [] }
-        let fields = try await mucModule.getRoomConfig(roomJID)
-        return fields.map { RoomConfigField(from: $0) }
+        guard let mucModule = await client.module(ofType: MUCModule.self) else { return DataFormInfo() }
+        return try await DataFormInfo(from: mucModule.getRoomConfig(roomJID))
     }
 
     func submitRoomConfig(jidString: String, fields: [RoomConfigField], accountID: UUID) async throws {
@@ -564,6 +587,7 @@ final class RoomService {
 
     func handleRoomJoined(room: BareJID, occupancy: RoomOccupancy, isNewlyCreated: Bool, accountID: UUID) async {
         let key = RoomJoinKey(accountID: accountID, room: room)
+        roomsReplayingHistory.insert(key)
         setOccupancy(occupancy, for: key)
         if isNewlyCreated {
             newlyCreatedRoomKeys.insert(key)
@@ -610,6 +634,14 @@ final class RoomService {
             // Only being thrown out ends the user's stay. A service that shuts down comes back.
             break
         }
+    }
+
+    func handleRoomSubjectChanged(room: BareJID, accountID: UUID) {
+        roomsReplayingHistory.remove(RoomJoinKey(accountID: accountID, room: room))
+    }
+
+    func isReplayingHistory(in room: BareJID, accountID: UUID) -> Bool {
+        roomsReplayingHistory.contains(RoomJoinKey(accountID: accountID, room: room))
     }
 
     func handleRoomInviteReceived(_ invite: RoomInvite, accountID: UUID) {
@@ -667,6 +699,7 @@ final class RoomService {
         roomParticipants.removeValue(forKey: key)
         roomFlags.removeValue(forKey: key)
         newlyCreatedRoomKeys.remove(key)
+        roomsReplayingHistory.remove(key)
         roomJoinNotifiers.removeValue(forKey: key)?.continuation.finish()
     }
 
@@ -674,6 +707,7 @@ final class RoomService {
         roomParticipants = roomParticipants.filter { $0.key.accountID != accountID }
         roomFlags = roomFlags.filter { $0.key.accountID != accountID }
         newlyCreatedRoomKeys = newlyCreatedRoomKeys.filter { $0.accountID != accountID }
+        roomsReplayingHistory = roomsReplayingHistory.filter { $0.accountID != accountID }
         for key in roomJoinNotifiers.keys where key.accountID == accountID {
             roomJoinNotifiers.removeValue(forKey: key)?.continuation.finish()
         }

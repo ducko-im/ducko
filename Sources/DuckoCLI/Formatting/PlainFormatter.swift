@@ -8,7 +8,7 @@ struct PlainFormatter: CLIFormatter {
         let direction = message.isOutgoing ? "->" : "<-"
         let displayJID = message.isOutgoing ? (accountJID?.description ?? message.fromJID) : message.fromJID
         let body = if message.isUndecryptable {
-            "\(message.fromJID): error: \(ChatMessage.undecryptableText)"
+            "\(message.fromJID): error: \(message.undecryptableNotice)"
         } else if message.body.hasPrefix("/me ") {
             "* \(displayJID) \(message.body.dropFirst(4))"
         } else {
@@ -36,8 +36,8 @@ struct PlainFormatter: CLIFormatter {
         return line
     }
 
-    func formatEncryptedMessage(_ message: ChatMessage, accountID: UUID) -> String {
-        formatMessage(message)
+    func formatEncryptedMessage(_ message: ChatMessage, in conversation: Conversation, accountID: UUID) -> String {
+        formatMessage(namingRoomSender(of: message, in: conversation))
     }
 
     func formatNote(_ note: TimelineNote, contactName: String) -> String {
@@ -96,6 +96,7 @@ struct PlainFormatter: CLIFormatter {
         case let .streamResumed(jid): "stream resumed as \(jid)"
         case let .disconnected(reason): formatDisconnect(reason)
         case let .authenticationFailed(message): "authentication failed: \(message)"
+        case .plainSignInRefused: plainSignInRefusedLine
         case let .messageReceived(message): formatIncomingMessage(message)
         case let .messageCarbonReceived(forwarded): formatCarbonEvent(forwarded, isOutgoing: false)
         case let .messageCarbonSent(forwarded): formatCarbonEvent(forwarded, isOutgoing: true)
@@ -104,9 +105,9 @@ struct PlainFormatter: CLIFormatter {
         case let .presenceSubscriptionRevoked(from: jid): "Subscription revoked by \(jid)"
         case let .deliveryReceiptReceived(messageID, from): "delivery receipt: \(messageID) from \(from.bareJID)"
         case let .chatMarkerReceived(messageID, .displayed, from): "read marker: \(messageID) from \(from.bareJID)"
-        case let .messageCorrected(_, newBody, from): "message corrected by \(from.bareJID): \(newBody)"
+        case let .messageCorrected(_, newBody, _, from, _): "message corrected by \(from.bareJID): \(newBody)"
         case let .messageError(_, from, error): "message error from \(from.bareJID): \(error.displayText)"
-        case let .messageRetracted(originalID, from): "[retracted] message retracted by \(from.bareJID) (id: \(originalID))"
+        case let .messageRetracted(originalID, from, _): "[retracted] message retracted by \(from.bareJID) (id: \(originalID))"
         case let .messageModerated(originalID, moderator, room, reason): formatModeratedMessage(originalID: originalID, moderator: moderator, room: room, reason: reason)
         case let .roomJoined(room, occupancy, isNewlyCreated): formatRoomJoinedMUC(room: room, occupancy: occupancy, isNewlyCreated: isNewlyCreated)
         case let .roomOccupantJoined(room, occupant): "\(room): \(occupant.nickname) joined"
@@ -170,8 +171,8 @@ struct PlainFormatter: CLIFormatter {
         let jid = isOutgoing ? forwarded.message.to?.bareJID : forwarded.message.from?.bareJID
         let oob = forwarded.message.oobData
         let body = forwarded.message.body ?? oob.first?.url
-        guard let jid, let body else { return nil }
-        let timestamp = iso8601(Date())
+        guard let jid, let body, printsFromEvent(carbon: forwarded.message) else { return nil }
+        let timestamp = iso8601(forwarded.sentTime)
         let direction = isOutgoing ? "->" : "<-"
         let formatted = if body.hasPrefix("/me ") {
             "* \(jid) \(body.dropFirst(4))"
@@ -190,7 +191,7 @@ struct PlainFormatter: CLIFormatter {
         let oob = message.oobData
         let body = message.body ?? oob.first?.url
         guard let body else { return nil }
-        let timestamp = iso8601(Date())
+        let timestamp = iso8601(sentTime(of: message))
         let formatted = if body.hasPrefix("/me ") {
             "* \(from) \(body.dropFirst(4))"
         } else {
@@ -249,7 +250,7 @@ struct PlainFormatter: CLIFormatter {
         let body = message.body ?? oob.first?.url
         guard let body else { return nil }
         let nickname = nicknameFromJID(from)
-        let timestamp = iso8601(Date())
+        let timestamp = iso8601(sentTime(of: message))
         let formatted = if body.hasPrefix("/me ") {
             "* \(nickname) \(body.dropFirst(4))"
         } else {
@@ -268,7 +269,7 @@ struct PlainFormatter: CLIFormatter {
         let body = message.body ?? oob.first?.url
         guard let body else { return nil }
         let nickname = nicknameFromJID(from)
-        let timestamp = iso8601(Date())
+        let timestamp = iso8601(sentTime(of: message))
         let formatted = if body.hasPrefix("/me ") {
             "[PM] * \(nickname) \(body.dropFirst(4))"
         } else {
@@ -316,6 +317,10 @@ struct PlainFormatter: CLIFormatter {
             line += " nick: \(nick)"
         }
         return line
+    }
+
+    func formatBlockListEntry(_ entry: BlockListEntry) -> String {
+        entry.jidString
     }
 
     func formatRoomParticipant(_ participant: RoomParticipant) -> String {
@@ -408,6 +413,23 @@ struct PlainFormatter: CLIFormatter {
         return lines.joined(separator: "\n")
     }
 
+    func formatDataForm(_ form: DataFormInfo) -> String {
+        var lines: [String] = []
+        if let title = form.title { lines.append(title) }
+        lines.append(contentsOf: form.instructions)
+        for field in form.fields where field.isDisplayed {
+            if field.isFixed {
+                lines.append(contentsOf: field.values)
+                continue
+            }
+            let marker = field.isRequired ? " (required)" : ""
+            let value = dataFormValueText(field)
+            lines.append("  \(field.displayLabel)\(marker): \(value.isEmpty ? "(empty)" : value)")
+            if let description = field.description { lines.append("    \(description)") }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     func formatRegistrationForm(_ form: RegistrationFormInfo) -> String {
         var lines: [String] = []
         let kindLabel = form.formKind == .dataForm ? "Data Form" : "Legacy"
@@ -416,19 +438,18 @@ struct PlainFormatter: CLIFormatter {
         if let instructions = form.instructions, !instructions.isEmpty {
             lines.append("Instructions: \(instructions)")
         }
+        if let redirectURL = form.redirectURL {
+            lines.append("Register at: \(redirectURL.absoluteString)")
+        }
         switch form.formKind {
         case .legacy:
-            lines.append("Fields:")
-            if form.hasUsername { lines.append("  Username: (required)") }
-            if form.hasPassword { lines.append("  Password: (required)") }
-            if form.hasEmail { lines.append("  Email: (optional)") }
-        case .dataForm:
-            lines.append("Fields:")
-            for field in form.dataFormFields where field.isUserEditable {
-                let label = field.displayLabel
-                let value = field.values.joined(separator: ", ")
-                lines.append("  \(label): \(value.isEmpty ? "(empty)" : value)")
+            if !form.legacyFields.isEmpty { lines.append("Fields (all required):") }
+            for field in form.legacyFields {
+                let value = registrationFieldValueText(field)
+                lines.append("  \(field.label): \(value.isEmpty ? "(empty)" : value)")
             }
+        case .dataForm:
+            lines.append(formatDataForm(form.dataForm))
         }
         return lines.joined(separator: "\n")
     }

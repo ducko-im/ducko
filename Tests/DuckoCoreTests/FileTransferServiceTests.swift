@@ -324,7 +324,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 }
             }
             let accountService = makeAccountService(
-                store: store, clientFactory: MockXMPPClientFactory(transport: transport, modules: [ServiceDiscoveryModule(), JingleModule()])
+                store: store, clientFactory: MockXMPPClientFactory(transport: transport, modules: [ServiceDiscoveryModule(), CapsModule(), JingleModule()])
             )
             try await accountService.loadAccounts()
             let chatService = ChatService(store: store, transcripts: MockTranscriptStore(), filterPipeline: MessageFilterPipeline())
@@ -435,6 +435,29 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             let ownSession = try #require(FullJID.parse("\(testJIDString)/ducko"))
             harness.service.handleJingleEvent(.connected(ownSession), accountID: harness.accountID)
             #expect(!harness.canSendDirectly)
+            await Self.tearDown(harness)
+        }
+
+        @Test(arguments: [true, false])
+        func `A session whose advertised capabilities were verified is not asked again`(takesFiles: Bool) async throws {
+            let harness = try await Self.connect(["laptop": takesFiles ? .capable : .incapable])
+            let ver = CapsModule.generateVerificationString(
+                identities: [], features: takesFiles ? [XMPPNamespaces.jingle, XMPPNamespaces.jingleFileTransfer] : [XMPPNamespaces.jingle]
+            )
+            await harness.transport.simulateReceive(
+                "<presence from='\(Self.contact)/laptop'><c xmlns='\(XMPPNamespaces.caps)' hash='sha-1' node='https://peer.example' ver='\(ver)'/></presence>"
+            )
+            let caps = try #require(await harness.accountService.connectedClient(for: harness.accountID)?.module(ofType: CapsModule.self))
+            let laptop = try JID.full(#require(FullJID(bareJID: Self.contact, resourcePart: "laptop")))
+            try await eventually { caps.features(of: laptop) != nil }
+            // Armed: the caps question is the one the laptop was asked.
+            try #require(await harness.questions(to: "laptop") == 1)
+            try await harness.deliver(from: "laptop")
+
+            await harness.refresh()
+
+            #expect(harness.canSendDirectly == takesFiles)
+            #expect(await harness.questions(to: "laptop") == 1)
             await Self.tearDown(harness)
         }
 

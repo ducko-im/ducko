@@ -44,15 +44,18 @@ enum MUCModuleCorrectionTests {
             <message type='groupchat' from='room@conference.example.com/alice' id='msg-2'>\
             <body>Hello (corrected)</body>\
             <replace xmlns='urn:xmpp:message-correct:0' id='msg-1'/>\
+            <fallback xmlns='urn:xmpp:fallback:0' for='urn:xmpp:reply:0'><body start='0' end='6'/></fallback>\
             </message>
             """)
 
             let events = try await eventsTask.value
-            guard case let .messageCorrected(originalID, newBody, from) = events.last else {
+            guard case let .messageCorrected(originalID, newBody, replyFallbackRange, from, messageType) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected messageCorrected")
             }
             #expect(originalID == "msg-1")
             #expect(newBody == "Hello (corrected)")
+            #expect(replyFallbackRange == 0 ..< 6)
+            #expect(messageType == .groupchat)
             #expect(from.bareJID == testRoomJID)
 
             await disconnectFast(client)
@@ -90,27 +93,47 @@ enum MUCModuleCorrectionTests {
         }
     }
 
-    struct SendCorrection {
-        @Test
-        func `Sends correction XML with replace element`() async throws {
+    struct PrivateChatAmendments {
+        /// The private message after the amendment marks the end of what the amendment produced.
+        @Test(arguments: [
+            "<retract xmlns='urn:xmpp:message-retract:1' id='pm-1'/><fallback xmlns='urn:xmpp:fallback:0' for='urn:xmpp:message-retract:1'/>"
+                + "<body>This person attempted to retract a previous message, but it's unsupported by your client.</body>",
+            "<replace xmlns='urn:xmpp:message-correct:0' id='pm-1'/><body>Fixed</body>"
+        ])
+        func `An occupant's private correction or retraction is not a private message`(amendment: String) async throws {
             let mock = MockTransport()
-            let client = try await makeConnectedClient(mock: mock)
+            let client = XMPPClient(
+                domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false
+            )
+            await client.register(ChatModule())
+            await client.register(MUCModule())
+            let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
+            await simulateNoTLSConnect(mock)
+            try await connectTask.value
             let module = try #require(await client.module(ofType: MUCModule.self))
+            try await module.joinRoom(testRoomJID, nickname: "me")
 
-            await mock.clearSentBytes()
-
-            try await module.sendCorrection(to: testRoomJID, body: "Fixed text", replacingID: "orig-1")
-
-            let sentData = await mock.sentBytes
-            let sentStrings = sentData.map { String(decoding: $0, as: UTF8.self) }
-            let correctionMsg = sentStrings.first {
-                $0.contains("<replace") && $0.contains("urn:xmpp:message-correct:0") && $0.contains("id=\"orig-1\"")
+            let eventsTask = Task {
+                try await collectEvents(from: client) { event in
+                    if case .mucPrivateMessageReceived = event { return true }
+                    return false
+                }
             }
-            #expect(correctionMsg != nil)
-            if let msg = correctionMsg {
-                #expect(msg.contains("Fixed text"))
-                #expect(msg.contains("type=\"groupchat\""))
+            await mock.simulateReceive("<message type='chat' from='room@conference.example.com/alice' id='pm-2'>\(amendment)</message>")
+            await mock.simulateReceive("<message type='chat' from='room@conference.example.com/alice' id='pm-3'><body>Next</body></message>")
+
+            let events = try await eventsTask.value
+            let privateMessageIDs = events.compactMap { event -> String? in
+                guard case let .mucPrivateMessageReceived(message) = event else { return nil }
+                return message.id
             }
+            #expect(privateMessageIDs == ["pm-3"])
+            let amendmentTypes = events.compactMap { event -> XMPPMessage.MessageType? in
+                if case let .messageCorrected(_, _, _, _, messageType) = event { return messageType }
+                if case let .messageRetracted(_, _, messageType) = event { return messageType }
+                return nil
+            }
+            #expect(amendmentTypes == [.chat])
 
             await disconnectFast(client)
         }

@@ -180,8 +180,8 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 try await states.sendChatState(chatState, to: .bare(bobJID))
 
                 _ = try await bob.waitForEvent { event in
-                    if case let .chatStateChanged(from, state) = event,
-                       from == aliceBareJID, state == chatState {
+                    if case let .chatStateChanged(from, state, _) = event,
+                       from.bareJID == aliceBareJID, state == chatState {
                         return true
                     }
                     return false
@@ -220,7 +220,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 // Bob sees the correction.
                 _ = try await bob.waitForEvent { event in
-                    if case let .messageCorrected(origID, correctedBody, from: _) = event,
+                    if case let .messageCorrected(origID, correctedBody, _, from: _, messageType: _) = event,
                        origID == originalID, correctedBody == newBody {
                         return true
                     }
@@ -259,7 +259,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 // Bob sees the retraction.
                 _ = try await bob.waitForEvent { event in
-                    if case let .messageRetracted(origID, from: _) = event, origID == stanzaID {
+                    if case let .messageRetracted(origID, from: _, messageType: _) = event, origID == stanzaID {
                         return true
                     }
                     return false
@@ -327,15 +327,15 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 let aliceConvForCorrection = try await harness.environment.chatService.openConversation(for: bobJID, accountID: alice.accountID)
                 let original = try #require(try await harness.environment.transcripts.findMessage(stanzaID: capturedID, conversationID: aliceConvForCorrection.id))
                 try await harness.environment.chatService.sendCorrection(
-                    original: original,
-                    to: bobJID,
+                    of: original,
                     newBody: updatedBody,
+                    in: aliceConvForCorrection,
                     accountID: alice.accountID
                 )
 
                 // Bob sees the correction.
                 _ = try await bob.waitForEvent { event in
-                    if case let .messageCorrected(origID, newBody, from: _) = event,
+                    if case let .messageCorrected(origID, newBody, _, from: _, messageType: _) = event,
                        origID == capturedID, newBody == updatedBody {
                         return true
                     }
@@ -382,14 +382,14 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 let aliceConvForRetract = try await harness.environment.chatService.openConversation(for: bobJID, accountID: alice.accountID)
                 let originalToRetract = try #require(try await harness.environment.transcripts.findMessage(stanzaID: capturedID, conversationID: aliceConvForRetract.id))
                 try await harness.environment.chatService.retractMessage(
-                    original: originalToRetract,
-                    to: bobJID,
+                    originalToRetract,
+                    in: aliceConvForRetract,
                     accountID: alice.accountID
                 )
 
                 // Bob sees the retraction.
                 _ = try await bob.waitForEvent { event in
-                    if case let .messageRetracted(origID, from: _) = event, origID == capturedID {
+                    if case let .messageRetracted(origID, from: _, messageType: _) = event, origID == capturedID {
                         return true
                     }
                     return false
@@ -404,7 +404,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
             }
         }
 
-        @Test @MainActor func `Service sendReply carries the reply marker`() async throws {
+        @Test @MainActor func `Service reply carries the reply marker`() async throws {
             try await TestHarness.withHarness { harness in
                 try await harness.setUp(accounts: [
                     "alice": TestCredentials.alice,
@@ -431,23 +431,26 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 })
                 let originalID = try #require(receivedMessage.id)
 
-                // Alice sends a reply via service.
+                // Alice replies to her own message via service.
                 let replyBody = "msg-\(UUID().uuidString.prefix(8))"
-                try await harness.environment.chatService.sendReply(
-                    to: bobJID,
-                    body: replyBody,
-                    replyToStanzaID: originalID,
+                let aliceConversation = try await harness.environment.chatService.openConversation(for: bobJID, accountID: alice.accountID)
+                let original = try #require(try await harness.environment.transcripts.findMessage(stanzaID: originalID, conversationID: aliceConversation.id))
+                try await harness.environment.chatService.sendMessage(
+                    replyBody,
+                    in: aliceConversation,
+                    replyingTo: original,
                     accountID: alice.accountID
                 )
 
-                // Bob receives the reply with the <reply/> marker.
+                // Bob receives the reply with the <reply/> marker, after a quote of the original.
                 let replyMessage = try await bob.waitForEvent(extracting: { event in
-                    if case let .messageReceived(m) = event, m.body == replyBody {
+                    if case let .messageReceived(m) = event, m.body?.hasSuffix(replyBody) == true {
                         return m
                     }
                     return nil
                 })
                 #expect(replyMessage.element.child(named: "reply", namespace: XMPPNamespaces.messageReply) != nil)
+                #expect(replyMessage.body == "> \(initialBody)\n\(replyBody)")
             }
         }
 

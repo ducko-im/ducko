@@ -20,8 +20,11 @@ enum TranscriptRecord: Codable {
         var isEncrypted: Bool
         /// Optional so records written before the flag existed decode. Those carry no key at all.
         var isUndecryptable: Bool?
+        var undecryptableReason: UndecryptableReason?
         var messageType: String
         var replyToID: String?
+        var replyToJID: String?
+        var replyFallbackRange: Range<Int>?
         var attachments: [Attachment]
     }
 
@@ -35,7 +38,12 @@ enum TranscriptRecord: Codable {
         var timestamp: Date?
         var body: String?
         var htmlBody: String?
+        var replyFallbackRange: Range<Int>?
+        var replyToID: String?
+        var replyToJID: String?
+        var attachments: [Attachment]?
         var errorText: String?
+        var serverID: String?
     }
 
     // MARK: - Note Entry
@@ -98,8 +106,11 @@ enum TranscriptRecord: Codable {
             isOutgoing: message.isOutgoing,
             isEncrypted: message.isEncrypted,
             isUndecryptable: message.isUndecryptable,
+            undecryptableReason: message.undecryptableReason,
             messageType: message.type,
             replyToID: message.replyToID,
+            replyToJID: message.replyToJID,
+            replyFallbackRange: message.replyFallbackRange,
             attachments: message.attachments
         ))
     }
@@ -113,7 +124,12 @@ enum TranscriptRecord: Codable {
             timestamp: amendment.timestamp,
             body: amendment.body,
             htmlBody: amendment.htmlBody,
-            errorText: amendment.errorText
+            replyFallbackRange: amendment.replyFallbackRange,
+            replyToID: amendment.replyToID,
+            replyToJID: amendment.replyToJID,
+            attachments: amendment.attachments,
+            errorText: amendment.errorText,
+            serverID: amendment.serverID
         ))
     }
 
@@ -142,8 +158,11 @@ enum TranscriptRecord: Codable {
             isEdited: false,
             type: entry.messageType,
             replyToID: entry.replyToID,
+            replyToJID: entry.replyToJID,
+            replyFallbackRange: entry.replyFallbackRange,
             isEncrypted: entry.isEncrypted,
             isUndecryptable: isUndecryptable,
+            undecryptableReason: entry.undecryptableReason,
             attachments: entry.attachments
         )
     }
@@ -163,7 +182,12 @@ enum TranscriptRecord: Codable {
             timestamp: entry.timestamp ?? Date(),
             body: entry.body,
             htmlBody: entry.htmlBody,
-            errorText: entry.errorText
+            replyFallbackRange: entry.replyFallbackRange,
+            replyToID: entry.replyToID,
+            replyToJID: entry.replyToJID,
+            attachments: entry.attachments,
+            errorText: entry.errorText,
+            serverID: entry.serverID
         )
     }
 }

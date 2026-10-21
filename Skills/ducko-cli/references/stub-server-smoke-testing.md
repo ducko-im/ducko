@@ -63,5 +63,5 @@ Beyond Stub Requirements 1 to 5, a stub written from scratch has to:
 2. Parse the restarted stream with a fresh XML parser and offer `<bind/>` in its features.
 3. Answer the bind request with the full JID in `<bind><jid>`, and answer the roster request.
 4. Send the contacts' `<presence>` after the client's first available presence.
-5. Answer the client's other requests: a result for carbons enable, an empty `<blocklist/>`, `item-not-found` for PEP item requests, an empty result for PEP publishes, a `vCard` for `vcard-temp`, and `<fin xmlns='urn:xmpp:mam:2' complete='true'>` for an archive query. Answer any other IQ request with `service-unavailable`.
+5. Answer the client's other requests: a result for carbons enable, an empty `<blocklist/>` when the server's disco#info lists `urn:xmpp:blocking` (without it the client requests no block list), `item-not-found` for PEP item requests, an empty result for PEP publishes, a `vCard` for `vcard-temp`, and `<fin xmlns='urn:xmpp:mam:2' complete='true'>` for an archive query. Answer any other IQ request with `service-unavailable`.
 6. Echo each request's `to` as the reply's `from`, and omit `from` when the request has no `to`. The client drops a reply to an addressed request that comes from any other JID.

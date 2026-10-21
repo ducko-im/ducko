@@ -13,6 +13,9 @@ public struct Account: Sendable, Identifiable {
     public var requireTLS: Bool
     public var rosterVersion: String?
     public var certificateFingerprint: String?
+    /// Set after a sign-in with a verified SCRAM success. From then on, a sign-in where the server offers only PLAIN is
+    /// refused.
+    public var requiresSCRAM: Bool
     public var importedFrom: String?
     public var createdAt: Date
 
@@ -28,6 +31,7 @@ public struct Account: Sendable, Identifiable {
         requireTLS: Bool = true,
         rosterVersion: String? = nil,
         certificateFingerprint: String? = nil,
+        requiresSCRAM: Bool = false,
         importedFrom: String? = nil,
         createdAt: Date
     ) {
@@ -42,6 +46,7 @@ public struct Account: Sendable, Identifiable {
         self.requireTLS = requireTLS
         self.rosterVersion = rosterVersion
         self.certificateFingerprint = certificateFingerprint
+        self.requiresSCRAM = requiresSCRAM
         self.importedFrom = importedFrom
         self.createdAt = createdAt
     }

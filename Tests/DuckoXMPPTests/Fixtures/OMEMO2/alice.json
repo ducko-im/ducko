@@ -1,0 +1,34 @@
+{
+  "jid": "alice@example.org",
+  "deviceID": 31415926,
+  "identityKey": {
+    "seed": "02vVXpz7LwCgdUeGg/cKtkqMP3s89ApfXvSxES1YTUM=",
+    "publicKey": "D9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOuk=",
+    "agreementPublicKey": "2fcaaDOUXai9olnimhea0uUJL+FNc3KvgA2jIzsWzk8="
+  },
+  "signedPreKey": {
+    "id": 1,
+    "privateKey": "uB19jZ0n/7JkT528kwu6W89PECZ1dKES5vS/tM8dMRY=",
+    "publicKey": "Bc0Rw8q1J7Nbq4xgprS5bpBS3y7GuhbG4R4CqNft4D0=",
+    "signature": "v0WKAPjB8ZBd45paUGSHl5V1fK4ujRWxEEmbzbx2QGV8SB0g3FtMbXPyE45ut+Y76Uv/uq70T/lMDnJFMbnGCw=="
+  },
+  "preKeys": [
+    {
+      "id": 1,
+      "privateKey": "+atKndkZ6WUCZ4yWLVVqKSNRakxODCHrqay3FP9+c+o=",
+      "publicKey": "TjAcl8r1oo/DfwbsE/AQg7Z+uLraSHwA5Cf9FVreJV8="
+    },
+    {
+      "id": 2,
+      "privateKey": "QHnqVGBZrhRD6qVJL6PJ5oqpTCRFWp3eZCrLlvz5IqU=",
+      "publicKey": "FPnhz6uq0X6NWTaarP9jLokfEdY7uBXPCbuVYRlKUWo="
+    },
+    {
+      "id": 3,
+      "privateKey": "oXgQVFn1XJyaw90edM2vrlUeyS0ZV6lav2mKNbE9Mfs=",
+      "publicKey": "UnLJyu4tVWKz1NJlK5lQHIVo64hhHxgL4bVqkz0F9io="
+    }
+  ],
+  "deviceList": "<devices xmlns=\"urn:xmpp:omemo:2\"><device id=\"31415926\" /></devices>",
+  "bundle": "<bundle xmlns=\"urn:xmpp:omemo:2\"><spk id=\"1\">Bc0Rw8q1J7Nbq4xgprS5bpBS3y7GuhbG4R4CqNft4D0=</spk><spks>v0WKAPjB8ZBd45paUGSHl5V1fK4ujRWxEEmbzbx2QGV8SB0g3FtMbXPyE45ut+Y76Uv/uq70T/lMDnJFMbnGCw==</spks><ik>D9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOuk=</ik><prekeys><pk id=\"1\">TjAcl8r1oo/DfwbsE/AQg7Z+uLraSHwA5Cf9FVreJV8=</pk><pk id=\"2\">FPnhz6uq0X6NWTaarP9jLokfEdY7uBXPCbuVYRlKUWo=</pk><pk id=\"3\">UnLJyu4tVWKz1NJlK5lQHIVo64hhHxgL4bVqkz0F9io=</pk></prekeys></bundle>"
+}

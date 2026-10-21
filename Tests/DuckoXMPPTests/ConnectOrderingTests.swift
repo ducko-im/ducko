@@ -6,10 +6,8 @@ enum ConnectOrderingTests {
     // MARK: - Post-Handshake Ordering
 
     struct PostHandshakeOrdering {
-        /// XEP-0163 §3.3.2: the caps-bearing presence (`CapsModule`) must reach the server before any PEP
-        /// publisher. Asserts the plain presence, then the caps presence (caps last), then the first
-        /// OMEMO connect-time stanza — proving the `presence → caps → PEP-publisher` ordering.
-        @Test func `caps-bearing presence precedes the first PEP module stanza`() async throws {
+        /// XEP-0163 §3.3.2: the caps-bearing initial presence must reach the server before any PEP publisher.
+        @Test func `the one caps-bearing initial presence precedes the first PEP module stanza`() async throws {
             let mock = MockTransport()
             let pepModule = PEPModule()
             let omemoModule = OMEMOModule(pepModule: pepModule)
@@ -18,39 +16,37 @@ enum ConnectOrderingTests {
                 credentials: .init(username: "user", password: "pass"),
                 transport: mock, requireTLS: false
             )
-            await client.register(PresenceModule())
-            await client.register(CapsModule())
+            let capsModule = CapsModule()
+            await client.register(PresenceModule(capsModule: capsModule))
+            await client.register(capsModule)
             await client.register(pepModule)
             await client.register(omemoModule)
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             await simulateNoTLSConnect(mock)
 
-            // Plain presence (index 4), caps presence (index 5), then OMEMO's connect-time PEP IQs:
-            // device-list retrieve (6), device-list publish (7), bundle publish (8).
-            await mock.waitForSent(count: 7)
-            let retrieveID = try await #require(extractIQID(from: mock.sentBytes[6]))
+            // Initial presence (index 4), then OMEMO's connect-time PEP IQs:
+            // device-list retrieve (5), device-list publish (6), bundle publish (7).
+            await mock.waitForSent(count: 6)
+            let retrieveID = try await #require(extractIQID(from: mock.sentBytes[5]))
             await mock.simulateReceive("<iq type=\"result\" id=\"\(retrieveID)\"/>")
-            await mock.waitForSent(count: 8)
-            let publishID = try await #require(extractIQID(from: mock.sentBytes[7]))
+            await mock.waitForSent(count: 7)
+            let publishID = try await #require(extractIQID(from: mock.sentBytes[6]))
             await mock.simulateReceive("<iq type=\"result\" id=\"\(publishID)\"/>")
-            await mock.waitForSent(count: 9)
-            let bundleID = try await #require(extractIQID(from: mock.sentBytes[8]))
+            await mock.waitForSent(count: 8)
+            let bundleID = try await #require(extractIQID(from: mock.sentBytes[7]))
             await mock.simulateReceive("<iq type=\"result\" id=\"\(bundleID)\"/>")
 
             try await connectTask.value
 
             let sent = await mock.sentBytes
             let strings = sent.map { String(decoding: $0, as: UTF8.self) }
-            let plainPresenceIndex = try #require(strings.firstIndex {
-                $0.contains("<presence") && !$0.contains(XMPPNamespaces.caps)
-            })
-            let capsPresenceIndex = try #require(strings.firstIndex {
-                $0.contains("<presence") && $0.contains(XMPPNamespaces.caps)
-            })
+            let presences = strings.indices.filter { strings[$0].contains("<presence") }
+            let presenceIndex = try #require(presences.first)
             let omemoIndex = try #require(strings.firstIndex { $0.contains(XMPPNamespaces.omemoDevices) })
-            #expect(plainPresenceIndex < capsPresenceIndex)
-            #expect(capsPresenceIndex < omemoIndex)
+            #expect(presences.count == 1)
+            #expect(strings[presenceIndex].contains(XMPPNamespaces.caps))
+            #expect(presenceIndex < omemoIndex)
 
             await disconnectFast(client)
         }
@@ -59,21 +55,22 @@ enum ConnectOrderingTests {
     // MARK: - Initial Presence Readiness Signal
 
     struct InitialPresenceReadiness {
-        @Test func `resolves after presence and caps on a fresh connect`() async throws {
+        @Test func `resolves after the initial presence on a fresh connect`() async throws {
             let mock = MockTransport()
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
                 transport: mock, requireTLS: false
             )
-            await client.register(PresenceModule())
-            await client.register(CapsModule())
+            let capsModule = CapsModule()
+            await client.register(PresenceModule(capsModule: capsModule))
+            await client.register(capsModule)
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             await simulateNoTLSConnect(mock)
             try await connectTask.value
 
-            // Presence + caps are fire-and-forget, so the gate is open once connect completes; reaching the
+            // Presence is fire-and-forget, so the gate is open once connect completes; reaching the
             // line after the await proves it resolved rather than hung.
             await client.awaitInitialPresenceSent()
 
@@ -213,25 +210,26 @@ enum ConnectOrderingTests {
         @Test func `connection loss while the gate is closed resolves a parked waiter`() async {
             // The cleanUp / connection-lost settle is a distinct path from the connect-time failure catches:
             // here the session reaches `.connected` and a service parks on the gate, but the connection drops
-            // before the caps presence opens it. Hold caps off the wire so the gate stays closed across the
-            // teardown, proving cleanUp's settle (not the caps settle) is what releases the waiter. Deleting
-            // that settle hangs this await.
+            // before the caps-bearing presence opens it. Hold that presence off the wire so the gate stays closed
+            // across the teardown, proving cleanUp's settle (not the presence settle) is what releases the waiter.
+            // Deleting that settle hangs this await.
             let mock = MockTransport()
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
                 transport: mock, requireTLS: false
             )
-            await client.register(PresenceModule())
-            await client.register(CapsModule())
+            let capsModule = CapsModule()
+            await client.register(PresenceModule(capsModule: capsModule))
+            await client.register(capsModule)
 
             await mock.blockSends { $0.contains(XMPPNamespaces.caps) }
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             await simulateNoTLSConnect(mock)
-            // Plain presence (stanza 5) goes out; the caps presence (stanza 6) is blocked, so the gate's
-            // caps settle is never reached and the gate stays closed.
-            await mock.waitForSent(count: 5)
+            // The caps-bearing initial presence is blocked, so the gate's presence settle is never reached and
+            // the gate stays closed.
+            await mock.waitForBlockedSend()
 
             let waiter = Task { await client.awaitInitialPresenceSent() }
             try? await Task.sleep(for: .milliseconds(50))
@@ -252,25 +250,25 @@ enum ConnectOrderingTests {
             connectTask.cancel()
         }
 
-        @Test func `the gate stays closed until the caps presence is sent`() async {
+        @Test func `the gate stays closed until the caps-bearing presence is sent`() async {
             // Negative assertion guarding the ordering invariant directly: a regression that opened the gate
-            // early — at `.connected`, after the plain presence, or before `CapsModule.handleConnect()`
-            // completes — would still pass the positive resolution tests. Hold the caps presence off the wire,
-            // park a waiter, and confirm it stays suspended; only releasing caps may resolve it.
+            // early — at `.connected` or before `PresenceModule.handleConnect()` completes — would still pass
+            // the positive resolution tests.
             let mock = MockTransport()
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
                 transport: mock, requireTLS: false
             )
-            await client.register(PresenceModule())
-            await client.register(CapsModule())
+            let capsModule = CapsModule()
+            await client.register(PresenceModule(capsModule: capsModule))
+            await client.register(capsModule)
 
             await mock.blockSends { $0.contains(XMPPNamespaces.caps) }
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             await simulateNoTLSConnect(mock)
-            await mock.waitForSent(count: 5) // plain presence out; caps (stanza 6) blocked
+            await mock.waitForBlockedSend()
 
             // Use an unstructured task that records resolution into an actor flag rather than a task-group
             // race: the gate await is a non-cancellable `CheckedContinuation`, so an abandoned waiter inside a
@@ -278,11 +276,11 @@ enum ConnectOrderingTests {
             let probe = GateProbe()
             let waiter = Task { await client.awaitInitialPresenceSent(); await probe.markOpen() }
 
-            // While caps is held off the wire the gate must NOT open.
+            // While the presence is held off the wire the gate must NOT open.
             try? await Task.sleep(for: .milliseconds(300))
             #expect(await probe.isOpen == false)
 
-            // Releasing caps sends it, reaching the post-caps settle; the gate then opens.
+            // Releasing the presence sends it, reaching the post-presence settle; the gate then opens.
             await mock.releaseBlockedSends()
             var opened = false
             for _ in 0 ..< 100 {
@@ -302,15 +300,16 @@ enum ConnectOrderingTests {
             // sets `.disconnected`, opens the gate, and rethrows WITHOUT calling `connection.disconnect()`, so
             // `XMPPConnection.events` and `MockTransport.receivedData` survive and attempt 2 can complete a full
             // handshake on the same instances. Without the re-gate, attempt 1's stale `isOpen = true` would leak
-            // into attempt 2 and resolve a waiter that must stay parked until the new caps presence is sent.
+            // into attempt 2 and resolve a waiter that must stay parked until the new caps-bearing presence is sent.
             let mock = MockTransport()
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
                 transport: mock, requireTLS: false
             )
-            await client.register(PresenceModule())
-            await client.register(CapsModule())
+            let capsModule = CapsModule()
+            await client.register(PresenceModule(capsModule: capsModule))
+            await client.register(capsModule)
 
             // Attempt 1: the transport-connect error makes `establish()` throw before the handshake. The catch
             // opens the gate (now stale-open) and rethrows without disconnecting the surviving connection.
@@ -319,14 +318,14 @@ enum ConnectOrderingTests {
                 try await client.connect(host: "example.com", port: 5222)
             }
 
-            // Attempt 2: reconnect on the same instances, holding caps off the wire so the gate's caps settle is
-            // never reached and its state is governed solely by the connect-start re-gate.
+            // Attempt 2: reconnect on the same instances, holding the caps-bearing presence off the wire so the
+            // gate's presence settle is never reached and its state is governed solely by the connect-start re-gate.
             await mock.blockSends { $0.contains(XMPPNamespaces.caps) }
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             // `simulateNoTLSConnect`'s `waitForSent(count: 1)` is the barrier proving `openStream` ran — i.e. the
             // re-gate's `settle(open: false)` already executed before this stanza went out.
             await simulateNoTLSConnect(mock)
-            await mock.waitForSent(count: 5) // plain presence out; caps (stanza 6) blocked
+            await mock.waitForBlockedSend()
 
             // Park a waiter AFTER the re-gate; the "started" signal proves it reached the closed gate before the
             // negative check, so a non-resolution can't be mistaken for a not-yet-started task.
@@ -347,7 +346,7 @@ enum ConnectOrderingTests {
             try? await Task.sleep(for: .milliseconds(300))
             #expect(await probe.isOpen == false)
 
-            // Releasing caps reaches the post-caps settle; the same waiter then resolves.
+            // Releasing the presence reaches the post-presence settle; the same waiter then resolves.
             await mock.releaseBlockedSends()
             var opened = false
             for _ in 0 ..< 100 {

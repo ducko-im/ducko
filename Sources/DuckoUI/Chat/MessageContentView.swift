@@ -52,7 +52,7 @@ struct MessageContentView<Header: View, Footer: View>: View {
                 noticeBubble("This message was retracted")
                     .accessibilityIdentifier("retracted-message")
             } else if message.isUndecryptable {
-                noticeBubble(ChatMessage.undecryptableText)
+                noticeBubble(message.undecryptableNotice)
                     .accessibilityIdentifier("undecryptable-message")
             } else {
                 header

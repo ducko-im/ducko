@@ -186,6 +186,20 @@ struct ChatWindowHistoryTests {
         #expect(fixture.windowState.messages.map(\.id) == loaded + [late.id])
     }
 
+    @Test(arguments: [true, false])
+    func `a message sent before the newest ones shows at its sent time without moving the view`(isScrolledUp: Bool) async throws {
+        let (fixture, messages) = try await Self.loaded(20)
+        let list = StandInTranscriptList(attachedTo: fixture.windowState.scroller)
+        list.arrive(at: isScrolledUp ? Self.reading : .newest)
+
+        let delayed = Self.message(fixture, at: 9.5)
+        await fixture.transcripts.addMessage(delayed)
+        await fixture.windowState.refreshMessages()
+
+        #expect(fixture.windowState.messages.map(\.id) == messages[..<10].map(\.id) + [delayed.id] + messages[10...].map(\.id))
+        #expect(list.takenRequests.isEmpty)
+    }
+
     @Test func `back at the newest message a refresh cuts the window to its resting count`() async throws {
         let (fixture, messages) = try await Self.loaded(300)
         let list = Self.scrolledUpList(fixture)
@@ -460,7 +474,7 @@ struct ChatWindowHistoryTests {
         await fixture.windowState.refreshMessages()
         #expect(fixture.windowState.linkPreview(for: linked) == nil)
 
-        try await waitUntil { fixture.windowState.linkPreview(for: linked) != nil }
+        try await eventually { fixture.windowState.linkPreview(for: linked) != nil }
         #expect(fixture.windowState.linkPreview(for: linked)?.title == "Counted Title")
     }
 }
@@ -528,7 +542,7 @@ extension ChatWindowHistoryTests {
         list.comeToRest()
         #expect(fixture.windowState.messages.map(\.body).prefix(2) == ["fromserver", "text"])
         #expect(!fixture.windowState.hasReachedEnd)
-        try await waitUntil { fixture.windowState.messages.last?.id == arrival.id }
+        try await eventually { fixture.windowState.messages.last?.id == arrival.id }
 
         let ending = Task { await fixture.windowState.loadOlderMessages() }
         _ = try await Self.answerArchiveQuery(server, with: [])

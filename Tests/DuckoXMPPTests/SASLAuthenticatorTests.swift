@@ -65,6 +65,21 @@ enum SASLAuthenticatorTests {
             #expect(element.attribute("mechanism") == "SCRAM-SHA-1")
         }
 
+        @Test(arguments: [
+            (["SCRAM-SHA-256", "PLAIN"], "SCRAM-SHA-256"),
+            (["SCRAM-SHA-1"], "SCRAM-SHA-1")
+        ])
+        func `With SCRAM required, an offer that includes SCRAM signs in with it`(offered: [String], expected: String) throws {
+            var auth = SASLAuthenticator()
+            let element = try auth.begin(
+                features: features(mechanisms: offered),
+                authcid: "user",
+                password: "pencil",
+                requiresSCRAM: true
+            )
+            #expect(element.attribute("mechanism") == expected)
+        }
+
         @Test
         func `Throws when no supported mechanism`() {
             var auth = SASLAuthenticator()

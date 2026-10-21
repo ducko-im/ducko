@@ -8,14 +8,16 @@ private func makeBookmark(
     name: String? = nil,
     autojoin: Bool = false,
     nickname: String? = nil,
-    password: String? = nil
+    password: String? = nil,
+    extensions: XMLElement? = nil
 ) -> Bookmark {
     Bookmark(
         jid: BareJID.parse(jid)!,
         name: name,
         autojoin: autojoin,
         nickname: nickname,
-        password: password
+        password: password,
+        extensions: extensions
     )
 }
 
@@ -182,11 +184,14 @@ enum BookmarkTests {
     struct RoundTrip {
         @Test
         func `Round-trip preserves all fields`() {
+            var extensions = XMLElement(name: "extensions", namespace: XMPPNamespaces.bookmarks2)
+            extensions.addChild(XMLElement(name: "pinned", namespace: "urn:example:other-client"))
             let original = makeBookmark(
                 name: "My Room",
                 autojoin: true,
                 nickname: "alice",
-                password: "pw123"
+                password: "pw123",
+                extensions: extensions
             )
 
             let element = original.toXMLElement()
@@ -201,6 +206,7 @@ enum BookmarkTests {
             #expect(parsed?.autojoin == original.autojoin)
             #expect(parsed?.nickname == original.nickname)
             #expect(parsed?.password == original.password)
+            #expect(parsed?.extensions?.child(named: "pinned", namespace: "urn:example:other-client") != nil)
         }
 
         @Test

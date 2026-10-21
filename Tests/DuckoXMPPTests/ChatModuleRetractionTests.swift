@@ -60,11 +60,12 @@ enum ChatModuleRetractionTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .messageRetracted(originalID, from) = events.last else {
+            guard case let .messageRetracted(originalID, from, messageType) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected messageRetracted")
             }
             #expect(originalID == "orig-msg-1")
             #expect(from.bareJID.description == "contact@example.com")
+            #expect(messageType == .chat)
 
             await disconnectFast(client)
         }
@@ -138,11 +139,12 @@ enum ChatModuleRetractionTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .messageRetracted(originalID, from) = events.last else {
+            guard case let .messageRetracted(originalID, from, messageType) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected messageRetracted")
             }
             #expect(originalID == "orig-gc-1")
             #expect(from.bareJID.description == "room@conference.example.com")
+            #expect(messageType == .groupchat)
 
             await disconnectFast(client)
         }

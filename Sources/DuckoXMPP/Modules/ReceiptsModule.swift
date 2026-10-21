@@ -22,7 +22,17 @@ public final class ReceiptsModule: XMPPModule, Sendable {
 
     // MARK: - Message Handling
 
+    /// A receipt or marker next to an OMEMO payload is outside the encryption, so only the decrypted copy's counts.
     public func handleMessage(_ message: XMPPMessage) throws {
+        guard !message.isOMEMOEncrypted else { return }
+        handleReceiptsAndMarkers(in: message)
+    }
+
+    public func handleDecryptedMessage(_ message: XMPPMessage) {
+        handleReceiptsAndMarkers(in: message)
+    }
+
+    private func handleReceiptsAndMarkers(in message: XMPPMessage) {
         guard let from = message.from else { return }
         let context = state.withLock { $0 }
 

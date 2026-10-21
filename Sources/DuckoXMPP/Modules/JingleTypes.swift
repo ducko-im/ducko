@@ -12,8 +12,11 @@ enum JingleAction: String {
     case sessionInfo = "session-info"
     case contentAdd = "content-add"
     case contentAccept = "content-accept"
+    case contentModify = "content-modify"
     case contentReject = "content-reject"
     case contentRemove = "content-remove"
+    case descriptionInfo = "description-info"
+    case securityInfo = "security-info"
 }
 
 /// Jingle-specific error condition per XEP-0166 §10.
@@ -21,6 +24,7 @@ enum JingleErrorCondition: String {
     case outOfOrder = "out-of-order"
     case tieBreak = "tie-break"
     case unknownSession = "unknown-session"
+    case unsupportedInfo = "unsupported-info"
 
     var element: XMLElement {
         XMLElement(name: rawValue, namespace: XMPPNamespaces.jingleErrors)
@@ -349,13 +353,17 @@ public struct IBBTransport: Sendable, Hashable {
         guard element.name == "transport",
               element.namespace == XMPPNamespaces.jingleIBB,
               let sid = element.attribute("sid"),
-              let blockSizeStr = element.attribute("block-size"),
-              let blockSize = Int(blockSizeStr),
-              // XEP-0047 caps block-size at 65535; a non-positive size would stall or crash chunking.
-              (1 ... 65535).contains(blockSize) else { return nil }
+              let blockSize = Self.blockSize(of: element) else { return nil }
 
         self.sid = sid
         self.blockSize = blockSize
+    }
+
+    /// The `block-size` of an IBB `<transport/>` or `<open/>`, or nil when it is missing or out of range: XEP-0047 caps
+    /// it at 65535, and a non-positive size would stall or crash chunking.
+    static func blockSize(of element: XMLElement) -> Int? {
+        guard let blockSize = element.attribute("block-size").flatMap(Int.init), (1 ... 65535).contains(blockSize) else { return nil }
+        return blockSize
     }
 
     /// Serializes to a `<transport>` element.
@@ -460,7 +468,7 @@ struct JingleContent {
 /// IBB session state for tracking in-band data transfer.
 struct IBBSessionState {
     let ibbSID: String
-    let blockSize: Int
+    var blockSize: Int
     var receivedData: [UInt8] = []
     var nextExpectedSeq: UInt16 = 0
     var hasOpened: Bool = false

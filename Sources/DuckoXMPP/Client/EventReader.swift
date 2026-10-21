@@ -5,6 +5,8 @@
 /// is sequential — only one caller consumes events at a time (handshake then dispatch).
 final class EventReader: @unchecked Sendable {
     private var iterator: AsyncStream<XMLStreamEvent>.Iterator
+    /// The `xml:lang` of the last stream header read, which the stanzas on that stream inherit (RFC 6120 §4.7.4).
+    private(set) var streamLang: String?
 
     init(_ stream: AsyncStream<XMLStreamEvent>) {
         self.iterator = stream.makeAsyncIterator()
@@ -30,6 +32,7 @@ final class EventReader: @unchecked Sendable {
         if let version = attributes["version"], version != "1.0" {
             throw XMPPClientError.unexpectedStreamState("Unsupported stream version: \(version)")
         }
+        streamLang = attributes["xml:lang"]
         return try await awaitFeaturesElement()
     }
 

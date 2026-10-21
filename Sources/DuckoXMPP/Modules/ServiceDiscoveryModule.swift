@@ -20,6 +20,10 @@ public final class ServiceDiscoveryModule: XMPPModule, Sendable {
             self.lang = lang
             self.name = name
         }
+
+        /// This client's identity. It names the language of the client's stream itself, so the caps hashes cover that
+        /// language whichever one a server stamps on the disco#info reply.
+        public static let ducko = Identity(category: "client", type: "pc", lang: XMPPStreamWriter.lang, name: "Ducko")
     }
 
     /// Result of a disco#info query.
@@ -61,7 +65,7 @@ public final class ServiceDiscoveryModule: XMPPModule, Sendable {
         [XMPPNamespaces.discoInfo, XMPPNamespaces.discoItems]
     }
 
-    public init(identity: Identity = Identity(category: "client", type: "pc", name: "Ducko")) {
+    public init(identity: Identity = .ducko) {
         self.identity = identity
         self.state = OSAllocatedUnfairLock(initialState: State())
     }
@@ -176,7 +180,7 @@ public final class ServiceDiscoveryModule: XMPPModule, Sendable {
 
         let forms = result.children(named: "x")
             .filter { $0.namespace == XMPPNamespaces.dataForms }
-            .map { parseDataForm($0) }
+            .map { parseDataForm($0).fields }
 
         return InfoResult(identities: identities, features: features, forms: forms)
     }

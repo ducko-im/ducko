@@ -62,7 +62,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/destroy [reason]` — destroy current room (owner only)
 - `/voice grant|revoke <nickname>` — grant or revoke voice (moderator only)
 - `/affiliations [member|admin|owner|outcast]` — list affiliations (default: member)
-- `/config [submit-default]` — show room configuration fields, or submit the defaults to unlock a new room
+- `/config [submit-default]` — show the room configuration form, or submit the defaults to unlock a new room. The form shows its title, instructions and fixed text, and each field with its description and a `(required)` marker, with text-private values as `********`. In JSON it is one `data_form` record with `title`, `instructions` and a `fields` array, which `/check-registration` nests under `form`
 - `/rooms [service]` — discover available rooms on MUC service
 - `/sendfile [jid] <path>` — send a file (uses current room if jid omitted)
 - `/senddirect <jid> <path>` — send a file straight to one of the contact's online devices (XEP-0234) instead of uploading it. The contact's devices are asked first. The command prints an error when the file is missing or is a folder, or when no device takes direct transfers. Otherwise it prints `Sending <file> to <jid> directly. Use /transfers to check progress.` and the prompt returns. A decline, or a transfer that fails once under way, is printed when it happens. A failure before that point, such as the device refusing the offer or the file's contents not being readable, prints nothing and shows only in `/transfers` and the history.
@@ -73,21 +73,25 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/remove <jid>` — remove contact from roster
 - `/approve <jid>` — approve subscription request
 - `/deny <jid>` — deny subscription request
+- `/block <jid>` — block an address, as `blocklist add` does
+- `/unblock <jid>` — unblock exactly that entry, as `blocklist remove` does
+- `/blocklist` — fetch and show the block list, as `blocklist list` does
 - `/avatar [jid]` — view avatar info (own if no JID, contact's if given)
 - `/profile` — view own vCard profile
 - `/connection-info` — show TLS connection info (protocol, cipher, certificate)
 - `/encrypt <jid> on|off` — toggle OMEMO encryption for a conversation. `off` also keeps a contact's encrypted message from switching it back on.
 - `/pref chatstates on|off` — toggle chat state notifications (typing indicators)
 - `/pref markers on|off` — toggle displayed markers (read receipts)
-- `/reply <jid> <message>` — reply to last incoming message from JID
-- `/retract <jid>` — retract last sent message to JID
+- `/reply <jid> <message>` — reply to the last incoming message from JID, or in the room JID, skipping a room message the room gave no id of its own. The reply starts with a quote of that message, unless the message was encrypted and the reply is not.
+- `/retract <jid>` — retract last sent message to JID (a room message only once the room has echoed it)
 - `/edit <jid> <new-body>` — edit last sent message to JID
+- In `/reply`, `/retract` and `/edit`, `room@service/nick` names the private chat with that occupant. An address that names none of the account's chats, such as a contact's full JID, is reported as an error.
 - `/moderate [reason]` — moderate last message in current room (MUC moderator)
 - `/search <jid> <query>` — search the whole message history with JID. Prints the newest 20 matches, oldest first.
 - `/searchall <query>` — search all the account's conversations, as `history --search <query>` does. Prints the newest 20 matches.
 - `/directed-presence <jid>` — send directed presence to a JID
 - `/check-registration [jid]` — show server registration form
-- `/submit-registration [jid]` — submit registration to server/component
+- `/submit-registration [jid]` — submit registration to server/component. It prompts for every field the form asks for: a legacy form's elements, such as username, password, nick, name and email, all of them required, or a data form's fields. Enter keeps the current value. A required field asks again until it has one, and input that ends before then submits nothing. A form that only names a web page is printed and not submitted. The legacy password and a text-private field read hidden input of at most 4094 bytes from the terminal. Without a terminal, a text-private field keeps its value, and a required one that has none ends with `No <field> provided…`. A boolean field takes yes or no (also y/n, on/off, true/false, 1/0) and asks again on any other answer. A list field takes only a listed option's value or label, comma-separated for list-multi. Text-multi and jid-multi read lines up to an empty one, and jid-multi also splits on commas.
 - `/unregister-account` — unregister account from server
 - `help` — show available commands
 - `quit` / `exit` — disconnect and exit
@@ -175,6 +179,18 @@ Delete an XMPP account by JID. Disconnects if connected, removes the account fro
 ducko account delete alice@example.com
 ```
 
+### `account reset-security <jid>`
+
+Once an account has signed in with SCRAM and the server proved it knows the password, Ducko refuses any later sign-in where the server offers only PLAIN, which sends the password itself. The app and the CLI share that requirement. A refused connect exits 1 with `Error: Sign-in refused: …`. Its event line ends with `Run 'ducko account reset-security <jid>' to send the password anyway.`, and in JSON it is `{"account":"<uuid>","message":"<text>","reason":"plain_after_scram","type":"sign_in_refused"}`. It is not an authentication failure, so the password is not to blame.
+
+`reset-security` clears the requirement without connecting, so the next sign-in sends the password to a server offering only PLAIN. The next SCRAM sign-in sets it again.
+
+```
+ducko account reset-security alice@example.com
+```
+
+To stage a refusal against the stub server, which offers only PLAIN, set the requirement in the throwaway profile's store: `sqlite3 "$HOME/Library/Application Support/Ducko-Dev-<unique>/default.store" "UPDATE ZACCOUNTRECORD SET ZREQUIRESSCRAM=1; SELECT changes();"`.
+
 ### `roster list`
 
 List an authoritative, locally saved snapshot for the selected account, grouped with current presence indicators. Waits up to 15 seconds for the identified full roster response to be saved. An empty snapshot completes successfully; JSON emits a `roster_empty` record.
@@ -258,6 +274,32 @@ Remove a bookmark. Retracts the PEP item.
 ducko bookmarks remove chat@conference.example.com
 ```
 
+### `blocklist list`
+
+List the account's block list (XEP-0191) as the server holds it, one address per line, sorted. An entry is a bare JID or a full JID, which blocks only that device of the contact. JSON emits one `block_list_entry` record (`jid`) per entry, or `block_list_empty` (with `account`). Against a server that does not advertise blocking, every `blocklist` subcommand exits 1 and prints `Error: The server does not support blocking`.
+
+```
+ducko blocklist list
+ducko blocklist list --output json
+```
+
+### `blocklist add <jid>`
+
+Block an address, which need not be in the roster. A full JID blocks only that device. Prints `Blocked <jid>.` once the server confirms.
+
+```
+ducko blocklist add spam@example.com
+ducko blocklist add alice@example.com/laptop
+```
+
+### `blocklist remove <jid>`
+
+Unblock exactly the entry the address names, as `blocklist list` prints it: removing a contact's bare JID leaves the entries for their devices in place. Prints `Unblocked <jid>.` once the server confirms.
+
+```
+ducko blocklist remove alice@example.com/laptop
+```
+
 ### `avatar get <jid> [--save <path>]`
 
 Fetch and save a contact's avatar. Tries PEP (XEP-0084) first, falls back to vCard (XEP-0054). By default it saves to `<jid>.<ext>`, with the extension taken from the avatar's MIME type (`png` if the type is unknown).
@@ -269,15 +311,15 @@ ducko avatar get alice@example.com --save alice.jpg
 
 ### `avatar set <path>`
 
-Publish own avatar from an image file (PNG recommended). Publishes via PEP and updates vCard if server lacks XEP-0398 conversion.
+Publish own avatar from an image file, converted to PNG and scaled down to at most 512 pixels on its longer side. Checks the account's server for PEP first, and without it exits 1 with `Error: The server cannot share avatars, so the picture was not published`. It publishes via PEP and updates vCard if server lacks XEP-0398 conversion. Prints the PNG's hash and size.
 
 ```
 ducko avatar set photo.png
 ```
 
-### `account register --server <domain> --username <user> --password <pw> [--email <email>]`
+### `account register --server <domain> --username <user> --password <pw> [--email <email>] [--host <host>] [--port <port>]`
 
-Register a new account on a server via XEP-0077 In-Band Registration. Creates the account on the remote server, then saves it locally.
+Register a new account on a server via XEP-0077 In-Band Registration. Fetches the server's form first and registers on the same connection, then saves the account locally and signs in. With `--host`, and `--port` when given, both connections go through that endpoint. When the form asks for more than username, password and email, or for an email `--email` did not give, the command prints it and prompts for its fields as `/submit-registration` does, with the given values filled in. A form that only names a web page is printed, and the command exits 1.
 
 ```
 ducko account register --server example.com --username alice --password secret
@@ -286,7 +328,7 @@ ducko account register --server example.com --username alice --password secret -
 
 ### `account check-registration --server <domain> [--host <host>] [--port <port>]`
 
-Fetch and display a server's XEP-0077 registration form without registering. Useful for inspecting required fields or CAPTCHAs before calling `account register`.
+Fetch and display a server's XEP-0077 registration form without registering: its instructions, the web page it names for registering (`Register at:`), and every field it asks for, with the password obscured. Useful for inspecting required fields or CAPTCHAs before calling `account register`. In JSON, the `registration_form` record carries `redirect_url`, a legacy form's `fields` as `{name, value}` objects (every one required), and a data form under `form`.
 
 ```
 ducko account check-registration --server example.com
@@ -312,7 +354,7 @@ ducko server-info --output json
 
 ### `room list [--service <jid>] [--search <keyword>]`
 
-Discover available rooms on a MUC service. Auto-discovers the server's MUC service if `--service` is omitted. Use `--search` / `-q` to search via XEP-0433 Extended Channel Search.
+Discover available rooms on a MUC service. Auto-discovers the server's MUC service if `--service` is omitted. Use `--search` / `-q` to search via XEP-0433 Extended Channel Search. When the search service rate-limits the search, the command exits 1 with `Error: The server is limiting channel searches, try again in <n> s`. The wait is the service's `retry-after`, else 10 seconds, doubling with each further limit in a row. It is stored with the account per search service, so later `room list --search` runs, the REPL and the app wait it out too, across relaunches.
 
 ```
 ducko room list
@@ -421,7 +463,9 @@ ducko import adium --path ~/Library/Application\ Support/Adium\ 2.0/Users/Defaul
 [2026-02-27T10:00:15.000Z] <- alice@example.com: Secret message [encrypted]
 ```
 
-`<-` = incoming, `->` = outgoing. Markers: `[delivered]` for delivery receipts, `[read]` instead once the contact has read the message, `[edited]` for corrected messages, `[encrypted]` for OMEMO-encrypted messages, `[error: ...]` for errors. An OMEMO message that could not be decrypted reads `<jid>: error: This message could not be decrypted` in place of its body.
+`<-` = incoming, `->` = outgoing. Markers: `[delivered]` for delivery receipts, `[read]` instead once the contact has read the message, `[edited]` for corrected messages, `[encrypted]` for OMEMO-encrypted messages, `[error: ...]` for errors. An encrypted message that could not be decrypted reads `<jid>: error: <notice>` in place of its body, and is also marked `[encrypted]`. The notice says why: `This message could not be decrypted`, `This message was not encrypted for this device`, `This message could not be trusted, because its encryption names another sender, recipient or time`, `This message could not be decrypted, because the room does not reveal who sent it`, or `This message is encrypted with <method>, which Ducko cannot decrypt` for a message encrypted with something other than OMEMO, such as OpenPGP.
+
+`interactive` prints an encrypted room message as it prints a plaintext one, `<room>/<nick>: <body>`, followed by `[encrypted]`. One in a room's private chat gets the `[PM]` prefix as well.
 
 History also prints timeline notes, which are not messages, on lines of their own: `[<timestamp>] -- Encryption enabled because <jid> sent an encrypted message`.
 
@@ -435,11 +479,11 @@ Same as plain with color codes (green incoming, cyan outgoing, red errors, dim t
 {"body":"Hello","direction":"incoming","from":"alice@example.com","timestamp":"2026-02-27T10:00:00Z","type":"message"}
 ```
 
-Optional keys: `"action":"true"` for a `/me` message (an outgoing one in history also carries `"actor"`, the account's address), `"attachments":"..."` (comma-separated attachment URLs, leaving out one whose URL is the whole body), `"delivered":"true"`, `"read":"true"` (with `"delivered"` also set), `"edited":"true"`, `"encrypted":"true"`, `"error":"..."`, and `"undecryptable":"true"` for an OMEMO message that could not be decrypted (its `body` is then empty). Keys are sorted alphabetically.
+Optional keys: `"action":"true"` for a `/me` message (an outgoing one in history also carries `"actor"`, the account's address), `"attachments":"..."` (comma-separated attachment URLs, leaving out one whose URL is the whole body), `"delivered":"true"`, `"read":"true"` (with `"delivered"` also set), `"edited":"true"`, `"encrypted":"true"`, `"error":"..."`, and `"undecryptable":"true"` for an encrypted message that could not be decrypted (its `body` is then empty, and `"notice"` says why). An encrypted room message `interactive` prints is a `room_message` record, and one in a room's private chat a `muc_private_message` record, each with `room` and `nickname` in place of `from`. Keys are sorted alphabetically.
 
 A timeline note in history is a record of its own: `{"kind":"encryption-enabled-by-contact","text":"...","timestamp":"...","type":"note"}`.
 
-Empty lists emit one `<kind>_empty` record instead of text: `accounts_empty`, `roster_empty`, `bookmarks_empty`, `rooms_empty`, `room_participants_empty`, `searched_channels_empty`, `messages_empty`, `omemo_identity_empty` or `omemo_devices_empty`. Account-scoped records carry `"account"`. `omemo_devices_empty` adds `"jid"`, and `room_participants_empty` carries `"room"`. OMEMO commands emit `omemo_fingerprint`, `omemo_device` (`jid`, `deviceID`, `trust`, and `fingerprint` when known) and `omemo_trust` records.
+Empty lists emit one `<kind>_empty` record instead of text: `accounts_empty`, `roster_empty`, `bookmarks_empty`, `block_list_empty`, `rooms_empty`, `room_participants_empty`, `searched_channels_empty`, `messages_empty`, `omemo_identity_empty` or `omemo_devices_empty`. Account-scoped records carry `"account"`. `omemo_devices_empty` adds `"jid"`, and `room_participants_empty` carries `"room"`. OMEMO commands emit `omemo_fingerprint`, `omemo_device` (`jid`, `deviceID`, `trust`, and `fingerprint` when known) and `omemo_trust` records.
 
 ## Throwaway Profiles
 
@@ -514,7 +558,7 @@ DUCKO_PROFILE=<sender-profile> .build/debug/DuckoCLI omemo trust RECEIVER_JID <d
 
 Then run `/encrypt RECEIVER_JID on` and `send RECEIVER_JID <text>` in the sender's REPL.
 
-The receiver's REPL prints an incoming encrypted message as it arrives, and `/history SENDER_JID` shows it again. A decrypted message ends in `[encrypted]`. A failed one reads `error: This message could not be decrypted` in place of its text and is also marked `[encrypted]`. A failed decryption also logs a warning in the receiver's file log. It reads `OMEMO key exchange rejected: …` when the sender used a pre-key the receiver no longer has, and `OMEMO decryption failed: <error>` otherwise. A repeated key exchange prints no message line and logs `OMEMO key exchange ignored: …`. No message line, live or in the history, and no log line means the message carried no key for the receiver's device, so check the trusted device ID.
+The receiver's REPL prints an incoming encrypted message as it arrives, and `/history SENDER_JID` shows it again. A decrypted message ends in `[encrypted]`. A failed one is also marked `[encrypted]` and reads `error:` and a notice in place of its text. `This message was not encrypted for this device` means it carried no key for the receiver's device, because the sender did not trust the receiver's new device, so check the trusted device ID. Otherwise it reads `This message could not be decrypted`, and the failure logs a warning in the receiver's file log. The warning is `OMEMO key exchange rejected: …` when the sender used a pre-key the receiver no longer has, and `OMEMO decryption failed: <error>` otherwise. A repeated key exchange prints no message line and logs `OMEMO key exchange ignored: …`.
 
 On the test server, a message sent while the receiver is offline reaches it through the archive sync on its next sign-in rather than as a live delivery. That path stores an encrypted message as undecryptable without trying, so this setup cannot check how a live delivery from offline storage decrypts.
 

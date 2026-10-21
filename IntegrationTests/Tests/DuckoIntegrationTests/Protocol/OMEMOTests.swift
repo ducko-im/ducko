@@ -49,8 +49,8 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 _ = try await ctx.bob.waitForEvent(
                     matching: { event in
-                        if case let .omemoEncryptedMessageReceived(_, decrypted, _) = event,
-                           decrypted == body {
+                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted)) = event,
+                           decrypted.message.body == body {
                             return true
                         }
                         return false
@@ -69,9 +69,9 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 let decryptedBody = try await ctx.bob.waitForEvent(
                     extracting: { event in
-                        if case let .omemoEncryptedMessageReceived(_, decrypted?, _) = event,
-                           decrypted == body {
-                            return decrypted
+                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted)) = event,
+                           decrypted.message.body == body {
+                            return decrypted.message.body
                         }
                         return nil
                     },
@@ -107,8 +107,8 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 _ = try await bob.waitForEvent(
                     matching: { event in
-                        if case let .omemoEncryptedMessageReceived(_, decrypted, _) = event,
-                           decrypted == bobBody {
+                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted)) = event,
+                           decrypted.message.body == bobBody {
                             return true
                         }
                         return false
@@ -117,8 +117,8 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 )
                 _ = try await carol.waitForEvent(
                     matching: { event in
-                        if case let .omemoEncryptedMessageReceived(_, decrypted, _) = event,
-                           decrypted == carolBody {
+                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted)) = event,
+                           decrypted.message.body == carolBody {
                             return true
                         }
                         return false
@@ -137,7 +137,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 let aliceJID = try harness.jid(for: TestCredentials.alice)
 
                 let body = "omemo-service-\(UUID().uuidString.prefix(8))"
-                try await harness.environment.chatService.sendMessage(toJIDString: TestCredentials.bob.jid, body: body, accountID: ctx.alice.accountID)
+                try await harness.environment.chatService.sendMessage(to: harness.jid(for: TestCredentials.bob), body: body, accountID: ctx.alice.accountID)
 
                 _ = try await ctx.bob.waitForEvent(
                     matching: { event in

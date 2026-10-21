@@ -9,10 +9,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Add a `self` field to the CLI's JSON output when a room departure or nickname change is your own
+- Add Blocked Contacts to each account's Actions menu in Preferences ▸ Accounts, listing every blocked address, including one that blocks a single device of a contact, with a field to block any address and a button to unblock each one
+- Add `ducko blocklist list`, `add` and `remove`, and the REPL commands `/block`, `/unblock` and `/blocklist`
+- Send replies that other XMPP apps show with their context: a reply starts with a quote of the message it answers, which apps that understand replies hide, and replies now work in rooms and in private chats within a room
+- Allow correcting, retracting and replying to messages in a private chat within a room, in the chat window and with `/edit`, `/retract` and `/reply` in the REPL
+- Create accounts on servers that ask for more than a username and password: Ducko fetches the server's form first and shows its further fields and instructions with what you typed filled in, or the web page the server sends you to, and registers only once every field the server asks for has a value. `ducko account register` and the REPL's `/submit-registration` prompt for those fields until each has a value, and name the web page instead of submitting an empty form
+- Show a form's title, instructions, fixed text, field descriptions and required fields in registration and room settings forms, in the app and the CLI, and keep Register, Submit and Save unavailable until every required field has a value
+- Count down in Join Room until a server that limits channel searches allows the next one, and report the wait from `ducko room list --search`. The wait survives quitting Ducko and applies to the app and the CLI alike
+- Follow avatar changes made on your account's other devices
+- Show why an encrypted message can't be read instead of dropping it: it was not encrypted for this device, it uses another method such as OpenPGP, it carries nothing to decrypt, or its room does not reveal who sent it. This includes room messages with no text of their own, announcement messages, corrections, which no longer replace a message's text with their fallback text, and messages you sent from another device under your room nickname
+- Add a `message_type` field to the CLI's JSON correction and retraction records
 
 ### Changed
 
 - Send your Mac's name to the server when signing in with the newer sign-in method, so the server can name the device a session belongs to
+- Encrypt with the current OMEMO format, so encrypted chats work with other apps that use it. Encrypted chats with earlier versions of Ducko stop working until both sides update, and each encrypted chat starts a new session
+- Stop adding a plain-text hint to encrypted messages: apps that can't decrypt them show their own notice instead
+- Publish avatars as PNG pictures of at most 512 pixels on each side, scaling down a larger picture so you can choose one of up to 50 MB instead of 8 MB, and don't publish one on a server that cannot share it
+- Change the CLI's JSON `registration_form` record: a form's fields are listed as objects, and a data form is nested under `form`, replacing the `has_*` and `field_*` keys. In JSON, `/config` prints the room settings form as one `data_form` record
 
 ### Removed
 
@@ -39,6 +53,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Keep your block list when another of your clients unblocks an address that names a device
 - Resume your session after a lost connection on servers that use the newer sign-in method, instead of starting a new one
 - Show messages you send or receive on another device even when the server can't turn on their copies during sign-in
+- Show private messages within a room that you send or receive on another device in that private chat, instead of a chat with the room's address, and stop saving invitations and error replies copied from your other devices as messages
+- Apply corrections and retractions made on your other devices, or by a contact on theirs, instead of ignoring them, and stop the CLI from printing the fallback text of a retraction made on another device
+- Apply corrections and retractions fetched from the server's archive instead of showing them as new messages or showing a retraction's fallback text
+- Fix other apps ignoring your retraction of a room message: it now names the id the room gave the message, and others' room retractions are matched the same way
+- Keep the reply, attachment and receipt request of a message when you correct it
+- Stop a correction, retraction or reply from reaching another message that happens to share its id, by giving every message an id that's never reused and matching only messages from the same sender
+- Show messages delivered while you were offline, and the earlier messages a room shows when you join it, at the time they were sent, and stop the room's earlier messages from counting as unread or alerting you
+- Fetch every message the server's archive holds since you were last online when you reconnect, not only the newest 50 of each chat you already had, and open the chats that exist only on the server
+- Send typing notifications only when your typing changes, stop sending them to a contact whose messages carry none, even after reconnecting, and send them to rooms as room messages instead of one-to-one messages
+- Send your app's capabilities with every presence, including when you join a room or change your nickname there, and check the capabilities contacts announce before relying on them
+- Keep other apps' data in a bookmark when Ducko saves it, failing the save when that data can't be fetched first, tell your other clients when you remove one, and join or leave a room when another device turns its bookmark's auto-join on or off
+- Make direct file transfers work with more apps: accept one offered over the in-band fallback first, send in the smaller blocks the receiver asks for, try the receiver's connection offers too, settle on one fallback when both sides switch to it at once, refuse data sent after a transfer was closed, and answer every transfer request, including ones Ducko does not support
+- Decrypt encrypted messages you send or receive on another device and show them in the chat with the other person, instead of dropping them
+- Decrypt encrypted room messages and private messages within a room, and show them under the sender's nickname
+- Sign in to an account `ducko account register` created through the `--host` and `--port` it was given
+- Hide what you type into a form's password fields, and keep every value of a field that takes several
+- Accept passwords longer than 128 characters at the CLI's password prompt, and refuse one too long to read whole instead of cutting it short
+- Remove your avatar on a server that cannot share avatars, by clearing it from your profile
+- Stop announcing a new avatar to contacts when it could not be saved to your profile, and stop a profile save from bringing back an avatar you changed elsewhere
+- Save your first avatar to your profile, and tell contacts when you have none, on servers that report a profile never saved before as missing
+- Name the file `ducko avatar get` saves, and the type it reports, after the picture's actual format instead of the type the profile claims
 
 ### Security
 
@@ -47,6 +82,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Ignore published bookmarks, avatars and encryption device lists that come from a single device or room occupant instead of the account they belong to
 - Tie sign-in to the encrypted connection when the server lists a way of doing so that Ducko supports, though someone holding a certificate your Mac trusts for the server can still make Ducko sign in without it
 - Never use the newer sign-in method over an unencrypted connection
+- Once an account has signed in without sending its password, refuse a later sign-in that would send it, which can mean someone is intercepting the connection. The Sign-In Refused alert lets you keep refusing or reset this, as does `ducko account reset-security`
+- Show an encrypted message as untrusted when the sender, recipient or time sealed inside it don't match how it arrived
+- Keep corrections and retractions of an encrypted message encrypted even after you turn encryption off, and refuse to send one that can't be encrypted instead of sending it in the clear
+- Stop showing a lock in a private chat within a room, which Ducko cannot encrypt: the chat offers no Encryption menu, and one whose encryption an earlier version turned on refuses to send until you turn it off
+- Show only the encrypted content of an encrypted message, ignoring unencrypted text, file links, reply references, corrections, retractions, room topics and invitations sent alongside it, including in private messages within a room, in messages fetched from the server's archive, and in the CLI's output for messages from your other devices
 
 ## [0.9.0] - 2026-10-18
 

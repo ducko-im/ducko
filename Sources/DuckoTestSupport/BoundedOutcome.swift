@@ -29,3 +29,10 @@ public func boundedOutcome(
     }
     return await box.result
 }
+
+/// What `task` throws, waiting no longer than `boundedOutcome` does. Returns `nil` when it finishes without throwing or
+/// is still running at the deadline, so a task that should fail fast cannot hang the test.
+public func boundedFailure(of task: Task<Void, any Error>) async throws -> (any Error)? {
+    guard case let .failure(error) = try await boundedOutcome(of: { try await task.value }) else { return nil }
+    return error
+}

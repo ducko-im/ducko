@@ -1,8 +1,9 @@
 import DuckoXMPP
 import Foundation
 
-/// Works out which of a contact's online sessions a direct file transfer can go to. A session is asked whether it
-/// takes direct transfers until it answers, and the answer is kept for as long as the session is known to be online.
+/// Works out which of a contact's online sessions a direct file transfer can go to. A session's verified capabilities
+/// answer whether it takes direct transfers; a session without them is asked until it answers. The answer is kept for
+/// as long as the session is known to be online.
 @MainActor @Observable
 final class DirectTransferResolver {
     /// The most sessions of one contact a single refresh asks. The contact chooses how many sessions to announce, and
@@ -40,15 +41,23 @@ final class DirectTransferResolver {
         return capable.first { $0.resourcePart == lockedResource } ?? capable.first
     }
 
-    /// Asks the online sessions of `jid` that have no answer on record and no question on its way, up to
-    /// `maxSessionsAsked`, in the order the contact shows them. Returns once every question on its way to one of them
-    /// has been answered or has gone unanswered.
+    /// Takes the answer of the online sessions of `jid` whose capabilities are verified, then asks those that have no
+    /// answer on record and no question on its way, up to `maxSessionsAsked`, in the order the contact shows them.
+    /// Returns once every question on its way to one of them has been answered or has gone unanswered.
     func refresh(for jid: BareJID, accountID: UUID) async {
         guard let client = accountService?.connectedClient(for: accountID),
               let disco = await client.module(ofType: ServiceDiscoveryModule.self) else { return }
+        let caps = await client.module(ofType: CapsModule.self)
         // Chosen only now, with nothing suspending before the questions are on record: two refreshes at once would
         // otherwise both find the same sessions unasked.
-        let unanswered = sessions(of: jid, accountID: accountID).filter { supportByAccount[accountID]?[$0] == nil }
+        let online = sessions(of: jid, accountID: accountID)
+        for session in online where supportByAccount[accountID]?[session] == nil
+            && asking[Question(accountID: accountID, session: session)] == nil {
+            if let features = caps?.features(of: .full(session)) {
+                supportByAccount[accountID, default: [:]][session] = features.contains(XMPPNamespaces.jingleFileTransfer)
+            }
+        }
+        let unanswered = online.filter { supportByAccount[accountID]?[$0] == nil }
         let unasked = unanswered.filter { asking[Question(accountID: accountID, session: $0)] == nil }
         for session in unasked.prefix(Self.maxSessionsAsked) {
             // Asked in a task of its own, which a cancelled caller does not end, so a caller that restarts on every

@@ -53,8 +53,8 @@ func driveMockConnect(
     await simulateNoTLSConnect(transport, postAuthFeatures: postAuthFeatures)
     if awaitInitialPresence {
         // The handshake sends 4 stanzas through bind; the client then sends the initial available presence
-        // (stanza 5) and entity caps (stanza 6), so a cumulative count of 6 means both have flushed.
-        await transport.waitForSent(count: 6)
+        // (stanza 5), so a cumulative count of 5 means it has flushed.
+        await transport.waitForSent(count: 5)
     }
     for _ in 0 ..< 100 {
         if service.connectedClient(for: accountID) != nil { break }
@@ -62,17 +62,6 @@ func driveMockConnect(
     }
     let client = try #require(service.connectedClient(for: accountID))
     return (client, task)
-}
-
-/// Waits until `predicate` holds, failing the test when it doesn't within `boundedOutcome`'s deadline.
-func eventually(_ predicate: @escaping @MainActor () async throws -> Bool) async throws {
-    let result = try await boundedOutcome { @MainActor in
-        while try await !predicate() {
-            try Task.checkCancellation(); await Task.yield()
-        }
-    }
-    try #require(result != nil)
-    try result?.get()
 }
 
 /// Waits, within `boundedOutcome`'s deadline, for a stanza containing `fragment` to go out on `transport`.

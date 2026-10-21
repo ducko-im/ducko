@@ -1066,6 +1066,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
             let harness = JingleInitiatorHarness()
             var content = XMLElement(name: "content", attributes: ["creator": "initiator", "name": "a-file-offer"])
             content.addChild(XMLElement(name: "description", namespace: XMPPNamespaces.jingleFileTransfer))
+            content.addChild(SOCKS5Transport(sid: "transport-sid").toXML())
             try harness.receive(action: "session-initiate", sid: "bad-sid", payload: [content], id: "initiate-bad")
 
             let terminate = try #require(try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue))

@@ -63,7 +63,16 @@ enum Base64 {
             if byte == 0x0D || byte == 0x0A || byte == 0x20 || byte == 0x09 { continue }
             input.append(byte)
         }
+        return decode(input)
+    }
 
+    /// Decodes base64 that holds nothing outside the alphabet and padding, not even whitespace, as XEP-0047 §10 requires
+    /// of IBB data.
+    static func decodeStrict(_ string: String) -> [UInt8]? {
+        decode(Array(string.utf8))
+    }
+
+    private static func decode(_ input: [UInt8]) -> [UInt8]? {
         guard input.count % 4 == 0 else { return nil }
         if input.isEmpty { return [] }
 

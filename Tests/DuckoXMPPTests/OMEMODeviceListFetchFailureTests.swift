@@ -44,7 +44,7 @@ extension OMEMOModuleTests {
             await mock.simulateReceive("""
             <iq type="result" id="\(id)"><pubsub xmlns="http://jabber.org/protocol/pubsub">\
             <items node="\(XMPPNamespaces.omemoDevices)"><item id="current">\
-            <list xmlns="urn:xmpp:omemo:2"><device id="99"/></list></item></items></pubsub></iq>
+            <devices xmlns="urn:xmpp:omemo:2"><device id="99"/></devices></item></items></pubsub></iq>
             """)
         }
 
@@ -62,8 +62,8 @@ extension OMEMOModuleTests {
         }
 
         private func publishedDeviceID(in bundlePublish: String) throws -> Substring {
-            let nodeStart = try #require(bundlePublish.range(of: OMEMOModule.bundleNodePrefix))
-            return bundlePublish[nodeStart.upperBound...].prefix { $0.isNumber }
+            let itemStart = try #require(bundlePublish.range(of: "<item id=\""))
+            return bundlePublish[itemStart.upperBound...].prefix { $0.isNumber }
         }
 
         /// A fetch that fails for any reason but a missing node publishes only the bundle and skips pruning. The device
@@ -87,7 +87,7 @@ extension OMEMOModuleTests {
                 bundleIndex = 6
             }
             let bundlePublish = await sentStanza(bundleIndex)
-            #expect(bundlePublish.contains("<publish") && bundlePublish.contains(OMEMOModule.bundleNodePrefix))
+            #expect(bundlePublish.contains("<publish") && bundlePublish.contains(XMPPNamespaces.omemoBundles))
             try await acknowledge(bundlePublish)
             try await connectTask.value
 

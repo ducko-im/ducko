@@ -296,7 +296,7 @@ public final class PresenceService {
             }
         case .presenceSubscriptionApproved, .presenceSubscriptionRevoked:
             break
-        case .authenticationFailed,
+        case .authenticationFailed, .plainSignInRefused,
              .messageReceived, .presenceReceived, .iqReceived,
              .rosterUpdated,
              .messageCarbonReceived, .messageCarbonSent,

@@ -5,9 +5,16 @@ private let log = Logger(label: "im.ducko.xmpp.blocking")
 
 /// Manages the XMPP blocking command (XEP-0191) — block list retrieval, block/unblock contacts, and push notifications.
 public final class BlockingModule: XMPPModule, Sendable {
+    public enum BlockingError: Error {
+        case notConnected
+        case blockingNotSupported
+    }
+
     private struct State {
         var context: ModuleContext?
-        var blockedJIDs: Set<BareJID> = []
+        var blockedJIDs: Set<JID> = []
+        /// Whether the server advertises blocking, once its disco#info has answered.
+        var isSupported: Bool?
     }
 
     private let state: OSAllocatedUnfairLock<State>
@@ -27,34 +34,13 @@ public final class BlockingModule: XMPPModule, Sendable {
     // MARK: - Lifecycle
 
     public func handleConnect() async throws {
-        guard let context = state.withLock({ $0.context }) else { return }
-
-        // Request block list
-        var iq = XMPPIQ(type: .get, id: context.generateID())
-        let blocklist = XMLElement(name: "blocklist", namespace: XMPPNamespaces.blocking)
-        iq.element.addChild(blocklist)
-
-        let result: XMLElement?
         do {
-            result = try await context.sendIQ(iq)
+            try await loadBlockList()
+        } catch BlockingError.blockingNotSupported {
+            log.info("The server does not support blocking")
         } catch is XMPPStanzaError {
-            log.warning("Block list GET returned stanza error")
-            return
+            log.warning("Block list request returned a stanza error")
         }
-
-        guard let result else { return }
-
-        let jids = result.children(named: "item").compactMap { element -> BareJID? in
-            guard let jidStr = element.attribute("jid") else { return nil }
-            return BareJID.parse(jidStr)
-        }
-
-        state.withLock { state in
-            state.blockedJIDs = Set(jids)
-        }
-
-        log.info("Block list loaded: \(jids.count) items")
-        context.emitEvent(.blockListLoaded(jids))
     }
 
     public func handleDisconnect() async {
@@ -85,10 +71,7 @@ public final class BlockingModule: XMPPModule, Sendable {
 
     private func processBlockingPush(child: XMLElement, isBlock: Bool, context: ModuleContext) {
         let items = child.children(named: "item")
-        let jids = items.compactMap { item -> BareJID? in
-            guard let jidStr = item.attribute("jid") else { return nil }
-            return BareJID.parse(jidStr)
-        }
+        let jids = Self.itemJIDs(in: child)
 
         // XEP-0191 §3.5: An <unblock/> with no items clears the entire block list. Announced as an empty list rather than
         // per contact, since a module built for a resumed stream never loaded the list it would name them from.
@@ -133,22 +116,43 @@ public final class BlockingModule: XMPPModule, Sendable {
         }
     }
 
+    private static func itemJIDs(in element: XMLElement) -> [JID] {
+        element.children(named: "item").compactMap { item in
+            item.attribute("jid").flatMap(JID.parse)
+        }
+    }
+
     // MARK: - Public API
 
-    public var blockedJIDs: Set<BareJID> {
+    public var blockedJIDs: Set<JID> {
         state.withLock { $0.blockedJIDs }
     }
 
-    public func blockContact(jid: BareJID) async throws {
+    /// Requests the block list from the server, announcing it as `.blockListLoaded`.
+    @discardableResult
+    public func loadBlockList() async throws -> [JID] {
+        let context = try await supportedContext()
+
+        var iq = XMPPIQ(type: .get, id: context.generateID())
+        iq.element.addChild(XMLElement(name: "blocklist", namespace: XMPPNamespaces.blocking))
+        let jids = try await context.sendIQ(iq).map(Self.itemJIDs) ?? []
+
+        state.withLock { $0.blockedJIDs = Set(jids) }
+        log.info("Block list loaded: \(jids.count) items")
+        context.emitEvent(.blockListLoaded(jids))
+        return jids
+    }
+
+    public func blockContact(jid: JID) async throws {
         try await sendBlockingIQ(elementName: "block", jid: jid)
     }
 
-    public func unblockContact(jid: BareJID) async throws {
+    public func unblockContact(jid: JID) async throws {
         try await sendBlockingIQ(elementName: "unblock", jid: jid)
     }
 
-    private func sendBlockingIQ(elementName: String, jid: BareJID) async throws {
-        guard let context = state.withLock({ $0.context }) else { return }
+    private func sendBlockingIQ(elementName: String, jid: JID) async throws {
+        let context = try await supportedContext()
 
         var iq = XMPPIQ(type: .set, id: context.generateID())
         var element = XMLElement(name: elementName, namespace: XMPPNamespaces.blocking)
@@ -157,5 +161,33 @@ public final class BlockingModule: XMPPModule, Sendable {
         iq.element.addChild(element)
 
         _ = try await context.sendIQ(iq)
+    }
+
+    // MARK: - Support (XEP-0191 §3.1)
+
+    /// The module's context once the server's disco#info lists blocking, asking the server on first use.
+    private func supportedContext() async throws -> ModuleContext {
+        let (context, known) = state.withLock { ($0.context, $0.isSupported) }
+        guard let context else { throw BlockingError.notConnected }
+
+        let isSupported: Bool
+        if let known {
+            isSupported = known
+        } else {
+            isSupported = try await serverAdvertisesBlocking(context: context)
+            state.withLock { $0.isSupported = isSupported }
+        }
+        guard isSupported else { throw BlockingError.blockingNotSupported }
+        return context
+    }
+
+    private func serverAdvertisesBlocking(context: ModuleContext) async throws -> Bool {
+        guard let domainJID = JID.parse(context.domain) else { return false }
+
+        var iq = XMPPIQ(type: .get, to: domainJID, id: context.generateID())
+        iq.element.addChild(XMLElement(name: "query", namespace: XMPPNamespaces.discoInfo))
+
+        let result = try await context.sendIQ(iq)
+        return result?.children(named: "feature").contains { $0.attribute("var") == XMPPNamespaces.blocking } ?? false
     }
 }

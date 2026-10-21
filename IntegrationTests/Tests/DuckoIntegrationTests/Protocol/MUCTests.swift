@@ -360,7 +360,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 var fields = try await harness.environment.chatService.getRoomConfig(
                     jidString: roomJID.description,
                     accountID: alice.accountID
-                )
+                ).fields
                 try #require(!fields.isEmpty)
 
                 // Find and modify the room name field.
@@ -379,7 +379,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 let updatedFields = try await harness.environment.chatService.getRoomConfig(
                     jidString: roomJID.description,
                     accountID: alice.accountID
-                )
+                ).fields
                 let updatedName = try #require(updatedFields.first { $0.variable == "muc#roomconfig_roomname" })
                 #expect(updatedName.values == [newName])
             }

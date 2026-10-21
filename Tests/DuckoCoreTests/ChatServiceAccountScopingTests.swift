@@ -198,7 +198,7 @@ enum ChatServiceAccountScopingTests {
             let accountB = UUID()
             let peer = try #require(BareJID.parse("peer@example.com"))
 
-            await service.handleEvent(.chatStateChanged(from: peer, state: .composing), accountID: accountA)
+            await service.handleEvent(.chatStateChanged(from: .bare(peer), state: .composing, messageType: .chat), accountID: accountA)
 
             #expect(service.isPartnerTyping(jidString: peer.description, accountID: accountA))
             #expect(!service.isPartnerTyping(jidString: peer.description, accountID: accountB))

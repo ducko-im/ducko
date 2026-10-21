@@ -23,6 +23,8 @@ enum SASLAuthError: Error, Equatable {
     case iterationCountTooLow(Int)
     case channelBindingDowngrade
     case unsupportedSignInStep
+    /// Sign-in requires SCRAM, and the server offers only PLAIN, which sends the password itself.
+    case plainRefused
 
     /// A `.serverFailure` prefers the server's non-blank `text`, then a phrase for a known condition, then the raw
     /// condition name.
@@ -39,6 +41,7 @@ enum SASLAuthError: Error, Equatable {
         case let .iterationCountTooLow(count): "The server's password hashing is too weak (\(count) iterations)"
         case .channelBindingDowngrade: "The server's authentication options contradict each other, which can mean the connection is being tampered with"
         case .unsupportedSignInStep: "The server asked for an extra authentication step that is not supported"
+        case .plainRefused: "The server offers only a sign-in that sends the password, and this account has signed in without sending it before"
         }
     }
 
@@ -125,14 +128,27 @@ func chooseChannelBinding(
 }
 
 /// Builds SASL mechanism preference order for the chosen channel binding: only `-PLUS` mechanisms when bound, so a
-/// stronger unbound mechanism never wins over binding, and none of them otherwise.
+/// stronger unbound mechanism never wins over binding, and none of them otherwise. `requiresSCRAM` leaves PLAIN out.
 ///
 /// Shared between ``SASLAuthenticator`` (SASL1) and ``SASL2Authenticator`` (SASL2).
-func buildSASLPreferenceOrder(channelBinding: ChannelBindingMode) -> [String] {
+func buildSASLPreferenceOrder(channelBinding: ChannelBindingMode, requiresSCRAM: Bool) -> [String] {
     switch channelBinding {
     case .bound:
         [SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha1Plus]
     case .none, .clientSupportsButNotUsed:
-        [SCRAMMechanismName.sha256, SCRAMMechanismName.sha1, SASLPlain.mechanismName]
+        [SCRAMMechanismName.sha256, SCRAMMechanismName.sha1] + (requiresSCRAM ? [] : [SASLPlain.mechanismName])
     }
+}
+
+/// The first offered mechanism in preference order. With `requiresSCRAM`, an offer whose only usable mechanism is PLAIN
+/// is refused, so the password never goes out.
+func selectSASLMechanism(
+    offered: Set<String>,
+    channelBinding: ChannelBindingMode,
+    requiresSCRAM: Bool
+) throws(SASLAuthError) -> String {
+    let preferenceOrder = buildSASLPreferenceOrder(channelBinding: channelBinding, requiresSCRAM: requiresSCRAM)
+    if let selected = preferenceOrder.first(where: { offered.contains($0) }) { return selected }
+    if requiresSCRAM, offered.contains(SASLPlain.mechanismName) { throw .plainRefused }
+    throw .noSupportedMechanism
 }

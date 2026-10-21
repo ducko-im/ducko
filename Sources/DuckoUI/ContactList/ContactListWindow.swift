@@ -153,6 +153,7 @@ struct ContactListWindow: View {
                 Text("The TLS certificate for \(warning.accountJID) has changed.\n\nPrevious: \(warning.previousFingerprint)\nNew: \(warning.newFingerprint)")
             }
         }
+        .signInSecurityAlert()
     }
 }
 

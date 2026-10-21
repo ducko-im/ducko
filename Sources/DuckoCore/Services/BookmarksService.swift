@@ -22,11 +22,18 @@ enum BookmarksError: Error, LocalizedError {
 @MainActor @Observable
 public final class BookmarksService {
     private var bookmarksByAccount: [UUID: [RoomBookmark]] = [:]
+    /// Accounts whose kept bookmarks are the whole list, as fetched. Without a fetch, an account keeps only the
+    /// bookmarks that notifications named.
+    private var fetchedBookmarkLists: Set<UUID> = []
     /// Accounts whose stream dropped and may yet resume. Their bookmarks are kept but not shown: a resumed stream
     /// carries on where it left off, so the server replays the pushes that were missed rather than the whole list.
     private var suspendedAccounts: Set<UUID> = []
     /// Accounts whose sign-in pass (bookmark fetch, auto-joins, rejoins) ran to its end on the session they are in.
     private(set) var completedSignInPass: Set<UUID> = []
+    /// Per-account rooms whose bookmark this device removed, until the server's notification of that retraction
+    /// arrives. A removal here keeps the room joined, so its notification is not taken for a removal made on another
+    /// device, which leaves the room.
+    private var removedBookmarksByAccount: [UUID: Set<String>] = [:]
 
     public var bookmarks: [RoomBookmark] {
         bookmarksByAccount.filter { !suspendedAccounts.contains($0.key) }.values.flatMap(\.self)
@@ -56,14 +63,17 @@ public final class BookmarksService {
     /// never gets here, so the list is kept for a resume.
     func purgeAccount(_ accountID: UUID) {
         bookmarksByAccount.removeValue(forKey: accountID)
+        fetchedBookmarkLists.remove(accountID)
         suspendedAccounts.remove(accountID)
         completedSignInPass.remove(accountID)
+        removedBookmarksByAccount.removeValue(forKey: accountID)
     }
 
     #if DEBUG
         /// Test seam: seeds per-account bookmarks without a live PEP fetch.
         func setBookmarksForTesting(_ bookmarks: [RoomBookmark], accountID: UUID) {
             bookmarksByAccount[accountID] = bookmarks
+            fetchedBookmarkLists.insert(accountID)
         }
     #endif
 
@@ -82,6 +92,7 @@ public final class BookmarksService {
             guard accountService?.connectedClient(for: accountID) === client else { return false }
             let bookmarks = parsed.map { mapToRoomBookmark($0) }
             bookmarksByAccount[accountID] = bookmarks
+            fetchedBookmarkLists.insert(accountID)
             await autojoinRooms(from: bookmarks, accountID: accountID)
             return true
         } catch {
@@ -102,12 +113,15 @@ public final class BookmarksService {
         guard try await discoModule.queryInfo(for: .bare(account.jid)).supportsPrivatePEPStorage else {
             throw BookmarksError.privateStorageUnsupported
         }
+        var bookmark = bookmark
+        bookmark.extensions = try await existingExtensions(of: jid, accountID: accountID, pepModule: pepModule)
         let xmppBookmark = Bookmark(
             jid: jid,
             name: bookmark.name,
             autojoin: bookmark.autojoin,
             nickname: bookmark.nickname,
-            password: bookmark.password
+            password: bookmark.password,
+            extensions: bookmark.extensions
         )
         try await pepModule.publishItem(
             node: XMPPNamespaces.bookmarks2,
@@ -116,14 +130,22 @@ public final class BookmarksService {
             options: Bookmark.publishOptions
         )
 
-        // Merge into local state
-        upsertBookmark(bookmark, accountID: accountID)
+        // Whichever of this result and the server's notification of it is handled first joins or leaves the room.
+        await storeBookmarks([bookmark], accountID: accountID)
     }
 
     public func removeBookmark(jidString: String, accountID: UUID) async throws {
         guard let client = accountService?.connectedClient(for: accountID), let pepModule = await client.module(ofType: PEPModule.self) else { return }
 
-        try await pepModule.retractItem(node: XMPPNamespaces.bookmarks2, itemID: jidString)
+        removedBookmarksByAccount[accountID, default: []].insert(jidString)
+        do {
+            try await pepModule.retractItem(node: XMPPNamespaces.bookmarks2, itemID: jidString, notify: true)
+        } catch let error as XMPPStanzaError {
+            // Only a refusal says the bookmark is still there. After a timeout or a lost connection the server may have
+            // removed it, and its notification may yet come.
+            removedBookmarksByAccount[accountID]?.remove(jidString)
+            throw error
+        }
         bookmarksByAccount[accountID]?.removeAll { $0.jidString == jidString }
     }
 
@@ -158,7 +180,7 @@ public final class BookmarksService {
             } else {
                 suspendedAccounts.insert(accountID)
             }
-        case .authenticationFailed,
+        case .authenticationFailed, .plainSignInRefused,
              .messageReceived, .presenceReceived, .iqReceived,
              .rosterUpdated,
              .presenceUpdated, .presenceSubscriptionRequest,
@@ -203,17 +225,27 @@ public final class BookmarksService {
               from == account.jid else { return }
 
         let parsed = items.compactMap { Bookmark.parse(itemID: $0.id, payload: $0.payload) }
+        await storeBookmarks(parsed.map(mapToRoomBookmark), accountID: accountID)
+    }
 
-        var newBookmarks: [RoomBookmark] = []
-        for bookmark in parsed {
-            let roomBookmark = mapToRoomBookmark(bookmark)
-            let isNew = upsertBookmark(roomBookmark, accountID: accountID)
-            if isNew {
-                newBookmarks.append(roomBookmark)
+    /// Stores `bookmarks` in place of the ones for the same rooms, then joins the rooms whose bookmark turned auto-join
+    /// on and leaves those whose bookmark turned it off.
+    private func storeBookmarks(_ bookmarks: [RoomBookmark], accountID: UUID) async {
+        var joining: [RoomBookmark] = []
+        var leaving: [String] = []
+        for bookmark in bookmarks {
+            let wasAutojoin = upsertBookmark(bookmark, accountID: accountID)?.autojoin
+            if bookmark.autojoin, wasAutojoin != true {
+                joining.append(bookmark)
+            } else if !bookmark.autojoin, wasAutojoin == true {
+                leaving.append(bookmark.jidString)
             }
         }
 
-        await autojoinRooms(from: newBookmarks, accountID: accountID)
+        await autojoinRooms(from: joining, accountID: accountID)
+        for jidString in leaving {
+            try? await chatService?.leaveRoom(jidString: jidString, accountID: accountID)
+        }
     }
 
     private func handleBookmarksRetracted(from: BareJID, itemIDs: [String], accountID: UUID) async {
@@ -222,6 +254,7 @@ public final class BookmarksService {
 
         for itemID in itemIDs {
             bookmarksByAccount[accountID]?.removeAll { $0.jidString == itemID }
+            guard removedBookmarksByAccount[accountID]?.remove(itemID) == nil else { continue }
             try? await chatService?.leaveRoom(jidString: itemID, accountID: accountID)
         }
     }
@@ -260,24 +293,42 @@ public final class BookmarksService {
         Set((accountService?.roomModule(for: accountID)?.roomOccupancies ?? [:]).keys)
     }
 
-    @discardableResult
-    private func upsertBookmark(_ bookmark: RoomBookmark, accountID: UUID) -> Bool {
+    /// The extensions of the bookmark the account already has for `jid`. Without a fetched list, the server's copy of
+    /// that bookmark is asked for them. item-not-found means there is no copy. Any other fetch error fails the edit
+    /// rather than dropping other clients' extensions.
+    private func existingExtensions(of jid: BareJID, accountID: UUID, pepModule: PEPModule) async throws -> DuckoXMPP.XMLElement? {
+        if fetchedBookmarkLists.contains(accountID) {
+            return bookmarksByAccount[accountID]?.first { $0.jidString == jid.description }?.extensions
+        }
+        do {
+            let items = try await pepModule.retrieveItems(node: XMPPNamespaces.bookmarks2, itemID: jid.description)
+            return items.lazy.compactMap { Bookmark.parse(itemID: $0.id, payload: $0.payload) }.first?.extensions
+        } catch let stanzaError as XMPPStanzaError where stanzaError.condition == .itemNotFound {
+            return nil
+        }
+    }
+
+    /// Stores `bookmark` in place of the account's bookmark for the same room, and returns the one it replaced.
+    private func upsertBookmark(_ bookmark: RoomBookmark, accountID: UUID) -> RoomBookmark? {
         if let index = bookmarksByAccount[accountID]?.firstIndex(where: { $0.jidString == bookmark.jidString }) {
+            let replaced = bookmarksByAccount[accountID]?[index]
             bookmarksByAccount[accountID]?[index] = bookmark
-            return false
+            return replaced
         } else {
             bookmarksByAccount[accountID, default: []].append(bookmark)
-            return true
+            return nil
         }
     }
 
     private func mapToRoomBookmark(_ bookmark: Bookmark) -> RoomBookmark {
-        RoomBookmark(
+        var roomBookmark = RoomBookmark(
             jidString: bookmark.jid.description,
             name: bookmark.name,
             autojoin: bookmark.autojoin,
             nickname: bookmark.nickname,
             password: bookmark.password
         )
+        roomBookmark.extensions = bookmark.extensions
+        return roomBookmark
     }
 }

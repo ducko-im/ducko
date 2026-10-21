@@ -7,7 +7,7 @@ extension DuckoCLI {
     struct Account: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Manage XMPP accounts",
-            subcommands: [List.self, Add.self, Delete.self, Unregister.self, Register.self, CheckRegistration.self],
+            subcommands: [List.self, Add.self, Delete.self, ResetSecurity.self, Unregister.self, Register.self, CheckRegistration.self],
             defaultSubcommand: List.self
         )
 
@@ -61,7 +61,7 @@ extension DuckoCLI {
                     throw CLIError.invalidJID(jid)
                 }
 
-                guard let resolvedPassword = password ?? CredentialHelper.getPassword() else {
+                guard let resolvedPassword = try password ?? CredentialHelper.getPassword() else {
                     throw CLIError.noPassword
                 }
 
@@ -119,6 +119,28 @@ extension DuckoCLI {
             }
         }
 
+        struct ResetSecurity: AsyncParsableCommand {
+            static let configuration = CommandConfiguration(
+                commandName: "reset-security",
+                abstract: "Let an account that signed in with SCRAM send its password to a server offering only PLAIN"
+            )
+
+            @Argument(help: "The bare JID of the account")
+            var jid: String
+
+            func run() async throws {
+                let context = try await MainActor.run {
+                    try CLIBootstrap.setUp(formatter: PlainFormatter())
+                }
+                let env = context.environment
+
+                let account = try await resolveAccount(byJID: jid, environment: env)
+
+                try await env.accountService.resetSignInSecurity(for: account.id)
+                print("Sign-in security reset for \(jid). A server offering only PLAIN gets the password again, until a sign-in that does not send it.")
+            }
+        }
+
         struct Unregister: AsyncParsableCommand {
             static let configuration = CommandConfiguration(
                 abstract: "Unregister an account from the server via XEP-0077"
@@ -148,7 +170,7 @@ extension DuckoCLI {
                     return
                 }
 
-                guard let password = CredentialHelper.getPassword(for: account.jid.description, using: env.credentialStore) else {
+                guard let password = try CredentialHelper.getPassword(for: account.jid.description, using: env.credentialStore) else {
                     throw CLIError.noPassword
                 }
 
@@ -184,7 +206,7 @@ extension DuckoCLI {
             @OptionGroup var endpoint: ConnectionEndpointOptions
 
             func run() async throws {
-                guard let resolvedPassword = password ?? CredentialHelper.getPassword() else {
+                guard let resolvedPassword = try password ?? CredentialHelper.getPassword() else {
                     throw CLIError.noPassword
                 }
 
@@ -194,7 +216,7 @@ extension DuckoCLI {
                     try CLIBootstrap.setUp(formatter: formatter)
                 }
 
-                let accountID = try await context.environment.accountService.registerAccount(
+                let outcome = try await context.environment.accountService.registerAccount(
                     domain: server,
                     username: username,
                     password: resolvedPassword,
@@ -204,8 +226,15 @@ extension DuckoCLI {
                 ) { accountID in
                     try await waitForConnected(accountID: accountID, environment: context.environment)
                 }
+                let accountID = switch outcome {
+                case let .registered(accountID): accountID
+                case let .needsMoreFields(pending): try await completeRegistration(pending, formatter: formatter)
+                }
+                let jid = await MainActor.run {
+                    context.environment.accountService.accounts.first { $0.id == accountID }?.jid.description
+                }
                 await context.environment.accountService.disconnect(accountID: accountID)
-                print("Account registered: \(username)@\(server)")
+                print("Account registered: \(jid ?? "\(username)@\(server)")")
             }
         }
 

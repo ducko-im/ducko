@@ -22,6 +22,27 @@ struct ScriptValidationTests {
         #expect(result.stderr.contains("Usage:"))
     }
 
+    @Test func `ducko-register points to the next script when the server asks for more`() throws {
+        let captured = try ScriptRunner.capture("ducko-register.sh", arguments: ["example.com", "juliet", "secret"], response: "MORE")
+        #expect(captured.result.exitCode == 0, "Script failed: \(captured.result.stderr)")
+        #expect(captured.result.stdout.contains("ducko-register-fields.sh"))
+    }
+
+    @Test(arguments: [[], ["submit"], ["fill", "nick"], ["redirect", "extra"]])
+    func `ducko-register-fields rejects an unknown action or an unpaired field`(_ arguments: [String]) throws {
+        let result = try ScriptRunner.run("ducko-register-fields.sh", arguments: arguments)
+        #expect(result.exitCode == 1)
+        #expect(result.stderr.contains("Usage:"))
+    }
+
+    @Test func `ducko-register-fields prints the page the server names`() throws {
+        let captured = try ScriptRunner.capture(
+            "ducko-register-fields.sh", arguments: ["redirect"], response: "URL:https://example.com/register"
+        )
+        #expect(captured.result.exitCode == 0, "Script failed: \(captured.result.stderr)")
+        #expect(captured.result.stdout == "https://example.com/register\n")
+    }
+
     @Test(arguments: [[], ["busy"]])
     func `ducko-status-menu rejects a missing or unknown action`(_ arguments: [String]) throws {
         let result = try ScriptRunner.run("ducko-status-menu.sh", arguments: arguments)
@@ -39,6 +60,29 @@ struct ScriptValidationTests {
     @Test(arguments: [[], ["bob@example.com"], ["bob@example.com", "block"]])
     func `ducko-contact-menu rejects a missing or unknown action`(_ arguments: [String]) throws {
         let result = try ScriptRunner.run("ducko-contact-menu.sh", arguments: arguments)
+        #expect(result.exitCode == 1)
+        #expect(result.stderr.contains("Usage:"))
+    }
+
+    @Test(arguments: [[], ["block"], ["add"], ["remove"], ["open", "bob@example.com"], ["list", "bob@example.com"]])
+    func `ducko-blocked-contacts rejects an unknown action or a misplaced address`(_ arguments: [String]) throws {
+        let result = try ScriptRunner.run("ducko-blocked-contacts.sh", arguments: arguments)
+        #expect(result.exitCode == 1)
+        #expect(result.stderr.contains("Usage:"))
+    }
+
+    @Test func `ducko-blocked-contacts prints the addresses the sheet lists`() throws {
+        let captured = try ScriptRunner.capture(
+            "ducko-blocked-contacts.sh", arguments: ["list"], response: "LIST:bob@example.com\nbob@example.com/laptop\n"
+        )
+        #expect(captured.result.exitCode == 0, "Script failed: \(captured.result.stderr)")
+        #expect(captured.result.stdout == "bob@example.com\nbob@example.com/laptop\n")
+        #expect(captured.invocations == ["osascript"])
+    }
+
+    @Test(arguments: [[], ["allow"]])
+    func `ducko-sign-in-security rejects a missing or unknown action`(_ arguments: [String]) throws {
+        let result = try ScriptRunner.run("ducko-sign-in-security.sh", arguments: arguments)
         #expect(result.exitCode == 1)
         #expect(result.stderr.contains("Usage:"))
     }
@@ -241,6 +285,9 @@ private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-attach.sh", arguments: ["/etc/hosts"], appleScriptArguments: [], invocations: ["osascript", "swift"], environment: ["DUCKO_PID": "4242"]),
     HandlerScriptCase(script: "ducko-avatar.sh", arguments: ["/etc/hosts"], appleScriptArguments: [], invocations: ["ducko-profile.sh", "osascript", "swift"], environment: ["DUCKO_PID": "4242"]),
     HandlerScriptCase(script: "ducko-avatar-remove.sh", arguments: [], appleScriptArguments: [], invocations: ["ducko-profile.sh", "osascript"]),
+    HandlerScriptCase(script: "ducko-blocked-contacts.sh", arguments: ["open"], appleScriptArguments: ["-", "open", ""], invocations: ["ducko-preferences.sh", "ducko-preferences-tab.sh", "osascript"]),
+    HandlerScriptCase(script: "ducko-blocked-contacts.sh", arguments: ["add", scriptSpecialArgument], appleScriptArguments: ["-", "add", scriptSpecialArgument]),
+    HandlerScriptCase(script: "ducko-blocked-contacts.sh", arguments: ["remove", scriptSpecialArgument], appleScriptArguments: ["-", "remove", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-chat-tabs.sh", arguments: ["close-all"], appleScriptArguments: ["-", "close-all", ""]),
     HandlerScriptCase(script: "ducko-change-nickname.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-change-password.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument], invocations: ["ducko-preferences.sh", "ducko-preferences-tab.sh", "sleep", "osascript"]),
@@ -256,12 +303,15 @@ private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-login.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-new-chat.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-register.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument]),
+    HandlerScriptCase(script: "ducko-register-fields.sh", arguments: ["fill", "nick", scriptSpecialArgument], appleScriptArguments: ["-", "fill", "nick", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-remove-contact.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-"], invocations: ["pgrep", "osascript", "osascript"], earlierCallArguments: [["-", scriptSpecialArgument]]),
     HandlerScriptCase(script: "ducko-remove-bookmark.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument], invocations: ["ducko-bookmarks.sh", "osascript"]),
     HandlerScriptCase(script: "ducko-preferences-tab.sh", arguments: ["Accounts"], appleScriptArguments: ["-", "Accounts"]),
     HandlerScriptCase(script: "ducko-room-settings-tab.sh", arguments: ["Members"], appleScriptArguments: ["-", "Members"]),
     HandlerScriptCase(script: "ducko-room-topic.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-select-mode.sh", arguments: ["Register"], appleScriptArguments: ["-", "Register"]),
+    HandlerScriptCase(script: "ducko-sign-in-security.sh", arguments: ["keep"], appleScriptArguments: ["-", "keep"]),
+    HandlerScriptCase(script: "ducko-sign-in-security.sh", arguments: ["reset"], appleScriptArguments: ["-", "reset"], invocations: ["pgrep", "osascript"]),
     HandlerScriptCase(script: "ducko-status.sh", arguments: ["away", scriptSpecialArgument], appleScriptArguments: ["-", "away", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-reply.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-connection-info.sh", arguments: [], appleScriptArguments: [], invocations: ["ducko-preferences.sh", "ducko-preferences-tab.sh", "osascript"])

@@ -47,8 +47,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0004.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Used for registration and room configuration forms; form instructions, fixed fields and required markers are not shown, and text-private and jid-multi fields are shown as plain text fields</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -107,36 +106,32 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0077.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">New accounts submit only username, password and email; data forms only for signed-in accounts</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0084.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Pictures are published in their own format rather than as PNG</xmpp:note>
+                <xmpp:note xml:lang="en">An avatar hosted at a web address does not show, because Ducko requests it from the publisher's avatar data node instead of the web address</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0085.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Composing is sent on every keystroke and to contacts that never sent a chat state; in group chats chat states go out as one-to-one messages</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0115.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Sent only with the initial presence, not with later presence or room joins</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0153.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">An avatar change made by another resource of the account is not followed</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -154,8 +149,8 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0166.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">File transfer sessions only; unknown actions go unanswered, and unrecognized session-info payloads are acknowledged rather than refused</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">File transfer sessions only</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -185,8 +180,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0203.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Read only on Carbons and MAM results; offline messages, room history and encrypted messages are stamped with their arrival time</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -198,8 +192,8 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0234.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Sending and receiving offered files, one per session; no file requests and no ranged transfers</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">Offered files only, one per session; no file requests and no ranged transfers, so an interrupted transfer starts over</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -224,21 +218,20 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0260.html"/>
                 <xmpp:status>complete</xmpp:status>
-                <xmpp:note xml:lang="en">The initiator does not try the responder's candidates</xmpp:note>
+                <xmpp:note xml:lang="en">The receiving side offers no candidates of its own</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0261.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Only as the fallback from SOCKS5 Bytestreams; an IBB transport offered in session-initiate is not accepted, and a smaller block-size in transport-accept is ignored</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">Offered only as the fallback from SOCKS5 Bytestreams</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0280.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Encrypted messages, corrections and retractions arriving as carbons are dropped</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -258,14 +251,14 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0308.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Corrections arriving as carbons are dropped; corrections in the archive show as new messages</xmpp:note>
+                <xmpp:note xml:lang="en">In group chats and their private chats, a correction is accepted from whoever now holds the author's nickname, even after the author left, since occupant ids are not checked</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0313.html"/>
-                <xmpp:status>complete</xmpp:status>
-                <xmpp:note xml:lang="en">Catch-up after reconnect reads one page of 50 messages per known chat</xmpp:note>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Ids the server stamps on messages are treated as archive ids without checking that it announces urn:xmpp:mam:2</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -277,7 +270,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0334.html"/>
-                <xmpp:status>partial</xmpp:status>
+                <xmpp:status>complete</xmpp:status>
                 <xmpp:note xml:lang="en">Only the store hint is sent</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
@@ -308,8 +301,14 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0380.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0384.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Outgoing OMEMO messages are marked; a one-to-one message using another encryption method, or an OMEMO message not encrypted for this device, is dropped without notice</xmpp:note>
+                <xmpp:note xml:lang="en">No session reset or opt-out handling, and encrypted messages fetched from the archive are not decrypted. This device is not re-added when removed from its own device list, room members' device lists are not fetched before sending, and devices that left a list still receive keys. Existing nodes with other settings are not reconfigured, and a new device id is not checked for collisions. A key exchange with a new identity key replaces the session without a trust decision</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -322,14 +321,14 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0388.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">XEP-0440, which this requires, is only partially supported; a SASL2 offer removed in transit leads to the SASL1 sign-in</xmpp:note>
+                <xmpp:note xml:lang="en">XEP-0440, which this requires, is only partially supported. SASL2 is used only when the server also offers Bind 2, and further sign-in tasks such as a second factor are not supported. A SASL2 offer removed in transit leads to the SASL1 sign-in</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0390.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Hashes are sent only with the initial presence; only the first received hash is checked</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">Ducko's own identity names its stream's xml:lang, which its hashes cover. A received identity without one inherits the disco#info query's, else the IQ's, else the stream header's</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -354,7 +353,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0402.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Unknown extensions in a bookmark are not preserved when it is republished; removals are not announced to other clients, and a changed autojoin flag does not join or leave the room</xmpp:note>
+                <xmpp:note xml:lang="en">Inside a bookmark's &lt;extensions>, an element in the jabber:client namespace or in no namespace is saved back in the urn:xmpp:bookmarks:1 namespace</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -365,9 +364,16 @@
         </implements>
         <implements>
             <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0420.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Used with OMEMO only, so the gaps the XEP-0384 entry lists apply here too</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0424.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">In group chats a retraction refers to, and is matched by, the message's own id instead of the room-assigned stanza-id; archived retractions show their fallback text</xmpp:note>
+                <xmpp:note xml:lang="en">In group chats and their private chats, a retraction is accepted from whoever now holds the author's nickname, even after the author left, since occupant ids are not checked</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -379,29 +385,26 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0428.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Only marks the fallback body of retractions; incoming fallback markers are not processed</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0433.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">A rate-limit error's retry-after is not honored</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0440.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Only tls-server-end-point is supported; sign-in proceeds unbound, with the GS2 flag "n" against RFC 5802 §6, when the server lists types but no -PLUS mechanism, lists only types Ducko cannot compute, or offers -PLUS over SASL1 without listing types; an attacker holding a trusted certificate for the server can use this to switch binding off</xmpp:note>
+                <xmpp:note xml:lang="en">Only tls-server-end-point is supported, not tls-exporter. Against rules 5 and 6, sign-in proceeds unbound with the GS2 flag "n" when the server lists channel-binding types but offers no -PLUS mechanism, or lists only types Ducko cannot compute. It does the same when -PLUS is offered over SASL1 without types. An attacker holding a trusted certificate for the server can therefore switch binding off. Separately, after a verified SCRAM sign-in an account refuses a later offer of only PLAIN until the user resets this</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0461.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">One-to-one chats only; the feature is not advertised, no quote fallback is sent and an incoming one is not hidden</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
 

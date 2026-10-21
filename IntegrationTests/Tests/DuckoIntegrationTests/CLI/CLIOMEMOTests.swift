@@ -135,6 +135,11 @@ extension DuckoIntegrationTests.CLILayer {
                         throw error
                     }
                     await first.terminate()
+                    // The first sign-in caught up on the newest archive page and stored the messages there that were
+                    // encrypted for other devices as undecryptable. Only a row the next sign-in adds would be the live
+                    // message's twin.
+                    let earlier = try await aliceCLI.run(["history", bobJID, "--output", "json"])
+                    let undecryptableBefore = Self.messageRows(earlier.stdout).count { $0["undecryptable"] == "true" }
 
                     // Signing in again starts the archive sync, which reads the message back from the archive.
                     let second = try await REPLSession.start(cli: aliceCLI, credentials: TestCredentials.alice, seedsAccount: false)
@@ -145,11 +150,9 @@ extension DuckoIntegrationTests.CLILayer {
 
                     let history = try await aliceCLI.run(["history", bobJID, "--output", "json"])
                     #expect(history.exitCode == 0)
-                    let rows = history.stdout.split(whereSeparator: \.isNewline).compactMap { line in
-                        try? JSONDecoder().decode([String: String].self, from: Data(line.utf8))
-                    }.filter { $0["type"] == "message" }
+                    let rows = Self.messageRows(history.stdout)
                     #expect(rows.count { $0["body"] == live } == 1)
-                    #expect(!rows.contains { $0["undecryptable"] == "true" })
+                    #expect(rows.count { $0["undecryptable"] == "true" } == undecryptableBefore)
                 }
             }
         }
@@ -158,6 +161,13 @@ extension DuckoIntegrationTests.CLILayer {
 
         /// `UInt32.max` — a device ID no real OMEMO devicelist publishes.
         private static let sentinelDeviceID: UInt32 = 4_294_967_295
+
+        /// The message records of `history --output json` output.
+        private static func messageRows(_ stdout: String) -> [[String: String]] {
+            stdout.split(whereSeparator: \.isNewline).compactMap { line in
+                try? JSONDecoder().decode([String: String].self, from: Data(line.utf8))
+            }.filter { $0["type"] == "message" }
+        }
 
         /// Parses `  <id>  <fp>  [<level>]` device lines into their ID and trust level.
         private static func parseDeviceLines(_ stdout: String) -> [(id: String, level: String)] {

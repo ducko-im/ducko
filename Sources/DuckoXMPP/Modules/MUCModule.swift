@@ -65,13 +65,15 @@ public final class MUCModule: XMPPModule, Sendable {
     }
 
     private let state: OSAllocatedUnfairLock<State>
+    private let presenceModule: PresenceModule?
 
     public var features: [String] {
         [XMPPNamespaces.muc, XMPPNamespaces.mucDirectInvite, XMPPNamespaces.messageCorrect]
     }
 
-    public init(selfPingInterval: Duration = .seconds(900), resuming: MUCResumeState? = nil) {
+    public init(selfPingInterval: Duration = .seconds(900), resuming: MUCResumeState? = nil, presenceModule: PresenceModule? = nil) {
         self.selfPingInterval = selfPingInterval
+        self.presenceModule = presenceModule
         var initial = State()
         if let resuming {
             initial.rooms = resuming.rooms
@@ -317,18 +319,9 @@ public final class MUCModule: XMPPModule, Sendable {
     // MARK: - Message Handling
 
     public func handleMessage(_ message: XMPPMessage) throws {
-        // Handle mediated invites (in normal or no-type messages)
-        if let mucUser = message.element.child(named: "x", namespace: XMPPNamespaces.mucUser),
-           let invite = mucUser.child(named: "invite") {
-            handleMediatedInvite(message: message, invite: invite, mucUser: mucUser)
-            return
-        }
-
-        // Handle direct invites (XEP-0249)
-        if let conference = message.element.child(named: "x", namespace: XMPPNamespaces.mucDirectInvite) {
-            handleDirectInvite(message: message, conference: conference)
-            return
-        }
+        // Children next to an encrypted payload are outside the encryption (XEP-0420), so an encrypted message is never
+        // taken as an invite.
+        if !message.isEncrypted, handleInvite(message) { return }
 
         // MUC Private Message (XEP-0045 §7.5): type="chat" from a tracked room occupant
         if handlePrivateMessage(message) { return }
@@ -341,6 +334,14 @@ public final class MUCModule: XMPPModule, Sendable {
         let isTracked = state.withLock { $0.rooms[roomJID] != nil }
         guard isTracked else { return }
 
+        // Children next to an encrypted payload are outside the encryption, so an encrypted message is never a subject
+        // change or an amendment. An OMEMO message is classified by OMEMOModule after decryption, and any other one,
+        // with or without a body, shows only a notice (XEP-0380).
+        if message.isEncrypted {
+            if !message.isOMEMOEncrypted { emitRoomMessage(message, in: roomJID) }
+            return
+        }
+
         // XEP-0045 §8.1: only a subject with neither a body nor a thread is a subject change. An empty subject clears it.
         if let subjectElement = message.element.child(named: "subject"), message.body == nil,
            message.element.child(named: "thread") == nil {
@@ -348,11 +349,6 @@ public final class MUCModule: XMPPModule, Sendable {
             state.withLock { $0.rooms[roomJID]?.subject = subject }
             let context = state.withLock { $0.context }
             context?.emitEvent(.roomSubjectChanged(room: roomJID, subject: subject, setter: from))
-            return
-        }
-
-        // Encrypted corrections/retractions are classified by OMEMOModule after decryption
-        if message.element.child(named: "encrypted", namespace: XMPPNamespaces.omemo) != nil {
             return
         }
 
@@ -370,18 +366,36 @@ public final class MUCModule: XMPPModule, Sendable {
                 state.rooms[roomJID]?.lastActivity = .now
                 return state.context
             }
-            context?.emitEvent(.messageCorrected(originalID: originalID, newBody: newBody, from: from))
+            context?.emitEvent(.messageCorrected(
+                originalID: originalID, newBody: newBody, replyFallbackRange: message.replyFallbackRange(in: newBody), from: from, messageType: .groupchat
+            ))
             return
         }
 
-        // Group message
         guard message.body != nil else { return }
+        emitRoomMessage(message, in: roomJID)
+    }
 
+    private func emitRoomMessage(_ message: XMPPMessage, in roomJID: BareJID) {
         let context = state.withLock { state -> ModuleContext? in
             state.rooms[roomJID]?.lastActivity = .now
             return state.context
         }
         context?.emitEvent(.roomMessageReceived(message))
+    }
+
+    /// Handles a mediated (XEP-0045 §7.8.2) or direct (XEP-0249) invite. Returns whether `message` was one.
+    private func handleInvite(_ message: XMPPMessage) -> Bool {
+        if let mucUser = message.element.child(named: "x", namespace: XMPPNamespaces.mucUser),
+           let invite = mucUser.child(named: "invite") {
+            handleMediatedInvite(message: message, invite: invite, mucUser: mucUser)
+            return true
+        }
+        if let conference = message.element.child(named: "x", namespace: XMPPNamespaces.mucDirectInvite) {
+            handleDirectInvite(message: message, conference: conference)
+            return true
+        }
+        return false
     }
 
     private func handleMediatedInvite(message: XMPPMessage, invite: XMLElement, mucUser: XMLElement) {
@@ -416,7 +430,9 @@ public final class MUCModule: XMPPModule, Sendable {
         context?.emitEvent(.roomInviteReceived(roomInvite))
     }
 
-    /// Returns `true` if the message was a MUC PM from a tracked room and was emitted.
+    /// Returns `true` if the message was a MUC PM from a tracked room. A correction or retraction is left to
+    /// `ChatModule`, which classifies it for 1:1 and private chats alike, so its fallback body is never shown. An
+    /// OMEMO message is left to `OMEMOModule`, as a body or file link next to its payload is outside the encryption.
     private func handlePrivateMessage(_ message: XMPPMessage) -> Bool {
         guard message.messageType == .chat,
               let from = message.from,
@@ -427,7 +443,9 @@ public final class MUCModule: XMPPModule, Sendable {
             return state.context
         }
         guard let context else { return false }
-        context.emitEvent(.mucPrivateMessageReceived(message))
+        if !message.carriesAmendment, !message.isOMEMOEncrypted {
+            context.emitEvent(.mucPrivateMessageReceived(message))
+        }
         return true
     }
 
@@ -445,7 +463,7 @@ public final class MUCModule: XMPPModule, Sendable {
             let reason = retract.child(named: "reason")?.textContent
             context?.emitEvent(.messageModerated(originalID: originalID, moderator: moderator, room: roomJID, reason: reason))
         } else if let originalID = retract.attribute("id") {
-            context?.emitEvent(.messageRetracted(originalID: originalID, from: from))
+            context?.emitEvent(.messageRetracted(originalID: originalID, from: from, messageType: .groupchat))
         }
     }
 
@@ -513,14 +531,14 @@ public final class MUCModule: XMPPModule, Sendable {
         log.debug("The room being left is \(room)")
     }
 
-    /// Sends a groupchat message to a room.
+    /// Sends a groupchat message to a room. An encrypted message carries no body.
     public func sendMessage(
-        to room: BareJID, body: String, id: String? = nil,
+        to room: BareJID, body: String?, id: String? = nil,
         markable: Bool = false, additionalElements: [XMLElement] = []
     ) async throws {
         guard let context = state.withLock({ $0.context }) else { return }
         let stanzaID = id ?? context.generateID()
-        var message = XMPPMessage(type: .groupchat, to: .bare(room), id: stanzaID)
+        var message = XMPPMessage(type: .groupchat, to: .bare(room), originID: stanzaID)
         message.body = body
         if markable {
             let markableElement = XMLElement(name: "markable", namespace: XMPPNamespaces.chatMarkers)
@@ -534,23 +552,20 @@ public final class MUCModule: XMPPModule, Sendable {
 
     /// Sends a private message to a room occupant (XEP-0045 §7.5).
     public func sendPrivateMessage(
-        to room: BareJID, nickname: String, body: String, id: String? = nil
+        to room: BareJID, nickname: String, body: String, id: String? = nil, additionalElements: [XMLElement] = []
     ) async throws {
         guard let context = state.withLock({ $0.context }) else { return }
         let nickname = try Self.normalizedNickname(nickname)
         guard let fullJID = FullJID(bareJID: room, resourcePart: nickname) else { return }
         let stanzaID = id ?? context.generateID()
-        var message = XMPPMessage(type: .chat, to: .full(fullJID), id: stanzaID)
+        var message = XMPPMessage(type: .chat, to: .full(fullJID), originID: stanzaID)
         message.body = body
         let mucUser = XMLElement(name: "x", namespace: XMPPNamespaces.mucUser)
         message.element.addChild(mucUser)
+        for element in additionalElements {
+            message.element.addChild(element)
+        }
         try await context.sendStanza(message)
-    }
-
-    /// Sends a message correction (XEP-0308) for a previously sent groupchat message.
-    public func sendCorrection(to room: BareJID, body: String, replacingID: String) async throws {
-        let replace = XMLElement(name: "replace", namespace: XMPPNamespaces.messageCorrect, attributes: ["id": replacingID])
-        try await sendMessage(to: room, body: body, additionalElements: [replace])
     }
 
     /// Sends a moderation request (XEP-0425) to retract a message by stanza-id.
@@ -650,6 +665,17 @@ public final class MUCModule: XMPPModule, Sendable {
         state.withLock { $0.rooms[room]?.confirmedNickname }
     }
 
+    /// The real address of the occupant with `nickname` in `room`, when the room reveals it to the user. Nil also for a
+    /// room the user is not in, and for an occupant it does not know.
+    public func realJID(ofOccupant nickname: String, in room: BareJID) -> BareJID? {
+        state.withLock { $0.rooms[room]?.occupants[nickname]?.jid }
+    }
+
+    /// Whether the user is in `room`, or joining it.
+    public func isInRoom(_ room: BareJID) -> Bool {
+        state.withLock { $0.rooms[room] != nil }
+    }
+
     /// The occupancy of every tracked room, including one whose join has not completed yet.
     public var roomOccupancies: [BareJID: RoomOccupancy] {
         state.withLock { $0.rooms.mapValues(\.occupancy) }
@@ -675,20 +701,21 @@ public final class MUCModule: XMPPModule, Sendable {
         guard let context = state.withLock({ $0.context }) else { return }
         let newNickname = try Self.normalizedNickname(newNickname)
         guard let fullJID = FullJID(bareJID: room, resourcePart: newNickname) else { return }
-        let presence = XMPPPresence(to: .full(fullJID), id: context.generateID())
+        var presence = XMPPPresence(to: .full(fullJID), id: context.generateID())
+        presenceModule?.decorate(&presence)
         try await context.sendStanza(presence)
     }
 
     // MARK: - Room Configuration (muc#owner)
 
     /// Retrieves the room configuration form.
-    public func getRoomConfig(_ room: BareJID) async throws -> [DataFormField] {
-        guard let context = state.withLock({ $0.context }) else { return [] }
+    public func getRoomConfig(_ room: BareJID) async throws -> DataForm {
+        guard let context = state.withLock({ $0.context }) else { return DataForm() }
         var iq = XMPPIQ(type: .get, to: .bare(room), id: context.generateID())
         let query = XMLElement(name: "query", namespace: XMPPNamespaces.mucOwner)
         iq.element.addChild(query)
 
-        guard let result = try await context.sendIQ(iq), let form = result.child(named: "x", namespace: XMPPNamespaces.dataForms) else { return [] }
+        guard let result = try await context.sendIQ(iq), let form = result.child(named: "x", namespace: XMPPNamespaces.dataForms) else { return DataForm() }
         return parseDataForm(form)
     }
 
@@ -887,6 +914,7 @@ public final class MUCModule: XMPPModule, Sendable {
             mucElement.addChild(historyElement)
         }
         presence.element.addChild(mucElement)
+        presenceModule?.decorate(&presence)
         return presence
     }
 

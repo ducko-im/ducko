@@ -24,13 +24,7 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
     }
 
     public func saveAccount(_ account: Account) throws {
-        let accountID = account.id
-        var descriptor = FetchDescriptor<AccountRecord>(
-            predicate: #Predicate { $0.id == accountID }
-        )
-        descriptor.fetchLimit = 1
-
-        if let existing = try modelContext.fetch(descriptor).first {
+        if let existing = try accountRecord(id: account.id) {
             existing.update(from: account)
         } else {
             let record = AccountRecord(
@@ -40,21 +34,40 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
             )
             record.update(from: account)
             record.rosterVersion = account.rosterVersion
+            record.requiresSCRAM = account.requiresSCRAM
             modelContext.insert(record)
         }
         try modelContext.save()
     }
 
     public func deleteAccount(_ id: UUID) throws {
-        var descriptor = FetchDescriptor<AccountRecord>(
-            predicate: #Predicate { $0.id == id }
-        )
-        descriptor.fetchLimit = 1
-
-        if let record = try modelContext.fetch(descriptor).first {
+        if let record = try accountRecord(id: id) {
             modelContext.delete(record)
             try modelContext.save()
         }
+    }
+
+    public func setRequiresSCRAM(_ requiresSCRAM: Bool, accountID: UUID) throws {
+        guard let record = try accountRecord(id: accountID) else { return }
+        record.requiresSCRAM = requiresSCRAM
+        try modelContext.save()
+    }
+
+    public func fetchChannelSearchLimits(accountID: UUID) throws -> [String: ChannelSearchLimit] {
+        guard let data = try accountRecord(id: accountID)?.channelSearchLimits else { return [:] }
+        return try JSONDecoder().decode([String: ChannelSearchLimit].self, from: data)
+    }
+
+    public func setChannelSearchLimits(_ limits: [String: ChannelSearchLimit], accountID: UUID) throws {
+        guard let record = try accountRecord(id: accountID) else { return }
+        record.channelSearchLimits = limits.isEmpty ? nil : try JSONEncoder().encode(limits)
+        try modelContext.save()
+    }
+
+    private func accountRecord(id: UUID) throws -> AccountRecord? {
+        var descriptor = FetchDescriptor<AccountRecord>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first
     }
 
     // MARK: - Contacts
@@ -79,11 +92,7 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
             existing.update(from: contact)
         } else {
             let accountID = contact.accountID
-            var accountDescriptor = FetchDescriptor<AccountRecord>(
-                predicate: #Predicate { $0.id == accountID }
-            )
-            accountDescriptor.fetchLimit = 1
-            guard let accountRecord = try modelContext.fetch(accountDescriptor).first else {
+            guard let account = try accountRecord(id: accountID) else {
                 throw PersistenceStoreError.parentNotFound("AccountRecord(\(accountID))")
             }
 
@@ -98,7 +107,7 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
                 avatarHash: contact.avatarHash,
                 avatarData: contact.avatarData,
                 isBlocked: contact.isBlocked,
-                account: accountRecord,
+                account: account,
                 lastSeen: contact.lastSeen,
                 createdAt: contact.createdAt
             )
@@ -122,9 +131,7 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
     public func applyRosterMutation(_ mutation: RosterMutation) throws -> [Contact] {
         try Task.checkCancellation()
         let accountID = mutation.accountID
-        var descriptor = FetchDescriptor<AccountRecord>(predicate: #Predicate { $0.id == accountID })
-        descriptor.fetchLimit = 1
-        guard let account = try modelContext.fetch(descriptor).first else {
+        guard let account = try accountRecord(id: accountID) else {
             throw PersistenceStoreError.parentNotFound("AccountRecord(\(accountID))")
         }
         do {
@@ -219,22 +226,18 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
         if let existing = try modelContext.fetch(descriptor).first {
             try applyUpdate(to: existing, from: conversation)
         } else {
-            var accountRecord: AccountRecord?
+            var account: AccountRecord?
             if let accountID = conversation.accountID {
-                var accountDescriptor = FetchDescriptor<AccountRecord>(
-                    predicate: #Predicate { $0.id == accountID }
-                )
-                accountDescriptor.fetchLimit = 1
-                guard let record = try modelContext.fetch(accountDescriptor).first else {
+                guard let record = try accountRecord(id: accountID) else {
                     throw PersistenceStoreError.parentNotFound("AccountRecord(\(accountID))")
                 }
-                accountRecord = record
+                account = record
             }
 
             let record = ConversationRecord(
                 id: conversation.id,
                 jid: conversation.jid.description,
-                account: accountRecord,
+                account: account,
                 createdAt: conversation.createdAt
             )
             record.update(from: conversation)
@@ -263,11 +266,7 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
         existing.update(from: conversation)
         guard existing.account?.id != conversation.accountID else { return }
         if let accountID = conversation.accountID {
-            var accountDescriptor = FetchDescriptor<AccountRecord>(
-                predicate: #Predicate { $0.id == accountID }
-            )
-            accountDescriptor.fetchLimit = 1
-            existing.account = try modelContext.fetch(accountDescriptor).first
+            existing.account = try accountRecord(id: accountID)
         } else {
             existing.account = nil
         }

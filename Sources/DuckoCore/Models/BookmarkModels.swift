@@ -1,3 +1,5 @@
+import DuckoXMPP
+
 /// Bridge type for `Bookmark` (XEP-0402) so DuckoUI can use it without importing DuckoXMPP.
 public struct RoomBookmark: Sendable, Identifiable {
     public var id: String {
@@ -9,6 +11,8 @@ public struct RoomBookmark: Sendable, Identifiable {
     public let autojoin: Bool
     public let nickname: String?
     public let password: String?
+    /// The `<extensions/>` the server holds for the bookmark, carried into a republish.
+    var extensions: DuckoXMPP.XMLElement?
 
     public init(
         jidString: String,

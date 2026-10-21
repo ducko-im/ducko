@@ -4,22 +4,16 @@ import Foundation
 
 func parseBeforeDate(_ string: String?) throws -> Date? {
     guard let string else { return nil }
-    let style = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
-    if let date = try? style.parse(string) {
-        return date
-    }
-    let basicStyle = Date.ISO8601FormatStyle()
-    if let date = try? basicStyle.parse(string) {
-        return date
-    }
-    throw CLIError.invalidDate(string)
+    guard let date = Date(xmppTimestamp: string) else { throw CLIError.invalidDate(string) }
+    return date
 }
 
+/// The newest `limit` messages before `before` in the chat or room with `jid`.
 func fetchHistory(
     jid: BareJID, before: Date?, limit: Int,
     environment: AppEnvironment, accountID: UUID
 ) async throws -> [ChatMessage] {
-    guard let conversation = try await resolveConversation(jid: jid, environment: environment, accountID: accountID) else {
+    guard let conversation = try await resolveConversation(jid: .bare(jid), environment: environment, accountID: accountID) else {
         return []
     }
     return try await environment.chatService.fetchMessageHistory(for: conversation.id, before: before, limit: limit)
@@ -36,7 +30,7 @@ func fetchHistoryNotes(
     jid: BareJID, among messages: [ChatMessage], before: Date?,
     environment: AppEnvironment, accountID: UUID
 ) async throws -> HistoryNotes {
-    guard let conversation = try await resolveConversation(jid: jid, environment: environment, accountID: accountID) else {
+    guard let conversation = try await resolveConversation(jid: .bare(jid), environment: environment, accountID: accountID) else {
         return HistoryNotes(notes: [], contactName: jid.description)
     }
     let notes = await environment.chatService.fetchNotes(for: conversation.id, since: messages.first?.timestamp, before: before)
@@ -59,7 +53,7 @@ func searchHistory(
     environment: AppEnvironment, accountID: UUID
 ) async throws -> [HistorySearchDay] {
     let conversations: [Conversation] = if let jid {
-        try await [resolveConversation(jid: jid, environment: environment, accountID: accountID)].compactMap(\.self)
+        try await [resolveConversation(jid: .bare(jid), environment: environment, accountID: accountID)].compactMap(\.self)
     } else {
         try await environment.chatService.fetchAllConversations().filter { $0.accountID == accountID }
     }
@@ -76,16 +70,20 @@ private func searchAddress(of conversation: Conversation) -> JID {
         .map(JID.full) ?? .bare(conversation.jid)
 }
 
-private func resolveConversation(
-    jid: BareJID,
-    environment: AppEnvironment,
-    accountID: UUID
-) async throws -> Conversation? {
+func resolveConversation(jid: JID, environment: AppEnvironment, accountID: UUID) async throws -> Conversation? {
     try await environment.chatService.loadConversations(for: accountID)
     let conversations = await MainActor.run { environment.chatService.openConversations }
+    return conversation(with: jid, among: conversations, accountID: accountID)
+}
+
+/// The account's conversation with `jid` among `conversations`. A room and the private chats with its occupants share
+/// the room's address, so an occupant's address `room@service/nick` names the private chat with them, and a bare
+/// address the chat or room.
+func conversation(with jid: JID, among conversations: [Conversation], accountID: UUID) -> Conversation? {
+    let occupantNickname: String? = if case let .full(occupant) = jid { occupant.resourcePart } else { nil }
     // Scope by account: `openConversations` is a cross-account union, so a bare-JID match alone could
     // resolve another account's conversation when the same peer is rostered on two accounts.
-    return conversations.first(where: { $0.jid == jid && $0.accountID == accountID })
+    return conversations.first { $0.jid == jid.bareJID && $0.accountID == accountID && $0.occupantNickname == occupantNickname }
 }
 
 /// Prints a search's results. Those of all conversations name each day's conversation on a line before its messages.

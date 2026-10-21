@@ -55,6 +55,9 @@ struct SASL2Authenticator {
     }
 
     private var activeMechanism: ActiveMechanism?
+    private var mechanismName: String?
+    /// The SCRAM mechanism whose server signature checked out, even when the rest of the success reply then failed.
+    private(set) var verifiedSCRAMMechanism: String?
 
     // MARK: - Feature Parsing
 
@@ -86,14 +89,16 @@ struct SASL2Authenticator {
     // MARK: - Negotiation
 
     /// Selects the strongest mechanism and produces the `<authenticate>` element.
-    /// The `inlinePayloads` are added as children (e.g., Bind 2 request).
+    /// The `inlinePayloads` are added as children (e.g., Bind 2 request). `requiresSCRAM` refuses an offer that leaves
+    /// only PLAIN.
     mutating func begin(
         features: XMLElement,
         authcid: String,
         password: String,
         inlinePayloads: [XMLElement],
         userAgent: SASL2UserAgent = SASL2UserAgent(),
-        channelBindingData: [UInt8]? = nil
+        channelBindingData: [UInt8]? = nil,
+        requiresSCRAM: Bool = false
     ) throws(SASLAuthError) -> XMLElement {
         guard let sasl2Features = Self.parseFeatures(features) else {
             throw SASLAuthError.noSupportedMechanism
@@ -105,16 +110,15 @@ struct SASL2Authenticator {
             offeredMechanisms: sasl2Features.mechanisms,
             isSASL2: true
         )
-        let preferenceOrder = buildSASLPreferenceOrder(channelBinding: channelBinding)
-
-        guard let selected = preferenceOrder.first(where: { sasl2Features.mechanisms.contains($0) }) else {
-            throw SASLAuthError.noSupportedMechanism
-        }
+        let selected = try selectSASLMechanism(
+            offered: sasl2Features.mechanisms, channelBinding: channelBinding, requiresSCRAM: requiresSCRAM
+        )
 
         let (mechanism, initialPayload) = startMechanism(
             selected, authcid: authcid, password: password, channelBinding: channelBinding
         )
         activeMechanism = mechanism
+        mechanismName = selected
 
         var authenticate = XMLElement(
             name: "authenticate",
@@ -202,15 +206,17 @@ struct SASL2Authenticator {
         }
     }
 
-    private func handleSuccess(_ stanza: XMLElement, mechanism: inout ActiveMechanism) -> Response {
+    private mutating func handleSuccess(_ stanza: XMLElement, mechanism: inout ActiveMechanism) -> Response {
         // Verify SCRAM server signature from <additional-data> (required for SCRAM mechanisms)
         switch mechanism {
         case var .scram256(scram):
             if let error = verifyScramSignature(stanza, scram: &scram) { return error }
             mechanism = .scram256(scram)
+            verifiedSCRAMMechanism = mechanismName
         case var .scram1(scram):
             if let error = verifyScramSignature(stanza, scram: &scram) { return error }
             mechanism = .scram1(scram)
+            verifiedSCRAMMechanism = mechanismName
         case .plain:
             break
         }

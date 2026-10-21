@@ -123,6 +123,66 @@ struct AccountConnectionResourceTests {
     }
 
     @Test
+    func `a redirect after a verified SCRAM sign-in builds its client requiring SCRAM`() async throws {
+        let original = MockTransport()
+        let redirected = MockTransport()
+        // The first session's sign-in is still running when the redirect comes, so it has not recorded the SCRAM success.
+        let hold = AsyncSemaphore()
+        let factory = AccountConnectionFactoryProbe(transports: [original, redirected], connectHold: hold)
+        let store = MockPersistenceStore()
+        let service = AccountService(store: store, credentialStore: MockCredentialStore(), clientFactory: factory)
+        let id = try await service.createAccount(jidString: "alice@example.com", requireTLS: false)
+        let connection = Task { try await service.connect(accountID: id, password: "secret") }
+        var server = SCRAMTestServer(password: "secret")
+        try await server.playSASL1SignIn(on: original)
+        await original.waitForSent(count: 4) // post-auth stream opening
+        await original.simulateReceive(testServerStreamOpen + testFeaturesBind)
+        await original.waitForSent(count: 5) // bind IQ
+        await original.simulateReceive(testBindResult)
+        #expect(try await factory.nextRequest().requiresSCRAM == false)
+        try await eventually { service.connectedClient(for: id) != nil }
+
+        await original.simulateReceive("<error><see-other-host xmlns='urn:ietf:params:xml:ns:xmpp-streams'>redirect.example.com:5223</see-other-host></error>")
+        let request = try await factory.nextRequest()
+
+        #expect(request.requiresSCRAM)
+        #expect(try await store.fetchAccounts().first?.requiresSCRAM == true)
+        await service.disconnect(accountID: id)
+        await hold.signal()
+        _ = await connection.result
+    }
+
+    @Test
+    func `a redirected session starts like any other and learns SCRAM from its own sign-in`() async throws {
+        let original = MockTransport()
+        let redirected = MockTransport()
+        let factory = AccountConnectionFactoryProbe(transports: [original, redirected])
+        let store = MockPersistenceStore()
+        let service = AccountService(store: store, credentialStore: MockCredentialStore(), clientFactory: factory)
+        let id = try await service.createAccount(jidString: "alice@example.com", requireTLS: false)
+        var starts: [UUID] = []
+        service.onSessionStarting = { starts.append($0) }
+        let (first, connection) = try await driveMockConnect(service, accountID: id, transport: original)
+        #expect(starts == [id])
+
+        await original.simulateReceive("<error><see-other-host xmlns='urn:ietf:params:xml:ns:xmpp-streams'>redirect.example.com:5223</see-other-host></error>")
+        try await exchange(redirected, matching: "<stream:stream", response: testServerStreamOpen + testFeaturesNoTLS)
+        try await exchange(redirected, matching: "<starttls", response: "<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
+        var server = SCRAMTestServer(password: "secret")
+        try await server.playSASL1SignIn(on: redirected)
+        await redirected.waitForSent(count: 4) // post-auth stream opening
+        await redirected.simulateReceive(testServerStreamOpen + testFeaturesBind)
+        await redirected.waitForSent(count: 5) // bind IQ
+        await redirected.simulateReceive(testBindResult)
+        try await eventually { service.connectedClient(for: id).map { $0 !== first } ?? false }
+
+        #expect(starts == [id, id])
+        try await eventually { try await store.fetchAccounts().first?.requiresSCRAM == true }
+        await service.disconnect(accountID: id)
+        _ = await connection.result
+    }
+
+    @Test
     func `fourth redirect during stream management setup reaches the limit`() async throws {
         let transports = (0 ..< 4).map { _ in MockTransport() }
         let factory = AccountConnectionFactoryProbe(transports: transports)
@@ -351,6 +411,7 @@ private actor AccountConnectionFactoryProbe: XMPPClientFactory {
         let password: String
         let resume: StreamResumeContext?
         let requireTLS: Bool?
+        let requiresSCRAM: Bool
         let disconnections: AsyncStream<Void>
     }
 
@@ -358,14 +419,20 @@ private actor AccountConnectionFactoryProbe: XMPPClientFactory {
     private let initialResume: SMResumeState?
     private let firstRelease: AsyncSemaphore?
     private let laterRelease: AsyncSemaphore?
+    private let connectHold: AsyncSemaphore?
     private let requests = AsyncStream.makeStream(of: Request.self)
     private(set) var requestCount = 0
 
-    init(transports: [MockTransport], initialResume: SMResumeState? = nil, firstRelease: AsyncSemaphore? = nil, laterRelease: AsyncSemaphore? = nil) {
+    /// With `connectHold`, the first client's sign-in stops once it is connected, until `connectHold` is signaled.
+    init(
+        transports: [MockTransport], initialResume: SMResumeState? = nil, firstRelease: AsyncSemaphore? = nil, laterRelease: AsyncSemaphore? = nil,
+        connectHold: AsyncSemaphore? = nil
+    ) {
         self.transports = transports
         self.initialResume = initialResume
         self.firstRelease = firstRelease
         self.laterRelease = laterRelease
+        self.connectHold = connectHold
     }
 
     func makeClient(account: Account, password: String, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
@@ -377,13 +444,20 @@ private actor AccountConnectionFactoryProbe: XMPPClientFactory {
         let observed = AccountConnectionTransport(mock: transport)
         builder.withTransport(observed)
         builder.withRequireTLS(requireTLSOverride ?? false)
+        builder.withRequiresSCRAM(account.requiresSCRAM)
         builder.withModule(sm)
         builder.withInterceptor(sm)
         builder.withModule(MUCModule(resuming: resuming?.rooms))
+        if index == 0, let connectHold {
+            builder.withModule(ConnectHold(release: connectHold))
+        }
         // A requested disconnect waits for the server to acknowledge what was sent.
         await transport.ackSyncRequests(from: sm)
         let client = await builder.build()
-        requests.continuation.yield(Request(password: password, resume: resuming, requireTLS: requireTLSOverride, disconnections: observed.disconnections))
+        requests.continuation.yield(Request(
+            password: password, resume: resuming, requireTLS: requireTLSOverride, requiresSCRAM: account.requiresSCRAM,
+            disconnections: observed.disconnections
+        ))
         if index == 0 { await firstRelease?.wait() } else { await laterRelease?.wait() }
         return (client, sm)
     }
@@ -401,6 +475,21 @@ private actor AccountConnectionFactoryProbe: XMPPClientFactory {
             }
             return try #require(await group.next()!)
         }
+    }
+}
+
+/// Holds a session's sign-in once it is connected until `release` is signaled, whatever happens to the stream meanwhile.
+private final class ConnectHold: XMPPModule {
+    private let release: AsyncSemaphore
+
+    init(release: AsyncSemaphore) {
+        self.release = release
+    }
+
+    func setUp(_: ModuleContext) {}
+
+    func handleConnect() async throws {
+        await release.wait()
     }
 }
 

@@ -120,6 +120,10 @@ struct GatedTranscriptStore: TranscriptStore {
         try await mock.findMessages(stanzaID: stanzaID, conversationID: conversationID)
     }
 
+    func findMessage(serverID: String, conversationID: UUID) async throws -> ChatMessage? {
+        try await mock.findMessage(serverID: serverID, conversationID: conversationID)
+    }
+
     func messageExists(stanzaID: String, conversationID: UUID) async throws -> Bool {
         try await mock.messageExists(stanzaID: stanzaID, conversationID: conversationID)
     }
@@ -177,6 +181,18 @@ struct GatedTranscriptPersistenceStore: PersistenceStore {
 
     func deleteAccount(_ id: UUID) async throws {
         try await mock.deleteAccount(id)
+    }
+
+    func setRequiresSCRAM(_ requiresSCRAM: Bool, accountID: UUID) async throws {
+        try await mock.setRequiresSCRAM(requiresSCRAM, accountID: accountID)
+    }
+
+    func fetchChannelSearchLimits(accountID: UUID) async throws -> [String: ChannelSearchLimit] {
+        try await mock.fetchChannelSearchLimits(accountID: accountID)
+    }
+
+    func setChannelSearchLimits(_ limits: [String: ChannelSearchLimit], accountID: UUID) async throws {
+        try await mock.setChannelSearchLimits(limits, accountID: accountID)
     }
 
     func fetchContacts(for accountID: UUID) async throws -> [Contact] {

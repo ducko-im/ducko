@@ -26,18 +26,28 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// (corrections, retractions, markers) — these don't bump `lastMessageDate`.
     public private(set) var messagesRevisions: [UUID: Int] = [:]
     public var onIncomingMessage: ((ChatMessage, Conversation) -> Void)?
+    /// A correction or retraction that came encrypted and was applied, as the event a plaintext one comes in, and its
+    /// account.
+    public var onDecryptedAmendment: ((XMPPEvent, UUID) -> Void)?
     public var onHeadlineMessage: (@Sendable (XMPPMessage) -> Void)?
 
-    private let store: any PersistenceStore
-    private let transcripts: any TranscriptStore
+    let store: any PersistenceStore
+    let transcripts: any TranscriptStore
     private let filterPipeline: MessageFilterPipeline
-    private weak var accountService: AccountService?
-    private weak var omemoService: OMEMOService?
-    private var typingDebounce: [UUID: [BareJID: Task<Void, Never>]] = [:]
+    weak var accountService: AccountService?
+    private(set) weak var omemoService: OMEMOService?
+    /// The `paused` each chat gets once the user stops typing, per account.
+    var typingDebounce: [UUID: [ChatStateRecipient: Task<Void, Never>]] = [:]
+    /// The chat state last sent to each chat, per account, so typing sends `composing` once, not on every keystroke.
+    var sentChatStates: [UUID: [ChatStateRecipient: ChatState]] = [:]
+    /// The contacts and occupants, per account, whose last message came without a chat state and who get none, across sessions.
+    var chatStateSilentPeers: [UUID: Set<ChatStateRecipient>] = [:]
     /// Fire-and-forget MAM sync tasks that outlive the
     /// call that spawned them. Drained by `AppEnvironment.shutdown(within:)` so they can't race transcript
     /// teardown; each task removes its own handle on completion via `defer`.
     private var pendingTasks: [UUID: Task<Void, Never>] = [:]
+    /// Where each account's catch-up starts reading the archives, noted on connect and kept until a catch-up completes.
+    var catchUpStarts: [UUID: CatchUpStart] = [:]
     /// Per-account map of the peer's most-recently-seen full-JID resource for live 1:1 chats
     /// (RFC 6121 §5.1 resource locking). Account-scoped — the same bare peer JID can exist under
     /// multiple accounts. Internal routing state, not observed UI state, so kept `private`.
@@ -57,7 +67,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         roomService.roomJoinNotifiers
     }
 
-    @ObservationIgnored private lazy var roomService = RoomService(
+    @ObservationIgnored lazy var roomService = RoomService(
         store: store,
         ensureConversation: { [weak self] room, nickname, accountID in
             guard let self else { throw CancellationError() }
@@ -109,7 +119,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
     /// Resolves the recipient for a 1:1 send: the locked full JID when a resource is locked for `jid`,
     /// otherwise the bare JID. Single decision point for full-vs-bare so the fallback rule lives in one place.
-    private func recipientJID(for jid: BareJID, accountID: UUID) -> JID {
+    func recipientJID(for jid: BareJID, accountID: UUID) -> JID {
         guard let resource = lockedResourcesByAccount[accountID]?[jid],
               let fullJID = FullJID(bareJID: jid, resourcePart: resource) else {
             return .bare(jid)
@@ -135,7 +145,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
     /// Returns a monotonic arrival tick. Captured synchronously at an inbound handler's entry (before any
     /// await) so `learnResourceLock` can reject out-of-order learns when interleaved per-event Tasks resume
-    /// on the MainActor in a different order than the messages arrived. Internal so `OMEMOService` can call it.
+    /// on the MainActor in a different order than the messages arrived.
     func nextLockSequence() -> UInt64 {
         defer { nextInboundLockSequence &+= 1 }
         return nextInboundLockSequence
@@ -145,11 +155,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// A full `from` locks (re-locking when the resource differs; `FullJID` guarantees a non-empty resource);
     /// a bare `from` releases the lock (RFC 6121 §5.1: a message from the bare JID releases it). `sequence` is
     /// the inbound's arrival tick — an arrival-older learn (lower sequence) is dropped so it can't overwrite a
-    /// newer lock. Internal so `OMEMOService` can call it, mirroring `ingestEncryptedMessage`.
+    /// newer lock.
     func learnResourceLock(from: JID, accountID: UUID, sequence: UInt64) {
-        // A groupchat/MUC sender (room@conference/nick) must never move the 1:1 lock. The plaintext path
-        // routes room messages to separate handlers, but OMEMO messages all reach this one, so guard here
-        // with the same groupchat-conversation check `shouldSkipRawMessage` uses.
+        // A groupchat/MUC sender (room@conference/nick) must never move the 1:1 lock. Callers route room messages
+        // elsewhere, and this guard, the groupchat-conversation check `shouldSkipRawMessage` uses, keeps it so for any
+        // caller.
         let bareJID = from.bareJID
         if openConversations.contains(where: { $0.jid == bareJID && $0.type == .groupchat && $0.accountID == accountID }) { return }
         if let owning = lockSequenceByPeer[accountID]?[bareJID], sequence < owning { return }
@@ -221,54 +231,57 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     public func sendMessage(to jid: BareJID, body: String, accountID: UUID, attachments: [Attachment] = []) async throws {
+        try await sendMessage(
+            body, toContactIn: findOrCreateConversation(for: jid, accountID: accountID), replyingTo: nil,
+            accountID: accountID, attachments: attachments
+        )
+    }
+
+    /// Sends `body` to the contact of the 1:1 `conversation`, as a reply to `quoted` when given.
+    func sendMessage(
+        _ body: String, toContactIn conversation: Conversation, replyingTo quoted: ChatMessage?, accountID: UUID, attachments: [Attachment] = []
+    ) async throws {
         guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
         guard let chatModule = await client.module(ofType: ChatModule.self) else { return }
+        let jid = conversation.jid
 
         let filtered = await filterBody(body, direction: .outgoing, accountID: accountID, fallback: jid)
-
-        let conversation = try await findOrCreateConversation(for: jid, accountID: accountID)
         let stanzaID = client.generateID()
         let trustedDeviceIDs = try await trustedDeviceIDsForSend(
             jid: jid, accountID: accountID, conversation: conversation
         )
+        let reply = try quoted.map {
+            try messageReply(quoting: $0, by: contactAuthor(of: $0, with: jid, accountID: accountID), inPlaintext: trustedDeviceIDs == nil)
+        }
+        let wireBody = reply?.body(replying: filtered.body) ?? filtered.body
 
         // Persist before sending so the server's carbon copy finds the stanzaID
         // via isDuplicate and is correctly skipped. Without this, handleCarbon
         // can persist a duplicate before persistMessage runs.
         let message = ChatMessage(
             id: UUID(), conversationID: conversation.id, stanzaID: stanzaID,
-            fromJID: jid.description, body: filtered.body, htmlBody: filtered.htmlBody,
+            fromJID: jid.description, body: wireBody, htmlBody: filtered.htmlBody,
             timestamp: Date(), isOutgoing: true, isDelivered: false, isEdited: false,
-            type: "chat", isEncrypted: trustedDeviceIDs != nil, attachments: attachments
+            type: "chat", replyToID: reply?.id, replyToJID: reply?.author.description, replyFallbackRange: reply?.fallbackRange,
+            isEncrypted: trustedDeviceIDs != nil, attachments: attachments
         )
         try await persistMessage(message, in: conversation, accountID: accountID)
 
         do {
             try await dispatchSend(SendDispatchContext(
-                jid: jid, filteredBody: filtered.body, stanzaID: stanzaID,
+                jid: jid, body: wireBody, stanzaID: stanzaID,
                 trustedDeviceIDs: trustedDeviceIDs, accountID: accountID,
-                chatModule: chatModule, additionalElements: attachments.map(Self.oobElement)
+                chatModule: chatModule, additionalElements: attachments.map(Self.oobElement) + (reply?.elements ?? [])
             ))
         } catch {
-            await appendFailedSendRetract(message, stanzaID: stanzaID, conversationID: conversation.id)
+            try? await recordLocalRetraction(of: message, stanzaID: stanzaID, in: conversation.id)
             throw error
         }
     }
 
-    /// Appends a local-only retract for an optimistic message whose network send failed, so the ghost row
-    /// doesn't linger in the transcript. The retract has no server effect — the message never reached it.
-    /// Callers re-throw the original send error after calling this.
-    private func appendFailedSendRetract(_ message: ChatMessage, stanzaID: String, conversationID: UUID) async {
-        try? await transcripts.appendAmendment(
-            TranscriptAmendment(action: .retract, targetMessageID: message.id, targetStanzaID: stanzaID, timestamp: Date()),
-            conversationID: conversationID
-        )
-        await messagesChanged(in: conversationID)
-    }
-
-    /// Resolves encryption for `sendMessage` and converts fail-closed resolutions into typed throws.
+    /// Resolves encryption for a 1:1 send and converts fail-closed resolutions into typed throws.
     /// Returns trusted device IDs or nil for user-opted-out plaintext.
-    private func trustedDeviceIDsForSend(
+    func trustedDeviceIDsForSend(
         jid: BareJID, accountID: UUID, conversation: Conversation
     ) async throws -> [UInt32]? {
         let resolution = await resolveEncryption(
@@ -286,7 +299,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
     private struct SendDispatchContext {
         let jid: BareJID
-        let filteredBody: String
+        let body: String
         let stanzaID: String
         let trustedDeviceIDs: [UInt32]?
         let accountID: UUID
@@ -294,43 +307,32 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         let additionalElements: [DuckoXMPP.XMLElement]
     }
 
-    /// Sends a 1:1 stanza; encrypts when `trustedDeviceIDs` is non-nil. Branches on `trustedDeviceIDs` (not on
-    /// `omemoService`) because `trustedDeviceIDsForSend` only returns nil on intentional `.userDisabled` —
-    /// folding `omemoService` into the optional-binding would silently downgrade to plaintext when the service is unwired.
+    /// Sends a 1:1 stanza, encrypted when `trustedDeviceIDs` is non-nil. `trustedDeviceIDsForSend` returns nil only for
+    /// an intentional `.userDisabled`, so an unwired service fails the send rather than downgrading it to plaintext.
     private func dispatchSend(_ context: SendDispatchContext) async throws {
         let recipient = recipientJID(for: context.jid, accountID: context.accountID)
-        let chatStatesEnabled = ChatPreferences.shared.enableChatStates
+        let attachesChatState = sendsChatStates(to: .contact(context.jid), accountID: context.accountID)
         guard let trustedDeviceIDs = context.trustedDeviceIDs else {
             try await context.chatModule.sendMessage(
-                to: recipient, body: context.filteredBody, id: context.stanzaID,
+                to: recipient, body: context.body, id: context.stanzaID,
                 requestReceipt: true, markable: true,
-                includeChatState: chatStatesEnabled,
+                includeChatState: attachesChatState,
                 additionalElements: context.additionalElements
             )
+            didSendContentMessage(to: .contact(context.jid), carryingChatState: attachesChatState, accountID: context.accountID)
             return
         }
-        guard let omemoService else {
-            // Unreachable in production: `resolveEncryption` returns
-            // `.serviceUnavailable` (→ `trustedDeviceIDsForSend` throws)
-            // when the service is nil. Defense in depth — if a future
-            // refactor lets a nil service slip past the resolution gate,
-            // fail closed instead of silently downgrading.
-            throw ChatServiceError.omemoServiceUnavailable(conversationJID: context.jid)
-        }
-        let elements = try await omemoService.encryptMessage(
-            body: context.filteredBody, to: context.jid,
-            trustedDeviceIDs: trustedDeviceIDs, accountID: context.accountID
+        try await sendEncrypted(
+            Self.envelopeContent(
+                body: context.body, context.additionalElements, requestsReceipt: true, isMarkable: true, carriesChatState: attachesChatState
+            ),
+            to: context.jid, id: context.stanzaID, trustedDeviceIDs: trustedDeviceIDs, accountID: context.accountID
         )
-        let storeHint = DuckoXMPP.XMLElement(name: "store", namespace: XMPPNamespaces.processingHints)
-        try await context.chatModule.sendMessage(
-            to: recipient, body: elements.fallbackBody, id: context.stanzaID,
-            requestReceipt: true, markable: true, includeChatState: chatStatesEnabled,
-            additionalElements: [elements.encrypted, elements.encryption, storeHint]
-        )
+        didSendContentMessage(to: .contact(context.jid), carryingChatState: attachesChatState, accountID: context.accountID)
     }
 
     /// XEP-0066: the element that lets other clients render the message as a file attachment.
-    private static func oobElement(for attachment: Attachment) -> DuckoXMPP.XMLElement {
+    nonisolated static func oobElement(for attachment: Attachment) -> DuckoXMPP.XMLElement {
         var oobX = DuckoXMPP.XMLElement(name: "x", namespace: XMPPNamespaces.oob)
         oobX.setChildText(named: "url", to: attachment.url)
         return oobX
@@ -412,96 +414,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         bumpRevision(for: conversationID)
     }
 
-    /// Whether an encrypted message is the user's own, sent from another of their devices. Internal so `OMEMOService`
-    /// can call it.
-    func isOwnEncryptedMessage(from: JID, in conversation: Conversation, accountID: UUID) async -> Bool {
-        switch conversation.type {
-        case .groupchat:
-            guard case let .full(occupant) = from else { return false }
-            return await isOwnRoomMessage(nickname: occupant.resourcePart, room: conversation.jid, accountID: accountID)
-        case .chat:
-            return from.bareJID == resolvedAccountJID(for: accountID)
-        }
-    }
-
-    /// Stores an encrypted message received via OMEMO unless a copy of it is stored already, and gives a new one the
-    /// attention a received message gets. Returns nil when the message could not be stored.
-    @discardableResult
-    func ingestEncryptedMessage(
-        message xmppMessage: XMPPMessage, decryptedBody: String?, isOutgoing: Bool,
-        in conversation: Conversation, accountID: UUID
-    ) async -> EncryptedMessageStoreOutcome? {
-        guard let sender = xmppMessage.from?.bareJID else { return nil }
-        let metadata = InboundMessageMetadata(xmppMessage)
-        let trustedBy = conversation.type == .groupchat ? conversation.jid : resolvedAccountJID(for: accountID)
-        var message = ChatMessage(
-            id: UUID(),
-            conversationID: conversation.id,
-            stanzaID: metadata.stanzaID,
-            serverID: trustedServerID(in: metadata, trustedBy: trustedBy),
-            fromJID: sender.description,
-            body: decryptedBody ?? "",
-            timestamp: Date(),
-            isOutgoing: isOutgoing,
-            isDelivered: false,
-            isEdited: false,
-            type: "chat",
-            // The reply reference and attachments travel outside the encryption, and are read from the stanza as the
-            // archive's copy is.
-            replyToID: metadata.replyToID,
-            isEncrypted: true,
-            isUndecryptable: decryptedBody == nil,
-            attachments: metadata.attachments
-        )
-        let outcome: EncryptedMessageStoreOutcome
-        do {
-            outcome = try await transcripts.storeEncryptedMessage(message, fromArchive: false)
-        } catch {
-            log.warning("Could not store an encrypted message: \(error)")
-            return nil
-        }
-        switch outcome {
-        case .inserted:
-            await persistAndNotify(message, in: conversation, accountID: accountID, isStored: true)
-        case let .upgraded(placeholderID, timestamp):
-            // The archive's undecryptable copy now reads as this message, which is new to the user. The row is read
-            // back, because a correction that reached the copy first keeps its text.
-            message.id = placeholderID
-            message.timestamp = timestamp
-            let stored = try? await transcripts.findMessage(id: placeholderID, conversationID: conversation.id)
-            await persistAndNotify(stored ?? message, in: conversation, accountID: accountID, isStored: true)
-        case .duplicate:
-            break
-        }
-        return outcome
-    }
-
-    public func sendMessage(toJIDString jidString: String, body: String, accountID: UUID) async throws {
-        guard let jid = BareJID.parse(jidString) else {
-            throw ChatServiceError.invalidJID(jidString)
-        }
-        try await sendMessage(to: jid, body: body, accountID: accountID)
-    }
-
     // MARK: - Typing
-
-    public func userIsTyping(in jid: BareJID, accountID: UUID) async {
-        guard ChatPreferences.shared.enableChatStates, let client = accountService?.connectedClient(for: accountID), let module = await client.module(ofType: ChatStatesModule.self) else { return }
-
-        typingDebounce[accountID]?[jid]?.cancel()
-        try? await module.sendChatState(.composing, to: recipientJID(for: jid, accountID: accountID))
-        typingDebounce[accountID, default: [:]][jid] = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(5))
-            guard !Task.isCancelled, let self else { return }
-            try? await module.sendChatState(.paused, to: recipientJID(for: jid, accountID: accountID))
-            typingDebounce[accountID]?[jid] = nil
-        }
-    }
-
-    public func userIsTyping(inJIDString jidString: String, accountID: UUID) async {
-        guard let jid = BareJID.parse(jidString) else { return }
-        await userIsTyping(in: jid, accountID: accountID)
-    }
 
     /// A contact who goes offline while typing sends no further chat state, so their typing indicator would stay on
     /// until this account disconnects. Called only once the contact's last session has gone. Chat-state events carry
@@ -522,331 +435,6 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         guard let accountID, let jid = BareJID.parse(jidString) else { return 0 }
         let chat = openConversations.first { $0.jid == jid && $0.accountID == accountID && $0.isDirectChat }
         return chat?.unreadCount ?? 0
-    }
-
-    // MARK: - Corrections
-
-    /// Sends an XEP-0308 correction for `original` and appends the matching
-    /// local edit amendment. Caller passes the already-resolved `ChatMessage`
-    /// so the service never re-resolves by stanzaID — per-session `ducko-N`
-    /// counters can collide with peers or with MAM-imported messages of
-    /// prior sessions, and a re-lookup may pick an incoming row instead.
-    public func sendCorrection(
-        original: ChatMessage,
-        to jid: BareJID,
-        newBody: String,
-        accountID: UUID
-    ) async throws {
-        guard original.isOutgoing, let originalStanzaID = original.stanzaID else {
-            throw ChatServiceError.notOutgoingMessage
-        }
-        let conversation = try await findOrCreateConversation(for: jid, accountID: accountID)
-        // Reject mismatched destination — a caller that passes a message
-        // from conversation A while addressing JID B would otherwise route
-        // the network stanza to B while writing the local amendment under A,
-        // splitting the transcript from the wire.
-        guard original.conversationID == conversation.id else {
-            throw ChatServiceError.notOutgoingMessage
-        }
-        guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
-        guard let chatModule = await client.module(ofType: ChatModule.self) else { return }
-
-        let chatStatesEnabled = ChatPreferences.shared.enableChatStates
-
-        let filtered = await filterBody(newBody, direction: .outgoing, accountID: accountID, fallback: jid)
-
-        let resolution = await resolveEncryption(
-            jid: jid, accountID: accountID, conversationEncryptionEnabled: conversation.encryptionEnabled
-        )
-        switch resolution {
-        case let .proceed(trustedDeviceIDs):
-            guard let omemoService else {
-                // Unreachable in production: `resolveEncryption` returns
-                // `.serviceUnavailable` when the service is nil. Defense in
-                // depth.
-                throw ChatServiceError.omemoServiceUnavailable(conversationJID: jid)
-            }
-            let elements = try await omemoService.encryptMessage(body: filtered.body, to: jid, trustedDeviceIDs: trustedDeviceIDs, accountID: accountID)
-            let replaceElement = DuckoXMPP.XMLElement(name: "replace", namespace: XMPPNamespaces.messageCorrect, attributes: ["id": originalStanzaID])
-            let storeHint = DuckoXMPP.XMLElement(name: "store", namespace: XMPPNamespaces.processingHints)
-            try await chatModule.sendMessage(
-                to: recipientJID(for: jid, accountID: accountID), body: elements.fallbackBody, id: client.generateID(),
-                includeChatState: chatStatesEnabled,
-                additionalElements: [elements.encrypted, elements.encryption, storeHint, replaceElement]
-            )
-        case .userDisabled:
-            try await chatModule.sendCorrection(to: recipientJID(for: jid, accountID: accountID), body: filtered.body, replacingID: originalStanzaID, includeChatState: chatStatesEnabled)
-        case .noLocalDevicesForPeer:
-            throw ChatServiceError.omemoNoLocalDevices(conversationJID: jid)
-        case .noTrustedDevicesForPeer:
-            throw ChatServiceError.omemoNoTrustedDevices(conversationJID: jid)
-        case .serviceUnavailable:
-            throw ChatServiceError.omemoServiceUnavailable(conversationJID: jid)
-        }
-        try await transcripts.appendAmendment(
-            TranscriptAmendment(action: .edit, targetMessageID: original.id, targetStanzaID: originalStanzaID, timestamp: Date(), body: filtered.body, htmlBody: filtered.htmlBody),
-            conversationID: conversation.id
-        )
-        await messagesChanged(in: conversation.id)
-    }
-
-    public func sendCorrection(
-        original: ChatMessage,
-        toJIDString jidString: String,
-        newBody: String,
-        accountID: UUID
-    ) async throws {
-        guard let jid = BareJID.parse(jidString) else {
-            throw ChatServiceError.invalidJID(jidString)
-        }
-        try await sendCorrection(original: original, to: jid, newBody: newBody, accountID: accountID)
-    }
-
-    // MARK: - Group Corrections
-
-    public func sendGroupCorrection(original: ChatMessage, in room: BareJID, newBody: String, accountID: UUID) async throws {
-        guard original.isOutgoing, let originalStanzaID = original.stanzaID else {
-            throw ChatServiceError.notOutgoingMessage
-        }
-        let conversation = try await findOrCreateGroupConversation(for: room, nickname: nil, accountID: accountID)
-        guard original.conversationID == conversation.id else {
-            throw ChatServiceError.notOutgoingMessage
-        }
-        guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
-        guard let mucModule = await client.module(ofType: MUCModule.self) else { return }
-
-        let filtered = await filterBody(newBody, direction: .outgoing, accountID: accountID, fallback: room)
-
-        let replaceElement = DuckoXMPP.XMLElement(name: "replace", namespace: XMPPNamespaces.messageCorrect, attributes: ["id": originalStanzaID])
-        _ = try await encryptAndSendGroupMessage(
-            room: room, body: filtered.body, stanzaID: client.generateID(),
-            conversation: conversation, mucModule: mucModule,
-            additionalElements: [replaceElement]
-        )
-        try await transcripts.appendAmendment(
-            TranscriptAmendment(action: .edit, targetMessageID: original.id, targetStanzaID: originalStanzaID, timestamp: Date(), body: filtered.body, htmlBody: filtered.htmlBody),
-            conversationID: conversation.id
-        )
-        await messagesChanged(in: conversation.id)
-    }
-
-    public func sendGroupCorrection(original: ChatMessage, inRoomJIDString roomJIDString: String, newBody: String, accountID: UUID) async throws {
-        guard let room = BareJID.parse(roomJIDString) else {
-            throw ChatServiceError.invalidJID(roomJIDString)
-        }
-        try await sendGroupCorrection(original: original, in: room, newBody: newBody, accountID: accountID)
-    }
-
-    // MARK: - Retractions
-
-    public func retractMessage(original: ChatMessage, to jid: BareJID, accountID: UUID) async throws {
-        guard original.isOutgoing, let stanzaID = original.stanzaID else {
-            throw ChatServiceError.notOutgoingMessage
-        }
-        let conversation = try await findOrCreateConversation(for: jid, accountID: accountID)
-        guard original.conversationID == conversation.id else {
-            throw ChatServiceError.notOutgoingMessage
-        }
-        guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
-        guard let chatModule = await client.module(ofType: ChatModule.self) else { return }
-
-        let resolution = await resolveEncryption(
-            jid: jid, accountID: accountID, conversationEncryptionEnabled: conversation.encryptionEnabled
-        )
-        switch resolution {
-        case let .proceed(trustedDeviceIDs):
-            guard let omemoService else {
-                throw ChatServiceError.omemoServiceUnavailable(conversationJID: jid)
-            }
-            let elements = try await omemoService.encryptMessage(body: retractionFallbackBody, to: jid, trustedDeviceIDs: trustedDeviceIDs, accountID: accountID)
-            let retractElement = DuckoXMPP.XMLElement(name: "retract", namespace: XMPPNamespaces.messageRetract, attributes: ["id": stanzaID])
-            let fallbackElement = DuckoXMPP.XMLElement(name: "fallback", namespace: XMPPNamespaces.fallbackIndication, attributes: ["for": XMPPNamespaces.messageRetract])
-            let storeHint = DuckoXMPP.XMLElement(name: "store", namespace: XMPPNamespaces.processingHints)
-            try await chatModule.sendMessage(
-                to: recipientJID(for: jid, accountID: accountID), body: elements.fallbackBody, id: client.generateID(),
-                includeChatState: false,
-                additionalElements: [elements.encrypted, elements.encryption, storeHint, retractElement, fallbackElement]
-            )
-        case .userDisabled:
-            try await chatModule.sendRetraction(to: recipientJID(for: jid, accountID: accountID), originalID: stanzaID)
-        case .noLocalDevicesForPeer:
-            throw ChatServiceError.omemoNoLocalDevices(conversationJID: jid)
-        case .serviceUnavailable:
-            throw ChatServiceError.omemoServiceUnavailable(conversationJID: jid)
-        case .noTrustedDevicesForPeer:
-            throw ChatServiceError.omemoNoTrustedDevices(conversationJID: jid)
-        }
-        try await transcripts.appendAmendment(
-            TranscriptAmendment(action: .retract, targetMessageID: original.id, targetStanzaID: stanzaID, timestamp: Date()),
-            conversationID: conversation.id
-        )
-        await messagesChanged(in: conversation.id)
-    }
-
-    public func retractMessage(original: ChatMessage, toJIDString jidString: String, accountID: UUID) async throws {
-        guard let jid = BareJID.parse(jidString) else {
-            throw ChatServiceError.invalidJID(jidString)
-        }
-        try await retractMessage(original: original, to: jid, accountID: accountID)
-    }
-
-    public func retractGroupMessage(original: ChatMessage, inRoomJIDString roomJIDString: String, accountID: UUID) async throws {
-        guard let room = BareJID.parse(roomJIDString) else {
-            throw ChatServiceError.invalidJID(roomJIDString)
-        }
-        try await retractGroupMessage(original: original, in: room, accountID: accountID)
-    }
-
-    public func retractGroupMessage(original: ChatMessage, in room: BareJID, accountID: UUID) async throws {
-        guard original.isOutgoing, let stanzaID = original.stanzaID else {
-            throw ChatServiceError.notOutgoingMessage
-        }
-        let conversation = try await findOrCreateGroupConversation(for: room, nickname: nil, accountID: accountID)
-        guard original.conversationID == conversation.id else {
-            throw ChatServiceError.notOutgoingMessage
-        }
-        guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
-        guard let mucModule = await client.module(ofType: MUCModule.self) else { return }
-
-        let retractElement = DuckoXMPP.XMLElement(name: "retract", namespace: XMPPNamespaces.messageRetract, attributes: ["id": stanzaID])
-        let fallbackElement = DuckoXMPP.XMLElement(name: "fallback", namespace: XMPPNamespaces.fallbackIndication, attributes: ["for": XMPPNamespaces.messageRetract])
-        _ = try await encryptAndSendGroupMessage(
-            room: room, body: retractionFallbackBody, stanzaID: client.generateID(),
-            conversation: conversation, mucModule: mucModule,
-            additionalElements: [retractElement, fallbackElement]
-        )
-        try await transcripts.appendAmendment(
-            TranscriptAmendment(action: .retract, targetMessageID: original.id, targetStanzaID: stanzaID, timestamp: Date()),
-            conversationID: conversation.id
-        )
-        await messagesChanged(in: conversation.id)
-    }
-
-    public func moderateMessage(serverID: String, inRoomJIDString roomJIDString: String, reason: String?, accountID: UUID) async throws {
-        guard let room = BareJID.parse(roomJIDString) else {
-            throw ChatServiceError.invalidJID(roomJIDString)
-        }
-        try await moderateMessage(serverID: serverID, in: room, reason: reason, accountID: accountID)
-    }
-
-    public func moderateMessage(serverID: String, in room: BareJID, reason: String?, accountID: UUID) async throws {
-        guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
-        guard let mucModule = await client.module(ofType: MUCModule.self) else { return }
-
-        try await mucModule.moderateMessage(room: room, stanzaID: serverID, reason: reason)
-        if let conversationID = await conversationID(for: .bare(room), accountID: accountID) {
-            try await transcripts.appendAmendment(
-                TranscriptAmendment(action: .retract, targetServerID: serverID, timestamp: Date()),
-                conversationID: conversationID
-            )
-            await messagesChanged(in: conversationID)
-        }
-    }
-
-    // MARK: - Replies
-
-    public func sendReply(
-        to jid: BareJID,
-        body: String,
-        replyToStanzaID: String,
-        accountID: UUID
-    ) async throws {
-        guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
-        guard let chatModule = await client.module(ofType: ChatModule.self) else { return }
-
-        let filtered = await filterBody(body, direction: .outgoing, accountID: accountID, fallback: jid)
-
-        let stanzaID = client.generateID()
-
-        // Resolve the conversation so the reply runs through `shouldEncrypt`
-        // and matches `sendMessage`'s encryption decision for the same peer —
-        // bypassing this is a silent-downgrade vector.
-        let conversation = try await findOrCreateConversation(for: jid, accountID: accountID)
-        try await dispatchReply(ReplyDispatchContext(
-            jid: jid, filteredBody: filtered.body, stanzaID: stanzaID,
-            replyToStanzaID: replyToStanzaID, accountID: accountID,
-            conversation: conversation, chatModule: chatModule
-        ))
-
-        let message = ChatMessage(
-            id: UUID(),
-            conversationID: conversation.id,
-            stanzaID: stanzaID,
-            fromJID: jid.description,
-            body: filtered.body,
-            htmlBody: filtered.htmlBody,
-            timestamp: Date(),
-            isOutgoing: true,
-            isDelivered: false,
-            isEdited: false,
-            type: "chat",
-            replyToID: replyToStanzaID
-        )
-        try await persistMessage(message, in: conversation, accountID: accountID)
-    }
-
-    private struct ReplyDispatchContext {
-        let jid: BareJID
-        let filteredBody: String
-        let stanzaID: String
-        let replyToStanzaID: String
-        let accountID: UUID
-        let conversation: Conversation
-        let chatModule: ChatModule
-    }
-
-    /// Resolves encryption and dispatches the reply on the chosen path.
-    private func dispatchReply(_ context: ReplyDispatchContext) async throws {
-        let chatStatesEnabled = ChatPreferences.shared.enableChatStates
-        let resolution = await resolveEncryption(
-            jid: context.jid, accountID: context.accountID,
-            conversationEncryptionEnabled: context.conversation.encryptionEnabled
-        )
-        switch resolution {
-        case let .proceed(trustedDeviceIDs):
-            guard let omemoService else {
-                throw ChatServiceError.omemoServiceUnavailable(conversationJID: context.jid)
-            }
-            let elements = try await omemoService.encryptMessage(
-                body: context.filteredBody, to: context.jid,
-                trustedDeviceIDs: trustedDeviceIDs, accountID: context.accountID
-            )
-            let replyElement = DuckoXMPP.XMLElement(
-                name: "reply", namespace: XMPPNamespaces.messageReply,
-                attributes: ["to": context.jid.description, "id": context.replyToStanzaID]
-            )
-            let storeHint = DuckoXMPP.XMLElement(name: "store", namespace: XMPPNamespaces.processingHints)
-            try await context.chatModule.sendMessage(
-                to: recipientJID(for: context.jid, accountID: context.accountID), body: elements.fallbackBody, id: context.stanzaID,
-                requestReceipt: true, markable: true, includeChatState: chatStatesEnabled,
-                additionalElements: [elements.encrypted, elements.encryption, storeHint, replyElement]
-            )
-        case .userDisabled:
-            try await context.chatModule.sendReply(
-                to: recipientJID(for: context.jid, accountID: context.accountID),
-                body: context.filteredBody, replyToID: context.replyToStanzaID,
-                replyToJID: .bare(context.jid), id: context.stanzaID,
-                includeChatState: chatStatesEnabled
-            )
-        case .noLocalDevicesForPeer:
-            throw ChatServiceError.omemoNoLocalDevices(conversationJID: context.jid)
-        case .noTrustedDevicesForPeer:
-            throw ChatServiceError.omemoNoTrustedDevices(conversationJID: context.jid)
-        case .serviceUnavailable:
-            throw ChatServiceError.omemoServiceUnavailable(conversationJID: context.jid)
-        }
-    }
-
-    public func sendReply(
-        toJIDString jidString: String,
-        body: String,
-        replyToStanzaID: String,
-        accountID: UUID
-    ) async throws {
-        guard let jid = BareJID.parse(jidString) else {
-            throw ChatServiceError.invalidJID(jidString)
-        }
-        try await sendReply(to: jid, body: body, replyToStanzaID: replyToStanzaID, accountID: accountID)
     }
 
     // MARK: - Markers
@@ -979,17 +567,35 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     public func sendGroupMessage(to room: BareJID, body: String, accountID: UUID, attachments: [Attachment] = []) async throws {
+        try await sendGroupMessage(
+            body, inRoom: findOrCreateGroupConversation(for: room, nickname: nil, accountID: accountID), replyingTo: nil,
+            accountID: accountID, attachments: attachments
+        )
+    }
+
+    /// Sends `body` to the room `conversation`, as a reply to `quoted` when given.
+    func sendGroupMessage(
+        _ body: String, inRoom conversation: Conversation, replyingTo quoted: ChatMessage?, accountID: UUID, attachments: [Attachment] = []
+    ) async throws {
         guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
         guard let mucModule = await client.module(ofType: MUCModule.self) else { return }
+        let room = conversation.jid
 
-        let conversation = try await findOrCreateGroupConversation(for: room, nickname: nil, accountID: accountID)
+        var reply: MessageReply?
+        if let quoted {
+            reply = try await messageReply(
+                quoting: quoted, by: roomAuthor(of: quoted, in: room, accountID: accountID), inPlaintext: !conversation.encryptionEnabled
+            )
+        }
         let filtered = await filterBody(body, direction: .outgoing, accountID: accountID, fallback: room)
+        let wireBody = reply?.body(replying: filtered.body) ?? filtered.body
 
         let stanzaID = client.generateID()
         // Resolve encryption before persisting so a "no trusted devices" throw leaves nothing persisted
         // (mirrors 1:1). Only the transport send sits inside the do/catch rollback below.
         let prepared = try await prepareGroupMessage(
-            room: room, body: filtered.body, conversation: conversation, additionalElements: attachments.map(Self.oobElement)
+            room: room, body: wireBody, conversation: conversation,
+            additionalElements: attachments.map(Self.oobElement) + (reply?.elements ?? [])
         )
 
         let message = ChatMessage(
@@ -997,13 +603,16 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             conversationID: conversation.id,
             stanzaID: stanzaID,
             fromJID: room.description,
-            body: filtered.body,
+            body: wireBody,
             htmlBody: filtered.htmlBody,
             timestamp: Date(),
             isOutgoing: true,
             isDelivered: false,
             isEdited: false,
             type: "groupchat",
+            replyToID: reply?.id,
+            replyToJID: reply?.author.description,
+            replyFallbackRange: reply?.fallbackRange,
             isEncrypted: prepared.isEncrypted,
             attachments: attachments
         )
@@ -1015,9 +624,10 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         do {
             try await sendPreparedGroupMessage(prepared, room: room, stanzaID: stanzaID, mucModule: mucModule)
         } catch {
-            await appendFailedSendRetract(message, stanzaID: stanzaID, conversationID: conversation.id)
+            try? await recordLocalRetraction(of: message, stanzaID: stanzaID, in: conversation.id)
             throw error
         }
+        didSendContentMessage(to: .room(room), carryingChatState: false, accountID: accountID)
     }
 
     public func joinRoom(jidString: String, nickname: String, password: String? = nil, accountID: UUID) async throws {
@@ -1033,44 +643,6 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             throw ChatServiceError.invalidJID(jidString)
         }
         try await sendGroupMessage(to: jid, body: body, accountID: accountID)
-    }
-
-    public func sendMUCPrivateMessage(roomJIDString: String, nickname: String, body: String, accountID: UUID) async throws {
-        guard let roomJID = BareJID.parse(roomJIDString) else {
-            throw ChatServiceError.invalidJID(roomJIDString)
-        }
-        guard let client = accountService?.connectedClient(for: accountID) else { throw ChatServiceError.notConnected(accountID) }
-        guard let mucModule = await client.module(ofType: MUCModule.self) else { return }
-        guard let nickname = FullJID.normalizeResourcePart(nickname) else { throw ChatServiceError.invalidJID(nickname) }
-
-        let filtered = await filterBody(body, direction: .outgoing, accountID: accountID, fallback: roomJID)
-
-        let conversation = try await findOrCreateMUCPMConversation(for: roomJID, nickname: nickname, accountID: accountID)
-        let stanzaID = client.generateID()
-
-        let message = ChatMessage(
-            id: UUID(),
-            conversationID: conversation.id,
-            stanzaID: stanzaID,
-            fromJID: nickname,
-            body: filtered.body,
-            htmlBody: filtered.htmlBody,
-            timestamp: Date(),
-            isOutgoing: true,
-            isDelivered: false,
-            isEdited: false,
-            type: "chat"
-        )
-        try await persistMessage(message, in: conversation, accountID: accountID)
-
-        // Persist-before-send + retract-on-failure (MUC PMs aren't echoed back to the sender, so the
-        // optimistic row is never doubled).
-        do {
-            try await mucModule.sendPrivateMessage(to: roomJID, nickname: nickname, body: filtered.body, id: stanzaID)
-        } catch {
-            await appendFailedSendRetract(message, stanzaID: stanzaID, conversationID: conversation.id)
-            throw error
-        }
     }
 
     public func openMUCPMConversation(roomJIDString: String, nickname: String, accountID: UUID) async throws -> Conversation {
@@ -1163,7 +735,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         try await roomService.changeRoomNickname(jidString: jidString, newNickname: newNickname, accountID: accountID)
     }
 
-    public func getRoomConfig(jidString: String, accountID: UUID) async throws -> [RoomConfigField] {
+    public func getRoomConfig(jidString: String, accountID: UUID) async throws -> DataFormInfo {
         try await roomService.getRoomConfig(jidString: jidString, accountID: accountID)
     }
 
@@ -1235,6 +807,16 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         case notConnected(UUID)
         case encryptionFailed(String)
         case notOutgoingMessage
+        /// A room message the room has not echoed yet has no stanza-id to retract it or reply to it by.
+        case unconfirmedRoomMessage
+        /// A message that arrived without an id cannot be replied to.
+        case unidentifiedMessage
+        /// Only a room's messages are moderated.
+        case notRoom
+        /// The conversation a message is sent in is not one of the account's.
+        case conversationNotInAccount
+        /// The message replied to, corrected or retracted is not in the conversation it is sent in.
+        case messageNotInConversation
         case timeout(BareJID)
         /// Conversation has encryption enabled but the local trust store has
         /// no devices for the peer (no `+notify`, peer has no OMEMO, fresh
@@ -1257,6 +839,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             case .notConnected: notConnectedDescription
             case let .encryptionFailed(reason): "Encryption failed: \(reason)"
             case .notOutgoingMessage: "Cannot correct a message that was not sent by you"
+            case .unconfirmedRoomMessage: "The room has not confirmed this message yet"
+            case .unidentifiedMessage: "This message has no id to reply to"
+            case .notRoom: "Only a room's messages can be removed by a moderator"
+            case .conversationNotInAccount: "This chat does not belong to the account"
+            case .messageNotInConversation: "The message is not in this chat"
             case let .timeout(jid): "Timed out waiting for room \(jid) join echo"
             case .omemoNoLocalDevices:
                 "Cannot send: no OMEMO devices known for this contact. The contact may not have OMEMO set up, or you have not received their device list yet."
@@ -1282,10 +869,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             await handleDeliveryReceipt(messageID: messageID, from: from, accountID: accountID)
         case let .chatMarkerReceived(messageID, markerType, from):
             await handleChatMarker(messageID: messageID, type: markerType, from: from, accountID: accountID)
-        case let .chatStateChanged(from, chatState):
-            handleChatStateChanged(from: from, state: chatState, accountID: accountID)
-        case let .messageCorrected(id, body, from): await handleMessageCorrected(originalID: id, newBody: body, from: from, accountID: accountID)
-        case let .messageRetracted(id, from): await handleMessageRetracted(originalID: id, from: from, accountID: accountID)
+        case let .chatStateChanged(from, chatState, type):
+            handleChatStateChanged(from: from, state: chatState, messageType: type, accountID: accountID)
+        case let .messageCorrected(id, body, range, from, type):
+            await handleMessageCorrected(originalID: id, newBody: body, replyFallbackRange: range, from: from, messageType: type, accountID: accountID)
+        case let .messageRetracted(id, from, type): await handleMessageRetracted(originalID: id, from: from, messageType: type, accountID: accountID)
         case let .messageModerated(id, _, room, _): await handleMessageModerated(originalID: id, room: room, accountID: accountID)
         case let .messageError(id, from, error): await handleMessageError(messageID: id, errorText: error.displayText, from: from, accountID: accountID)
         case let .rosterUpdated(update):
@@ -1307,7 +895,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         case .connected: roomService.clearPendingLeaves(accountID: accountID)
         case .streamResumed: roomService.handleStreamResumed(accountID: accountID)
         case let .disconnected(reason): handleMUCDisconnect(reason: reason, accountID: accountID)
-        case .authenticationFailed,
+        case .authenticationFailed, .plainSignInRefused,
              .presenceReceived, .iqReceived,
              .presenceSubscriptionRequest,
              .presenceSubscriptionApproved, .presenceSubscriptionRevoked,
@@ -1428,86 +1016,17 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         return false
     }
 
-    private func handleChatStateChanged(from: BareJID, state: ChatState, accountID: UUID) {
-        typingStates[accountID, default: [:]][from] = state
+    private func handleChatStateChanged(from: JID, state: ChatState, messageType: XMPPMessage.MessageType, accountID: UUID) {
+        typingStates[accountID, default: [:]][from.bareJID] = state
+        guard messageType != .groupchat else { return }
+        learnChatStateUse(of: chatStatePeer(from, accountID: accountID), uses: true, accountID: accountID)
     }
 
-    private func handleMessageCorrected(originalID: String, newBody: String, from: JID, accountID: UUID) async {
-        let conversationID = await conversationID(for: from, accountID: accountID)
-        guard let conversationID,
-              let original = try? await transcripts.findMessage(stanzaID: originalID, conversationID: conversationID), await verifySender(from: from, original: original, action: "correction", accountID: accountID) else { return }
-
-        let filterDirection: FilterDirection = original.isOutgoing ? .outgoing : .incoming
-        let filtered = await filterBody(newBody, direction: filterDirection, accountID: accountID, fallback: from.bareJID)
-
-        try? await transcripts.appendAmendment(
-            TranscriptAmendment(action: .edit, targetMessageID: original.id, targetStanzaID: originalID, timestamp: Date(), body: filtered.body, htmlBody: filtered.htmlBody),
-            conversationID: conversationID
-        )
-        await messagesChanged(in: conversationID)
-    }
-
-    private func handleMessageRetracted(originalID: String, from: JID, accountID: UUID) async {
-        let conversationID = await conversationID(for: from, accountID: accountID)
-        guard let conversationID,
-              let original = try? await transcripts.findMessage(stanzaID: originalID, conversationID: conversationID), await verifySender(from: from, original: original, action: "retraction", accountID: accountID) else { return }
-
-        try? await transcripts.appendAmendment(
-            TranscriptAmendment(action: .retract, targetMessageID: original.id, targetStanzaID: originalID, timestamp: Date()),
-            conversationID: conversationID
-        )
-        await messagesChanged(in: conversationID)
-    }
-
-    private func verifySender(from: JID, original: ChatMessage, action: String, accountID: UUID) async -> Bool {
-        if original.type == "groupchat" {
-            // MUC: verify sender nickname matches
-            guard case let .full(fullJID) = from else {
-                log.warning("Rejected MUC \(action) without full JID")
-                log.debug("The rejected MUC \(action) came from \(from)")
-                return false
-            }
-            let senderNickname = fullJID.resourcePart
-            if original.isOutgoing {
-                // Echo of our own message — verify it's from our nickname
-                guard await isOwnRoomMessage(nickname: senderNickname, room: from.bareJID, accountID: accountID) else {
-                    log.warning("Rejected MUC \(action) for own message from wrong sender")
-                    log.debug("The rejected MUC \(action) came from \(senderNickname)")
-                    return false
-                }
-            } else {
-                // Incoming — sender nickname must match original
-                guard senderNickname == original.fromJID else {
-                    log.warning("Rejected MUC \(action) from a nickname other than the original sender's")
-                    log.debug("The rejected MUC \(action) came from \(senderNickname), not \(original.fromJID)")
-                    return false
-                }
-            }
-        } else {
-            // 1:1 chat: only the original sender can correct/retract their own message.
-            // Outgoing messages store the recipient as fromJID — reject any remote
-            // correction/retraction targeting our own outgoing messages.
-            if original.isOutgoing {
-                log.warning("Rejected \(action) targeting outgoing 1:1 message")
-                return false
-            }
-            let senderJID = from.bareJID.description
-            guard senderJID == original.fromJID else {
-                log.warning("Rejected \(action) from a sender other than the original one")
-                log.debug("The rejected \(action) came from \(senderJID), not \(original.fromJID)")
-                return false
-            }
-        }
-        return true
-    }
-
+    /// A moderation is applied in the room alone, never in a private chat with one of its occupants.
     private func handleMessageModerated(originalID: String, room: BareJID, accountID: UUID) async {
-        guard let conversationID = await conversationID(for: .bare(room), accountID: accountID) else { return }
-        try? await transcripts.appendAmendment(
-            TranscriptAmendment(action: .retract, targetServerID: originalID, timestamp: Date()),
-            conversationID: conversationID
-        )
-        await messagesChanged(in: conversationID)
+        guard let conversation = try? await store.fetchConversation(jid: room.description, type: .groupchat, accountID: accountID, importSourceJID: nil)
+        else { return }
+        try? await recordModeration(of: originalID, in: conversation.id)
     }
 
     private func handleMessageError(messageID: String?, errorText: String, from: JID, accountID: UUID) async {
@@ -1520,7 +1039,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         await messagesChanged(in: conversationID)
     }
 
-    private func isOwnRoomMessage(nickname: String?, room: BareJID, accountID: UUID) async -> Bool {
+    func isOwnRoomMessage(nickname: String?, room: BareJID, accountID: UUID) async -> Bool {
         guard let nickname else { return false }
         return await nickname == ownNickname(inRoom: room, accountID: accountID)
     }
@@ -1529,7 +1048,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// so both copies of a message agree on its direction. It is always one the room confirmed. The room module's
     /// confirmed nickname comes first, and the stored one stands in, such as while a join waits. Only the room's
     /// confirmations write the stored nickname: a join and the user's own nickname change.
-    private func ownNickname(inRoom room: BareJID, accountID: UUID) async -> String? {
+    func ownNickname(inRoom room: BareJID, accountID: UUID) async -> String? {
         let mucModule = await accountService?.client(for: accountID)?.module(ofType: MUCModule.self)
         if let nickname = mucModule?.confirmedNickname(in: room) { return nickname }
         let stored = try? await store.fetchConversation(jid: room.description, type: .groupchat, accountID: accountID, importSourceJID: nil)
@@ -1538,13 +1057,14 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
     private func handleRoomMessageReceived(_ xmppMessage: XMPPMessage, accountID: UUID) async {
         let metadata = InboundMessageMetadata(xmppMessage)
-        guard let from = xmppMessage.from else { return }
+        guard await !showsEncryptionNotice(for: xmppMessage, inRoom: true, accountID: accountID), let from = xmppMessage.from else { return }
 
         // Accept messages with body or OOB attachments
         let body = xmppMessage.body ?? metadata.attachments.first?.url
         guard let body else { return }
 
         let roomJID = from.bareJID
+        let arrival = roomArrival(of: xmppMessage, in: roomJID, accountID: accountID)
 
         let senderNickname: String? = if case let .full(fullJID) = from {
             fullJID.resourcePart
@@ -1552,8 +1072,13 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             nil
         }
 
-        // Skip own messages (the server echoes them back)
+        let serverID = trustedServerID(in: metadata, trustedBy: roomJID)
+
+        // The room echoes the user's own messages, which were stored when sent.
         if await isOwnRoomMessage(nickname: senderNickname, room: roomJID, accountID: accountID) {
+            if let serverID {
+                await recordEchoedServerID(serverID, echo: metadata, body: body, in: roomJID, accountID: accountID)
+            }
             return
         }
 
@@ -1569,10 +1094,8 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             return
         }
 
-        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: roomJID, isUnstyled: xmppMessage.isUnstyled, attachments: metadata.attachments)
-
-        // Parse XEP-0359 stanza-id assigned by the MUC server
-        let serverID = metadata.serverIdentifiers.first { $0.by == roomJID.description }?.id
+        let replyFallbackRange = metadata.replyFallbackRange(in: xmppMessage.body)
+        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: roomJID, isUnstyled: xmppMessage.isUnstyled, attachments: metadata.attachments, replyFallbackRange: replyFallbackRange)
 
         let fromLabel = senderNickname ?? roomJID.description
         let message = ChatMessage(
@@ -1583,20 +1106,23 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             fromJID: fromLabel,
             body: filtered.body,
             htmlBody: filtered.htmlBody,
-            timestamp: Date(),
+            timestamp: arrival.sentTime,
             isOutgoing: false,
             isDelivered: false,
             isEdited: false,
             type: "groupchat",
             replyToID: metadata.replyToID,
+            replyToJID: metadata.replyToJID,
+            replyFallbackRange: replyFallbackRange,
             attachments: metadata.attachments
         )
-        await persistAndNotify(message, in: conversation, accountID: accountID)
+        await persistAndNotify(message, in: conversation, accountID: accountID, isReplayed: arrival.isJoinHistory)
     }
 
+    /// Files a room's private message. One encrypted in a way this device cannot read is skipped, since
+    /// `handleMessageReceived` shows its notice, as it does for a 1:1 message.
     private func handleMUCPrivateMessageReceived(_ xmppMessage: XMPPMessage, accountID: UUID) async {
-        guard let from = xmppMessage.from,
-              case let .full(fullJID) = from else { return }
+        guard xmppMessage.unreadableEncryption == nil, let from = xmppMessage.from, case let .full(fullJID) = from else { return }
 
         let metadata = InboundMessageMetadata(xmppMessage)
         let body = xmppMessage.body ?? metadata.attachments.first?.url
@@ -1618,27 +1144,33 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             return
         }
 
-        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: roomJID, isUnstyled: xmppMessage.isUnstyled, attachments: metadata.attachments)
+        let replyFallbackRange = metadata.replyFallbackRange(in: xmppMessage.body)
+        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: roomJID, isUnstyled: xmppMessage.isUnstyled, attachments: metadata.attachments, replyFallbackRange: replyFallbackRange)
 
         let message = ChatMessage(
             id: UUID(),
             conversationID: conversation.id,
             stanzaID: metadata.stanzaID,
+            // The account's archive stamps it, so catch-up knows its archived copy.
+            serverID: trustedServerID(in: metadata, trustedBy: resolvedAccountJID(for: accountID)),
             fromJID: nickname,
             body: filtered.body,
             htmlBody: filtered.htmlBody,
-            timestamp: Date(),
+            timestamp: sentTime(of: xmppMessage, accountID: accountID),
             isOutgoing: false,
             isDelivered: false,
             isEdited: false,
             type: "chat",
             replyToID: metadata.replyToID,
+            replyToJID: metadata.replyToJID,
+            replyFallbackRange: replyFallbackRange,
             attachments: metadata.attachments
         )
+        learnChatStateUse(of: .occupant(fullJID), from: xmppMessage, accountID: accountID)
         await persistAndNotify(message, in: conversation, accountID: accountID)
     }
 
-    private func findOrCreateMUCPMConversation(
+    func findOrCreateMUCPMConversation(
         for roomJID: BareJID, nickname: String, accountID: UUID
     ) async throws -> Conversation {
         let conversations = try await store.fetchConversations(for: accountID)
@@ -1713,10 +1245,12 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         await messagesChanged(in: conversationID)
     }
 
-    /// `isStored` tells that the transcript holds the message already.
-    private func persistAndNotify(_ message: ChatMessage, in conversation: Conversation, accountID: UUID, isStored: Bool = false) async {
+    /// `isStored` tells that the transcript holds the message already. A message `isReplayed` from before the user
+    /// joined, as a room's join history is, neither counts as unread nor draws attention.
+    func persistAndNotify(_ message: ChatMessage, in conversation: Conversation, accountID: UUID, isStored: Bool = false, isReplayed: Bool = false) async {
         // The user's own message from another device is new here but was read where they wrote it.
-        let countsAsUnread = !message.isOutgoing && conversation.id != activeConversationID
+        let isNew = !message.isOutgoing && !isReplayed
+        let countsAsUnread = isNew && conversation.id != activeConversationID
         let isKept = await (try? isStored
             ? recordStoredMessage(message, in: conversation, incrementUnread: countsAsUnread, accountID: accountID)
             : persistMessage(message, in: conversation, incrementUnread: countsAsUnread, accountID: accountID))
@@ -1733,11 +1267,12 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             if countsAsUnread {
                 await republishConversations(for: accountID)
             }
-        } else if !message.isOutgoing, !countsAsUnread {
+        } else if isNew, !countsAsUnread {
             _ = try? await store.updateConversation(conversation.id) { $0.unreadCount += 1 }
             await republishConversations(for: accountID)
         }
 
+        guard !isReplayed else { return }
         onIncomingMessage?(message, conversation)
     }
 
@@ -1765,6 +1300,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     private func handleRoomSubjectChanged(room: BareJID, subject: String?, accountID: UUID) async {
+        roomService.handleRoomSubjectChanged(room: room, accountID: accountID)
         let conversations = await (try? store.fetchConversations(for: accountID)) ?? []
         guard let conversation = conversations.first(where: { $0.jid == room && $0.type == .groupchat }),
               let updated = try? await store.updateConversation(conversation.id, { $0.roomSubject = subject }) else { return }
@@ -1785,12 +1321,13 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
     // MARK: - Lifecycle
 
-    /// Drops one account's live chat state — peer resource locks, incoming typing indicators, and room-keyed
-    /// state. Shared by the `.disconnected` handler and `purgeAccount` so the two stay in lockstep. Clears only
+    /// Drops one account's live chat state — peer resource locks, incoming typing indicators, the user's own chat
+    /// states, and room-keyed state. Shared by the `.disconnected` handler and `purgeAccount` so the two stay in lockstep. Clears only
     /// state that must reset on a blip: locks, typing, and room occupancy are rebuilt on reconnect/rejoin.
     private func clearLiveChatState(for accountID: UUID) {
         clearLocks(accountID: accountID)
         typingStates.removeValue(forKey: accountID)
+        clearOutgoingChatStates(for: accountID)
         clearRoomState(forAccount: accountID)
     }
 
@@ -1806,12 +1343,12 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
     // MARK: - Private: Group OMEMO
 
-    /// Resolved group-message payload: whether OMEMO applied, the body to put on the wire (plaintext, or the
-    /// OMEMO fallback when encrypted), and the elements to attach. Built before persist so an encryption
-    /// failure throws with nothing persisted (mirrors how 1:1 resolves `trustedDeviceIDsForSend` first).
+    /// Resolved group-message payload: whether OMEMO applied, the body to put on the wire (none when encrypted), and
+    /// the elements to attach. Built before persist so an encryption failure throws with nothing persisted (mirrors how
+    /// 1:1 resolves `trustedDeviceIDsForSend` first). An encrypted message is marked inside its envelope.
     private struct PreparedGroupMessage {
         let isEncrypted: Bool
-        let body: String
+        let body: String?
         let additionalElements: [DuckoXMPP.XMLElement]
     }
 
@@ -1831,7 +1368,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
         let memberJIDs = try await roomMemberJIDs(roomJIDString: room.description, accountID: accountID)
         guard !memberJIDs.isEmpty else {
-            throw ChatServiceError.encryptionFailed("Cannot encrypt: no room members with known JIDs")
+            throw ChatServiceError.encryptionFailed("no room members with known JIDs")
         }
 
         // Pre-check per occupant: if every member resolves to no-local or
@@ -1865,14 +1402,9 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         }
 
         let elements = try await omemoService.encryptGroupMessage(
-            body: body, roomJID: room, memberJIDs: memberJIDs, accountID: accountID
+            content: Self.envelopeContent(body: body, additionalElements, isMarkable: true), roomJID: room, memberJIDs: memberJIDs, accountID: accountID
         )
-        let storeHint = DuckoXMPP.XMLElement(name: "store", namespace: XMPPNamespaces.processingHints)
-        return PreparedGroupMessage(
-            isEncrypted: true,
-            body: elements.fallbackBody,
-            additionalElements: [elements.encrypted, elements.encryption, storeHint] + additionalElements
-        )
+        return PreparedGroupMessage(isEncrypted: true, body: nil, additionalElements: elements.stanzaElements)
     }
 
     /// Sends a prepared group payload. The only step that touches the transport — kept separate so callers
@@ -1881,7 +1413,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         _ prepared: PreparedGroupMessage, room: BareJID, stanzaID: String, mucModule: MUCModule
     ) async throws {
         try await mucModule.sendMessage(
-            to: room, body: prepared.body, id: stanzaID, markable: true,
+            to: room, body: prepared.body, id: stanzaID, markable: !prepared.isEncrypted,
             additionalElements: prepared.additionalElements
         )
     }
@@ -1889,7 +1421,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// Prepares and sends a group message in one step, returning whether it was encrypted. Used by the
     /// correction/retraction flows, which persist their amendment after a successful send (success-path
     /// amendment, not persist-before-send rollback).
-    private func encryptAndSendGroupMessage(
+    func encryptAndSendGroupMessage(
         room: BareJID, body: String, stanzaID: String,
         conversation: Conversation, mucModule: MUCModule,
         additionalElements: [DuckoXMPP.XMLElement] = []
@@ -1902,7 +1434,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     /// Bumps the revision (so the open chat view refreshes) and reloads `messages` only when `conversationID` matches the active one.
-    private func messagesChanged(in conversationID: UUID) async {
+    func messagesChanged(in conversationID: UUID) async {
         bumpRevision(for: conversationID)
         if conversationID == activeConversationID {
             messages = await loadMessages(for: conversationID)
@@ -1920,19 +1452,21 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// Single entry point for running a body through the filter pipeline, so every send/receive/correction/archive
     /// path shares one place to set direction, account JID, `isUnstyled`, and the archive safety flags (rather than
     /// each site rebuilding `MessageContent`/`FilterContext` and risking a forgotten flag).
-    private func filterBody(
+    func filterBody(
         _ body: String,
         direction: FilterDirection,
         accountID: UUID,
         fallback: BareJID,
         isUnstyled: Bool = false,
-        attachments: [Attachment] = []
+        isEncrypted: Bool = false,
+        attachments: [Attachment] = [],
+        replyFallbackRange: Range<Int>? = nil
     ) async -> MessageContent {
         // A body that only repeats an attachment's link is shown as the attachment, which decides for itself when
-        // the link is fetched, so no preview is fetched for it.
+        // the link is fetched, so no preview is fetched for it. Nor is one fetched for an encrypted body's links.
         await filterBody(
             body, direction: direction, accountJID: accountJID(for: accountID, fallback: fallback), isUnstyled: isUnstyled,
-            allowLinkPreviewFetches: !attachments.areLinked(by: body)
+            allowLinkPreviewFetches: !isEncrypted && !attachments.areLinked(by: body), replyFallbackRange: replyFallbackRange
         )
     }
 
@@ -1942,8 +1476,19 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         accountJID: BareJID,
         isUnstyled: Bool = false,
         allowLinkPreviewFetches: Bool = true,
-        allowBodyMutation: Bool = true
+        allowBodyMutation: Bool = true,
+        replyFallbackRange: Range<Int>? = nil
     ) async -> MessageContent {
+        // A reply's body is kept as it came, so the range of its quote still fits it, and the display-only HTML covers
+        // only the reply's own text.
+        if let replyFallbackRange {
+            var content = await filterBody(
+                body.removingUnicodeScalars(at: replyFallbackRange), direction: direction, accountJID: accountJID,
+                isUnstyled: isUnstyled, allowLinkPreviewFetches: allowLinkPreviewFetches, allowBodyMutation: false
+            )
+            content.body = body
+            return content
+        }
         let content = MessageContent(body: body, isUnstyled: isUnstyled)
         let context = FilterContext(
             accountJID: accountJID,
@@ -1956,7 +1501,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// Bridges optional `OMEMOService` to `EncryptionResolution`. Fail-closed: nil service → `.serviceUnavailable`
     /// (every dispatch throws). Collapsing nil-service into `.userDisabled` or `.proceed([])` would silently
     /// downgrade an encryption-required send to plaintext.
-    private func resolveEncryption(
+    func resolveEncryption(
         jid: BareJID, accountID: UUID, conversationEncryptionEnabled: Bool
     ) async -> OMEMOService.EncryptionResolution {
         guard conversationEncryptionEnabled else { return .userDisabled }
@@ -1978,7 +1523,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     ///
     /// Fail-closed: returns nil when `trustedBy` is nil (e.g., weakly-held `accountService` deallocated). Falling back
     /// to the peer JID would let a peer's own `<stanza-id by=...>` pass the filter.
-    private func trustedServerID(in metadata: InboundMessageMetadata, trustedBy: BareJID?) -> String? {
+    func trustedServerID(in metadata: InboundMessageMetadata, trustedBy: BareJID?) -> String? {
         guard let trustedBy else { return nil }
         return metadata.serverIdentifiers.first { identifier in
             guard let by = identifier.by, let parsed = BareJID.parse(by) else { return false }
@@ -1989,12 +1534,12 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// Strict variant of `accountJID(for:)`: returns nil when the account
     /// can't be resolved, instead of falling back to a (potentially attacker-
     /// controlled) peer JID. Use this for trust-filter inputs.
-    private func resolvedAccountJID(for accountID: UUID) -> BareJID? {
+    func resolvedAccountJID(for accountID: UUID) -> BareJID? {
         accountService?.accounts.first { $0.id == accountID }?.jid
     }
 
     private func handleMessageReceived(_ xmppMessage: XMPPMessage, accountID: UUID) async {
-        if shouldSkipRawMessage(xmppMessage, accountID: accountID) { return }
+        if await showsEncryptionNotice(for: xmppMessage, inRoom: false, accountID: accountID) || shouldSkipRawMessage(xmppMessage, accountID: accountID) { return }
 
         // Headline messages are transient (RFC 6121 §5.2.2) — surface but don't persist
         if xmppMessage.messageType == .headline {
@@ -2036,7 +1581,8 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             return
         }
 
-        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: fromJID, isUnstyled: xmppMessage.isUnstyled, attachments: metadata.attachments)
+        let replyFallbackRange = metadata.replyFallbackRange(in: xmppMessage.body)
+        let filtered = await filterBody(body, direction: .incoming, accountID: accountID, fallback: fromJID, isUnstyled: xmppMessage.isUnstyled, attachments: metadata.attachments, replyFallbackRange: replyFallbackRange)
 
         let message = ChatMessage(
             id: UUID(),
@@ -2046,27 +1592,36 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             fromJID: fromJID.description,
             body: filtered.body,
             htmlBody: filtered.htmlBody,
-            timestamp: Date(),
+            timestamp: sentTime(of: xmppMessage, accountID: accountID),
             isOutgoing: false,
             isDelivered: false,
             isEdited: false,
             type: "chat",
             replyToID: metadata.replyToID,
+            replyToJID: metadata.replyToJID,
+            replyFallbackRange: replyFallbackRange,
             attachments: metadata.attachments
         )
         // RFC 6121 §5.1: lock the conversation to the peer's most recent full resource. Placed after every
         // accept guard so bodyless chat-state-only, duplicate, or stream-replayed stanzas can't move the lock.
         // Only accepted live 1:1 inbound moves the lock — MAM ingest, carbons, and MUC PMs are deliberately excluded.
         learnResourceLock(from: from, accountID: accountID, sequence: lockSequence)
+        learnChatStateUse(of: .contact(fromJID), from: xmppMessage, accountID: accountID)
         await persistAndNotify(message, in: conversation, accountID: accountID)
     }
 
     private func handleCarbon(_ forwarded: ForwardedMessage, accountID: UUID, isOutgoing: Bool) async {
-        let jid = isOutgoing ? forwarded.message.to?.bareJID : forwarded.message.from?.bareJID
+        guard forwarded.message.messageType != .groupchat, forwarded.message.messageType != .error,
+              let peer = isOutgoing ? forwarded.message.to : forwarded.message.from else { return }
+        let jid = peer.bareJID
         let metadata = InboundMessageMetadata(forwarded.message)
 
-        guard forwarded.message.messageType != .groupchat,
-              let jid else { return }
+        // Classified before any cleartext child is read, since next to an encrypted payload those children are not
+        // covered by the encryption.
+        if forwarded.message.isEncrypted {
+            await omemoService?.handleEncryptedCarbon(forwarded, isOutgoing: isOutgoing, accountID: accountID)
+            return
+        }
 
         // Handle receipt/marker carbons (bodyless) before the body guard.
         // Carbon-forwarded stanzas bypass ReceiptsModule dispatch, so parse XML directly.
@@ -2074,44 +1629,34 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             return
         }
 
-        // Skip retractions — handled by .messageRetracted event
-        if forwarded.message.element.child(named: "retract", namespace: XMPPNamespaces.messageRetract) != nil {
+        if await applyAmendment(carriedBy: forwarded.message, chatWith: peer, sentAt: forwarded.sentTime, isDecrypted: false, accountID: accountID) {
             return
         }
 
-        // Skip corrections — handled by .messageCorrected event
-        if forwarded.message.element.child(named: "replace", namespace: XMPPNamespaces.messageCorrect) != nil {
-            return
-        }
-
-        // Skip encrypted messages — handled by .omemoEncryptedMessageReceived event
-        if forwarded.message.element.child(named: "encryption", namespace: XMPPNamespaces.eme) != nil {
-            return
-        }
-
-        await ingestCarbonBody(
-            forwarded, metadata: metadata, jid: jid, accountID: accountID, isOutgoing: isOutgoing
-        )
+        await ingestCarbonBody(forwarded, metadata: metadata, peer: peer, accountID: accountID, isOutgoing: isOutgoing)
     }
 
-    /// Persists a carbon after classification, keeping direction-specific filtering and trust here.
-    private func ingestCarbonBody(
-        _ forwarded: ForwardedMessage,
-        metadata: InboundMessageMetadata,
-        jid: BareJID,
-        accountID: UUID,
-        isOutgoing: Bool
-    ) async {
-        guard let body = forwarded.message.body ?? metadata.attachments.first?.url else { return }
+    /// Persists a carbon after classification, keeping direction-specific filtering and trust here. It is filed in the
+    /// chat with `peer`, the private chat when `peer` is a room's occupant. An invite shows as an event of its own live,
+    /// so it is never filed in a chat. Neither is a private message carrying muc#user from a room the user has no chat
+    /// with. One without muc#user from such a room looks like a contact's message, so it is filed in a 1:1 chat with
+    /// the room's address.
+    private func ingestCarbonBody(_ forwarded: ForwardedMessage, metadata: InboundMessageMetadata, peer: JID, accountID: UUID, isOutgoing: Bool) async {
+        guard !forwarded.message.carriesInvite, let body = forwarded.message.body ?? metadata.attachments.first?.url,
+              let chat = await chat(with: peer, accountID: accountID, opensDirectChat: !forwarded.message.hasClassifiedEvent)
+        else { return }
+        let jid = peer.bareJID
+        let nickname = chat.occupant?.resourcePart
         // XEP-0359 trust-filtered (see `trustedServerID`). Inbound carbons key on `serverID` — without it, a carbon
         // insert followed by a MAM replay would double-persist (MAM keys on serverID, older carbons keyed only on
         // stanzaID). Outgoing carbons reuse the simpler `(stanzaID, fromJID)` path since the message persisted before send.
+        // A room's private messages key on their stanzaID in the private chat, as live ones do.
         let serverID = trustedServerID(
             in: metadata, trustedBy: resolvedAccountJID(for: accountID)
         )
 
-        let isDup: Bool = if isOutgoing {
-            await isDuplicate(stanzaID: metadata.stanzaID, from: jid, accountID: accountID)
+        let isDup: Bool = if isOutgoing || nickname != nil {
+            await isDuplicate(stanzaID: metadata.stanzaID, from: jid, occupantNickname: nickname, accountID: accountID)
         } else {
             await isDuplicateIncoming(
                 serverID: serverID, stanzaID: metadata.stanzaID, from: jid, accountID: accountID
@@ -2119,40 +1664,32 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         }
         if isDup { return }
 
-        let conversation: Conversation
-        do {
-            conversation = try await findOrCreateConversation(for: jid, accountID: accountID)
-        } catch {
-            return
-        }
-
         let filterDirection: FilterDirection = isOutgoing ? .outgoing : .incoming
-        let filtered = await filterBody(body, direction: filterDirection, accountID: accountID, fallback: jid, isUnstyled: forwarded.message.isUnstyled, attachments: metadata.attachments)
+        let replyFallbackRange = metadata.replyFallbackRange(in: forwarded.message.body)
+        let filtered = await filterBody(body, direction: filterDirection, accountID: accountID, fallback: jid, isUnstyled: forwarded.message.isUnstyled, attachments: metadata.attachments, replyFallbackRange: replyFallbackRange)
 
         let message = ChatMessage(
             id: UUID(),
-            conversationID: conversation.id,
+            conversationID: chat.conversation.id,
             stanzaID: metadata.stanzaID,
             serverID: serverID,
-            fromJID: jid.description,
+            fromJID: nickname ?? jid.description,
             body: filtered.body,
             htmlBody: filtered.htmlBody,
-            timestamp: parseISO8601Timestamp(forwarded.timestamp),
+            timestamp: forwarded.sentTime,
             isOutgoing: isOutgoing,
             isDelivered: false,
             isEdited: false,
             type: "chat",
             replyToID: metadata.replyToID,
+            replyToJID: metadata.replyToJID,
+            replyFallbackRange: replyFallbackRange,
             attachments: metadata.attachments
         )
-        try? await persistMessage(message, in: conversation, accountID: accountID)
-    }
-
-    private func parseISO8601Timestamp(_ stamp: String?) -> Date {
-        guard let stamp else { return Date() }
-        let isoStyle = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
-        let basicStyle = Date.ISO8601FormatStyle()
-        return (try? isoStyle.parse(stamp)) ?? (try? basicStyle.parse(stamp)) ?? Date()
+        if !isOutgoing {
+            learnChatStateUse(of: chat.occupant.map(ChatStateRecipient.occupant) ?? .contact(jid), from: forwarded.message, accountID: accountID)
+        }
+        try? await persistMessage(message, in: chat.conversation, accountID: accountID)
     }
 
     /// Returns `true` if the raw `.messageReceived` stanza should be skipped because a classified event handles it.
@@ -2166,7 +1703,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
     /// Returns `false` when the message was not kept because its room is gone.
     @discardableResult
-    private func persistMessage(
+    func persistMessage(
         _ message: ChatMessage,
         in conversation: Conversation,
         incrementUnread: Bool = false,
@@ -2362,25 +1899,47 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         let to: BareJID? = conversation.type == .groupchat ? conversation.jid : nil
         let with: BareJID? = conversation.type == .groupchat ? nil : jid
         // The last page of the range is the one adjacent to `before`. A page can hold nothing to add, only duplicates
-        // and entries without a body, while the archive goes on before it.
+        // and entries without a body, while the archive goes on before it. A correction or retraction can come a page
+        // before the message it names, so it waits for the pages before it, and is dropped when the fetch ends first.
         var page = MAMModule.RSMBefore.lastPage
+        var added: [ChatMessage] = []
+        var waiting: [MessageAmendment] = []
+        var amendedIDs: Set<UUID> = []
         for _ in 0 ..< Self.maxServerHistoryPages {
             let (archived, fin) = try await mamModule.queryMessages(
                 MAMModule.Query(to: to, with: with, end: endISO, before: page, max: limit)
             )
-            let newMessages = try await convertAndDedup(
+            let converted = try await convertAndDedup(
                 archived: archived, conversation: conversation, accountJID: accountJID, accountID: accountID
             )
-            guard newMessages.isEmpty, !fin.complete, let first = fin.first else {
-                return (newMessages, !fin.complete)
+            added = converted.messages + added
+            try await recordLastMessage(of: converted.messages, in: conversation.id)
+            let applied = await applyArchivedAmendments(waiting + converted.amendments, in: conversation, accountID: accountID)
+            waiting = applied.unapplied
+            amendedIDs.formUnion(applied.amendedIDs)
+            guard added.isEmpty || !waiting.isEmpty, !fin.complete, let first = fin.first else {
+                return try await (stored(added, amendedIDs: amendedIDs), !fin.complete)
             }
             page = .id(first)
         }
-        return ([], true)
+        return try await (stored(added, amendedIDs: amendedIDs), true)
     }
 
     /// How many archive pages one history fetch reads before it gives up finding anything to add.
     private static let maxServerHistoryPages = 10
+
+    /// `messages` as stored, with the corrections and retractions applied to the ones in `amendedIDs`.
+    private func stored(_ messages: [ChatMessage], amendedIDs: Set<UUID>) async throws -> [ChatMessage] {
+        var current: [ChatMessage] = []
+        for message in messages {
+            guard amendedIDs.contains(message.id) else {
+                current.append(message)
+                continue
+            }
+            try await current.append(transcripts.findMessage(id: message.id, conversationID: message.conversationID) ?? message)
+        }
+        return current
+    }
 
     public func fetchServerHistory(
         jidString: String,
@@ -2402,59 +1961,14 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         }
     }
 
-    private func syncRecentHistory(accountID: UUID) async {
-        guard let client = accountService?.connectedClient(for: accountID), let mamModule = await client.module(ofType: MAMModule.self), let account = accountService?.accounts.first(where: { $0.id == accountID }) else { return }
-        let accountJID = account.jid
-
-        do {
-            let conversations = try await store.fetchConversations(for: accountID)
-            for conversation in conversations where conversation.hasArchivedHistory {
-                if Task.isCancelled { return }
-                let lastMessages = try await transcripts.fetchMessages(for: conversation.id, before: nil, limit: 1)
-                let startISO = lastMessages.first.map { $0.timestamp.formatted(.iso8601) }
-
-                let to: BareJID? = conversation.type == .groupchat ? conversation.jid : nil
-                let with: BareJID? = conversation.type == .groupchat ? nil : conversation.jid
-                let (archived, _) = try await mamModule.queryMessages(
-                    to: to, with: with, start: startISO, max: 50
-                )
-                let newMessages = try await convertAndDedup(
-                    archived: archived, conversation: conversation, accountJID: accountJID, accountID: accountID
-                )
-                // `convertAndDedup` appended the archived rows to the transcript across
-                // several awaits. If the room was destroyed during the MAM round-trip or
-                // those appends, delete the transcript it recreated rather than leave an
-                // orphaned JSONL the account-purge sweep can no longer reach. Checked
-                // after the appends so no transcript write can follow it; the metadata
-                // write below is guarded separately by `updateConversation`.
-                guard try await store.fetchConversations(for: accountID).contains(where: { $0.id == conversation.id }) else {
-                    try? await transcripts.deleteTranscripts(for: conversation.id)
-                    continue
-                }
-                if let lastMessage = newMessages.last {
-                    // Updates an existing row only, since the conversation may have been destroyed during this MAM
-                    // round-trip. It writes only the last message's date and preview, because `conversation` was read
-                    // before the round-trip and the rest of it may have changed since. A live message as new as this
-                    // one keeps its preview, which can be the decrypted text of the archive's undecryptable copy.
-                    try await store.updateConversation(conversation.id) { conversation in
-                        conversation.recordLastMessage(lastMessage, winsTies: false)
-                    }
-                }
-            }
-            try await setConversations(store.fetchConversations(for: accountID), for: accountID)
-        } catch {
-            let desc = error.localizedDescription
-            log.warning("MAM sync failed: \(desc)")
-        }
-    }
-
-    private func convertAndDedup(
+    func convertAndDedup(
         archived: [ArchivedMessage],
         conversation: Conversation,
         accountJID: BareJID,
         accountID: UUID
-    ) async throws -> [ChatMessage] {
+    ) async throws -> (messages: [ChatMessage], amendments: [MessageAmendment]) {
         var newMessages: [ChatMessage] = []
+        var amendments: [MessageAmendment] = []
         let ownNickname = conversation.type == .groupchat ? await ownNickname(inRoom: conversation.jid, accountID: accountID) : nil
 
         // Trust anchor for XEP-0359 `<stanza-id>`: 1:1 archives are stamped by
@@ -2463,9 +1977,16 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
         for entry in archived {
             let forwarded = entry.forwarded
+            if MessageAmendment.isCarried(by: forwarded.message) {
+                if let amendment = MessageAmendment(forwarded.message, timestamp: forwarded.sentTime, in: conversation) {
+                    amendments.append(amendment)
+                }
+                continue
+            }
+            if forwarded.message.carriesOnlyOMEMOKeys { continue }
             let metadata = InboundMessageMetadata(forwarded.message)
-            let isOMEMO = Self.isOMEMOArchive(forwarded.message)
-            let body = forwarded.message.body ?? metadata.attachments.first?.url ?? (isOMEMO ? "" : nil)
+            let isEncrypted = forwarded.message.isEncrypted
+            let body = forwarded.message.body ?? metadata.attachments.first?.url ?? (isEncrypted ? "" : nil)
             guard let body else { continue }
 
             let meta = resolveMessageMeta(forwarded: forwarded, conversation: conversation, ownNickname: ownNickname, accountJID: accountJID)
@@ -2474,10 +1995,12 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             // raw, before XEP-0359 §3 `by`-validation.
             let trustedServerID = trustedServerID(in: metadata, trustedBy: trustedBy)
 
-            if isOMEMO {
+            if isEncrypted {
+                // The archive is not decrypted yet. One without an OMEMO payload shows its notice.
                 let archivedEntry = ArchivedEntry(
-                    forwarded: forwarded, body: "", isOMEMO: true, meta: meta,
-                    serverID: trustedServerID ?? entry.messageID, metadata: metadata
+                    forwarded: forwarded, body: "", isEncrypted: true, meta: meta,
+                    serverID: trustedServerID ?? entry.messageID, metadata: metadata,
+                    undecryptableReason: forwarded.message.unreadableEncryption
                 )
                 if let message = try await storeArchivedEncryptedMessage(archivedEntry, in: conversation, accountJID: accountJID) {
                     newMessages.append(message)
@@ -2488,7 +2011,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             // An entry that carries no id of its own is known by the archive's id for it, or it would be added again
             // each time its range is read.
             let archivedEntry = ArchivedEntry(
-                forwarded: forwarded, body: body, isOMEMO: false, meta: meta,
+                forwarded: forwarded, body: body, isEncrypted: false, meta: meta,
                 serverID: trustedServerID ?? (metadata.stanzaID == nil ? entry.messageID : nil), metadata: metadata
             )
             if try await archivedPlaintextExists(archivedEntry, trustedServerID: trustedServerID, archiveID: entry.messageID, in: conversation) {
@@ -2499,10 +2022,10 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             newMessages.append(message)
         }
 
-        return newMessages.sorted { $0.timestamp < $1.timestamp }
+        return (newMessages.sorted { $0.timestamp < $1.timestamp }, amendments)
     }
 
-    /// Stores an archived OMEMO entry unless a copy of it is stored already, and returns it when this call stored it.
+    /// Stores an archived encrypted entry unless a copy of it is stored already, and returns it when this call stored it.
     /// The entry is known by its trusted server id, or else the archive's id for it: under `urn:xmpp:mam:2` the
     /// stanza-id stamped on a live message is its archive id (XEP-0313), so a live copy and its archived copy share one
     /// server id.
@@ -2510,9 +2033,12 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         _ entry: ArchivedEntry, in conversation: Conversation, accountJID: BareJID
     ) async throws -> ChatMessage? {
         // Our own room message is stored before it is sent, with no server id, so the store's server-id match cannot see
-        // it.
-        if conversation.type == .groupchat, entry.meta.isOutgoing, let stanzaID = entry.metadata.stanzaID,
-           try await ownOptimisticGroupRowExists(stanzaID: stanzaID, isOMEMOArchive: true, body: "", conversation: conversation) {
+        // it. It gets the room's stanza-id recorded instead.
+        if conversation.type == .groupchat, entry.meta.isOutgoing,
+           let ownRow = try await ownRow(echoedBy: entry.metadata, ofEncrypted: true, body: "", conversationID: conversation.id) {
+            if let serverID = entry.serverID {
+                try await recordServerID(serverID, on: ownRow)
+            }
             return nil
         }
         let message = await makeArchivedMessage(entry, in: conversation, accountJID: accountJID)
@@ -2521,7 +2047,8 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     /// Whether a plaintext archive entry is stored already. An entry with a trusted server id is matched by it, and its
-    /// stanza id serves only to find the user's own optimistic room row.
+    /// origin-id or message id serves only to find the user's own optimistic room row, which then gets the server id
+    /// recorded.
     private func archivedPlaintextExists(
         _ entry: ArchivedEntry, trustedServerID: String?, archiveID: String, in conversation: Conversation
     ) async throws -> Bool {
@@ -2529,15 +2056,13 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             if try await transcripts.messageExists(serverID: trustedServerID, conversationID: conversation.id) {
                 return true
             }
-            // Our own MUC echo is dropped by nickname in `handleRoomMessageReceived` before any
-            // serverID is recorded, so the optimistically-persisted row keeps `serverID == nil` and
-            // the serverID check above can't see it. Without this guard, the MAM copy (which carries a
-            // trusted serverID) re-imports as a second row. Match the un-reconciled optimistic row by
-            // stanzaID so the replay dedups against it.
-            guard conversation.type == .groupchat, entry.meta.isOutgoing, let stanzaID = entry.metadata.stanzaID else { return false }
-            return try await ownOptimisticGroupRowExists(
-                stanzaID: stanzaID, isOMEMOArchive: false, body: entry.body, conversation: conversation
-            )
+            // The user's own room message is stored before it is sent, without a server id, and keeps none while its
+            // live echo was missed. Without this match, the archived copy would be imported as a second row.
+            guard conversation.type == .groupchat, entry.meta.isOutgoing,
+                  let ownRow = try await ownRow(echoedBy: entry.metadata, ofEncrypted: false, body: entry.body, conversationID: conversation.id)
+            else { return false }
+            try await recordServerID(trustedServerID, on: ownRow)
+            return true
         }
         guard let stanzaID = entry.metadata.stanzaID else {
             return try await transcripts.messageExists(serverID: archiveID, conversationID: conversation.id)
@@ -2560,27 +2085,30 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     private struct ArchivedEntry {
         let forwarded: ForwardedMessage
         let body: String
-        let isOMEMO: Bool
+        let isEncrypted: Bool
         let meta: MessageMeta
         let serverID: String?
         let metadata: InboundMessageMetadata
+        var undecryptableReason: UndecryptableReason?
     }
 
     /// Builds the persisted `ChatMessage` for an archived entry. A plaintext entry's display-only `htmlBody` goes
     /// through the live paths' styling and mention filters, so a backfilled message renders like a live one. The
     /// archive-path flags leave its body as the raw archived `body` that `convertAndDedup`'s checks compared.
     ///
-    /// An archived OMEMO entry is stored as undecryptable with an empty body, since the archive path does not decrypt
-    /// and the entry's body is at most the sender's fallback sentence.
+    /// An archived encrypted entry is stored as undecryptable with an empty body, since the archive path does not
+    /// decrypt, and takes no reply or file from outside its encryption (XEP-0420).
     private func makeArchivedMessage(_ entry: ArchivedEntry, in conversation: Conversation, accountJID: BareJID) async -> ChatMessage {
         let filterDirection: FilterDirection = entry.meta.isOutgoing ? .outgoing : .incoming
-        let filtered: MessageContent? = if entry.isOMEMO {
+        let cleartext = entry.isEncrypted ? nil : entry.metadata
+        let replyFallbackRange = cleartext?.replyFallbackRange(in: entry.forwarded.message.body)
+        let filtered: MessageContent? = if entry.isEncrypted {
             nil
         } else {
             await filterBody(
                 entry.body, direction: filterDirection, accountJID: accountJID,
                 isUnstyled: entry.forwarded.message.isUnstyled,
-                allowLinkPreviewFetches: false, allowBodyMutation: false
+                allowLinkPreviewFetches: false, allowBodyMutation: false, replyFallbackRange: replyFallbackRange
             )
         }
 
@@ -2592,41 +2120,18 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             fromJID: entry.meta.fromJID,
             body: filtered?.body ?? "",
             htmlBody: filtered?.htmlBody,
-            timestamp: parseISO8601Timestamp(entry.forwarded.timestamp),
+            timestamp: entry.forwarded.sentTime,
             isOutgoing: entry.meta.isOutgoing,
             isDelivered: false,
             isEdited: false,
             type: entry.meta.messageType,
-            replyToID: entry.metadata.replyToID,
-            isEncrypted: entry.isOMEMO,
-            isUndecryptable: entry.isOMEMO,
-            attachments: entry.metadata.attachments
+            replyToID: cleartext?.replyToID, replyToJID: cleartext?.replyToJID,
+            replyFallbackRange: replyFallbackRange,
+            isEncrypted: entry.isEncrypted,
+            isUndecryptable: entry.isEncrypted,
+            undecryptableReason: entry.undecryptableReason,
+            attachments: cleartext?.attachments ?? []
         )
-    }
-
-    private static func isOMEMOArchive(_ archived: DuckoXMPP.XMPPMessage) -> Bool {
-        archived.element.child(named: "encrypted", namespace: XMPPNamespaces.omemo) != nil
-            || archived.body == omemoFallbackBody
-    }
-
-    /// Returns true when an un-reconciled optimistic own-MUC row (`serverID == nil`) matches the archived
-    /// stanza, so a MAM replay of our own group message isn't double-imported. The sub-branch is keyed on
-    /// the *archive's* OMEMO-ness, not the candidate's: a plaintext archive matches on body equality; an
-    /// OMEMO archive matches on stanzaID + `isEncrypted`, because the optimistic row stores plaintext while
-    /// the archive carries the undecryptable fallback body. Uses the all-candidates `findMessages` query so a
-    /// `ducko-N` collision can't make `findMessage`'s first-match return an older, wrong row.
-    private func ownOptimisticGroupRowExists(
-        stanzaID: String, isOMEMOArchive: Bool, body: String, conversation: Conversation
-    ) async throws -> Bool {
-        let candidates = try await transcripts.findMessages(stanzaID: stanzaID, conversationID: conversation.id)
-        return candidates.contains { candidate in
-            guard candidate.isOutgoing, candidate.serverID == nil else { return false }
-            // A retracted optimistic row has its body cleared, so the body/isEncrypted disambiguation
-            // below can't recognize it. Suppress the MAM replay anyway: a stanza we retracted must stay
-            // gone, not re-import as a fresh unretracted row.
-            if candidate.isRetracted { return true }
-            return isOMEMOArchive ? candidate.isEncrypted : candidate.body == body
-        }
     }
 
     private struct MessageMeta {
@@ -2655,16 +2160,16 @@ public final class ChatService { // swiftlint:disable:this type_body_length
                 messageType: conversation.type.rawValue
             )
         case .chat:
-            // 1:1 chat: compare bare JIDs
+            // 1:1 chat: compare bare JIDs. A room's private chat stores the occupant's nickname either way, as live.
             return MessageMeta(
-                fromJID: forwarded.message.from?.bareJID.description ?? accountJID.description,
+                fromJID: conversation.occupantNickname ?? forwarded.message.from?.bareJID.description ?? accountJID.description,
                 isOutgoing: forwarded.message.from?.bareJID == accountJID,
                 messageType: forwarded.message.messageType?.rawValue ?? "chat"
             )
         }
     }
 
-    private func findOrCreateConversation(for jid: BareJID, accountID: UUID) async throws -> Conversation {
+    func findOrCreateConversation(for jid: BareJID, accountID: UUID) async throws -> Conversation {
         let conversations = try await store.fetchConversations(for: accountID)
         if let existing = conversations.first(where: { $0.jid == jid && $0.occupantNickname == nil }) {
             return existing
@@ -2685,7 +2190,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         return conversation
     }
 
-    private func findOrCreateGroupConversation(
+    func findOrCreateGroupConversation(
         for room: BareJID,
         nickname: String?,
         accountID: UUID

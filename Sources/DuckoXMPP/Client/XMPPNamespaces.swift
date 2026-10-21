@@ -1,5 +1,6 @@
 /// XMPP namespace constants per RFC 6120.
 public enum XMPPNamespaces {
+    public static let client = "jabber:client"
     public static let streams = "urn:ietf:params:xml:ns:xmpp-streams"
     public static let stanzas = "urn:ietf:params:xml:ns:xmpp-stanzas"
     public static let tls = "urn:ietf:params:xml:ns:xmpp-tls"
@@ -44,6 +45,7 @@ public enum XMPPNamespaces {
     public static let pubsub = "http://jabber.org/protocol/pubsub"
     public static let pubsubEvent = "http://jabber.org/protocol/pubsub#event"
     public static let pubsubOwner = "http://jabber.org/protocol/pubsub#owner"
+    public static let pubsubPublish = "http://jabber.org/protocol/pubsub#publish"
     public static let pubsubPublishOptions = "http://jabber.org/protocol/pubsub#publish-options"
     public static let bookmarks2 = "urn:xmpp:bookmarks:1"
     public static let avatarData = "urn:xmpp:avatar:data"
@@ -60,8 +62,8 @@ public enum XMPPNamespaces {
     public static let serverInfo = "http://jabber.org/network/serverinfo"
     public static let channelSearch = "urn:xmpp:channel-search:0:search"
     public static let channelSearchParams = "urn:xmpp:channel-search:0:search-params"
+    public static let channelSearchError = "urn:xmpp:channel-search:0:error"
     public static let register = "jabber:iq:register"
-    public static let registerFeature = "http://jabber.org/features/iq-register"
     public static let caps2 = "urn:xmpp:caps"
     public static let hashes2 = "urn:xmpp:hashes:2"
     public static let hashFunctionSHA256 = "urn:xmpp:hash-function-text-names:sha-256"
@@ -73,6 +75,7 @@ public enum XMPPNamespaces {
     // OMEMO (XEP-0384)
     public static let omemo = "urn:xmpp:omemo:2"
     public static let omemoDevices = "urn:xmpp:omemo:2:devices"
+    public static let omemoBundles = "urn:xmpp:omemo:2:bundles"
 
     /// Explicit Message Encryption (XEP-0380)
     public static let eme = "urn:xmpp:eme:0"

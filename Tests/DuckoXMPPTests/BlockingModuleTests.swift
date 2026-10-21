@@ -8,6 +8,15 @@ import Testing
 /// Empty blocklist response for tests that don't need pre-loaded blocked JIDs.
 private let emptyBlocklistResponse = "<iq type='result' id='{requestID}'><blocklist xmlns='urn:xmpp:blocking'/></iq>"
 
+/// Answers the module's disco#info query to the server, listing the blocking feature when `supported`.
+private func answerServerDiscoInfo(on mock: MockTransport, supported: Bool = true) async throws {
+    let iqID = try await awaitOutgoingIQ(on: mock, type: .get, namespace: XMPPNamespaces.discoInfo) {
+        $0.contains("to=\"example.com\"")
+    }.id
+    let feature = supported ? "<feature var='urn:xmpp:blocking'/>" : ""
+    await mock.simulateReceive("<iq type='result' id='\(iqID)' from='example.com'><query xmlns='http://jabber.org/protocol/disco#info'>\(feature)</query></iq>")
+}
+
 /// Creates a connected client with BlockingModule registered.
 private func makeConnectedClient(mock: MockTransport, blocklistResponse: String = emptyBlocklistResponse) async throws -> XMPPClient {
     let client = XMPPClient(
@@ -21,6 +30,7 @@ private func makeConnectedClient(mock: MockTransport, blocklistResponse: String 
         try await client.connect(host: "example.com", port: 5222)
     }, respond: {
         await simulateNoTLSConnect(mock)
+        try await answerServerDiscoInfo(on: mock)
         let iqID = try await awaitOutgoingIQ(on: mock, type: .get, namespace: "urn:xmpp:blocking") {
             $0.contains("<blocklist")
         }.id
@@ -35,10 +45,10 @@ private func makeConnectedClient(mock: MockTransport, blocklistResponse: String 
 enum BlockingModuleTests {
     struct BlockListLoad {
         @Test
-        func `Blocklist GET on connect parses JIDs and emits blockListLoaded`() async throws {
+        func `Blocklist GET on connect parses bare and full JIDs and emits blockListLoaded`() async throws {
             let mock = MockTransport()
 
-            let blocklistResponse = "<iq type='result' id='{requestID}'><blocklist xmlns='urn:xmpp:blocking'><item jid='spam@example.com'/><item jid='troll@example.com'/></blocklist></iq>"
+            let blocklistResponse = "<iq type='result' id='{requestID}'><blocklist xmlns='urn:xmpp:blocking'><item jid='spam@example.com'/><item jid='troll@example.com/laptop'/></blocklist></iq>"
 
             let client = XMPPClient(
                 domain: "example.com",
@@ -59,6 +69,7 @@ enum BlockingModuleTests {
                 try await client.connect(host: "example.com", port: 5222)
             }, respond: {
                 await simulateNoTLSConnect(mock)
+                try await answerServerDiscoInfo(on: mock)
                 let iqID = try await awaitOutgoingIQ(on: mock, type: .get, namespace: "urn:xmpp:blocking") {
                     $0.contains("<blocklist")
                 }.id
@@ -69,11 +80,39 @@ enum BlockingModuleTests {
             guard case let .blockListLoaded(jids) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected blockListLoaded event")
             }
-            #expect(jids.count == 2)
+            let expected: [JID] = try [.bare(#require(BareJID.parse("spam@example.com"))), .full(#require(FullJID.parse("troll@example.com/laptop")))]
+            #expect(jids == expected)
 
             let module = try #require(await client.module(ofType: BlockingModule.self))
-            #expect(module.blockedJIDs.count == 2)
+            #expect(module.blockedJIDs == Set(expected))
 
+            await disconnectFast(client)
+        }
+
+        @Test
+        func `No block list request is sent when the server lacks blocking`() async throws {
+            let mock = MockTransport()
+            let client = XMPPClient(
+                domain: "example.com",
+                credentials: .init(username: "user", password: "pass"),
+                transport: mock, requireTLS: false
+            )
+            await client.register(BlockingModule())
+
+            try await withIQOperation(client: client, operation: {
+                try await client.connect(host: "example.com", port: 5222)
+            }, respond: {
+                await simulateNoTLSConnect(mock)
+                try await answerServerDiscoInfo(on: mock, supported: false)
+            })
+            let module = try #require(await client.module(ofType: BlockingModule.self))
+            let jid = try JID.bare(#require(BareJID.parse("spam@example.com")))
+            await #expect(throws: BlockingModule.BlockingError.blockingNotSupported) {
+                try await module.blockContact(jid: jid)
+            }
+
+            let sent = await mock.sentBytes.map { String(decoding: $0, as: UTF8.self) }
+            #expect(!sent.contains { $0.contains(XMPPNamespaces.blocking) && !$0.contains(XMPPNamespaces.discoInfo) })
             await disconnectFast(client)
         }
     }
@@ -87,7 +126,7 @@ enum BlockingModuleTests {
 
             await mock.clearSentBytes()
 
-            let jid = try #require(BareJID.parse("spam@example.com"))
+            let jid = try JID.bare(#require(BareJID.parse("spam@example.com")))
             try await withIQOperation(client: client, operation: {
                 try await module.blockContact(jid: jid)
             }, respond: {
@@ -101,14 +140,14 @@ enum BlockingModuleTests {
         }
 
         @Test
-        func `unblockContact sends correct IQ`() async throws {
+        func `unblockContact names exactly the given full JID`() async throws {
             let mock = MockTransport()
             let client = try await makeConnectedClient(mock: mock)
             let module = try #require(await client.module(ofType: BlockingModule.self))
 
             await mock.clearSentBytes()
 
-            let jid = try #require(BareJID.parse("spam@example.com"))
+            let jid = try JID.full(#require(FullJID.parse("spam@example.com/bot")))
             try await withIQOperation(client: client, operation: {
                 try await module.unblockContact(jid: jid)
             }, respond: {
@@ -116,6 +155,7 @@ enum BlockingModuleTests {
                     $0.contains("<unblock ") && $0.contains("spam@example.com")
                 }
                 #expect(request.xml.contains("<unblock xmlns=\"urn:xmpp:blocking\""))
+                #expect(request.xml.contains("jid=\"spam@example.com/bot\""))
                 await mock.simulateReceive("<iq type='result' id='\(request.id)'/>")
             })
             await disconnectFast(client)
@@ -234,20 +274,33 @@ enum BlockingModuleTests {
             await disconnectFast(client)
         }
 
-        /// Another client can unblock an address with a resource, which this module does not track. That is not an
-        /// unblock of everyone.
+        /// Another client can unblock one device of a contact while the contact itself stays blocked.
         @Test
-        func `An unblock naming only full JIDs leaves the block list alone`() throws {
-            let module = BlockingModule()
-            let events = OSAllocatedUnfairLock<[XMPPEvent]>(initialState: [])
-            module.setUp(makeStubModuleContext(emitEvent: { event in events.withLock { $0.append(event) } }))
+        func `An unblock naming a full JID removes only that entry`() async throws {
+            let mock = MockTransport()
+            let blocklistResponse = "<iq type='result' id='{requestID}'><blocklist xmlns='urn:xmpp:blocking'><item jid='spam@example.com'/><item jid='spam@example.com/bot'/></blocklist></iq>"
+            let client = try await makeConnectedClient(mock: mock, blocklistResponse: blocklistResponse)
+            let module = try #require(await client.module(ofType: BlockingModule.self))
 
-            _ = try module.handleIQ(XMPPIQ(element: stanza(
-                "<iq type='set' id='push-1'><unblock xmlns='urn:xmpp:blocking'><item jid='spam@example.com/bot'/></unblock></iq>"
-            )))
+            let eventsTask = Task {
+                try await collectEvents(from: client) { event in
+                    if case .contactUnblocked = event { return true }
+                    return false
+                }
+            }
 
-            let emitted = events.withLock { $0 }
-            #expect(emitted.isEmpty)
+            await mock.simulateReceive(
+                "<iq type='set' id='push-5'><unblock xmlns='urn:xmpp:blocking'><item jid='spam@example.com/bot'/></unblock></iq>"
+            )
+
+            let events = try await eventsTask.value
+            let device = try JID.full(#require(FullJID.parse("spam@example.com/bot")))
+            guard case let .contactUnblocked(jid) = events.last, jid == device else {
+                throw XMPPClientError.unexpectedStreamState("Expected contactUnblocked for the device")
+            }
+            #expect(module.blockedJIDs.map(\.description) == ["spam@example.com"])
+
+            await disconnectFast(client)
         }
     }
 

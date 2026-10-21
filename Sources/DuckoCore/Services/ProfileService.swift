@@ -95,25 +95,27 @@ public final class ProfileService {
         }
     }
 
+    /// Publishes the profile's fields to the own vCard and leaves its photo as the vCard holds it. The photo `profile`
+    /// was loaded with may have been replaced on another device since, and must not be uploaded again (XEP-0153 §4.3).
     public func publishProfile(_ profile: ProfileInfo, accountID: UUID) async throws {
         guard let client = accountService?.connectedClient(for: accountID), let vcardModule = await client.module(ofType: VCardModule.self) else {
             throw ProfileServiceError.notConnected(accountID)
         }
 
         var vcard = mapProfileInfoToVCard(profile)
-        // Re-fetch the current raw vCard before each publish so unmodeled XML (custom X-* fields) survives
-        // across successive publishes. "No vCard yet" — item-not-found, or nil when there's no connected
-        // context — means there is nothing to preserve; any other fetch error fails the publish rather than
-        // silently dropping unmodeled XML.
-        do {
-            if let fetched = try await vcardModule.fetchOwnVCard(forceRefresh: true) {
-                vcard.rawElement = fetched.rawElement
-            }
-        } catch let stanzaError as XMPPStanzaError where stanzaError.condition == .itemNotFound {}
+        // Re-fetch the current raw vCard before each publish so unmodeled XML (custom X-* fields) and the current photo
+        // survive across successive publishes. Nil, when there's no connected context, means there is nothing to
+        // preserve; a fetch error fails the publish rather than silently dropping unmodeled XML.
+        if let fetched = try await vcardModule.fetchOwnVCard(forceRefresh: true) {
+            vcard.rawElement = fetched.rawElement
+            vcard.photoData = fetched.photoData
+            vcard.photoType = fetched.photoType
+            vcard.photoHash = fetched.photoHash
+        }
         try await vcardModule.publishVCard(vcard)
         // A disconnect during the publish ended this connection, and a delete may have dropped the profile since.
         guard accountService?.connectedClient(for: accountID) === client else { return }
-        ownProfilesByAccount[accountID] = profile
+        ownProfilesByAccount[accountID] = mapVCardToProfileInfo(vcard)
     }
 
     // MARK: - Mapping
@@ -156,9 +158,6 @@ public final class ProfileService {
             )
         }
 
-        let photoBytes = profile.photoData.map { Array($0) }
-        let photoHash: String? = photoBytes.map { sha1Hex($0) }
-
         return VCardModule.VCard(
             fullName: profile.fullName,
             nickname: profile.nickname,
@@ -171,10 +170,7 @@ public final class ProfileService {
             role: profile.role,
             url: profile.url,
             birthday: profile.birthday,
-            note: profile.note,
-            photoData: photoBytes,
-            photoType: profile.photoType,
-            photoHash: photoHash
+            note: profile.note
         )
     }
 

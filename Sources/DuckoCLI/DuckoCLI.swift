@@ -14,6 +14,7 @@ struct DuckoCLI: AsyncParsableCommand {
             History.self,
             Room.self,
             Bookmarks.self,
+            Blocklist.self,
             Avatar.self,
             Account.self,
             ServerInfoCommand.self,

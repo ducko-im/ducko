@@ -8,8 +8,9 @@ struct RoomConfigView: View {
     let roomJIDString: String
     let accountID: UUID
     @Binding var saveRequested: Bool
+    @Binding var canSave: Bool
 
-    @State private var fields: [RoomConfigField] = []
+    @State private var form = DataFormInfo()
     @State private var isLoading = true
     @State private var errorMessage: String?
 
@@ -31,6 +32,9 @@ struct RoomConfigView: View {
         .task {
             await loadConfig()
         }
+        .onChange(of: form.hasRequiredValues, initial: true) {
+            canSave = form.hasRequiredValues
+        }
         .onChange(of: saveRequested) {
             if saveRequested {
                 Task {
@@ -43,7 +47,7 @@ struct RoomConfigView: View {
 
     private var configForm: some View {
         Form {
-            DataFormFieldsView(fields: $fields)
+            DataFormFieldsView(form: $form)
         }
         .formStyle(.grouped)
     }
@@ -52,7 +56,7 @@ struct RoomConfigView: View {
 
     private func loadConfig() async {
         do {
-            fields = try await environment.chatService.getRoomConfig(jidString: roomJIDString, accountID: accountID)
+            form = try await environment.chatService.getRoomConfig(jidString: roomJIDString, accountID: accountID)
             isLoading = false
         } catch {
             errorMessage = error.localizedDescription
@@ -62,7 +66,7 @@ struct RoomConfigView: View {
 
     private func saveConfig() async {
         do {
-            try await environment.chatService.submitRoomConfig(jidString: roomJIDString, fields: fields, accountID: accountID)
+            try await environment.chatService.submitRoomConfig(jidString: roomJIDString, fields: form.fields, accountID: accountID)
             saveRequested = false
             dismiss()
         } catch {

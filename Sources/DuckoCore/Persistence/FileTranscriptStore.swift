@@ -17,7 +17,7 @@ public actor FileTranscriptStore: TranscriptStore {
     private var serverIndex: [UUID: [String: String]] = [:]
 
     /// In-memory index of message UUID → (conversationID, date string). Authoritative
-    /// for amendment routing; disambiguates per-session `ducko-N` counter collisions
+    /// for amendment routing; disambiguates stanza ID collisions
     /// within a single per-day file.
     private var uuidIndex: [UUID: (UUID, String)] = [:]
 
@@ -106,6 +106,9 @@ public actor FileTranscriptStore: TranscriptStore {
         let fileURL = transcriptFileURL(conversationID: conversationID, dateString: dateString)
         let record = TranscriptRecord.from(amendment)
         try appendRecord(record, to: fileURL, conversationID: conversationID)
+        if amendment.action == .serverIDAssigned {
+            Self.indexNewestDay(amendment.serverID, in: &serverIndex[conversationID, default: [:]], dateString: dateString)
+        }
     }
 
     public func appendNote(_ note: TimelineNote) async throws {
@@ -122,13 +125,7 @@ public actor FileTranscriptStore: TranscriptStore {
             guard stored.isUndecryptable, !stored.isRetracted, !message.isUndecryptable,
                   stored.isOutgoing == message.isOutgoing
             else { return .duplicate }
-            try appendAmendment(
-                TranscriptAmendment(
-                    action: .decrypted, targetMessageID: stored.id, timestamp: Date(),
-                    body: message.body, htmlBody: message.htmlBody
-                ),
-                conversationID: conversationID
-            )
+            try appendAmendment(.decrypted(stored, as: message), conversationID: conversationID)
             return .upgraded(placeholderID: stored.id, timestamp: stored.timestamp)
         }
         // A message id restarts with each client, so it is a key only where no server id tells two messages apart.
@@ -147,7 +144,7 @@ public actor FileTranscriptStore: TranscriptStore {
     /// Returns nil if the target cannot be found in the indexes or by scanning the conversation's files.
     private func resolveAmendmentDate(amendment: TranscriptAmendment, conversationID: UUID) -> String? {
         // UUID is authoritative — never fall through to stanzaID/serverID,
-        // which can collide on `ducko-N` and leave a dangling record in
+        // which can collide across senders and leave a dangling record in
         // the wrong file.
         if let messageID = amendment.targetMessageID {
             if let (indexedConv, date) = uuidIndex[messageID], indexedConv == conversationID { return date }
@@ -167,12 +164,22 @@ public actor FileTranscriptStore: TranscriptStore {
             let lines = data.split(separator: UInt8(ascii: "\n"))
             for line in lines {
                 guard !line.isEmpty,
-                      let record = try? decoder.decode(TranscriptRecord.self, from: Data(line)),
-                      case let .message(entry) = record
+                      let record = try? decoder.decode(TranscriptRecord.self, from: Data(line))
                 else { continue }
-                if amendmentMatches(amendment, entry: entry) {
-                    indexEntry(id: entry.id, stanzaID: entry.stanzaID, serverID: entry.serverID, conversationID: conversationID, dateString: dateString)
-                    return dateString
+                switch record {
+                case let .message(entry):
+                    if amendmentMatches(amendment, entry: entry) {
+                        indexEntry(id: entry.id, stanzaID: entry.stanzaID, serverID: entry.serverID, conversationID: conversationID, dateString: dateString)
+                        return dateString
+                    }
+                case let .amendment(entry):
+                    // A server ID recorded after the message was stored lives in the message's file too.
+                    if amendmentMatches(amendment, assignment: entry) {
+                        Self.indexNewestDay(entry.serverID, in: &serverIndex[conversationID, default: [:]], dateString: dateString)
+                        return dateString
+                    }
+                case .note:
+                    continue
                 }
             }
         }
@@ -188,9 +195,17 @@ public actor FileTranscriptStore: TranscriptStore {
         return false
     }
 
+    /// Returns true when `assignment` records the server ID a server-ID-only amendment targets.
+    private func amendmentMatches(_ amendment: TranscriptAmendment, assignment: TranscriptRecord.AmendmentEntry) -> Bool {
+        guard amendment.targetMessageID == nil, amendment.targetStanzaID == nil,
+              let srvid = amendment.targetServerID, assignment.action == .serverIDAssigned
+        else { return false }
+        return assignment.serverID == srvid
+    }
+
     /// Populates the uuid/stanza/server indexes for a message that is written or found by a scan. Reads fill only
-    /// the uuid index: a stanza or server ID can recur within a conversation (`ducko-N` collisions), and reading an
-    /// older day before the newer one is indexed would point the ID at the older message.
+    /// the uuid index: a stanza or server ID can recur within a conversation, since each sender picks its own, and
+    /// reading an older day before the newer one is indexed would point the ID at the older message.
     private func indexEntry(id: UUID, stanzaID: String?, serverID: String?, conversationID: UUID, dateString: String) {
         uuidIndex[id] = (conversationID, dateString)
         Self.indexNewestDay(stanzaID, in: &stanzaIndex[conversationID, default: [:]], dateString: dateString)
@@ -276,7 +291,7 @@ public actor FileTranscriptStore: TranscriptStore {
 
     public func findMessages(stanzaID: String, conversationID: UUID) async throws -> [ChatMessage] {
         // Full multi-file scan, not the `stanzaIndex` fast path: that index holds one day per stanzaID, so a colliding
-        // `ducko-N` would surface only that day's file. Callers need the duplicates in the other files too.
+        // stanza ID would surface only that day's file. Callers need the duplicates in the other files too.
         let dateFiles = try listDateFiles(for: conversationID)
         var matches: [ChatMessage] = []
         for (_, fileURL) in dateFiles {
@@ -482,7 +497,7 @@ public actor FileTranscriptStore: TranscriptStore {
             }
         }
 
-        applyAmendments(amendments, to: &accumulator.messages, stanzaToID: accumulator.stanzaToID, serverToID: accumulator.serverToID)
+        applyAmendments(amendments, to: &accumulator.messages, stanzaToID: accumulator.stanzaToID, serverToID: &accumulator.serverToID)
         return accumulator.order.compactMap { accumulator.messages[$0] }
     }
 
@@ -520,16 +535,17 @@ public actor FileTranscriptStore: TranscriptStore {
         if let srvid = msg.serverID { accumulator.serverToID[srvid] = msg.id }
     }
 
-    /// Applies amendment records to a mutable message dictionary.
+    /// Applies amendment records to a mutable message dictionary. A recorded server ID routes the later amendments that
+    /// target it.
     private func applyAmendments(
         _ amendments: [TranscriptAmendment],
         to messages: inout [UUID: ChatMessage],
         stanzaToID: [String: UUID],
-        serverToID: [String: UUID]
+        serverToID: inout [String: UUID]
     ) {
         for amendment in amendments {
             // UUID-bearing amendments fail closed: stanzaID/serverID fallback
-            // would re-introduce the `ducko-N` collision risk this field
+            // would re-introduce the stanza ID collision risk this field
             // exists to prevent. Amendments without a UUID still resolve via
             // stanzaID/serverID: chat markers in a room or a private chat with one
             // of its occupants, moderation, and the receipts, markers and errors
@@ -545,35 +561,11 @@ public actor FileTranscriptStore: TranscriptStore {
             }
             guard let targetID, var msg = messages[targetID] else { continue }
 
-            switch amendment.action {
-            case .edit:
-                if let body = amendment.body {
-                    msg.body = body
-                    msg.htmlBody = amendment.htmlBody
-                    msg.isEdited = true
-                    msg.editedAt = amendment.timestamp
-                }
-            case .retract:
-                msg.isRetracted = true
-                msg.retractedAt = amendment.timestamp
-                msg.body = ""
-                msg.htmlBody = nil
-            case .delivery:
-                msg.isDelivered = true
-            case .displayed:
-                msg.isDelivered = true
-                msg.isDisplayed = true
-            case .error:
-                msg.errorText = amendment.errorText
-            case .decrypted:
-                msg.isUndecryptable = false
-                // A retraction keeps the message gone, and a correction's text is the newer one.
-                if !msg.isRetracted, !msg.isEdited {
-                    msg.body = amendment.body ?? ""
-                    msg.htmlBody = amendment.htmlBody
-                }
+            let serverID = msg.serverID
+            msg.apply(amendment)
+            if msg.serverID != serverID, let assigned = msg.serverID {
+                serverToID[assigned] = targetID
             }
-
             messages[targetID] = msg
         }
     }

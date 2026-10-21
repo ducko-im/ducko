@@ -14,6 +14,9 @@ final class AccountRecord {
     var requireTLS: Bool = true
     var rosterVersion: String?
     var certificateFingerprint: String?
+    var requiresSCRAM = false
+    /// The account's `[String: ChannelSearchLimit]`, JSON-encoded.
+    var channelSearchLimits: Data?
     var importedFrom: String?
     @Relationship(deleteRule: .nullify, inverse: \ContactRecord.account)
     var contacts: [ContactRecord]
@@ -33,6 +36,7 @@ final class AccountRecord {
         requireTLS: Bool = true,
         rosterVersion: String? = nil,
         certificateFingerprint: String? = nil,
+        requiresSCRAM: Bool = false,
         importedFrom: String? = nil,
         contacts: [ContactRecord] = [],
         conversations: [ConversationRecord] = [],
@@ -49,6 +53,7 @@ final class AccountRecord {
         self.requireTLS = requireTLS
         self.rosterVersion = rosterVersion
         self.certificateFingerprint = certificateFingerprint
+        self.requiresSCRAM = requiresSCRAM
         self.importedFrom = importedFrom
         self.contacts = contacts
         self.conversations = conversations

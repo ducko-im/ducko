@@ -182,7 +182,8 @@ struct ChatHeaderView: View {
         .accessibilityLabel("History")
         .accessibilityIdentifier("history-button")
 
-        if let accountID = conversation.accountID {
+        // A room's private chat is never encrypted, so its menu only offers to switch off encryption it still has on.
+        if let accountID = conversation.accountID, !isMUCPrivateMessage || conversation.encryptionEnabled {
             Menu {
                 Button(conversation.encryptionEnabled ? "Disable Encryption" : "Enable Encryption") {
                     Task {
@@ -192,8 +193,10 @@ struct ChatHeaderView: View {
                         )
                     }
                 }
-                Button("Device Fingerprints…") {
-                    showDeviceFingerprints = true
+                if !isMUCPrivateMessage {
+                    Button("Device Fingerprints…") {
+                        showDeviceFingerprints = true
+                    }
                 }
             } label: {
                 Image(systemName: conversation.encryptionEnabled ? "lock.fill" : "lock.open")

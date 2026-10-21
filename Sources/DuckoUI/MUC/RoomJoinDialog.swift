@@ -18,9 +18,15 @@ struct RoomJoinDialog: View {
     @State private var hasMoreResults = false
     @State private var lastSearchQuery = ""
     @State private var lastCursor: String?
+    @State private var searchCooldown: ChannelSearchCooldown?
+    @State private var cooldownNow = ContinuousClock.now
 
     private var account: Account? {
         environment.accountService.accounts.first
+    }
+
+    private var searchWaitSeconds: Int? {
+        searchCooldown?.remainingSeconds(at: cooldownNow)
     }
 
     var body: some View {
@@ -56,6 +62,13 @@ struct RoomJoinDialog: View {
                     .font(.callout)
             }
 
+            if let searchWaitSeconds {
+                Text(ChannelSearchRateLimit.waitMessage(seconds: searchWaitSeconds))
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+                    .accessibilityIdentifier("channel-search-wait")
+            }
+
             HStack {
                 TextField("Search channels…", text: $searchText)
                     .textFieldStyle(.roundedBorder)
@@ -66,7 +79,7 @@ struct RoomJoinDialog: View {
                 Button("Search") {
                     searchChannels()
                 }
-                .disabled(searchText.isEmpty || isSearching)
+                .disabled(searchText.isEmpty || isSearching || searchWaitSeconds != nil)
                 .accessibilityIdentifier("channel-search-button")
 
                 Button("Browse Rooms") {
@@ -105,6 +118,18 @@ struct RoomJoinDialog: View {
             }
             guard let accountID = account?.id else { return }
             mucService = await environment.chatService.discoverMUCService(accountID: accountID)
+        }
+        .task(id: searchCooldown) {
+            guard let searchCooldown else { return }
+            cooldownNow = .now
+            while searchCooldown.remainingSeconds(at: cooldownNow) != nil {
+                do {
+                    try await Task.sleep(until: searchCooldown.nextChange(after: cooldownNow), clock: .continuous)
+                } catch {
+                    return
+                }
+                cooldownNow = .now
+            }
         }
     }
 
@@ -160,7 +185,7 @@ struct RoomJoinDialog: View {
                 Button("Load More") {
                     loadMoreResults()
                 }
-                .disabled(isSearching)
+                .disabled(isSearching || searchWaitSeconds != nil)
             }
         }
     }
@@ -276,7 +301,7 @@ struct RoomJoinDialog: View {
     }
 
     private func searchChannels() {
-        guard let accountID = account?.id, !searchText.isEmpty else { return }
+        guard let accountID = account?.id, !searchText.isEmpty, searchWaitSeconds == nil else { return }
         isSearching = true
         discoveredRooms = []
         lastSearchQuery = searchText
@@ -287,6 +312,8 @@ struct RoomJoinDialog: View {
                 searchedChannels = result.channels
                 hasMoreResults = result.hasMore
                 lastCursor = result.lastCursor
+            } catch let rateLimit as ChannelSearchRateLimit {
+                startSearchCooldown(rateLimit)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -295,7 +322,7 @@ struct RoomJoinDialog: View {
     }
 
     private func loadMoreResults() {
-        guard let accountID = account?.id, let cursor = lastCursor else { return }
+        guard let accountID = account?.id, let cursor = lastCursor, searchWaitSeconds == nil else { return }
         isSearching = true
         Task {
             do {
@@ -303,10 +330,17 @@ struct RoomJoinDialog: View {
                 searchedChannels.append(contentsOf: result.channels)
                 hasMoreResults = result.hasMore
                 lastCursor = result.lastCursor
+            } catch let rateLimit as ChannelSearchRateLimit {
+                startSearchCooldown(rateLimit)
             } catch {
                 errorMessage = error.localizedDescription
             }
             isSearching = false
         }
+    }
+
+    private func startSearchCooldown(_ rateLimit: ChannelSearchRateLimit) {
+        cooldownNow = .now
+        searchCooldown = ChannelSearchCooldown(seconds: rateLimit.retryAfterSeconds, from: cooldownNow)
     }
 }

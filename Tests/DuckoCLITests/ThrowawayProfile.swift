@@ -49,8 +49,8 @@ struct ThrowawayProfile {
         try process.run()
         try stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
         try stdin.fileHandleForWriting.close()
-        let output = Task.detached { try stdout.fileHandleForReading.readToEnd() ?? Data() }
-        let errors = Task.detached { try stderr.fileHandleForReading.readToEnd() ?? Data() }
+        let output = Self.readToEnd(stdout)
+        let errors = Self.readToEnd(stderr)
         do {
             let deadline = ContinuousClock.now + .seconds(15)
             while process.isRunning, ContinuousClock.now < deadline {
@@ -69,5 +69,18 @@ struct ThrowawayProfile {
             output: String(decoding: output.value, as: UTF8.self), errors: String(decoding: errors.value, as: UTF8.self),
             exitCode: process.terminationStatus, reason: process.terminationReason
         )
+    }
+
+    /// Reads `pipe` until the process closes it. The read blocks until then, so it runs on a dispatch thread: a
+    /// cooperative thread held by each open pipe can starve the pool that the loopback server and this wait run on.
+    private static func readToEnd(_ pipe: Pipe) -> Task<Data, any Error> {
+        let handle = pipe.fileHandleForReading
+        return Task {
+            try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global().async {
+                    continuation.resume(with: Result { try handle.readToEnd() ?? Data() })
+                }
+            }
+        }
     }
 }

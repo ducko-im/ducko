@@ -4,6 +4,8 @@ public enum XMPPEvent: Sendable {
     case streamResumed(FullJID)
     case disconnected(DisconnectReason)
     case authenticationFailed(String)
+    /// The sign-in was refused before the password went out, as ``XMPPClientError/plainSignInRefused`` describes.
+    case plainSignInRefused
     case messageReceived(XMPPMessage)
     case presenceReceived(XMPPPresence)
     case iqReceived(XMPPIQ)
@@ -15,11 +17,15 @@ public enum XMPPEvent: Sendable {
     case messageCarbonReceived(ForwardedMessage)
     case messageCarbonSent(ForwardedMessage)
     case archivedMessagesLoaded([ArchivedMessage], fin: MAMFin)
-    case chatStateChanged(from: BareJID, state: ChatState)
+    /// `messageType` tells a room's chat state (`groupchat`) from one in a 1:1 or a room's private chat.
+    case chatStateChanged(from: JID, state: ChatState, messageType: XMPPMessage.MessageType)
     case deliveryReceiptReceived(messageID: String, from: JID)
     case chatMarkerReceived(messageID: String, type: ChatMarkerType, from: JID)
-    case messageCorrected(originalID: String, newBody: String, from: JID)
-    case messageRetracted(originalID: String, from: JID)
+    /// `messageType` tells a room's correction (`groupchat`) from one in a 1:1 or a room's private chat.
+    /// `replyFallbackRange` is the part of `newBody` that quotes the message a corrected reply answers.
+    case messageCorrected(originalID: String, newBody: String, replyFallbackRange: Range<Int>?, from: JID, messageType: XMPPMessage.MessageType)
+    /// `originalID` is the room's stanza-id of the message for a `groupchat` retraction, else the message's own id.
+    case messageRetracted(originalID: String, from: JID, messageType: XMPPMessage.MessageType)
     case messageModerated(originalID: String, moderator: String, room: BareJID, reason: String?)
     case messageError(messageID: String?, from: JID, error: XMPPStanzaError)
 
@@ -48,20 +54,21 @@ public enum XMPPEvent: Sendable {
     case pepItemsPublished(from: BareJID, node: String, items: [PEPItem])
     case pepItemsRetracted(from: BareJID, node: String, itemIDs: [String])
 
-    /// Avatar (XEP-0153 vCard-Based Avatars)
-    case vcardAvatarHashReceived(from: BareJID, hash: String?)
+    /// Avatar (XEP-0153 vCard-Based Avatars). `from` is the sending resource, so another resource of the account can be
+    /// told from this one.
+    case vcardAvatarHashReceived(from: JID, hash: String?)
 
-    // Blocking (XEP-0191)
-    case blockListLoaded([BareJID])
-    case contactBlocked(BareJID)
-    case contactUnblocked(BareJID)
+    // Blocking (XEP-0191). An entry with a resource blocks only that device of the contact.
+    case blockListLoaded([JID])
+    case contactBlocked(JID)
+    case contactUnblocked(JID)
 
     // OMEMO (XEP-0384)
 
     case omemoDeviceListReceived(jid: BareJID, devices: [UInt32])
-    /// `message` is the stanza as received. Only `decryptedBody` comes from the encrypted envelope, so the stanza's
-    /// ids, attachments, delay and reply are not covered by the encryption.
-    case omemoEncryptedMessageReceived(message: XMPPMessage, decryptedBody: String?, senderDeviceID: UInt32)
+    /// `message` is the stanza as received. A message that carries only key material, or one this device read before,
+    /// is not reported.
+    case omemoEncryptedMessageReceived(message: XMPPMessage, outcome: OMEMOReceiveOutcome)
     /// `consumedPreKeyID` names the one-time pre-key of this device that a contact's key exchange used up, or nil when
     /// this device started the session.
     case omemoSessionEstablished(jid: BareJID, deviceID: UInt32, identityKey: [UInt8], consumedPreKeyID: UInt32?)

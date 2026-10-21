@@ -111,40 +111,100 @@ public struct SearchedChannel: Sendable, Identifiable {
     }
 }
 
-/// Bridge type for `DataFormField` so DuckoUI can edit room config without importing DuckoXMPP.
-public struct RoomConfigField: Sendable, Identifiable {
-    public var id: String {
-        variable
+/// Bridge type for `DataForm` so DuckoUI can show a form's title and instructions without importing DuckoXMPP.
+public struct DataFormInfo: Sendable {
+    public let title: String?
+    public let instructions: [String]
+    public var fields: [RoomConfigField]
+
+    /// Whether every required field the user can edit has a value.
+    public var hasRequiredValues: Bool {
+        !fields.contains(where: \.isMissingRequiredValue)
     }
 
-    public let variable: String
+    public init(title: String? = nil, instructions: [String] = [], fields: [RoomConfigField] = []) {
+        self.title = title
+        self.instructions = instructions
+        self.fields = fields
+    }
+}
+
+/// Bridge type for `DataFormField` so DuckoUI can edit room config without importing DuckoXMPP.
+public struct RoomConfigField: Sendable, Identifiable {
+    /// Keys a field by its `var`, or by its position in the form for a fixed field without one.
+    public enum FieldID: Hashable, Sendable {
+        case variable(String)
+        case position(Int)
+    }
+
+    public let id: FieldID
+    public let variable: String?
     public let type: String?
     public let label: String?
+    public let description: String?
+    public let isRequired: Bool
     public var values: [String]
     public let options: [(label: String?, value: String)]
 
-    /// Whether this field should be displayed to users (excludes FORM_TYPE and hidden fields).
+    /// Whether the user can edit this field (excludes FORM_TYPE, hidden and fixed fields).
     public var isUserEditable: Bool {
-        variable != "FORM_TYPE" && type != "hidden"
+        variable != "FORM_TYPE" && type != "hidden" && !isFixed
+    }
+
+    /// Whether this field is text the form shows between its fields rather than a value to fill in.
+    public var isFixed: Bool {
+        type == "fixed"
+    }
+
+    public var isDisplayed: Bool {
+        isUserEditable || isFixed
+    }
+
+    /// Whether this field is required and the user has not given it a value yet.
+    public var isMissingRequiredValue: Bool {
+        isRequired && isUserEditable && values.allSatisfy(\.isBlank)
     }
 
     /// User-facing label, falling back to the variable name.
     public var displayLabel: String {
-        label ?? variable
+        label ?? variable ?? ""
     }
 
     public init(
-        variable: String,
+        variable: String?,
+        position: Int = 0,
         type: String? = nil,
         label: String? = nil,
+        description: String? = nil,
+        isRequired: Bool = false,
         values: [String] = [],
         options: [(label: String?, value: String)] = []
     ) {
+        self.id = variable.map(FieldID.variable) ?? .position(position)
         self.variable = variable
         self.type = type
         self.label = label
-        self.values = values
+        self.description = description
+        self.isRequired = isRequired
+        // A boolean without a value is false (XEP-0004 §3.3), so a required one holds that value rather than none.
+        self.values = type == "boolean" && isRequired && values.allSatisfy(\.isBlank) ? ["0"] : values
         self.options = options
+    }
+
+    /// Selects or deselects one option of a list field, keeping the selected values in the order the form lists them.
+    public mutating func setOption(_ value: String, isSelected: Bool) {
+        var selected = Set(values)
+        if isSelected {
+            selected.insert(value)
+        } else {
+            selected.remove(value)
+        }
+        values = optionValues(selected)
+    }
+
+    /// The option values among `selected`, in the order the form lists its options.
+    public func optionValues(_ selected: Set<String>) -> [String] {
+        options.map(\.value).filter(selected.contains)
     }
 }
 

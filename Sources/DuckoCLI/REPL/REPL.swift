@@ -57,6 +57,8 @@ private func dispatchREPLCommand(
     case .searchAll: await handleSearchAllREPLCommand(arguments, context: context)
     case .approve: await handleApproveREPLCommand(arguments, context: context)
     case .deny: await handleDenyREPLCommand(arguments, context: context)
+    case .block, .unblock: await handleBlockREPLCommand(arguments, context: context, unblocking: command.kind == .unblock)
+    case .blocklist: await handleBlockListREPLCommand(context: context)
     case .directedPresence: await handleDirectedPresenceREPLCommand(arguments, context: context)
     case .unregisterAccount: await handleUnregisterAccountREPLCommand(context: context)
     case .checkRegistration: await handleCheckRegistrationREPLCommand(arguments, context: context)

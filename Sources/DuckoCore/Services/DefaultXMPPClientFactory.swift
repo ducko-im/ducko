@@ -18,6 +18,7 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
             password: password
         )
         builder.withRequireTLS(requireTLSOverride ?? account.requireTLS)
+        builder.withRequiresSCRAM(account.requiresSCRAM)
         builder.withPreferredResource(account.resource)
         builder.withUserAgent(SASL2UserAgent(device: SCDynamicStoreCopyComputerName(nil, nil) as String?))
         let rosterModule = RosterModule()
@@ -25,16 +26,19 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
         rosterModule.setRosterVersionProvider { rosterVersion }
         builder.withModule(ChatModule())
         builder.withModule(rosterModule)
-        builder.withModule(PresenceModule())
+        let capsModule = CapsModule()
+        let presenceModule = PresenceModule(capsModule: capsModule)
+        builder.withModule(presenceModule)
         builder.withModule(ServiceDiscoveryModule())
-        builder.withModule(CapsModule())
+        builder.withModule(capsModule)
         builder.withModule(VCardModule())
         builder.withModule(ReceiptsModule())
         builder.withModule(ChatStatesModule())
         builder.withModule(CarbonsModule())
         builder.withModule(MAMModule())
         builder.withModule(PingModule())
-        builder.withModule(MUCModule(resuming: resuming?.rooms))
+        let mucModule = MUCModule(resuming: resuming?.rooms, presenceModule: presenceModule)
+        builder.withModule(mucModule)
         builder.withModule(HTTPUploadModule())
         builder.withModule(JingleModule())
         let pepModule = PEPModule()
@@ -43,9 +47,9 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
         pepModule.registerNotifyInterest(XMPPNamespaces.omemoDevices)
         builder.withModule(pepModule)
         let omemoModule: OMEMOModule = if let omemoService {
-            await omemoService.buildModule(for: account.jid, accountID: account.id, pepModule: pepModule)
+            await omemoService.buildModule(for: account.jid, accountID: account.id, pepModule: pepModule, mucModule: mucModule)
         } else {
-            OMEMOModule(pepModule: pepModule)
+            OMEMOModule(pepModule: pepModule, mucModule: mucModule)
         }
         builder.withModule(omemoModule)
         builder.withModule(BlockingModule())

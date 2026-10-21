@@ -48,7 +48,7 @@ enum AvatarTests {
             guard case let .vcardAvatarHashReceived(from, hash) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected vcardAvatarHashReceived")
             }
-            #expect(from.description == "alice@example.com")
+            #expect(from.description == "alice@example.com/resource")
             #expect(hash == "abc123def456")
 
             await disconnectFast(client)

@@ -40,7 +40,13 @@ enum CLIBootstrap {
         environment.chatService.onIncomingMessage = { message, conversation in
             guard message.isEncrypted, let accountID = conversation.accountID else { return }
             Task {
-                await eventHandler.handleEncryptedMessage(message, accountID: accountID)
+                await eventHandler.handleEncryptedMessage(message, in: conversation, accountID: accountID)
+            }
+        }
+        // An encrypted correction or retraction prints as a plaintext one's event does, once applied.
+        environment.chatService.onDecryptedAmendment = { event, accountID in
+            Task {
+                await eventHandler.handleEvent(event, accountID: accountID)
             }
         }
 

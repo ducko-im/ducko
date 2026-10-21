@@ -1,0 +1,944 @@
+{
+  "associatedData": "D9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOumfVoauhCmY2DKuGzbUUYJMpywK2QVvQdFWcg9UYFMzVQ==",
+  "messages": [
+    {
+      "sender": "alice",
+      "recipient": "bob",
+      "plaintext": "<envelope xmlns='urn:xmpp:sce:1'><content><body xmlns='jabber:client'>Hello Bob!</body></content><rpad>kAvF</rpad><time stamp='2026-10-20T12:00:00Z'/><to jid='bob@example.org'/><from jid='alice@example.org'/></envelope>",
+      "encrypted": "<encrypted xmlns=\"urn:xmpp:omemo:2\"><header sid=\"31415926\"><keys jid=\"bob@example.org\"><key rid=\"27182818\" kex=\"true\">CAIQARogD9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOukiIJH6iO1TMYbnCAI8BRv6gICwSx989nWFgfj74UX2LrE3KnwKECK7ZwHzVev5oILT2dyrrroSaAgAEAAaILJp9ygvbiDXxXFV7ykmorCjvogE3nDY3IRM2XKPrBcyIkCm4Y9F8S9B8DAexmfNftjFrRlUncfAwUjJP+X0IzFV3RK0mKDjOch58bL0lBgOZRzTWSHBNoteIFTWnP6mD48Z</key></keys></header><payload>sTEDJZpGX0U+6HrBE96dXHdAm5OSr4XjBq5muI5rhteQzgDXLN52HaxElQ8ki5yh7p4gZIJWM97bK1Aa6IUxPLTpIJRXeJ1jBT6mwquSwJEYb8OSkVa3ABNq0fa+rLzDzgDK6TP4wnU74coFi+PCkTQMqm/d0k7uhMbkxTz9gKyX5FMbAtdYufXxN3sDcStkz2awzbmuvrZpsfc52la3XGqIB7X+9TOBYZZGeJlvE3Mjs3+uEWgGGUwUBXmkWw6njMWB5neRXShFMSMma3kKHN6UA7+KBrglderPThMrBXk=</payload></encrypted>",
+      "keyExchange": {
+        "pkID": 2,
+        "spkID": 1,
+        "ik": "D9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOuk=",
+        "ek": "kfqI7VMxhucIAjwFG/qAgLBLH3z2dYWB+PvhRfYusTc=",
+        "bytes": "CAIQARogD9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOukiIJH6iO1TMYbnCAI8BRv6gICwSx989nWFgfj74UX2LrE3KnwKECK7ZwHzVev5oILT2dyrrroSaAgAEAAaILJp9ygvbiDXxXFV7ykmorCjvogE3nDY3IRM2XKPrBcyIkCm4Y9F8S9B8DAexmfNftjFrRlUncfAwUjJP+X0IzFV3RK0mKDjOch58bL0lBgOZRzTWSHBNoteIFTWnP6mD48Z"
+      },
+      "authenticatedMessage": {
+        "mac": "IrtnAfNV6/mggtPZ3Kuuug==",
+        "bytes": "ChAiu2cB81Xr+aCC09ncq666EmgIABAAGiCyafcoL24g18VxVe8pJqKwo76IBN5w2NyETNlyj6wXMiJApuGPRfEvQfAwHsZnzX7Yxa0ZVJ3HwMFIyT/l9CMxVd0StJig4znIefGy9JQYDmUc01khwTaLXiBU1pz+pg+PGQ=="
+      },
+      "message": {
+        "n": 0,
+        "pn": 0,
+        "dhPub": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+        "ciphertext": "puGPRfEvQfAwHsZnzX7Yxa0ZVJ3HwMFIyT/l9CMxVd0StJig4znIefGy9JQYDmUc01khwTaLXiBU1pz+pg+PGQ==",
+        "bytes": "CAAQABogsmn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzIiQKbhj0XxL0HwMB7GZ81+2MWtGVSdx8DBSMk/5fQjMVXdErSYoOM5yHnxsvSUGA5lHNNZIcE2i14gVNac/qYPjxk="
+      },
+      "payload": "sTEDJZpGX0U+6HrBE96dXHdAm5OSr4XjBq5muI5rhteQzgDXLN52HaxElQ8ki5yh7p4gZIJWM97bK1Aa6IUxPLTpIJRXeJ1jBT6mwquSwJEYb8OSkVa3ABNq0fa+rLzDzgDK6TP4wnU74coFi+PCkTQMqm/d0k7uhMbkxTz9gKyX5FMbAtdYufXxN3sDcStkz2awzbmuvrZpsfc52la3XGqIB7X+9TOBYZZGeJlvE3Mjs3+uEWgGGUwUBXmkWw6njMWB5neRXShFMSMma3kKHN6UA7+KBrglderPThMrBXk="
+    },
+    {
+      "sender": "alice",
+      "recipient": "bob",
+      "plaintext": "<envelope xmlns='urn:xmpp:sce:1'><content><body xmlns='jabber:client'>Fish &amp; chips tonight?</body></content><rpad>Qx</rpad><time stamp='2026-10-20T12:00:05Z'/><to jid='bob@example.org'/><from jid='alice@example.org'/></envelope>",
+      "encrypted": "<encrypted xmlns=\"urn:xmpp:omemo:2\"><header sid=\"31415926\"><keys jid=\"bob@example.org\"><key rid=\"27182818\" kex=\"true\">CAIQARogD9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOukiIJH6iO1TMYbnCAI8BRv6gICwSx989nWFgfj74UX2LrE3KnwKEI1YIh6l+4h2UVod3ZOEvz0SaAgBEAAaILJp9ygvbiDXxXFV7ykmorCjvogE3nDY3IRM2XKPrBcyIkBtffgtHdoUkfBIL6e/R95p3N4NucHcB5FFS/qzHmqVJVV+JaG6WX9vKpNtXfW0EFHYObmBoGPRehxh/BYRnDta</key></keys></header><payload>qWIm80iwTznMseLAKpm5BI/B8wLMZgC+W6NVrsID7GgzaKaj2SXwnvpbKy5FAHUA9Z6n6GGDgFwUAFX1pzT1xGOCgVLL4E3bvtkEWo2xV1MIg1bIEx+6u1CjiDsmFGRng1FVxquml032QKTDc7BvhYJiRdzEBQGeuIn/Od68NfnKAjjf6i1pmVrextQ8VYS+kuTcr5jFVarhONW5xMfrixxpJFk7rucJSDRo9/R0QnqG4M28qWTgoDDc1zZ68UEMhCLYcPppIMhlN1zo7DhXv+/C8ggYRZ3gO11cQznFCCzm2T+rGI0xdfcmjPp2WudO</payload></encrypted>",
+      "keyExchange": {
+        "pkID": 2,
+        "spkID": 1,
+        "ik": "D9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOuk=",
+        "ek": "kfqI7VMxhucIAjwFG/qAgLBLH3z2dYWB+PvhRfYusTc=",
+        "bytes": "CAIQARogD9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOukiIJH6iO1TMYbnCAI8BRv6gICwSx989nWFgfj74UX2LrE3KnwKEI1YIh6l+4h2UVod3ZOEvz0SaAgBEAAaILJp9ygvbiDXxXFV7ykmorCjvogE3nDY3IRM2XKPrBcyIkBtffgtHdoUkfBIL6e/R95p3N4NucHcB5FFS/qzHmqVJVV+JaG6WX9vKpNtXfW0EFHYObmBoGPRehxh/BYRnDta"
+      },
+      "authenticatedMessage": {
+        "mac": "jVgiHqX7iHZRWh3dk4S/PQ==",
+        "bytes": "ChCNWCIepfuIdlFaHd2ThL89EmgIARAAGiCyafcoL24g18VxVe8pJqKwo76IBN5w2NyETNlyj6wXMiJAbX34LR3aFJHwSC+nv0feadzeDbnB3AeRRUv6sx5qlSVVfiWhull/byqTbV31tBBR2Dm5gaBj0XocYfwWEZw7Wg=="
+      },
+      "message": {
+        "n": 1,
+        "pn": 0,
+        "dhPub": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+        "ciphertext": "bX34LR3aFJHwSC+nv0feadzeDbnB3AeRRUv6sx5qlSVVfiWhull/byqTbV31tBBR2Dm5gaBj0XocYfwWEZw7Wg==",
+        "bytes": "CAEQABogsmn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzIiQG19+C0d2hSR8Egvp79H3mnc3g25wdwHkUVL+rMeapUlVX4lobpZf28qk21d9bQQUdg5uYGgY9F6HGH8FhGcO1o="
+      },
+      "payload": "qWIm80iwTznMseLAKpm5BI/B8wLMZgC+W6NVrsID7GgzaKaj2SXwnvpbKy5FAHUA9Z6n6GGDgFwUAFX1pzT1xGOCgVLL4E3bvtkEWo2xV1MIg1bIEx+6u1CjiDsmFGRng1FVxquml032QKTDc7BvhYJiRdzEBQGeuIn/Od68NfnKAjjf6i1pmVrextQ8VYS+kuTcr5jFVarhONW5xMfrixxpJFk7rucJSDRo9/R0QnqG4M28qWTgoDDc1zZ68UEMhCLYcPppIMhlN1zo7DhXv+/C8ggYRZ3gO11cQznFCCzm2T+rGI0xdfcmjPp2WudO"
+    },
+    {
+      "sender": "alice",
+      "recipient": "bob",
+      "plaintext": "<envelope xmlns='urn:xmpp:sce:1'><content><body xmlns='jabber:client'>This one arrives last.</body></content><rpad>eW3pZ1</rpad><time stamp='2026-10-20T12:00:10Z'/><to jid='bob@example.org'/><from jid='alice@example.org'/></envelope>",
+      "encrypted": "<encrypted xmlns=\"urn:xmpp:omemo:2\"><header sid=\"31415926\"><keys jid=\"bob@example.org\"><key rid=\"27182818\" kex=\"true\">CAIQARogD9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOukiIJH6iO1TMYbnCAI8BRv6gICwSx989nWFgfj74UX2LrE3KnwKEEZvkbgIwY+7kA7kk8cvW9MSaAgCEAAaILJp9ygvbiDXxXFV7ykmorCjvogE3nDY3IRM2XKPrBcyIkAXg/cMfz44Xx19trCTwBMP7wpqgOEW1K8xjp4886X9gQ8qCIH9xhI9Q3Dnd+i3H9oFSJXolr/aa0BsMCA2jIPD</key></keys></header><payload>4rIYnnf7e7fwB923oF2FY/hgeTHClZGf9P3QYnBLz2+xVHGxFPW3nxt0v85F7CJuYtSx32SqYibgFOwp9oHLd1kb9Ju6fmvtAaMCm0lW3HSkwwwHJsJJVPWrapizrlEFdCUo4QD+Y8yguuUmoxxQwzaalsGMGqr6iD9Jxr3OcZxv+FUMEbyxBo6Hivf/a4Gih6as7Pete4jQCa7kSEOmNqQ/K5RA2TbZjqjfAEBd3/KxyNqjVDhSAAhpSJKXm3bLrq/9I6uXnwLWt/KoNEGFvEFLVy/BpUAyON0BGEMOHzZHYfiYtDH9jIOVLpVNwNpC</payload></encrypted>",
+      "keyExchange": {
+        "pkID": 2,
+        "spkID": 1,
+        "ik": "D9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOuk=",
+        "ek": "kfqI7VMxhucIAjwFG/qAgLBLH3z2dYWB+PvhRfYusTc=",
+        "bytes": "CAIQARogD9Xk+tjxj6E/hUZfncMSxcF9DIJCQ5IgttsRpUmPOukiIJH6iO1TMYbnCAI8BRv6gICwSx989nWFgfj74UX2LrE3KnwKEEZvkbgIwY+7kA7kk8cvW9MSaAgCEAAaILJp9ygvbiDXxXFV7ykmorCjvogE3nDY3IRM2XKPrBcyIkAXg/cMfz44Xx19trCTwBMP7wpqgOEW1K8xjp4886X9gQ8qCIH9xhI9Q3Dnd+i3H9oFSJXolr/aa0BsMCA2jIPD"
+      },
+      "authenticatedMessage": {
+        "mac": "Rm+RuAjBj7uQDuSTxy9b0w==",
+        "bytes": "ChBGb5G4CMGPu5AO5JPHL1vTEmgIAhAAGiCyafcoL24g18VxVe8pJqKwo76IBN5w2NyETNlyj6wXMiJAF4P3DH8+OF8dfbawk8ATD+8KaoDhFtSvMY6ePPOl/YEPKgiB/cYSPUNw53fotx/aBUiV6Ja/2mtAbDAgNoyDww=="
+      },
+      "message": {
+        "n": 2,
+        "pn": 0,
+        "dhPub": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+        "ciphertext": "F4P3DH8+OF8dfbawk8ATD+8KaoDhFtSvMY6ePPOl/YEPKgiB/cYSPUNw53fotx/aBUiV6Ja/2mtAbDAgNoyDww==",
+        "bytes": "CAIQABogsmn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzIiQBeD9wx/PjhfHX22sJPAEw/vCmqA4RbUrzGOnjzzpf2BDyoIgf3GEj1DcOd36Lcf2gVIleiWv9prQGwwIDaMg8M="
+      },
+      "payload": "4rIYnnf7e7fwB923oF2FY/hgeTHClZGf9P3QYnBLz2+xVHGxFPW3nxt0v85F7CJuYtSx32SqYibgFOwp9oHLd1kb9Ju6fmvtAaMCm0lW3HSkwwwHJsJJVPWrapizrlEFdCUo4QD+Y8yguuUmoxxQwzaalsGMGqr6iD9Jxr3OcZxv+FUMEbyxBo6Hivf/a4Gih6as7Pete4jQCa7kSEOmNqQ/K5RA2TbZjqjfAEBd3/KxyNqjVDhSAAhpSJKXm3bLrq/9I6uXnwLWt/KoNEGFvEFLVy/BpUAyON0BGEMOHzZHYfiYtDH9jIOVLpVNwNpC"
+    },
+    {
+      "sender": "bob",
+      "recipient": "alice",
+      "plaintext": null,
+      "encrypted": "<encrypted xmlns=\"urn:xmpp:omemo:2\"><header sid=\"27182818\"><keys jid=\"alice@example.org\"><key rid=\"31415926\">ChBZBKDeIQWaD3GsAAAblEE/ElgIABAAGiBeK9xTxtlBwC5IdgwXQXBv3gpQaB/5ApVK6qxkpo1hRCIwzEfrWGg5IswweJ6IeuZAjLN/N34mRMgaqnitQAOv6+tEINcwkjvWlNHSkH3xynJl</key></keys></header></encrypted>",
+      "keyExchange": null,
+      "authenticatedMessage": {
+        "mac": "WQSg3iEFmg9xrAAAG5RBPw==",
+        "bytes": "ChBZBKDeIQWaD3GsAAAblEE/ElgIABAAGiBeK9xTxtlBwC5IdgwXQXBv3gpQaB/5ApVK6qxkpo1hRCIwzEfrWGg5IswweJ6IeuZAjLN/N34mRMgaqnitQAOv6+tEINcwkjvWlNHSkH3xynJl"
+      },
+      "message": {
+        "n": 0,
+        "pn": 0,
+        "dhPub": "XivcU8bZQcAuSHYMF0Fwb94KUGgf+QKVSuqsZKaNYUQ=",
+        "ciphertext": "zEfrWGg5IswweJ6IeuZAjLN/N34mRMgaqnitQAOv6+tEINcwkjvWlNHSkH3xynJl",
+        "bytes": "CAAQABogXivcU8bZQcAuSHYMF0Fwb94KUGgf+QKVSuqsZKaNYUQiMMxH61hoOSLMMHieiHrmQIyzfzd+JkTIGqp4rUADr+vrRCDXMJI71pTR0pB98cpyZQ=="
+      },
+      "payload": null
+    },
+    {
+      "sender": "alice",
+      "recipient": "bob",
+      "plaintext": "<envelope xmlns='urn:xmpp:sce:1'><content><body xmlns='jabber:client'>Grüße 🦆</body></content><rpad></rpad><time stamp='2026-10-20T12:01:00Z'/><to jid='bob@example.org'/><from jid='alice@example.org'/></envelope>",
+      "encrypted": "<encrypted xmlns=\"urn:xmpp:omemo:2\"><header sid=\"31415926\"><keys jid=\"bob@example.org\"><key rid=\"27182818\">ChCHnlfYNhigQE33XmcO2D3CEmgIABADGiAAF3tNNZ2OHfvc7e0cxxtHUtL3ixtVI0ZUz/XNN0+yXyJAIOCCyhgWKkxZ4f6+0mKKVlkQydZ+S4NuYOQva43VXDdR/icgRng+Z2K1JCxMhgmvXqkAcpASHe94+OHJR+IBLg==</key></keys></header><payload>J1eEGf5tw55K9cG1WepdwpfMs/AiPo4/oXs1rOVkI6i/1JKilNQrPOi+LsCmhBEURoPbK8f20QNUm0WwCKbTnIbuoMkarDpgFYbX1gRsuJNhoG1An9/iUteL3L16JWfykjjOeeGJKews4Nn+nQ2np6x3JQnwvExw8rvBSwpUOc3yNo1lnnbxWgbZ4/CZvkMQ65t7P+gZABuXxpCZX9rGW83pNz3X0QfaSsC3SarECpxGxVRORscaNFRGGUiLokZKtTyFNdiaGwb/QeqsCRfQxjq+AhUxPkV9AyoX87a9sCA=</payload></encrypted>",
+      "keyExchange": null,
+      "authenticatedMessage": {
+        "mac": "h55X2DYYoEBN915nDtg9wg==",
+        "bytes": "ChCHnlfYNhigQE33XmcO2D3CEmgIABADGiAAF3tNNZ2OHfvc7e0cxxtHUtL3ixtVI0ZUz/XNN0+yXyJAIOCCyhgWKkxZ4f6+0mKKVlkQydZ+S4NuYOQva43VXDdR/icgRng+Z2K1JCxMhgmvXqkAcpASHe94+OHJR+IBLg=="
+      },
+      "message": {
+        "n": 0,
+        "pn": 3,
+        "dhPub": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "ciphertext": "IOCCyhgWKkxZ4f6+0mKKVlkQydZ+S4NuYOQva43VXDdR/icgRng+Z2K1JCxMhgmvXqkAcpASHe94+OHJR+IBLg==",
+        "bytes": "CAAQAxogABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8iQCDggsoYFipMWeH+vtJiilZZEMnWfkuDbmDkL2uN1Vw3Uf4nIEZ4PmditSQsTIYJr16pAHKQEh3vePjhyUfiAS4="
+      },
+      "payload": "J1eEGf5tw55K9cG1WepdwpfMs/AiPo4/oXs1rOVkI6i/1JKilNQrPOi+LsCmhBEURoPbK8f20QNUm0WwCKbTnIbuoMkarDpgFYbX1gRsuJNhoG1An9/iUteL3L16JWfykjjOeeGJKews4Nn+nQ2np6x3JQnwvExw8rvBSwpUOc3yNo1lnnbxWgbZ4/CZvkMQ65t7P+gZABuXxpCZX9rGW83pNz3X0QfaSsC3SarECpxGxVRORscaNFRGGUiLokZKtTyFNdiaGwb/QeqsCRfQxjq+AhUxPkV9AyoX87a9sCA="
+    },
+    {
+      "sender": "alice",
+      "recipient": "bob",
+      "plaintext": "<envelope xmlns='urn:xmpp:sce:1'><content><body xmlns='jabber:client'>Out of order, second.</body></content><rpad>p</rpad><time stamp='2026-10-20T12:01:05Z'/><to jid='bob@example.org'/><from jid='alice@example.org'/></envelope>",
+      "encrypted": "<encrypted xmlns=\"urn:xmpp:omemo:2\"><header sid=\"31415926\"><keys jid=\"bob@example.org\"><key rid=\"27182818\">ChCIQxGso5YFeBQb6uLqpcp0EmgIARADGiAAF3tNNZ2OHfvc7e0cxxtHUtL3ixtVI0ZUz/XNN0+yXyJAvWtHrOvzmsBpiS78XlLpgcHQw2LRwbuVTm3X/a0Ga46y66dfLoN5c0BNvgeGMIaiHHfVh/YHT3fIalXNhwSD9Q==</key></keys></header><payload>7k/iaGRhdud0t6+bQCZpj+l9R+Wd0kwYtQVB8A94IfPEhKcHB/GjKdG1zskixVUYgODCs9RZlur7QJgELnnaFzZ93pOkK/9VOAcK5vRIEHNsEmEHuFcsEJXvyYllGjzt790rY66PAoPLO8wPnQMbnVFI7NlFH/56SNdjXE9SaElpE2y+IgrhFUNYKtbvyUwaGLX9CjDE4vvvhEYKGnx9nmTvMJEoolVoZsG5kvAc5abdBkOix0yi44xsHULf5ZRF4k00MlCBwXShj/r6nTsgxD19QTce5BCopkM9LZElWNFahQjcr+cmdlhw5LlYSuc3</payload></encrypted>",
+      "keyExchange": null,
+      "authenticatedMessage": {
+        "mac": "iEMRrKOWBXgUG+ri6qXKdA==",
+        "bytes": "ChCIQxGso5YFeBQb6uLqpcp0EmgIARADGiAAF3tNNZ2OHfvc7e0cxxtHUtL3ixtVI0ZUz/XNN0+yXyJAvWtHrOvzmsBpiS78XlLpgcHQw2LRwbuVTm3X/a0Ga46y66dfLoN5c0BNvgeGMIaiHHfVh/YHT3fIalXNhwSD9Q=="
+      },
+      "message": {
+        "n": 1,
+        "pn": 3,
+        "dhPub": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "ciphertext": "vWtHrOvzmsBpiS78XlLpgcHQw2LRwbuVTm3X/a0Ga46y66dfLoN5c0BNvgeGMIaiHHfVh/YHT3fIalXNhwSD9Q==",
+        "bytes": "CAEQAxogABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8iQL1rR6zr85rAaYku/F5S6YHB0MNi0cG7lU5t1/2tBmuOsuunXy6DeXNATb4HhjCGohx31Yf2B093yGpVzYcEg/U="
+      },
+      "payload": "7k/iaGRhdud0t6+bQCZpj+l9R+Wd0kwYtQVB8A94IfPEhKcHB/GjKdG1zskixVUYgODCs9RZlur7QJgELnnaFzZ93pOkK/9VOAcK5vRIEHNsEmEHuFcsEJXvyYllGjzt790rY66PAoPLO8wPnQMbnVFI7NlFH/56SNdjXE9SaElpE2y+IgrhFUNYKtbvyUwaGLX9CjDE4vvvhEYKGnx9nmTvMJEoolVoZsG5kvAc5abdBkOix0yi44xsHULf5ZRF4k00MlCBwXShj/r6nTsgxD19QTce5BCopkM9LZElWNFahQjcr+cmdlhw5LlYSuc3"
+    },
+    {
+      "sender": "alice",
+      "recipient": "bob",
+      "plaintext": "<envelope xmlns='urn:xmpp:sce:1'><content><body xmlns='jabber:client'>A longer message that spans several AES blocks, so the payload is more than one block of ciphertext.</body></content><rpad>Zz9</rpad><time stamp='2026-10-20T12:01:10Z'/><to jid='bob@example.org'/><from jid='alice@example.org'/></envelope>",
+      "encrypted": "<encrypted xmlns=\"urn:xmpp:omemo:2\"><header sid=\"31415926\"><keys jid=\"bob@example.org\"><key rid=\"27182818\">ChCqbZt309XbuTqT0/DFHQajEmgIAhADGiAAF3tNNZ2OHfvc7e0cxxtHUtL3ixtVI0ZUz/XNN0+yXyJAVaEx7PPtJAWT43M/+gySE+PnxKoBxC3eNTp72rNG15Rp2n8lqnT0pe45mPLjCXHYpt3VxdZZeOXsoYE6NP3Y9Q==</key></keys></header><payload>TLM28qBKRYdoaLeERgEEYBEDB5OIfaSvhwigF35EWsWKtUKgY+WUkwlSh8AqDnIiu0JeqsRuGbxnSlfni2nBxxPtxi51ja4tr0ZAWE/5S7G93SW98Bk765UJqMKGgUNpyGy8tXyhPPTV6xHFLZn2JLicJFqg/pzcsf4OoskGLyWeWK65wX7aAHNn3dQLXAolZ6/rvWWVE87YmXmb71VzLQcdxtNNt5bbTGCLjp2h5KVDrv2Jfjh8upGVGx6caC2TW7DgmilHEvjkrY7tdGLVGqVsbo0zmoVok8oVxdf7JL/v4gwXIwBpTxVuNpaO5+xJQn7CeZAuEfWZ2no4gmKfHnNJC+f3DqVGKlCbCAsxxtty6VmupB12dNWdJcHFGHgu96osrKCCQzRlSyOxSGu110xfqcnDs/qx9FMIS1SgSGI=</payload></encrypted>",
+      "keyExchange": null,
+      "authenticatedMessage": {
+        "mac": "qm2bd9PV27k6k9PwxR0Gow==",
+        "bytes": "ChCqbZt309XbuTqT0/DFHQajEmgIAhADGiAAF3tNNZ2OHfvc7e0cxxtHUtL3ixtVI0ZUz/XNN0+yXyJAVaEx7PPtJAWT43M/+gySE+PnxKoBxC3eNTp72rNG15Rp2n8lqnT0pe45mPLjCXHYpt3VxdZZeOXsoYE6NP3Y9Q=="
+      },
+      "message": {
+        "n": 2,
+        "pn": 3,
+        "dhPub": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "ciphertext": "VaEx7PPtJAWT43M/+gySE+PnxKoBxC3eNTp72rNG15Rp2n8lqnT0pe45mPLjCXHYpt3VxdZZeOXsoYE6NP3Y9Q==",
+        "bytes": "CAIQAxogABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8iQFWhMezz7SQFk+NzP/oMkhPj58SqAcQt3jU6e9qzRteUadp/Jap09KXuOZjy4wlx2Kbd1cXWWXjl7KGBOjT92PU="
+      },
+      "payload": "TLM28qBKRYdoaLeERgEEYBEDB5OIfaSvhwigF35EWsWKtUKgY+WUkwlSh8AqDnIiu0JeqsRuGbxnSlfni2nBxxPtxi51ja4tr0ZAWE/5S7G93SW98Bk765UJqMKGgUNpyGy8tXyhPPTV6xHFLZn2JLicJFqg/pzcsf4OoskGLyWeWK65wX7aAHNn3dQLXAolZ6/rvWWVE87YmXmb71VzLQcdxtNNt5bbTGCLjp2h5KVDrv2Jfjh8upGVGx6caC2TW7DgmilHEvjkrY7tdGLVGqVsbo0zmoVok8oVxdf7JL/v4gwXIwBpTxVuNpaO5+xJQn7CeZAuEfWZ2no4gmKfHnNJC+f3DqVGKlCbCAsxxtty6VmupB12dNWdJcHFGHgu96osrKCCQzRlSyOxSGu110xfqcnDs/qx9FMIS1SgSGI="
+    },
+    {
+      "sender": "bob",
+      "recipient": "alice",
+      "plaintext": "<envelope xmlns='urn:xmpp:sce:1'><content><body xmlns='jabber:client'>Got them all.</body></content><rpad>r0Ta</rpad><time stamp='2026-10-20T12:02:00Z'/><to jid='alice@example.org'/><from jid='bob@example.org'/></envelope>",
+      "encrypted": "<encrypted xmlns=\"urn:xmpp:omemo:2\"><header sid=\"27182818\"><keys jid=\"alice@example.org\"><key rid=\"31415926\">ChBXP2cl7sSZ/SFJos6vV2kOEmgIABABGiA8RyQm/jxj5jGS+Hiy7cMN3dbKnMSPQxJhJBqBzxifJiJAojRopcwJS50KPa2y6plNYMjAVHeGLZfKJFIL3VwFFjvsGEOxE7NWWjg8rr7wBOy4h3SZM8DQ+xiiEfEI6o00Sw==</key></keys></header><payload>ZdI8te0SUy651y89Dn+uYkLkmUamG/2nUSb0CWql2oFSxrzJIelFfVqELMhZMlvb1WhujXo+tyS6AqCraarHVQkaLH3Fbu9SGka/fpTSZEsvtkrEw5V3WTGNSU+dMNcfStX2ucWh81A53qczOH+MX8TJ177MvIkQIGp3GO4nTfkX8nMWVUEmUoBF7Mo6ItvGRBX2cRAevyErxRQVVbZf+faZP5ZTo8h5+DtgbRv7iz7Fo7c/leMTW+5YTKuvHhoi9ZbvKfLY5VlUz3WmqHudBZDhAnakxWlZCZpDkPi92W4=</payload></encrypted>",
+      "keyExchange": null,
+      "authenticatedMessage": {
+        "mac": "Vz9nJe7Emf0hSaLOr1dpDg==",
+        "bytes": "ChBXP2cl7sSZ/SFJos6vV2kOEmgIABABGiA8RyQm/jxj5jGS+Hiy7cMN3dbKnMSPQxJhJBqBzxifJiJAojRopcwJS50KPa2y6plNYMjAVHeGLZfKJFIL3VwFFjvsGEOxE7NWWjg8rr7wBOy4h3SZM8DQ+xiiEfEI6o00Sw=="
+      },
+      "message": {
+        "n": 0,
+        "pn": 1,
+        "dhPub": "PEckJv48Y+Yxkvh4su3DDd3WypzEj0MSYSQagc8YnyY=",
+        "ciphertext": "ojRopcwJS50KPa2y6plNYMjAVHeGLZfKJFIL3VwFFjvsGEOxE7NWWjg8rr7wBOy4h3SZM8DQ+xiiEfEI6o00Sw==",
+        "bytes": "CAAQARogPEckJv48Y+Yxkvh4su3DDd3WypzEj0MSYSQagc8YnyYiQKI0aKXMCUudCj2tsuqZTWDIwFR3hi2XyiRSC91cBRY77BhDsROzVlo4PK6+8ATsuId0mTPA0PsYohHxCOqNNEs="
+      },
+      "payload": "ZdI8te0SUy651y89Dn+uYkLkmUamG/2nUSb0CWql2oFSxrzJIelFfVqELMhZMlvb1WhujXo+tyS6AqCraarHVQkaLH3Fbu9SGka/fpTSZEsvtkrEw5V3WTGNSU+dMNcfStX2ucWh81A53qczOH+MX8TJ177MvIkQIGp3GO4nTfkX8nMWVUEmUoBF7Mo6ItvGRBX2cRAevyErxRQVVbZf+faZP5ZTo8h5+DtgbRv7iz7Fo7c/leMTW+5YTKuvHhoi9ZbvKfLY5VlUz3WmqHudBZDhAnakxWlZCZpDkPi92W4="
+    }
+  ],
+  "events": [
+    {
+      "party": "alice",
+      "action": "send",
+      "message": 0,
+      "x3dh": {
+        "dh1": "G8P3x8YnVIr1kq5QW9rPTEr5oCqwManE11p+6g2pugk=",
+        "dh2": "/iBKuHMx2d9rT8FCThsZJyHMG9TuqUBgxxp2tue6ujc=",
+        "dh3": "MZ8FtmMjt8SFu/FPFmFJyomd7ifWkw838YSobH92QQA=",
+        "dh4": "Ru6n8y3e4Kuq9RhkpFHSlDppmPlpx9vajwxqZbzLizU=",
+        "sharedSecret": "HSf69tCxq0s/l0vyn+Kfi8LMoitKaZXH4UI1wclTwww="
+      },
+      "rootChainSteps": [
+        {
+          "rootKey": "HSf69tCxq0s/l0vyn+Kfi8LMoitKaZXH4UI1wclTwww=",
+          "dhOutput": "V84q9rcYyR/0xt3M3E7KPazIufbG1fW/ZmAMNsy9N3Y=",
+          "nextRootKey": "AJU3v0hGtlGVyTba66v6IjF65wzZnD3f7WlLC0Ik4FY=",
+          "chainKey": "CU9MBgKY4UqWvtrrt2LHuYJ0xyFJfL/dQFk+x48vYlM="
+        }
+      ],
+      "messageChainSteps": [
+        {
+          "chainKey": "CU9MBgKY4UqWvtrrt2LHuYJ0xyFJfL/dQFk+x48vYlM=",
+          "nextChainKey": "watRMUFEbtqG5sn4FIle/Lb8+auPCc2xnXinzFpgaP8=",
+          "messageKey": "UgtaLwvDIH8KW/NBA0qNT+4J0tuWu43euEQkyYC/zrM="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "UgtaLwvDIH8KW/NBA0qNT+4J0tuWu43euEQkyYC/zrM=",
+        "encryptionKey": "Shj2gHEgy/gvGVcZVTcHAs+IoEUD5bq0mZUnjsQ9r6I=",
+        "authenticationKey": "0y8nF8ZNBZbgUsKZX0SMnKBn9v8oMa0ijA3uTkYinLM=",
+        "iv": "DFg3ltS6+aZbv0paC7PalQ=="
+      },
+      "payloadKeyMaterial": {
+        "key": "jTKjOc8/H5OIutK7PpYb03qjLhMrBop8OBDW4xg6GI0=",
+        "encryptionKey": "rbeEaCMEJkNKzob+GZY68zJYtm1ZhtMbtxLAk9lb1zc=",
+        "authenticationKey": "ivSFphyKkh+RwY+xB0aJp3dowC6gfznXbbFKIeZXbHs=",
+        "iv": "n9z6AJZQvy86v2CerMRtUA==",
+        "hmac": "bxhfosascME+BM1CMa/qIw=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "aUrG6Dci07xcd96fRkhTNyc3iGSgsBwx4EpOoI4ANFQ=",
+        "ownPublicKey": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+        "otherPublicKey": "mCsNRZqsKJCMQs98V9PvlnmK/lC0x+aKLTTPh9t5bW0=",
+        "rootKey": "AJU3v0hGtlGVyTba66v6IjF65wzZnD3f7WlLC0Ik4FY=",
+        "sendingChain": {
+          "key": "watRMUFEbtqG5sn4FIle/Lb8+auPCc2xnXinzFpgaP8=",
+          "length": 1
+        },
+        "receivingChain": null,
+        "previousSendingChainLength": null,
+        "skippedMessageKeys": []
+      }
+    },
+    {
+      "party": "alice",
+      "action": "send",
+      "message": 1,
+      "x3dh": null,
+      "rootChainSteps": [],
+      "messageChainSteps": [
+        {
+          "chainKey": "watRMUFEbtqG5sn4FIle/Lb8+auPCc2xnXinzFpgaP8=",
+          "nextChainKey": "54SVoIfR7Rq6d4FTyu7tTB1RkHs0zqrbvinawCJRga0=",
+          "messageKey": "kyoNxQJDFIa+PUkzzkpK4eGu/uorbWBfx5dRrozy/18="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "kyoNxQJDFIa+PUkzzkpK4eGu/uorbWBfx5dRrozy/18=",
+        "encryptionKey": "cKD4m6Qk9q8JFdOY0zfxU+qTHpSMiNyxjDxLyvCaHis=",
+        "authenticationKey": "29R2qLBtd+CiJBjTEt0CgOw0Sei9/Q3iYd4WJ+H05y4=",
+        "iv": "CstutUflwXqSF37tdINYaQ=="
+      },
+      "payloadKeyMaterial": {
+        "key": "rs1wAaZ/JvKiTWejM9nSVvFJMImmvgTsPmo/Q3Ozqwg=",
+        "encryptionKey": "a3rWPBX5/xkf/4ZuiMYshupglaQm/KquugMGVWyCZac=",
+        "authenticationKey": "lqcazCWqWugdQJI7fDP9lpDuhh1l/kIDWr02f5ka5PY=",
+        "iv": "2zp8KhKuw2oCdQe6MJ8Ssg==",
+        "hmac": "OWvtGyYQQkcIYJrqwWps4Q=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "aUrG6Dci07xcd96fRkhTNyc3iGSgsBwx4EpOoI4ANFQ=",
+        "ownPublicKey": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+        "otherPublicKey": "mCsNRZqsKJCMQs98V9PvlnmK/lC0x+aKLTTPh9t5bW0=",
+        "rootKey": "AJU3v0hGtlGVyTba66v6IjF65wzZnD3f7WlLC0Ik4FY=",
+        "sendingChain": {
+          "key": "54SVoIfR7Rq6d4FTyu7tTB1RkHs0zqrbvinawCJRga0=",
+          "length": 2
+        },
+        "receivingChain": null,
+        "previousSendingChainLength": null,
+        "skippedMessageKeys": []
+      }
+    },
+    {
+      "party": "alice",
+      "action": "send",
+      "message": 2,
+      "x3dh": null,
+      "rootChainSteps": [],
+      "messageChainSteps": [
+        {
+          "chainKey": "54SVoIfR7Rq6d4FTyu7tTB1RkHs0zqrbvinawCJRga0=",
+          "nextChainKey": "c00h8Q2vlgr0+ynksVCXqKox8Eq0BJfGBHOg3rhjzyA=",
+          "messageKey": "l8VNSon/bd2hF8vsS7RwF35abKrYR3XGyHXlvsmQ0ws="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "l8VNSon/bd2hF8vsS7RwF35abKrYR3XGyHXlvsmQ0ws=",
+        "encryptionKey": "/rJjSr5VfGXfpMR2JDTeEBy2UQloPf7jYr2Ejli9dsU=",
+        "authenticationKey": "VasOeI8pEHKEXSgAaFODzhVhoKTwID5riW2XSbakCpE=",
+        "iv": "seteTl2doQXDRwlrRDyyNw=="
+      },
+      "payloadKeyMaterial": {
+        "key": "Azeogp07SIX/Rpl5V7oo56vSMuF6MhTeAtLr+Tr5NkI=",
+        "encryptionKey": "vpvnMLnyWErADOchHpsgxqalvL4XDg/WZyPMtUZbcY0=",
+        "authenticationKey": "P62N3DrkpRJltxetl2RyA9f3tEltLfZ1soY+KuEz+iE=",
+        "iv": "BQ6O0LovV+8YprjNn2P6DQ==",
+        "hmac": "QSqWWzDJi8rroJ6+h6czWQ=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "aUrG6Dci07xcd96fRkhTNyc3iGSgsBwx4EpOoI4ANFQ=",
+        "ownPublicKey": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+        "otherPublicKey": "mCsNRZqsKJCMQs98V9PvlnmK/lC0x+aKLTTPh9t5bW0=",
+        "rootKey": "AJU3v0hGtlGVyTba66v6IjF65wzZnD3f7WlLC0Ik4FY=",
+        "sendingChain": {
+          "key": "c00h8Q2vlgr0+ynksVCXqKox8Eq0BJfGBHOg3rhjzyA=",
+          "length": 3
+        },
+        "receivingChain": null,
+        "previousSendingChainLength": null,
+        "skippedMessageKeys": []
+      }
+    },
+    {
+      "party": "bob",
+      "action": "receive",
+      "message": 0,
+      "x3dh": {
+        "dh1": "G8P3x8YnVIr1kq5QW9rPTEr5oCqwManE11p+6g2pugk=",
+        "dh2": "/iBKuHMx2d9rT8FCThsZJyHMG9TuqUBgxxp2tue6ujc=",
+        "dh3": "MZ8FtmMjt8SFu/FPFmFJyomd7ifWkw838YSobH92QQA=",
+        "dh4": "Ru6n8y3e4Kuq9RhkpFHSlDppmPlpx9vajwxqZbzLizU=",
+        "sharedSecret": "HSf69tCxq0s/l0vyn+Kfi8LMoitKaZXH4UI1wclTwww="
+      },
+      "rootChainSteps": [
+        {
+          "rootKey": "HSf69tCxq0s/l0vyn+Kfi8LMoitKaZXH4UI1wclTwww=",
+          "dhOutput": "V84q9rcYyR/0xt3M3E7KPazIufbG1fW/ZmAMNsy9N3Y=",
+          "nextRootKey": "AJU3v0hGtlGVyTba66v6IjF65wzZnD3f7WlLC0Ik4FY=",
+          "chainKey": "CU9MBgKY4UqWvtrrt2LHuYJ0xyFJfL/dQFk+x48vYlM="
+        },
+        {
+          "rootKey": "AJU3v0hGtlGVyTba66v6IjF65wzZnD3f7WlLC0Ik4FY=",
+          "dhOutput": "Xp8qycSAcuSm6n2AaQOaXdct2wQVhK/bzSE8u+46tx8=",
+          "nextRootKey": "n+As2ncO39+Hiu5q7Oe9AdW/BfkipxVNsecOJ/0NYfw=",
+          "chainKey": "jJfJ5bw8P3hBf0c8J2eKQO8hkxf7Q08cQce3QtacSuQ="
+        }
+      ],
+      "messageChainSteps": [
+        {
+          "chainKey": "CU9MBgKY4UqWvtrrt2LHuYJ0xyFJfL/dQFk+x48vYlM=",
+          "nextChainKey": "watRMUFEbtqG5sn4FIle/Lb8+auPCc2xnXinzFpgaP8=",
+          "messageKey": "UgtaLwvDIH8KW/NBA0qNT+4J0tuWu43euEQkyYC/zrM="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "UgtaLwvDIH8KW/NBA0qNT+4J0tuWu43euEQkyYC/zrM=",
+        "encryptionKey": "Shj2gHEgy/gvGVcZVTcHAs+IoEUD5bq0mZUnjsQ9r6I=",
+        "authenticationKey": "0y8nF8ZNBZbgUsKZX0SMnKBn9v8oMa0ijA3uTkYinLM=",
+        "iv": "DFg3ltS6+aZbv0paC7PalQ=="
+      },
+      "payloadKeyMaterial": {
+        "key": "jTKjOc8/H5OIutK7PpYb03qjLhMrBop8OBDW4xg6GI0=",
+        "encryptionKey": "rbeEaCMEJkNKzob+GZY68zJYtm1ZhtMbtxLAk9lb1zc=",
+        "authenticationKey": "ivSFphyKkh+RwY+xB0aJp3dowC6gfznXbbFKIeZXbHs=",
+        "iv": "n9z6AJZQvy86v2CerMRtUA==",
+        "hmac": "bxhfosascME+BM1CMa/qIw=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "tHMGpnBJ5ZOXmz9Myj3s5WlY138IrRs+ERW51y3sS4c=",
+        "ownPublicKey": "XivcU8bZQcAuSHYMF0Fwb94KUGgf+QKVSuqsZKaNYUQ=",
+        "otherPublicKey": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+        "rootKey": "n+As2ncO39+Hiu5q7Oe9AdW/BfkipxVNsecOJ/0NYfw=",
+        "sendingChain": {
+          "key": "jJfJ5bw8P3hBf0c8J2eKQO8hkxf7Q08cQce3QtacSuQ=",
+          "length": 0
+        },
+        "receivingChain": {
+          "key": "watRMUFEbtqG5sn4FIle/Lb8+auPCc2xnXinzFpgaP8=",
+          "length": 1
+        },
+        "previousSendingChainLength": null,
+        "skippedMessageKeys": []
+      },
+      "session": "built"
+    },
+    {
+      "party": "bob",
+      "action": "send",
+      "message": 3,
+      "x3dh": null,
+      "rootChainSteps": [],
+      "messageChainSteps": [
+        {
+          "chainKey": "jJfJ5bw8P3hBf0c8J2eKQO8hkxf7Q08cQce3QtacSuQ=",
+          "nextChainKey": "xWBRJQYSxTqvIIJyD4bgG8HC7vkvv4GmkQwn2ABSO5Q=",
+          "messageKey": "0hCNa3pLCPV1QYJOQolGy/RA5vNbO+rhHdAhysjFqd4="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "0hCNa3pLCPV1QYJOQolGy/RA5vNbO+rhHdAhysjFqd4=",
+        "encryptionKey": "dv+zbL8F+rrpNhtgDQtjpCSwowKOcTNWm3uK006vy0g=",
+        "authenticationKey": "aB4cfi+XITin4aIDClvSoCe00RxE70uJ7xCb1ZCK7lc=",
+        "iv": "hCZx+5Gi7FBWOCQRhwzoew=="
+      },
+      "payloadKeyMaterial": null,
+      "ratchet": {
+        "ownPrivateKey": "tHMGpnBJ5ZOXmz9Myj3s5WlY138IrRs+ERW51y3sS4c=",
+        "ownPublicKey": "XivcU8bZQcAuSHYMF0Fwb94KUGgf+QKVSuqsZKaNYUQ=",
+        "otherPublicKey": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+        "rootKey": "n+As2ncO39+Hiu5q7Oe9AdW/BfkipxVNsecOJ/0NYfw=",
+        "sendingChain": {
+          "key": "xWBRJQYSxTqvIIJyD4bgG8HC7vkvv4GmkQwn2ABSO5Q=",
+          "length": 1
+        },
+        "receivingChain": {
+          "key": "watRMUFEbtqG5sn4FIle/Lb8+auPCc2xnXinzFpgaP8=",
+          "length": 1
+        },
+        "previousSendingChainLength": null,
+        "skippedMessageKeys": []
+      }
+    },
+    {
+      "party": "bob",
+      "action": "receive",
+      "message": 1,
+      "x3dh": null,
+      "rootChainSteps": [],
+      "messageChainSteps": [
+        {
+          "chainKey": "watRMUFEbtqG5sn4FIle/Lb8+auPCc2xnXinzFpgaP8=",
+          "nextChainKey": "54SVoIfR7Rq6d4FTyu7tTB1RkHs0zqrbvinawCJRga0=",
+          "messageKey": "kyoNxQJDFIa+PUkzzkpK4eGu/uorbWBfx5dRrozy/18="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "kyoNxQJDFIa+PUkzzkpK4eGu/uorbWBfx5dRrozy/18=",
+        "encryptionKey": "cKD4m6Qk9q8JFdOY0zfxU+qTHpSMiNyxjDxLyvCaHis=",
+        "authenticationKey": "29R2qLBtd+CiJBjTEt0CgOw0Sei9/Q3iYd4WJ+H05y4=",
+        "iv": "CstutUflwXqSF37tdINYaQ=="
+      },
+      "payloadKeyMaterial": {
+        "key": "rs1wAaZ/JvKiTWejM9nSVvFJMImmvgTsPmo/Q3Ozqwg=",
+        "encryptionKey": "a3rWPBX5/xkf/4ZuiMYshupglaQm/KquugMGVWyCZac=",
+        "authenticationKey": "lqcazCWqWugdQJI7fDP9lpDuhh1l/kIDWr02f5ka5PY=",
+        "iv": "2zp8KhKuw2oCdQe6MJ8Ssg==",
+        "hmac": "OWvtGyYQQkcIYJrqwWps4Q=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "tHMGpnBJ5ZOXmz9Myj3s5WlY138IrRs+ERW51y3sS4c=",
+        "ownPublicKey": "XivcU8bZQcAuSHYMF0Fwb94KUGgf+QKVSuqsZKaNYUQ=",
+        "otherPublicKey": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+        "rootKey": "n+As2ncO39+Hiu5q7Oe9AdW/BfkipxVNsecOJ/0NYfw=",
+        "sendingChain": {
+          "key": "xWBRJQYSxTqvIIJyD4bgG8HC7vkvv4GmkQwn2ABSO5Q=",
+          "length": 1
+        },
+        "receivingChain": {
+          "key": "54SVoIfR7Rq6d4FTyu7tTB1RkHs0zqrbvinawCJRga0=",
+          "length": 2
+        },
+        "previousSendingChainLength": null,
+        "skippedMessageKeys": []
+      },
+      "session": "kept"
+    },
+    {
+      "party": "alice",
+      "action": "receive",
+      "message": 3,
+      "x3dh": null,
+      "rootChainSteps": [
+        {
+          "rootKey": "AJU3v0hGtlGVyTba66v6IjF65wzZnD3f7WlLC0Ik4FY=",
+          "dhOutput": "Xp8qycSAcuSm6n2AaQOaXdct2wQVhK/bzSE8u+46tx8=",
+          "nextRootKey": "n+As2ncO39+Hiu5q7Oe9AdW/BfkipxVNsecOJ/0NYfw=",
+          "chainKey": "jJfJ5bw8P3hBf0c8J2eKQO8hkxf7Q08cQce3QtacSuQ="
+        },
+        {
+          "rootKey": "n+As2ncO39+Hiu5q7Oe9AdW/BfkipxVNsecOJ/0NYfw=",
+          "dhOutput": "nkgFzBmOBx5ULURdTZvnaM+AkhYoOqFq3rxo8IliO0Q=",
+          "nextRootKey": "grvaehI1X0zZKEmJFN+oX86TZaucwhmwgtUwqjR3cvA=",
+          "chainKey": "7j9cytaQwKQhJg0R1V0jCJq+wOhTinugfmS6xAN4in4="
+        }
+      ],
+      "messageChainSteps": [
+        {
+          "chainKey": "jJfJ5bw8P3hBf0c8J2eKQO8hkxf7Q08cQce3QtacSuQ=",
+          "nextChainKey": "xWBRJQYSxTqvIIJyD4bgG8HC7vkvv4GmkQwn2ABSO5Q=",
+          "messageKey": "0hCNa3pLCPV1QYJOQolGy/RA5vNbO+rhHdAhysjFqd4="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "0hCNa3pLCPV1QYJOQolGy/RA5vNbO+rhHdAhysjFqd4=",
+        "encryptionKey": "dv+zbL8F+rrpNhtgDQtjpCSwowKOcTNWm3uK006vy0g=",
+        "authenticationKey": "aB4cfi+XITin4aIDClvSoCe00RxE70uJ7xCb1ZCK7lc=",
+        "iv": "hCZx+5Gi7FBWOCQRhwzoew=="
+      },
+      "payloadKeyMaterial": null,
+      "ratchet": {
+        "ownPrivateKey": "DlNyZbQh4Y117yBo+YB3V+is0ylfKQ7dDjQNYsYiBR4=",
+        "ownPublicKey": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "otherPublicKey": "XivcU8bZQcAuSHYMF0Fwb94KUGgf+QKVSuqsZKaNYUQ=",
+        "rootKey": "grvaehI1X0zZKEmJFN+oX86TZaucwhmwgtUwqjR3cvA=",
+        "sendingChain": {
+          "key": "7j9cytaQwKQhJg0R1V0jCJq+wOhTinugfmS6xAN4in4=",
+          "length": 0
+        },
+        "receivingChain": {
+          "key": "xWBRJQYSxTqvIIJyD4bgG8HC7vkvv4GmkQwn2ABSO5Q=",
+          "length": 1
+        },
+        "previousSendingChainLength": 3,
+        "skippedMessageKeys": []
+      },
+      "session": "kept"
+    },
+    {
+      "party": "alice",
+      "action": "send",
+      "message": 4,
+      "x3dh": null,
+      "rootChainSteps": [],
+      "messageChainSteps": [
+        {
+          "chainKey": "7j9cytaQwKQhJg0R1V0jCJq+wOhTinugfmS6xAN4in4=",
+          "nextChainKey": "HJp91wbtOM9QqWKgv0filfrem6oFbe+GTyGOafMOEQE=",
+          "messageKey": "Mn4ITeqJtGpSP02n3XcSAs2DC8iRj8Bi+nJuOqB484Q="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "Mn4ITeqJtGpSP02n3XcSAs2DC8iRj8Bi+nJuOqB484Q=",
+        "encryptionKey": "QfgKUWnpZdgd4kAzzrPAOWqj3hu4VHZoY06EGXok+5g=",
+        "authenticationKey": "5wFfjmcifzHaMEZ9rgMrxEHu5IBzNF0pApIStpVCWck=",
+        "iv": "ptwBZoy7DurORjnfvmb2NQ=="
+      },
+      "payloadKeyMaterial": {
+        "key": "6xHGbR2YyPRCnwkZaXMVv9TjbvRiJoHNqdI/BicgcQY=",
+        "encryptionKey": "vHukCDPv/UZhZyVOk4Kuu9ydQIC2X/4UBgrRL3/1gpo=",
+        "authenticationKey": "woAO9fGYj+VQkqbvotUkek1gRUZhS5DprJJoE9zs/is=",
+        "iv": "uhKm+xeLsXDE3x0PsN4WUg==",
+        "hmac": "YIY4heDyzohq9ZEFrCg/1Q=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "DlNyZbQh4Y117yBo+YB3V+is0ylfKQ7dDjQNYsYiBR4=",
+        "ownPublicKey": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "otherPublicKey": "XivcU8bZQcAuSHYMF0Fwb94KUGgf+QKVSuqsZKaNYUQ=",
+        "rootKey": "grvaehI1X0zZKEmJFN+oX86TZaucwhmwgtUwqjR3cvA=",
+        "sendingChain": {
+          "key": "HJp91wbtOM9QqWKgv0filfrem6oFbe+GTyGOafMOEQE=",
+          "length": 1
+        },
+        "receivingChain": {
+          "key": "xWBRJQYSxTqvIIJyD4bgG8HC7vkvv4GmkQwn2ABSO5Q=",
+          "length": 1
+        },
+        "previousSendingChainLength": 3,
+        "skippedMessageKeys": []
+      }
+    },
+    {
+      "party": "alice",
+      "action": "send",
+      "message": 5,
+      "x3dh": null,
+      "rootChainSteps": [],
+      "messageChainSteps": [
+        {
+          "chainKey": "HJp91wbtOM9QqWKgv0filfrem6oFbe+GTyGOafMOEQE=",
+          "nextChainKey": "zNXYhK3FOCfQbwFWioe52KAFqTl8wEKbwIs+MIJgopQ=",
+          "messageKey": "9Dmv5i02V5FLJNGwVdKZY1QYAdpGTuO1AMHHL0x2vZ0="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "9Dmv5i02V5FLJNGwVdKZY1QYAdpGTuO1AMHHL0x2vZ0=",
+        "encryptionKey": "vsrnSXMTHq3mdEa7MpKihaPtL31T3Far+49Z0ym+HBM=",
+        "authenticationKey": "8qr+nX3iim8Hln2waR+cdHe3OFXEZvXmRKpvOTkTZ80=",
+        "iv": "TLXjQHH56dHRHCEhrHFpMA=="
+      },
+      "payloadKeyMaterial": {
+        "key": "2rUHQFLGDFH3W/XC92sB9I0cv8pVRugMb849tDVkPDM=",
+        "encryptionKey": "RgYxc5Mn76w3UQypTUWeYrJpzgooZ6A77R0qQMH2onM=",
+        "authenticationKey": "dheUAX2O8zDh7F67ryhLMXHdpKywQtIdetcrKddcIN8=",
+        "iv": "kpS8aFfoDCSES3oO9CxCGQ==",
+        "hmac": "VUX/qe1K6Uz49ZQRgi7uqg=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "DlNyZbQh4Y117yBo+YB3V+is0ylfKQ7dDjQNYsYiBR4=",
+        "ownPublicKey": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "otherPublicKey": "XivcU8bZQcAuSHYMF0Fwb94KUGgf+QKVSuqsZKaNYUQ=",
+        "rootKey": "grvaehI1X0zZKEmJFN+oX86TZaucwhmwgtUwqjR3cvA=",
+        "sendingChain": {
+          "key": "zNXYhK3FOCfQbwFWioe52KAFqTl8wEKbwIs+MIJgopQ=",
+          "length": 2
+        },
+        "receivingChain": {
+          "key": "xWBRJQYSxTqvIIJyD4bgG8HC7vkvv4GmkQwn2ABSO5Q=",
+          "length": 1
+        },
+        "previousSendingChainLength": 3,
+        "skippedMessageKeys": []
+      }
+    },
+    {
+      "party": "alice",
+      "action": "send",
+      "message": 6,
+      "x3dh": null,
+      "rootChainSteps": [],
+      "messageChainSteps": [
+        {
+          "chainKey": "zNXYhK3FOCfQbwFWioe52KAFqTl8wEKbwIs+MIJgopQ=",
+          "nextChainKey": "g3Um4kFj6DbBwKxSwWJdIpY0enKHA56+ESqkB3henms=",
+          "messageKey": "QmJcaZU2RmJT1xeqDqa4IhrwApFa0DhZeQLFJZvsDiM="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "QmJcaZU2RmJT1xeqDqa4IhrwApFa0DhZeQLFJZvsDiM=",
+        "encryptionKey": "x10LxlHE+fDRnpM+qzLhzNOwEibFeEHm6+FAewyD1qE=",
+        "authenticationKey": "5eKDK/yLolXdpgdNqai5lo2YzXWFhoQODXJJaUkRG9w=",
+        "iv": "x7RnAPxuSR5brxCmhYE27A=="
+      },
+      "payloadKeyMaterial": {
+        "key": "JxBDee8gX+NZ/05T1tmzuAzBrVoqN6ooruLQ4tlVLus=",
+        "encryptionKey": "b8leYTh3DPsW6Fhcb2/LU2FBtbbCXrgKBaTVUHWgbk4=",
+        "authenticationKey": "S2LhFoTY5CWaoruC1d/8ulDOS6VtpROStebpuY1JBP8=",
+        "iv": "KQdOQ728/Vo9SUVWto+Ssw==",
+        "hmac": "+dok3R0l1Z9VCgESFdTD0Q=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "DlNyZbQh4Y117yBo+YB3V+is0ylfKQ7dDjQNYsYiBR4=",
+        "ownPublicKey": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "otherPublicKey": "XivcU8bZQcAuSHYMF0Fwb94KUGgf+QKVSuqsZKaNYUQ=",
+        "rootKey": "grvaehI1X0zZKEmJFN+oX86TZaucwhmwgtUwqjR3cvA=",
+        "sendingChain": {
+          "key": "g3Um4kFj6DbBwKxSwWJdIpY0enKHA56+ESqkB3henms=",
+          "length": 3
+        },
+        "receivingChain": {
+          "key": "xWBRJQYSxTqvIIJyD4bgG8HC7vkvv4GmkQwn2ABSO5Q=",
+          "length": 1
+        },
+        "previousSendingChainLength": 3,
+        "skippedMessageKeys": []
+      }
+    },
+    {
+      "party": "bob",
+      "action": "receive",
+      "message": 4,
+      "x3dh": null,
+      "rootChainSteps": [
+        {
+          "rootKey": "n+As2ncO39+Hiu5q7Oe9AdW/BfkipxVNsecOJ/0NYfw=",
+          "dhOutput": "nkgFzBmOBx5ULURdTZvnaM+AkhYoOqFq3rxo8IliO0Q=",
+          "nextRootKey": "grvaehI1X0zZKEmJFN+oX86TZaucwhmwgtUwqjR3cvA=",
+          "chainKey": "7j9cytaQwKQhJg0R1V0jCJq+wOhTinugfmS6xAN4in4="
+        },
+        {
+          "rootKey": "grvaehI1X0zZKEmJFN+oX86TZaucwhmwgtUwqjR3cvA=",
+          "dhOutput": "kb+Y14+DQtcN2S6kseiyoLop0H7JHl4Rk+xn/zLLJUk=",
+          "nextRootKey": "xwMwxKkx4NQufNvc8Umuu8MougSwajv7wJqTYC7b+UE=",
+          "chainKey": "xH6na6HrySZoCka9pK5hdnVusPVUap8iueFBkuzga04="
+        }
+      ],
+      "messageChainSteps": [
+        {
+          "chainKey": "54SVoIfR7Rq6d4FTyu7tTB1RkHs0zqrbvinawCJRga0=",
+          "nextChainKey": "c00h8Q2vlgr0+ynksVCXqKox8Eq0BJfGBHOg3rhjzyA=",
+          "messageKey": "l8VNSon/bd2hF8vsS7RwF35abKrYR3XGyHXlvsmQ0ws="
+        },
+        {
+          "chainKey": "7j9cytaQwKQhJg0R1V0jCJq+wOhTinugfmS6xAN4in4=",
+          "nextChainKey": "HJp91wbtOM9QqWKgv0filfrem6oFbe+GTyGOafMOEQE=",
+          "messageKey": "Mn4ITeqJtGpSP02n3XcSAs2DC8iRj8Bi+nJuOqB484Q="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "Mn4ITeqJtGpSP02n3XcSAs2DC8iRj8Bi+nJuOqB484Q=",
+        "encryptionKey": "QfgKUWnpZdgd4kAzzrPAOWqj3hu4VHZoY06EGXok+5g=",
+        "authenticationKey": "5wFfjmcifzHaMEZ9rgMrxEHu5IBzNF0pApIStpVCWck=",
+        "iv": "ptwBZoy7DurORjnfvmb2NQ=="
+      },
+      "payloadKeyMaterial": {
+        "key": "6xHGbR2YyPRCnwkZaXMVv9TjbvRiJoHNqdI/BicgcQY=",
+        "encryptionKey": "vHukCDPv/UZhZyVOk4Kuu9ydQIC2X/4UBgrRL3/1gpo=",
+        "authenticationKey": "woAO9fGYj+VQkqbvotUkek1gRUZhS5DprJJoE9zs/is=",
+        "iv": "uhKm+xeLsXDE3x0PsN4WUg==",
+        "hmac": "YIY4heDyzohq9ZEFrCg/1Q=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "OzCg3x9HK0PQE2N8h28hZyncFNpUXjsKV1/9YGE7vqc=",
+        "ownPublicKey": "PEckJv48Y+Yxkvh4su3DDd3WypzEj0MSYSQagc8YnyY=",
+        "otherPublicKey": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "rootKey": "xwMwxKkx4NQufNvc8Umuu8MougSwajv7wJqTYC7b+UE=",
+        "sendingChain": {
+          "key": "xH6na6HrySZoCka9pK5hdnVusPVUap8iueFBkuzga04=",
+          "length": 0
+        },
+        "receivingChain": {
+          "key": "HJp91wbtOM9QqWKgv0filfrem6oFbe+GTyGOafMOEQE=",
+          "length": 1
+        },
+        "previousSendingChainLength": 1,
+        "skippedMessageKeys": [
+          {
+            "ratchetPublicKey": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+            "index": 2,
+            "messageKey": "l8VNSon/bd2hF8vsS7RwF35abKrYR3XGyHXlvsmQ0ws="
+          }
+        ]
+      },
+      "session": "kept"
+    },
+    {
+      "party": "bob",
+      "action": "receive",
+      "message": 6,
+      "x3dh": null,
+      "rootChainSteps": [],
+      "messageChainSteps": [
+        {
+          "chainKey": "HJp91wbtOM9QqWKgv0filfrem6oFbe+GTyGOafMOEQE=",
+          "nextChainKey": "zNXYhK3FOCfQbwFWioe52KAFqTl8wEKbwIs+MIJgopQ=",
+          "messageKey": "9Dmv5i02V5FLJNGwVdKZY1QYAdpGTuO1AMHHL0x2vZ0="
+        },
+        {
+          "chainKey": "zNXYhK3FOCfQbwFWioe52KAFqTl8wEKbwIs+MIJgopQ=",
+          "nextChainKey": "g3Um4kFj6DbBwKxSwWJdIpY0enKHA56+ESqkB3henms=",
+          "messageKey": "QmJcaZU2RmJT1xeqDqa4IhrwApFa0DhZeQLFJZvsDiM="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "QmJcaZU2RmJT1xeqDqa4IhrwApFa0DhZeQLFJZvsDiM=",
+        "encryptionKey": "x10LxlHE+fDRnpM+qzLhzNOwEibFeEHm6+FAewyD1qE=",
+        "authenticationKey": "5eKDK/yLolXdpgdNqai5lo2YzXWFhoQODXJJaUkRG9w=",
+        "iv": "x7RnAPxuSR5brxCmhYE27A=="
+      },
+      "payloadKeyMaterial": {
+        "key": "JxBDee8gX+NZ/05T1tmzuAzBrVoqN6ooruLQ4tlVLus=",
+        "encryptionKey": "b8leYTh3DPsW6Fhcb2/LU2FBtbbCXrgKBaTVUHWgbk4=",
+        "authenticationKey": "S2LhFoTY5CWaoruC1d/8ulDOS6VtpROStebpuY1JBP8=",
+        "iv": "KQdOQ728/Vo9SUVWto+Ssw==",
+        "hmac": "+dok3R0l1Z9VCgESFdTD0Q=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "OzCg3x9HK0PQE2N8h28hZyncFNpUXjsKV1/9YGE7vqc=",
+        "ownPublicKey": "PEckJv48Y+Yxkvh4su3DDd3WypzEj0MSYSQagc8YnyY=",
+        "otherPublicKey": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "rootKey": "xwMwxKkx4NQufNvc8Umuu8MougSwajv7wJqTYC7b+UE=",
+        "sendingChain": {
+          "key": "xH6na6HrySZoCka9pK5hdnVusPVUap8iueFBkuzga04=",
+          "length": 0
+        },
+        "receivingChain": {
+          "key": "g3Um4kFj6DbBwKxSwWJdIpY0enKHA56+ESqkB3henms=",
+          "length": 3
+        },
+        "previousSendingChainLength": 1,
+        "skippedMessageKeys": [
+          {
+            "ratchetPublicKey": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+            "index": 2,
+            "messageKey": "l8VNSon/bd2hF8vsS7RwF35abKrYR3XGyHXlvsmQ0ws="
+          },
+          {
+            "ratchetPublicKey": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+            "index": 1,
+            "messageKey": "9Dmv5i02V5FLJNGwVdKZY1QYAdpGTuO1AMHHL0x2vZ0="
+          }
+        ]
+      },
+      "session": "kept"
+    },
+    {
+      "party": "bob",
+      "action": "receive",
+      "message": 5,
+      "x3dh": null,
+      "rootChainSteps": [],
+      "messageChainSteps": [],
+      "messageKeyMaterial": {
+        "messageKey": "9Dmv5i02V5FLJNGwVdKZY1QYAdpGTuO1AMHHL0x2vZ0=",
+        "encryptionKey": "vsrnSXMTHq3mdEa7MpKihaPtL31T3Far+49Z0ym+HBM=",
+        "authenticationKey": "8qr+nX3iim8Hln2waR+cdHe3OFXEZvXmRKpvOTkTZ80=",
+        "iv": "TLXjQHH56dHRHCEhrHFpMA=="
+      },
+      "payloadKeyMaterial": {
+        "key": "2rUHQFLGDFH3W/XC92sB9I0cv8pVRugMb849tDVkPDM=",
+        "encryptionKey": "RgYxc5Mn76w3UQypTUWeYrJpzgooZ6A77R0qQMH2onM=",
+        "authenticationKey": "dheUAX2O8zDh7F67ryhLMXHdpKywQtIdetcrKddcIN8=",
+        "iv": "kpS8aFfoDCSES3oO9CxCGQ==",
+        "hmac": "VUX/qe1K6Uz49ZQRgi7uqg=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "OzCg3x9HK0PQE2N8h28hZyncFNpUXjsKV1/9YGE7vqc=",
+        "ownPublicKey": "PEckJv48Y+Yxkvh4su3DDd3WypzEj0MSYSQagc8YnyY=",
+        "otherPublicKey": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "rootKey": "xwMwxKkx4NQufNvc8Umuu8MougSwajv7wJqTYC7b+UE=",
+        "sendingChain": {
+          "key": "xH6na6HrySZoCka9pK5hdnVusPVUap8iueFBkuzga04=",
+          "length": 0
+        },
+        "receivingChain": {
+          "key": "g3Um4kFj6DbBwKxSwWJdIpY0enKHA56+ESqkB3henms=",
+          "length": 3
+        },
+        "previousSendingChainLength": 1,
+        "skippedMessageKeys": [
+          {
+            "ratchetPublicKey": "smn3KC9uINfFcVXvKSaisKO+iATecNjchEzZco+sFzI=",
+            "index": 2,
+            "messageKey": "l8VNSon/bd2hF8vsS7RwF35abKrYR3XGyHXlvsmQ0ws="
+          }
+        ]
+      },
+      "session": "kept"
+    },
+    {
+      "party": "bob",
+      "action": "receive",
+      "message": 2,
+      "x3dh": null,
+      "rootChainSteps": [],
+      "messageChainSteps": [],
+      "messageKeyMaterial": {
+        "messageKey": "l8VNSon/bd2hF8vsS7RwF35abKrYR3XGyHXlvsmQ0ws=",
+        "encryptionKey": "/rJjSr5VfGXfpMR2JDTeEBy2UQloPf7jYr2Ejli9dsU=",
+        "authenticationKey": "VasOeI8pEHKEXSgAaFODzhVhoKTwID5riW2XSbakCpE=",
+        "iv": "seteTl2doQXDRwlrRDyyNw=="
+      },
+      "payloadKeyMaterial": {
+        "key": "Azeogp07SIX/Rpl5V7oo56vSMuF6MhTeAtLr+Tr5NkI=",
+        "encryptionKey": "vpvnMLnyWErADOchHpsgxqalvL4XDg/WZyPMtUZbcY0=",
+        "authenticationKey": "P62N3DrkpRJltxetl2RyA9f3tEltLfZ1soY+KuEz+iE=",
+        "iv": "BQ6O0LovV+8YprjNn2P6DQ==",
+        "hmac": "QSqWWzDJi8rroJ6+h6czWQ=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "OzCg3x9HK0PQE2N8h28hZyncFNpUXjsKV1/9YGE7vqc=",
+        "ownPublicKey": "PEckJv48Y+Yxkvh4su3DDd3WypzEj0MSYSQagc8YnyY=",
+        "otherPublicKey": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "rootKey": "xwMwxKkx4NQufNvc8Umuu8MougSwajv7wJqTYC7b+UE=",
+        "sendingChain": {
+          "key": "xH6na6HrySZoCka9pK5hdnVusPVUap8iueFBkuzga04=",
+          "length": 0
+        },
+        "receivingChain": {
+          "key": "g3Um4kFj6DbBwKxSwWJdIpY0enKHA56+ESqkB3henms=",
+          "length": 3
+        },
+        "previousSendingChainLength": 1,
+        "skippedMessageKeys": []
+      },
+      "session": "kept"
+    },
+    {
+      "party": "bob",
+      "action": "send",
+      "message": 7,
+      "x3dh": null,
+      "rootChainSteps": [],
+      "messageChainSteps": [
+        {
+          "chainKey": "xH6na6HrySZoCka9pK5hdnVusPVUap8iueFBkuzga04=",
+          "nextChainKey": "j/bKU1j6ysswuC1FDztC22IPNweMoHwE4kej3sheVEU=",
+          "messageKey": "qG/RqYhosEnWKIyqIsFyeXs9eFfRPoey+KYf7fsLXJY="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "qG/RqYhosEnWKIyqIsFyeXs9eFfRPoey+KYf7fsLXJY=",
+        "encryptionKey": "ewm5A71yZUd1qGPKqpdleVcHRNSEgFYpy/MQE/HjZVQ=",
+        "authenticationKey": "VtXprI9DBPAa+EdS4xNVbnJpYTsjGdZb+1vX9pKd4Ho=",
+        "iv": "mgv7/hPD5RH6CcUB9gvWXQ=="
+      },
+      "payloadKeyMaterial": {
+        "key": "XdtKxfiFI6AQu9K2IAPwLYgVr7u6NYjUDKlYzYit1ew=",
+        "encryptionKey": "UJ9xIUmN8UdhKsnwHXkIyS+0E3P9pJtF/JRqtKuvSnE=",
+        "authenticationKey": "1GZybkLkJSERVAH8UT8IGBguR67676G1yuS58cSnqCE=",
+        "iv": "Z26YN10Z/8No48fPUxm4Jw==",
+        "hmac": "GVfuEd6UKRkEmYUEbvL9ww=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "OzCg3x9HK0PQE2N8h28hZyncFNpUXjsKV1/9YGE7vqc=",
+        "ownPublicKey": "PEckJv48Y+Yxkvh4su3DDd3WypzEj0MSYSQagc8YnyY=",
+        "otherPublicKey": "ABd7TTWdjh373O3tHMcbR1LS94sbVSNGVM/1zTdPsl8=",
+        "rootKey": "xwMwxKkx4NQufNvc8Umuu8MougSwajv7wJqTYC7b+UE=",
+        "sendingChain": {
+          "key": "j/bKU1j6ysswuC1FDztC22IPNweMoHwE4kej3sheVEU=",
+          "length": 1
+        },
+        "receivingChain": {
+          "key": "g3Um4kFj6DbBwKxSwWJdIpY0enKHA56+ESqkB3henms=",
+          "length": 3
+        },
+        "previousSendingChainLength": 1,
+        "skippedMessageKeys": []
+      }
+    },
+    {
+      "party": "alice",
+      "action": "receive",
+      "message": 7,
+      "x3dh": null,
+      "rootChainSteps": [
+        {
+          "rootKey": "grvaehI1X0zZKEmJFN+oX86TZaucwhmwgtUwqjR3cvA=",
+          "dhOutput": "kb+Y14+DQtcN2S6kseiyoLop0H7JHl4Rk+xn/zLLJUk=",
+          "nextRootKey": "xwMwxKkx4NQufNvc8Umuu8MougSwajv7wJqTYC7b+UE=",
+          "chainKey": "xH6na6HrySZoCka9pK5hdnVusPVUap8iueFBkuzga04="
+        },
+        {
+          "rootKey": "xwMwxKkx4NQufNvc8Umuu8MougSwajv7wJqTYC7b+UE=",
+          "dhOutput": "atiZNzwdCMPOXWccxzHO+jt7kgDygWYEuDyjB2zDJkE=",
+          "nextRootKey": "CoiX11WB5VEaS23+Z24BknYWXUfm+k3BQ0cwckhm/3g=",
+          "chainKey": "RmEmdFwf5h3QgmKj2ULYAJQeUSzAI8dtz942dYV1OMI="
+        }
+      ],
+      "messageChainSteps": [
+        {
+          "chainKey": "xH6na6HrySZoCka9pK5hdnVusPVUap8iueFBkuzga04=",
+          "nextChainKey": "j/bKU1j6ysswuC1FDztC22IPNweMoHwE4kej3sheVEU=",
+          "messageKey": "qG/RqYhosEnWKIyqIsFyeXs9eFfRPoey+KYf7fsLXJY="
+        }
+      ],
+      "messageKeyMaterial": {
+        "messageKey": "qG/RqYhosEnWKIyqIsFyeXs9eFfRPoey+KYf7fsLXJY=",
+        "encryptionKey": "ewm5A71yZUd1qGPKqpdleVcHRNSEgFYpy/MQE/HjZVQ=",
+        "authenticationKey": "VtXprI9DBPAa+EdS4xNVbnJpYTsjGdZb+1vX9pKd4Ho=",
+        "iv": "mgv7/hPD5RH6CcUB9gvWXQ=="
+      },
+      "payloadKeyMaterial": {
+        "key": "XdtKxfiFI6AQu9K2IAPwLYgVr7u6NYjUDKlYzYit1ew=",
+        "encryptionKey": "UJ9xIUmN8UdhKsnwHXkIyS+0E3P9pJtF/JRqtKuvSnE=",
+        "authenticationKey": "1GZybkLkJSERVAH8UT8IGBguR67676G1yuS58cSnqCE=",
+        "iv": "Z26YN10Z/8No48fPUxm4Jw==",
+        "hmac": "GVfuEd6UKRkEmYUEbvL9ww=="
+      },
+      "ratchet": {
+        "ownPrivateKey": "q0KVtfAPxFT5KTZUaId592zktdd2iqk15qI2iUtfXdA=",
+        "ownPublicKey": "l2IX6JwMPyHOy/U+vJQ2wvR5Hrbgubqkx+v2vgmH51o=",
+        "otherPublicKey": "PEckJv48Y+Yxkvh4su3DDd3WypzEj0MSYSQagc8YnyY=",
+        "rootKey": "CoiX11WB5VEaS23+Z24BknYWXUfm+k3BQ0cwckhm/3g=",
+        "sendingChain": {
+          "key": "RmEmdFwf5h3QgmKj2ULYAJQeUSzAI8dtz942dYV1OMI=",
+          "length": 0
+        },
+        "receivingChain": {
+          "key": "j/bKU1j6ysswuC1FDztC22IPNweMoHwE4kej3sheVEU=",
+          "length": 1
+        },
+        "previousSendingChainLength": 3,
+        "skippedMessageKeys": []
+      },
+      "session": "kept"
+    }
+  ]
+}

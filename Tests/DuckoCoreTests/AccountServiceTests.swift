@@ -635,4 +635,25 @@ enum AccountServiceTests {
             #expect(elapsed < .milliseconds(500))
         }
     }
+
+    struct SessionStart {
+        @Test
+        @MainActor
+        func `onSessionStarting runs once per connect before the stream opens`() async throws {
+            let store = makeStore()
+            let account = makeAccount()
+            await store.addAccount(account)
+            let transport = MockTransport()
+            let service = makeAccountService(store: store, clientFactory: MockXMPPClientFactory(transport: transport))
+            try await service.loadAccounts()
+            var sentWhenStarting: [Int] = []
+            service.onSessionStarting = { _ in await sentWhenStarting.append(transport.sentBytes.count) }
+
+            let (_, connectTask) = try await driveMockConnect(service, accountID: account.id, transport: transport)
+
+            #expect(sentWhenStarting == [0])
+            connectTask.cancel()
+            await service.disconnect(accountID: account.id)
+        }
+    }
 }

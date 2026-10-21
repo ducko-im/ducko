@@ -277,7 +277,7 @@ struct PlainFormatterTests {
 
     @Test func `format event message corrected`() throws {
         let jid = try #require(JID.parse("alice@example.com/res"))
-        let output = try #require(formatter.formatEvent(.messageCorrected(originalID: "msg-1", newBody: "fixed", from: jid), accountID: UUID()))
+        let output = try #require(formatter.formatEvent(.messageCorrected(originalID: "msg-1", newBody: "fixed", replyFallbackRange: nil, from: jid, messageType: .chat), accountID: UUID()))
         #expect(output.contains("corrected"))
         #expect(output.contains("fixed"))
     }
@@ -545,18 +545,24 @@ struct PlainFormatterTests {
             formType: .legacy,
             instructions: "Please provide credentials",
             isRegistered: false,
-            hasUsername: true,
-            hasPassword: true,
-            hasEmail: true,
-            dataFormFields: []
+            legacyFields: [
+                RegistrationModule.LegacyField(name: "username"),
+                RegistrationModule.LegacyField(name: "password"),
+                RegistrationModule.LegacyField(name: "email"),
+                RegistrationModule.LegacyField(name: "nick", value: "jules")
+            ],
+            redirectURL: "https://example.com/register"
         ))
         let output = formatter.formatRegistrationForm(form)
         #expect(output.contains("Legacy"))
         #expect(output.contains("Not registered"))
         #expect(output.contains("Please provide credentials"))
-        #expect(output.contains("Username"))
-        #expect(output.contains("Password"))
-        #expect(output.contains("Email"))
+        #expect(output.contains("Register at: https://example.com/register"))
+        #expect(output.contains("Fields (all required):"))
+        #expect(output.contains("Username: (empty)"))
+        #expect(output.contains("Password: (empty)"))
+        #expect(output.contains("Email: (empty)"))
+        #expect(output.contains("Nickname: jules"))
     }
 
     @Test func `format data form registration`() {
@@ -564,13 +570,10 @@ struct PlainFormatterTests {
             formType: .dataForm,
             instructions: nil,
             isRegistered: true,
-            hasUsername: false,
-            hasPassword: false,
-            hasEmail: false,
-            dataFormFields: [
+            dataForm: DataForm(fields: [
                 DataFormField(variable: "username", type: "text-single", label: "Username", values: ["alice"]),
                 DataFormField(variable: "FORM_TYPE", type: "hidden", values: ["jabber:iq:register"])
-            ]
+            ])
         ))
         let output = formatter.formatRegistrationForm(form)
         #expect(output.contains("Data Form"))

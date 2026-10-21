@@ -11,6 +11,20 @@ private func storedPreKeys(_ ids: some Sequence<UInt32>, isUsed: Bool = false) -
     ids.map { OMEMOStoredPreKey(accountJID: accountJID.description, keyID: $0, keyData: Data(repeating: 0xD4, count: 32), isUsed: isUsed) }
 }
 
+/// A responder session in the stored encoding, or, with `isRatchetOnly`, its ratchet alone as the earlier encoding stored it.
+private func storedSessionData(isRatchetOnly: Bool = false) throws -> [UInt8] {
+    let ratchet = try OMEMODoubleRatchetSession(
+        asResponderWithSharedSecret: Array(repeating: 1, count: 32),
+        ourSignedPreKeyPair: OMEMOSignedPreKey(keyID: 1, identityKey: OMEMOIdentityKeyPair()).keyPair
+    )
+    let keyExchange = OMEMOKeyExchangeHeader(
+        preKeyID: 1, signedPreKeyID: 1, identityKey: Array(repeating: 0xAB, count: 32), ephemeralKey: Array(repeating: 0xEE, count: 32)
+    )
+    return isRatchetOnly
+        ? ratchet.serialize()
+        : OMEMOSession(ratchet: ratchet, associatedData: Array(repeating: 0, count: 64), start: .received(keyExchange)).serialized
+}
+
 /// Records the IQs a module driven without a client sends, answering each with an empty result.
 private final class IQRecorder: Sendable {
     private let sent = OSAllocatedUnfairLock<[DuckoXMPP.XMLElement]>(initialState: [])
@@ -174,8 +188,8 @@ extension OMEMOServiceTests {
 
             #expect(module.ownIdentityData?.deviceID == 4242)
             let publish = try #require(recorder.iqs.first { $0.contains("<publish") })
-            #expect(publish.contains("\(OMEMOModule.bundleNodePrefix)4242"))
-            #expect(publish.contains("signedPreKeyId=\"\(signedPreKey.keyID)\""))
+            #expect(publish.contains("<publish node=\"\(XMPPNamespaces.omemoBundles)\"><item id=\"4242\">"))
+            #expect(publish.contains("<spk id=\"\(signedPreKey.keyID)\">"))
             #expect(publish.contains(Base64.encode(Array(signedPreKey.signature))))
         }
 
@@ -194,13 +208,10 @@ extension OMEMOServiceTests {
             #expect(recorder.iqs.isEmpty)
         }
 
-        @Test func `A stored session that cannot be decoded is skipped and the others are restored`() async throws {
+        @Test func `A stored session that cannot be decoded, as one in the earlier encoding, is skipped and the others are restored`() async throws {
             await store.seedFromIdentityData(makeIdentityData(preKeyIDs: [1]), accountJID: accountJID.description)
-            let session = try OMEMODoubleRatchetSession(
-                asResponderWithSharedSecret: Array(repeating: 1, count: 32),
-                ourSignedPreKeyPair: OMEMOSignedPreKey(keyID: 1, identityKey: OMEMOIdentityKeyPair()).keyPair
-            )
-            for (deviceID, data) in [(UInt32(1), Data([0xFF])), (2, Data(session.serialize()))] {
+            let rows = try [(UInt32(1), Data([0xFF])), (2, Data(storedSessionData(isRatchetOnly: true))), (3, Data(storedSessionData()))]
+            for (deviceID, data) in rows {
                 try await store.saveSession(OMEMOStoredSession(
                     accountJID: accountJID.description, peerJID: "peer@example.com", peerDeviceID: deviceID,
                     sessionData: data, associatedData: Data(repeating: 0, count: 64)
@@ -210,7 +221,8 @@ extension OMEMOServiceTests {
             let module = await buildInstalledModule(recorder: IQRecorder())
 
             let peer = try #require(BareJID.parse("peer@example.com"))
-            #expect(module.exportSession(jid: peer, deviceID: 2) != nil)
+            #expect(module.exportSession(jid: peer, deviceID: 3) != nil)
+            #expect(module.exportSession(jid: peer, deviceID: 2) == nil)
             #expect(module.exportSession(jid: peer, deviceID: 1) == nil)
             #expect(module.ownIdentityData != nil)
         }
@@ -265,12 +277,8 @@ extension OMEMOServiceTests {
             let transport = MockTransport()
             let peer = try #require(BareJID.parse("peer@example.com"))
             let omemoModule = OMEMOModule(pepModule: PEPModule())
-            let session = try OMEMODoubleRatchetSession(
-                asResponderWithSharedSecret: Array(repeating: 1, count: 32),
-                ourSignedPreKeyPair: OMEMOSignedPreKey(keyID: 1, identityKey: OMEMOIdentityKeyPair()).keyPair
-            )
-            omemoModule.restoreSessions([OMEMOModule.StoredSessionEntry(
-                jid: peer, deviceID: 7, sessionData: session.serialize(), associatedData: Array(repeating: 0, count: 64)
+            try omemoModule.restoreSessions([OMEMOModule.StoredSessionEntry(
+                jid: peer, deviceID: 7, sessionData: storedSessionData(), associatedData: Array(repeating: 0, count: 64)
             )])
             let accounts = makeAccountService(
                 store: store, clientFactory: MockXMPPClientFactory(transport: transport, modules: [omemoModule])

@@ -142,6 +142,7 @@ private struct AccountDetailView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var isShowingConnectionInfo = false
     @State private var isShowingServerInfo = false
+    @State private var isShowingBlockedContacts = false
     @State private var isShowingChangePassword = false
     @State private var isShowingRegistrationForm = false
     @State private var isCancelAccountConfirmPresented = false
@@ -223,6 +224,9 @@ private struct AccountDetailView: View {
         .sheet(isPresented: $isShowingServerInfo) {
             ServerInfoView(accountID: account.id)
         }
+        .sheet(isPresented: $isShowingBlockedContacts) {
+            BlockedContactsSheet(accountID: account.id)
+        }
         .sheet(isPresented: $isShowingChangePassword) {
             ChangePasswordSheet(accountID: account.id)
         }
@@ -261,6 +265,10 @@ private struct AccountDetailView: View {
 
             Button("Server Info…") {
                 isShowingServerInfo = true
+            }
+
+            Button("Blocked Contacts…") {
+                isShowingBlockedContacts = true
             }
 
             Divider()

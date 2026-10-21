@@ -23,7 +23,7 @@ struct ANSIFormatter: CLIFormatter {
         let color = message.isOutgoing ? Color.cyan : Color.green
         let displayJID = message.isOutgoing ? (accountJID?.description ?? message.fromJID) : message.fromJID
         let body = if message.isUndecryptable {
-            "\(message.fromJID): \(Color.red)error: \(ChatMessage.undecryptableText)"
+            "\(message.fromJID): \(Color.red)error: \(message.undecryptableNotice)"
         } else if message.body.hasPrefix("/me ") {
             "* \(displayJID) \(message.body.dropFirst(4))"
         } else {
@@ -51,8 +51,8 @@ struct ANSIFormatter: CLIFormatter {
         return line
     }
 
-    func formatEncryptedMessage(_ message: ChatMessage, accountID: UUID) -> String {
-        formatMessage(message)
+    func formatEncryptedMessage(_ message: ChatMessage, in conversation: Conversation, accountID: UUID) -> String {
+        formatMessage(namingRoomSender(of: message, in: conversation))
     }
 
     func formatNote(_ note: TimelineNote, contactName: String) -> String {
@@ -121,6 +121,7 @@ struct ANSIFormatter: CLIFormatter {
         case let .streamResumed(jid): "\(Color.green)stream resumed as \(jid)\(Color.reset)"
         case let .disconnected(reason): formatDisconnect(reason)
         case let .authenticationFailed(message): "\(Color.red)authentication failed: \(message)\(Color.reset)"
+        case .plainSignInRefused: "\(Color.red)\(plainSignInRefusedLine)\(Color.reset)"
         case let .messageReceived(message): formatIncomingMessage(message)
         case let .messageCarbonReceived(forwarded): formatCarbonEvent(forwarded, isOutgoing: false)
         case let .messageCarbonSent(forwarded): formatCarbonEvent(forwarded, isOutgoing: true)
@@ -129,9 +130,9 @@ struct ANSIFormatter: CLIFormatter {
         case let .presenceSubscriptionRevoked(from: jid): "\(Color.yellow)✗ Subscription revoked by \(jid)\(Color.reset)"
         case let .deliveryReceiptReceived(messageID, from): "\(Color.dim)\u{2713} delivery receipt: \(messageID) from \(from.bareJID)\(Color.reset)"
         case let .chatMarkerReceived(messageID, .displayed, from): "\(Color.dim)\u{2713}\u{2713} read marker: \(messageID) from \(from.bareJID)\(Color.reset)"
-        case let .messageCorrected(_, newBody, from): "\(Color.yellow)message corrected by \(from.bareJID): \(newBody)\(Color.reset)"
+        case let .messageCorrected(_, newBody, _, from, _): "\(Color.yellow)message corrected by \(from.bareJID): \(newBody)\(Color.reset)"
         case let .messageError(_, from, error): "\(Color.red)message error from \(from.bareJID): \(error.displayText)\(Color.reset)"
-        case let .messageRetracted(originalID, from): "\(Color.dim)\u{2298} message retracted by \(from.bareJID) (id: \(originalID))\(Color.reset)"
+        case let .messageRetracted(originalID, from, _): "\(Color.dim)\u{2298} message retracted by \(from.bareJID) (id: \(originalID))\(Color.reset)"
         case let .messageModerated(originalID, moderator, room, reason): formatModeratedMessage(originalID: originalID, moderator: moderator, room: room, reason: reason)
         case let .roomJoined(room, occupancy, isNewlyCreated): formatRoomJoinedMUC(room: room, occupancy: occupancy, isNewlyCreated: isNewlyCreated)
         case let .roomOccupantJoined(room, occupant): "\(Color.yellow)\(room): \(occupant.nickname) joined\(Color.reset)"
@@ -214,6 +215,10 @@ struct ANSIFormatter: CLIFormatter {
         return line
     }
 
+    func formatBlockListEntry(_ entry: BlockListEntry) -> String {
+        "\(Color.bold)\(entry.jidString)\(Color.reset)"
+    }
+
     func formatRoomParticipant(_ participant: RoomParticipant) -> String {
         var line = "  \(Color.green)\(participant.nickname)\(Color.reset)"
         if let jid = participant.jidString {
@@ -231,8 +236,8 @@ struct ANSIFormatter: CLIFormatter {
         let jid = isOutgoing ? forwarded.message.to?.bareJID : forwarded.message.from?.bareJID
         let oob = forwarded.message.oobData
         let body = forwarded.message.body ?? oob.first?.url
-        guard let jid, let body else { return nil }
-        let timestamp = iso8601(Date())
+        guard let jid, let body, printsFromEvent(carbon: forwarded.message) else { return nil }
+        let timestamp = iso8601(forwarded.sentTime)
         let direction = isOutgoing ? "->" : "<-"
         let color = isOutgoing ? Color.cyan : Color.green
         let formatted = if body.hasPrefix("/me ") {
@@ -252,7 +257,7 @@ struct ANSIFormatter: CLIFormatter {
         let oob = message.oobData
         let body = message.body ?? oob.first?.url
         guard let body else { return nil }
-        let timestamp = iso8601(Date())
+        let timestamp = iso8601(sentTime(of: message))
         let formatted = if body.hasPrefix("/me ") {
             "* \(from) \(body.dropFirst(4))"
         } else {
@@ -311,7 +316,7 @@ struct ANSIFormatter: CLIFormatter {
         let body = message.body ?? oob.first?.url
         guard let body else { return nil }
         let nickname = nicknameFromJID(from)
-        let timestamp = iso8601(Date())
+        let timestamp = iso8601(sentTime(of: message))
         let formatted = if body.hasPrefix("/me ") {
             "* \(nickname) \(body.dropFirst(4))"
         } else {
@@ -330,7 +335,7 @@ struct ANSIFormatter: CLIFormatter {
         let body = message.body ?? oob.first?.url
         guard let body else { return nil }
         let nickname = nicknameFromJID(from)
-        let timestamp = iso8601(Date())
+        let timestamp = iso8601(sentTime(of: message))
         let formatted = if body.hasPrefix("/me ") {
             "[PM] * \(nickname) \(body.dropFirst(4))"
         } else {
@@ -445,6 +450,24 @@ struct ANSIFormatter: CLIFormatter {
         return lines.joined(separator: "\n")
     }
 
+    func formatDataForm(_ form: DataFormInfo) -> String {
+        var lines: [String] = []
+        if let title = form.title { lines.append("\(Color.bold)\(title)\(Color.reset)") }
+        lines.append(contentsOf: form.instructions)
+        for field in form.fields where field.isDisplayed {
+            if field.isFixed {
+                lines.append(contentsOf: field.values.map { "\(Color.bold)\($0)\(Color.reset)" })
+                continue
+            }
+            let marker = field.isRequired ? " \(Color.yellow)(required)\(Color.reset)" : ""
+            let value = dataFormValueText(field)
+            let shownValue = value.isEmpty ? "\(Color.dim)(empty)\(Color.reset)" : value
+            lines.append("  \(Color.cyan)\(field.displayLabel)\(Color.reset)\(marker): \(shownValue)")
+            if let description = field.description { lines.append("    \(Color.dim)\(description)\(Color.reset)") }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     func formatRegistrationForm(_ form: RegistrationFormInfo) -> String {
         var lines: [String] = []
         let kindLabel = form.formKind == .dataForm ? "Data Form" : "Legacy"
@@ -454,19 +477,19 @@ struct ANSIFormatter: CLIFormatter {
         if let instructions = form.instructions, !instructions.isEmpty {
             lines.append("\(Color.bold)Instructions:\(Color.reset) \(instructions)")
         }
+        if let redirectURL = form.redirectURL {
+            lines.append("\(Color.bold)Register at:\(Color.reset) \(redirectURL.absoluteString)")
+        }
         switch form.formKind {
         case .legacy:
-            lines.append("\(Color.bold)Fields:\(Color.reset)")
-            if form.hasUsername { lines.append("  \(Color.cyan)Username\(Color.reset): (required)") }
-            if form.hasPassword { lines.append("  \(Color.cyan)Password\(Color.reset): (required)") }
-            if form.hasEmail { lines.append("  \(Color.cyan)Email\(Color.reset): (optional)") }
-        case .dataForm:
-            lines.append("\(Color.bold)Fields:\(Color.reset)")
-            for field in form.dataFormFields where field.isUserEditable {
-                let label = field.displayLabel
-                let value = field.values.joined(separator: ", ")
-                lines.append("  \(Color.cyan)\(label)\(Color.reset): \(value.isEmpty ? "\(Color.dim)(empty)\(Color.reset)" : value)")
+            if !form.legacyFields.isEmpty { lines.append("\(Color.bold)Fields\(Color.reset) \(Color.yellow)(all required)\(Color.reset)\(Color.bold):\(Color.reset)") }
+            for field in form.legacyFields {
+                let value = registrationFieldValueText(field)
+                let shownValue = value.isEmpty ? "\(Color.dim)(empty)\(Color.reset)" : value
+                lines.append("  \(Color.cyan)\(field.label)\(Color.reset): \(shownValue)")
             }
+        case .dataForm:
+            lines.append(formatDataForm(form.dataForm))
         }
         return lines.joined(separator: "\n")
     }

@@ -60,13 +60,7 @@ public actor MockTranscriptStore: TranscriptStore {
         if let serverID = message.serverID, let match = stored.first(where: { $0.serverID == serverID }) {
             guard match.isUndecryptable, !match.isRetracted, !message.isUndecryptable, match.isOutgoing == message.isOutgoing
             else { return .duplicate }
-            amendments.append((
-                TranscriptAmendment(
-                    action: .decrypted, targetMessageID: match.id, timestamp: Date(),
-                    body: message.body, htmlBody: message.htmlBody
-                ),
-                message.conversationID
-            ))
+            amendments.append((.decrypted(match, as: message), message.conversationID))
             return .upgraded(placeholderID: match.id, timestamp: match.timestamp)
         }
         if message.serverID == nil || fromArchive, let stanzaID = message.stanzaID {
@@ -150,12 +144,16 @@ public actor MockTranscriptStore: TranscriptStore {
         return applyAmendments(to: newestDayFirst.map(\.element))
     }
 
+    public func findMessage(serverID: String, conversationID: UUID) async throws -> ChatMessage? {
+        applyAmendments(to: messages.filter { $0.conversationID == conversationID }).first { $0.serverID == serverID }
+    }
+
     public func messageExists(stanzaID: String, conversationID: UUID) async throws -> Bool {
         messages.contains { $0.stanzaID == stanzaID && $0.conversationID == conversationID }
     }
 
     public func messageExists(serverID: String, conversationID: UUID) async throws -> Bool {
-        messages.contains { $0.serverID == serverID && $0.conversationID == conversationID }
+        try await findMessage(serverID: serverID, conversationID: conversationID) != nil
     }
 
     public func messageExists(stanzaID: String, fromJID: String, conversationID: UUID) async throws -> Bool {
@@ -195,56 +193,53 @@ public actor MockTranscriptStore: TranscriptStore {
     // MARK: - Amendment Application
 
     private func applyAmendments(to messages: [ChatMessage]) -> [ChatMessage] {
+        let targets = amendmentsByTarget()
         var result = messages
-        for (amendment, conversationID) in amendments {
-            for index in result.indices where result[index].conversationID == conversationID {
-                // Mirror FileTranscriptStore precedence: UUID authoritative,
-                // then stanzaID, then serverID. A plain OR would let a stale
-                // stanzaID override the UUID intent.
-                let matches: Bool = if amendment.targetMessageID != nil {
-                    result[index].id == amendment.targetMessageID
-                } else if amendment.targetStanzaID != nil {
-                    result[index].stanzaID == amendment.targetStanzaID
-                } else if amendment.targetServerID != nil {
-                    result[index].serverID == amendment.targetServerID
-                } else {
-                    false
-                }
-                guard matches else { continue }
-
-                switch amendment.action {
-                case .edit:
-                    if let body = amendment.body {
-                        result[index].body = body
-                    }
-                    if let htmlBody = amendment.htmlBody {
-                        result[index].htmlBody = htmlBody
-                    }
-                    result[index].isEdited = true
-                    result[index].editedAt = amendment.timestamp
-                case .retract:
-                    result[index].isRetracted = true
-                    result[index].retractedAt = amendment.timestamp
-                    result[index].body = ""
-                    result[index].htmlBody = nil
-                case .delivery:
-                    result[index].isDelivered = true
-                case .displayed:
-                    result[index].isDelivered = true
-                    result[index].isDisplayed = true
-                case .error:
-                    if let errorText = amendment.errorText {
-                        result[index].errorText = errorText
-                    }
-                case .decrypted:
-                    result[index].isUndecryptable = false
-                    if !result[index].isRetracted, !result[index].isEdited {
-                        result[index].body = amendment.body ?? ""
-                        result[index].htmlBody = amendment.htmlBody
-                    }
-                }
+        for index in result.indices {
+            for amendment in targets[result[index].id] ?? [] {
+                result[index].apply(amendment)
             }
         }
         return result
+    }
+
+    /// Each stored message's amendments, by its id, resolved as FileTranscriptStore resolves them: UUID authoritative,
+    /// then stanzaID, then serverID. A plain OR would let a stale stanzaID override the UUID intent. An amendment without
+    /// a UUID goes to the conversation's last message stored with that id, and a server id an amendment assigns routes
+    /// the later amendments that target it.
+    private func amendmentsByTarget() -> [UUID: [TranscriptAmendment]] {
+        var stored: [UUID: ChatMessage] = [:]
+        var stanzaToID: [UUID: [String: UUID]] = [:]
+        var serverToID: [UUID: [String: UUID]] = [:]
+        for message in messages {
+            stored[message.id] = message
+            if let stanzaID = message.stanzaID {
+                stanzaToID[message.conversationID, default: [:]][stanzaID] = message.id
+            }
+            if let serverID = message.serverID {
+                serverToID[message.conversationID, default: [:]][serverID] = message.id
+            }
+        }
+        var targets: [UUID: [TranscriptAmendment]] = [:]
+        for (amendment, conversationID) in amendments {
+            let targetID: UUID? = if let messageID = amendment.targetMessageID {
+                messageID
+            } else if let stanzaID = amendment.targetStanzaID {
+                stanzaToID[conversationID]?[stanzaID]
+            } else if let serverID = amendment.targetServerID {
+                serverToID[conversationID]?[serverID]
+            } else {
+                nil
+            }
+            guard let targetID, var message = stored[targetID], message.conversationID == conversationID else { continue }
+            let serverID = message.serverID
+            message.apply(amendment)
+            if message.serverID != serverID, let assigned = message.serverID {
+                serverToID[conversationID, default: [:]][assigned] = targetID
+            }
+            stored[targetID] = message
+            targets[targetID, default: []].append(amendment)
+        }
+        return targets
     }
 }

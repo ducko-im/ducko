@@ -532,12 +532,12 @@ enum JingleIBBFallbackTests {
 
             let peer = JingleInitiatorHarness.peer
             let foreignStanzas: [String: XMLElement] = [
-                "foreign-open": XMLElement(name: "open", namespace: XMPPNamespaces.ibb, attributes: ["sid": "ibb-sid", "block-size": "4096"]),
+                "foreign-open": JingleInitiatorHarness.ibbOpen(),
                 "foreign-data": JingleInitiatorHarness.ibbData([9, 9, 9], seq: 0),
                 "foreign-close": JingleInitiatorHarness.ibbClose()
             ]
             let unknownStreamStanzas: [String: XMLElement] = [
-                "unknown-open": XMLElement(name: "open", namespace: XMPPNamespaces.ibb, attributes: ["sid": "other", "block-size": "4096"]),
+                "unknown-open": JingleInitiatorHarness.ibbOpen(ibbSID: "other"),
                 "unknown-data": JingleInitiatorHarness.ibbData([9, 9, 9], seq: 0, ibbSID: "other"),
                 "unknown-close": JingleInitiatorHarness.ibbClose(ibbSID: "other")
             ]
@@ -612,6 +612,21 @@ enum JingleIBBFallbackTests {
             #expect(harness.eventCount(matching: JingleInitiatorHarness.isCompletion) == 0)
             let terminate = try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue)
             #expect(terminate?.child(named: "jingle")?.child(named: "reason")?.child(named: "cancel") != nil)
+        }
+
+        @Test
+        func `Data after a close gets item-not-found and is not taken in`() async throws {
+            let harness = JingleInitiatorHarness()
+            try await startIBBReceive(harness)
+            try harness.deliver(JingleInitiatorHarness.ibbData([1, 2], seq: 0), id: "data-0")
+            try harness.deliver(JingleInitiatorHarness.ibbClose(), id: "close")
+
+            try harness.deliver(JingleInitiatorHarness.ibbData([3], seq: 1), id: "data-1")
+            let error = try #require(try await harness.sentStanza(matching: JingleInitiatorHarness.isReply(to: "data-1", type: "error")))
+            #expect(error.child(named: "error")?.child(named: "item-not-found", namespace: XMPPNamespaces.stanzas) != nil)
+            await #expect(throws: JingleModule.JingleError.transportFailed("The transfer ended before the whole file arrived")) {
+                _ = try await harness.module.receiveFileData(sid: "sid-1")
+            }
         }
 
         @Test

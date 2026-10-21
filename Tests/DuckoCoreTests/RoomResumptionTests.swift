@@ -265,6 +265,53 @@ struct RoomResumptionTests {
     }
 
     @Test
+    func `A bookmark whose auto-join is switched on has its room joined`() async throws {
+        let fixture = RoomResumptionFixture()
+        try await fixture.signIn()
+        await fixture.transports[0].simulateReceive(bookmarksEvent("<item id='\(otherRoom)'><conference xmlns='urn:xmpp:bookmarks:1'/></item>"))
+        try await eventually { fixture.bookmarks.contains(otherRoom.description) }
+
+        await fixture.transports[0].simulateReceive(bookmarksEvent("<item id='\(otherRoom)'><conference xmlns='urn:xmpp:bookmarks:1' autojoin='true'/></item>"))
+
+        let join = try await sentStanza(on: fixture.transports[0], containing: "to=\"\(otherRoom)/alice\"")
+        #expect(join.hasPrefix("<presence"))
+        await fixture.close()
+    }
+
+    @Test
+    func `A bookmark whose auto-join is switched off has its room left`() async throws {
+        let fixture = RoomResumptionFixture()
+        try await fixture.signIn()
+
+        await fixture.transports[0].simulateReceive(bookmarksEvent("<item id='\(room)'><conference xmlns='urn:xmpp:bookmarks:1'/></item>"))
+
+        let leave = try await sentStanza(on: fixture.transports[0], matching: { $0.contains("to=\"\(room)/alice\"") && $0.contains("type=\"unavailable\"") })
+        #expect(leave.hasPrefix("<presence"))
+        try await eventually { fixture.participants(in: room).isEmpty }
+        await fixture.close()
+    }
+
+    @Test
+    func `A retracted bookmark has its room left only where another device removed it`() async throws {
+        let fixture = RoomResumptionFixture()
+        try await fixture.signIn(remembering: rememberedRoom)
+        let removal = Task { try await fixture.environment.bookmarksService.removeBookmark(jidString: room.description, accountID: fixture.accountID) }
+        let retract = try await sentStanza(on: fixture.transports[0], containing: "<retract ")
+        let retractID = try #require(extractIQID(from: retract))
+
+        // The rooms are retracted in order, so the second room's leave follows whatever the first one's sends.
+        await fixture.transports[0].simulateReceive(bookmarksEvent("<retract id='\(room)'/><retract id='\(rememberedRoom)'/>"))
+        await fixture.transports[0].simulateReceive("<iq type='result' id='\(retractID)'/>")
+        try await removal.value
+
+        _ = try await sentStanza(on: fixture.transports[0], matching: { $0.contains("to=\"\(rememberedRoom)/alice\"") && $0.contains("type=\"unavailable\"") })
+        let sent = await fixture.transports[0].sentBytes.map { String(decoding: $0, as: UTF8.self) }
+        #expect(!sent.contains { $0.contains("to=\"\(room)/alice\"") && $0.contains("type=\"unavailable\"") })
+        #expect(fixture.participants(in: room) == ["alice", "bob"])
+        await fixture.close()
+    }
+
+    @Test
     func `A sign-in pass interrupted on a later fresh session is finished on its resumed stream too`() async throws {
         let fixture = RoomResumptionFixture(transports: [MockTransport(), MockTransport(), MockTransport()])
         try await fixture.signIn()

@@ -13,7 +13,7 @@ private func announcedDeviceLists(sender: String?) throws -> [String: [UInt32]] 
     <message\(from) to='user@example.com/res'>\
     <event xmlns='http://jabber.org/protocol/pubsub#event'>\
     <items node='urn:xmpp:omemo:2:devices'>\
-    <item id='current'><list xmlns='urn:xmpp:omemo:2'><device id='7'/></list></item>\
+    <item id='current'><devices xmlns='urn:xmpp:omemo:2'><device id='7'/></devices></item>\
     </items></event></message>
     """)))
 

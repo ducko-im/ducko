@@ -4,18 +4,41 @@ import Testing
 @testable import DuckoCore
 @testable import DuckoXMPP
 
-/// An encrypted chat stanza from `from` with message id `id`, as `OMEMOModule` hands it on. `serverID` adds the
+/// An encrypted stanza of `type` from `from` with message id `id`, as `OMEMOModule` hands it on. `serverID` adds the
 /// account archive's stamp.
-func makeEncryptedStanza(from: JID, id: String?, serverID: String? = nil) -> XMPPMessage {
-    var message = XMPPMessage(type: .chat, id: id)
+func makeEncryptedStanza(from: JID, id: String?, serverID: String? = nil, type: XMPPMessage.MessageType = .chat) -> XMPPMessage {
+    var message = XMPPMessage(type: type, id: id)
     message.from = from
-    message.element.addChild(DuckoXMPP.XMLElement(name: "encrypted", namespace: XMPPNamespaces.omemo))
+    var encrypted = DuckoXMPP.XMLElement(name: "encrypted", namespace: XMPPNamespaces.omemo)
+    encrypted.addChild(DuckoXMPP.XMLElement(name: "payload"))
+    message.element.addChild(encrypted)
     if let serverID {
         message.element.addChild(DuckoXMPP.XMLElement(
             name: "stanza-id", namespace: XMPPNamespaces.stanzaID, attributes: ["id": serverID, "by": testJIDString]
         ))
     }
     return message
+}
+
+/// The event `OMEMOModule` reports for `stanza`: decrypted to a message with `body` and `elements`, else undecryptable
+/// for `reason`.
+func encryptedMessageEvent(
+    _ stanza: XMPPMessage, body: String?, elements: [DuckoXMPP.XMLElement] = [], reason: OMEMOUndecryptableReason = .decryptionFailed
+) -> XMPPEvent {
+    .omemoEncryptedMessageReceived(message: stanza, outcome: encryptedOutcome(of: stanza, body: body, elements: elements, reason: reason))
+}
+
+func encryptedOutcome(
+    of stanza: XMPPMessage, body: String?, elements: [DuckoXMPP.XMLElement] = [], sentTime: String? = nil,
+    reason: OMEMOUndecryptableReason = .decryptionFailed
+) -> OMEMOReceiveOutcome {
+    guard let body else { return .undecryptable(reason) }
+    var element = DuckoXMPP.XMLElement(name: "message", attributes: stanza.element.attributes)
+    element.setChildText(named: "body", to: body)
+    for child in elements {
+        element.addChild(child)
+    }
+    return .decrypted(OMEMODecryptedMessage(message: XMPPMessage(element: element), sentTime: sentTime))
 }
 
 private let peer = BareJID(localPart: "peer", domainPart: "example.com")!
@@ -63,8 +86,8 @@ struct ChatServiceEncryptedIngestTests {
         self.conversation = conversation
     }
 
-    private func receive(_ stanza: XMPPMessage, body: String?) async {
-        await service.handleEvent(.omemoEncryptedMessageReceived(message: stanza, decryptedBody: body, senderDeviceID: 1), accountID: accountID)
+    private func receive(_ stanza: XMPPMessage, body: String?, elements: [DuckoXMPP.XMLElement] = []) async {
+        await service.handleEvent(encryptedMessageEvent(stanza, body: body, elements: elements), accountID: accountID)
     }
 
     private func storedConversation() async throws -> Conversation {
@@ -135,18 +158,18 @@ struct ChatServiceEncryptedIngestTests {
         #expect(try await storedConversation().lastMessagePreview == "corrected")
     }
 
-    @Test func `A live encrypted reply keeps the message it answers and the file sent with it`() async throws {
+    /// What stands next to the payload is outside the encryption, so only the envelope's reply and file count.
+    @Test func `A live encrypted reply keeps the message it answers and the file sent with it, from inside the encryption`() async throws {
+        func reply(to id: String) -> DuckoXMPP.XMLElement {
+            DuckoXMPP.XMLElement(name: "reply", namespace: XMPPNamespaces.messageReply, attributes: ["to": peer.description, "id": id])
+        }
         var stanza = makeEncryptedStanza(from: .bare(peer), id: "ducko-6")
-        stanza.element.addChild(DuckoXMPP.XMLElement(
-            name: "reply", namespace: XMPPNamespaces.messageReply, attributes: ["to": peer.description, "id": "ducko-5"]
-        ))
-        var oob = DuckoXMPP.XMLElement(name: "x", namespace: XMPPNamespaces.oob)
-        var url = DuckoXMPP.XMLElement(name: "url")
-        url.addText("https://example.com/photo.jpg")
-        oob.addChild(url)
-        stanza.element.addChild(oob)
+        stanza.element.addChild(reply(to: "ducko-4"))
+        stanza.element.addChild(ChatService.oobElement(for: Attachment(id: UUID(), url: "https://example.com/injected.jpg")))
 
-        await receive(stanza, body: "yes")
+        await receive(stanza, body: "yes", elements: [
+            reply(to: "ducko-5"), ChatService.oobElement(for: Attachment(id: UUID(), url: "https://example.com/photo.jpg"))
+        ])
 
         let message = try #require(await transcripts.messages.first)
         #expect(message.replyToID == "ducko-5")
@@ -161,7 +184,7 @@ struct ChatServiceEncryptedIngestTests {
         ))
 
         for nickname in ["me", "other"] {
-            try await receive(makeEncryptedStanza(from: .full(#require(FullJID.parse("\(room)/\(nickname)"))), id: nickname), body: "hi")
+            try await receive(makeEncryptedStanza(from: .full(#require(FullJID.parse("\(room)/\(nickname)"))), id: nickname, type: .groupchat), body: "hi")
         }
 
         #expect(await transcripts.messages.map(\.isOutgoing) == [true, false])

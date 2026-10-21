@@ -170,6 +170,87 @@ struct ChatWindowStateTests {
         #expect(fixture.windowState.replyingTo?.id == question.id)
     }
 
+    @Test func `typing in a private chat within a room tells the occupant`() async throws {
+        let transport = MockTransport()
+        let fixture = try await ChatWindowFixture.make(clientFactory: MockXMPPClientFactory(transport: transport, modules: [ChatStatesModule()]))
+        let session = MockServerSession(transport: transport)
+        try await session.connect(fixture.environment, accountID: fixture.accountID)
+        // The account counts as connected only once its event stream delivers the connection, which can come after
+        // `connect` returns.
+        try await eventually { fixture.environment.accountService.connectedClient(for: fixture.accountID) != nil }
+        let windowState = ChatWindowState(jidString: "room@conference.example.com/nick", accountID: fixture.accountID, environment: fixture.environment)
+        windowState.conversation = try Conversation(
+            id: UUID(), accountID: fixture.accountID, jid: #require(BareJID.parse("room@conference.example.com")), type: .chat,
+            isPinned: false, isMuted: false, unreadCount: 0, occupantNickname: "nick", createdAt: Date()
+        )
+
+        await windowState.userIsTyping()
+
+        let composing = try await session.next("<composing")
+        #expect(composing.contains("to=\"room@conference.example.com/nick\""))
+    }
+
+    /// A tab on `jidString` whose account is connected with a room module, and the server's side of the connection.
+    private static func connectedRoomTab(
+        _ jidString: String, type: Conversation.ConversationType
+    ) async throws -> (ChatWindowFixture, MockServerSession) {
+        let transport = MockTransport()
+        let fixture = try await ChatWindowFixture.make(
+            jidString: jidString, type: type, clientFactory: MockXMPPClientFactory(transport: transport, modules: [MUCModule()])
+        )
+        let session = MockServerSession(transport: transport)
+        try await session.connect(fixture.environment, accountID: fixture.accountID)
+        try await eventually { fixture.environment.accountService.connectedClient(for: fixture.accountID) != nil }
+        return (fixture, session)
+    }
+
+    /// The user's own message in the tab's conversation.
+    private static func ownMessage(in fixture: ChatWindowFixture) async -> ChatMessage {
+        let own = ChatMessage(
+            id: UUID(), conversationID: fixture.conversationID, stanzaID: "m1", fromJID: "bob", body: "Mine",
+            timestamp: Date(), isOutgoing: true, isDelivered: false, isEdited: false, type: "chat"
+        )
+        await fixture.transcripts.addMessage(own)
+        return own
+    }
+
+    @Test func `a reply in a room goes to the room and names the message by the room's stanza-id`() async throws {
+        let (fixture, session) = try await Self.connectedRoomTab("room@conference.example.com", type: .groupchat)
+        fixture.windowState.startReply(to: ChatMessage(
+            id: UUID(), conversationID: fixture.conversationID, stanzaID: "bob-1", serverID: "t1", fromJID: "bob", body: "Lunch?",
+            timestamp: Date(), isOutgoing: false, isDelivered: true, isEdited: false, type: "groupchat"
+        ))
+
+        await fixture.windowState.sendMessage("Sure")
+
+        let reply = try await session.next("<reply")
+        #expect(reply.contains("to=\"room@conference.example.com\"") && reply.contains("type=\"groupchat\""))
+        #expect(reply.contains("<reply xmlns=\"urn:xmpp:reply:0\" id=\"t1\" to=\"room@conference.example.com/bob\"/>"))
+        #expect(fixture.windowState.lastSendError == nil)
+    }
+
+    @Test func `an edit in a private chat within a room goes to the occupant`() async throws {
+        let (fixture, session) = try await Self.connectedRoomTab("room@conference.example.com/bob", type: .chat)
+        await fixture.windowState.startEdit(of: Self.ownMessage(in: fixture))
+
+        await fixture.windowState.sendMessage("Fixed")
+
+        let correction = try await session.next("<replace")
+        #expect(correction.contains("to=\"room@conference.example.com/bob\"") && correction.contains("type=\"chat\""))
+        #expect(correction.contains("<replace xmlns=\"urn:xmpp:message-correct:0\" id=\"m1\"/>"))
+        #expect(fixture.windowState.lastSendError == nil)
+    }
+
+    @Test func `a retraction in a private chat within a room goes to the occupant`() async throws {
+        let (fixture, session) = try await Self.connectedRoomTab("room@conference.example.com/bob", type: .chat)
+
+        await fixture.windowState.retractMessage(Self.ownMessage(in: fixture))
+
+        let retraction = try await session.next("<retract")
+        #expect(retraction.contains("to=\"room@conference.example.com/bob\"") && retraction.contains("type=\"chat\""))
+        #expect(retraction.contains("<retract xmlns=\"urn:xmpp:message-retract:1\" id=\"m1\"/>"))
+    }
+
     @Test func `clearSendError resets lastSendError`() async throws {
         let fixture = try await ChatWindowFixture.make()
         fixture.windowState.lastSendError = "Send failed: invalid JID"
@@ -390,7 +471,7 @@ struct ChatWindowStateTests {
             let rows = await fixture.transcripts.messages
             #expect(rows.count == 2)
             #expect(rows.allSatisfy { $0.isOutgoing && $0.attachments.first?.localFileURL == fileURL })
-            try await waitUntil { fixture.environment.fileTransferService.activeTransfers.allSatisfy { transfer in
+            try await eventually { fixture.environment.fileTransferService.activeTransfers.allSatisfy { transfer in
                 if case .failed = transfer.state { true } else { false }
             } }
 
@@ -500,7 +581,7 @@ struct ChatWindowStateTests {
         }
         // Nothing is stored for the link, so the message is published without a preview and one is fetched.
         await fixture.windowState.refreshMessages()
-        try await waitUntil { redrawn.withLock { $0 } }
+        try await eventually { redrawn.withLock { $0 } }
 
         #expect(fixture.windowState.linkPreview(for: message)?.title == "Counted Title")
     }

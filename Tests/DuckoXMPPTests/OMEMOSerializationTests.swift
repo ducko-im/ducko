@@ -88,7 +88,7 @@ enum OMEMOSerializationTests {
             // Verify restored session can continue encrypting
             var mutable = restored
             let msg = try mutable.encrypt(plaintext: Array("Test".utf8), associatedData: ad)
-            #expect(msg.header.messageNumber == 2)
+            #expect(msg.message.messageNumber == 2)
         }
 
         @Test func `session with skipped keys round trip`() throws {
@@ -128,6 +128,37 @@ enum OMEMOSerializationTests {
 
             #expect(restored.skippedMessageKeys.count == skippedCount)
             #expect(restored.skippedKeyOrder.count == skippedCount)
+        }
+    }
+
+    // MARK: - OMEMO Session
+
+    struct OMEMOSessionSerializationTests {
+        /// Until the device answers, the session wraps each message in its key exchange.
+        @Test func `a started session reads back unconfirmed until a message from the device confirms it`() throws {
+            let associatedData = Array(repeating: UInt8(0x5A), count: 64)
+            let bobKeyPair = Curve25519.KeyAgreement.PrivateKey()
+            let keyExchange = OMEMOKeyExchangeHeader(
+                preKeyID: 7, signedPreKeyID: 1, identityKey: Array(repeating: 0xAB, count: 32), ephemeralKey: Array(repeating: 0xEE, count: 32)
+            )
+            var bob = OMEMODoubleRatchetSession(asResponderWithSharedSecret: Array(repeating: 1, count: 32), ourSignedPreKeyPair: bobKeyPair)
+            let started = try OMEMOSession(
+                ratchet: OMEMODoubleRatchetSession(
+                    asInitiatorWithSharedSecret: Array(repeating: 1, count: 32), peerSignedPreKey: Array(bobKeyPair.publicKey.rawRepresentation)
+                ),
+                associatedData: associatedData,
+                start: .sent(keyExchange, isConfirmed: false)
+            )
+
+            var alice = try OMEMOSession(serialized: started.serialized, associatedData: associatedData)
+            let first = try alice.encryptKey([1])
+            _ = try bob.decrypt(message: OMEMOKeyExchange(serialized: first.data).message, associatedData: associatedData)
+            _ = try alice.decrypt(bob.encrypt(plaintext: [2], associatedData: associatedData))
+            var confirmed = try OMEMOSession(serialized: alice.serialized, associatedData: associatedData)
+
+            #expect(first.isKex)
+            #expect(confirmed.start == .sent(keyExchange, isConfirmed: true))
+            #expect(try !confirmed.encryptKey([3]).isKex)
         }
     }
 

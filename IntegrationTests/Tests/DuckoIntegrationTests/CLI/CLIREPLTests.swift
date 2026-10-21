@@ -45,7 +45,6 @@ extension DuckoIntegrationTests.CLILayer {
         @MainActor func `REPL /roster /status /history /who produce output`() async throws {
             try await CLIProcess.withProcess { aliceCLI in
                 let alice = TestCredentials.alice
-                let bob = TestCredentials.bob
 
                 // The PTY makes `OutputFormat.defaultForTerminal` resolve
                 // to `.ansi`, but the assertions below pin
@@ -78,12 +77,13 @@ extension DuckoIntegrationTests.CLILayer {
                 )
 
                 // `/history <jid>` rejects a bare invocation with a
-                // usage hint. Pass bob's JID so the handler proceeds
-                // and prints either a row or "No messages found." (via
-                // `printHistory` in `HistoryHelpers`). On a fresh
-                // inttest profile no transcript exists yet, so we pin
-                // the empty-state string.
-                try await session.send("/history \(bob.jid)")
+                // usage hint. Pass a JID so the handler proceeds and
+                // prints either a row or "No messages found." (via
+                // `printHistory` in `HistoryHelpers`). Signing in catches
+                // up on the newest archive page, so ask for an address no
+                // account has written to and pin the empty-state string.
+                let stranger = "inttest-\(UUID().uuidString.prefix(8).lowercased())@\(TestCredentials.testServerDomain)"
+                try await session.send("/history \(stranger)")
                 _ = try await session.waitForOutput(
                     containing: "No messages found.",
                     timeout: TestTimeout.replOutput

@@ -242,70 +242,71 @@ enum OMEMOCryptoTests {
     // MARK: - Message Crypto
 
     struct MessageCryptoTests {
+        private let messageKey = (0 ..< 32).map { _ in UInt8.random(in: 0 ... 255) }
+        private let ad = (0 ..< 64).map { _ in UInt8.random(in: 0 ... 255) }
+
+        private func encrypt(_ plaintext: [UInt8], associatedData: [UInt8]? = nil) throws -> OMEMOAuthenticatedMessage {
+            try OMEMOMessageCrypto.encrypt(plaintext: plaintext, messageKey: messageKey, associatedData: associatedData ?? ad) {
+                OMEMOMessage(messageNumber: 3, previousChainCount: 1, dhPublicKey: Array(repeating: 0x42, count: 32), ciphertext: $0)
+            }
+        }
+
         @Test func encryptDecryptRoundTrip() throws {
             let plaintext = Array("Hello, OMEMO encryption!".utf8)
-            let messageKey = (0 ..< 32).map { _ in UInt8.random(in: 0 ... 255) }
-            let ad = (0 ..< 64).map { _ in UInt8.random(in: 0 ... 255) }
 
-            let encrypted = try OMEMOMessageCrypto.encrypt(
-                plaintext: plaintext, messageKey: messageKey, associatedData: ad
-            )
-            let decrypted = try OMEMOMessageCrypto.decrypt(
-                payload: encrypted, messageKey: messageKey, associatedData: ad
-            )
+            let encrypted = try encrypt(plaintext)
+            let decrypted = try OMEMOMessageCrypto.decrypt(encrypted, messageKey: messageKey, associatedData: ad)
 
             #expect(decrypted == plaintext)
         }
 
         @Test func `hmac is truncated to 16 bytes`() throws {
-            let plaintext = Array("test".utf8)
-            let messageKey = (0 ..< 32).map { _ in UInt8.random(in: 0 ... 255) }
-            let ad = (0 ..< 64).map { _ in UInt8.random(in: 0 ... 255) }
+            let encrypted = try encrypt(Array("test".utf8))
 
-            let encrypted = try OMEMOMessageCrypto.encrypt(
-                plaintext: plaintext, messageKey: messageKey, associatedData: ad
-            )
-
-            #expect(encrypted.truncatedHMAC.count == 16)
+            #expect(encrypted.mac.count == 16)
         }
 
-        @Test func `hmac verification fails on tamper`() throws {
-            let plaintext = Array("test".utf8)
-            let messageKey = (0 ..< 32).map { _ in UInt8.random(in: 0 ... 255) }
-            let ad = (0 ..< 64).map { _ in UInt8.random(in: 0 ... 255) }
-
-            let encrypted = try OMEMOMessageCrypto.encrypt(
-                plaintext: plaintext, messageKey: messageKey, associatedData: ad
-            )
-
-            // Tamper with ciphertext
-            var tampered = encrypted.ciphertext
-            tampered[0] ^= 0xFF
-            let tamperedPayload = OMEMOEncryptedPayload(
-                ciphertext: tampered, truncatedHMAC: encrypted.truncatedHMAC
-            )
+        @Test(arguments: [true, false])
+        func `hmac verification fails when the ciphertext or the header changes`(changesCiphertext: Bool) throws {
+            let encrypted = try encrypt(Array("test".utf8))
+            let message = encrypted.message
+            var ciphertext = message.ciphertext
+            if changesCiphertext {
+                ciphertext[0] ^= 0xFF
+            }
+            let tampered = OMEMOAuthenticatedMessage(mac: encrypted.mac, message: OMEMOMessage(
+                messageNumber: changesCiphertext ? message.messageNumber : message.messageNumber + 1,
+                previousChainCount: message.previousChainCount, dhPublicKey: message.dhPublicKey, ciphertext: ciphertext
+            ))
 
             #expect(throws: OMEMOCryptoError.self) {
-                try OMEMOMessageCrypto.decrypt(
-                    payload: tamperedPayload, messageKey: messageKey, associatedData: ad
-                )
+                try OMEMOMessageCrypto.decrypt(tampered, messageKey: messageKey, associatedData: ad)
             }
         }
 
         @Test func `different AD fails decrypt`() throws {
-            let plaintext = Array("test".utf8)
-            let messageKey = (0 ..< 32).map { _ in UInt8.random(in: 0 ... 255) }
-            let ad1 = (0 ..< 64).map { _ in UInt8.random(in: 0 ... 255) }
-            let ad2 = (0 ..< 64).map { _ in UInt8.random(in: 0 ... 255) }
+            let otherAD = (0 ..< 64).map { _ in UInt8.random(in: 0 ... 255) }
 
-            let encrypted = try OMEMOMessageCrypto.encrypt(
-                plaintext: plaintext, messageKey: messageKey, associatedData: ad1
-            )
+            let encrypted = try encrypt(Array("test".utf8), associatedData: otherAD)
 
             #expect(throws: OMEMOCryptoError.self) {
-                try OMEMOMessageCrypto.decrypt(
-                    payload: encrypted, messageKey: messageKey, associatedData: ad2
-                )
+                try OMEMOMessageCrypto.decrypt(encrypted, messageKey: messageKey, associatedData: ad)
+            }
+        }
+
+        @Test func `a payload decrypts with its key material and not with a changed MAC`() throws {
+            let plaintext = Array("Hello, OMEMO!".utf8)
+            let key = (0 ..< 32).map { _ in UInt8.random(in: 0 ... 255) }
+
+            let payload = try OMEMOPayload(encrypting: plaintext, key: key)
+            var keyMaterial = payload.keyMaterial
+            keyMaterial[keyMaterial.count - 1] ^= 0xFF
+
+            #expect(payload.keyMaterial.count == 48)
+            #expect(Array(payload.keyMaterial.prefix(32)) == key)
+            #expect(try payload.decrypt() == plaintext)
+            #expect(throws: OMEMOCryptoError.self) {
+                try OMEMOPayload(ciphertext: payload.ciphertext, keyMaterial: keyMaterial).decrypt()
             }
         }
     }
@@ -560,7 +561,7 @@ enum OMEMOCryptoTests {
             var pair = try Self.createSessionPair()
 
             // Encrypt many messages without decrypting
-            var messages: [OMEMORatchetMessage] = []
+            var messages: [OMEMOAuthenticatedMessage] = []
             for i in 0 ..< 1002 {
                 let plaintext = Array("Message \(i)".utf8)
                 let encrypted = try pair.aliceSession.encrypt(

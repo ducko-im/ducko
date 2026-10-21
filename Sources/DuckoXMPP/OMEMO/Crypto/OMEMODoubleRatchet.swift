@@ -67,7 +67,7 @@ struct OMEMODoubleRatchetSession {
     mutating func encrypt(
         plaintext: [UInt8],
         associatedData: [UInt8]
-    ) throws -> OMEMORatchetMessage {
+    ) throws -> OMEMOAuthenticatedMessage {
         guard let ck = sendChainKey else {
             throw OMEMOCryptoError.sessionNotInitialized
         }
@@ -75,35 +75,34 @@ struct OMEMODoubleRatchetSession {
         let ckResult = OMEMOCrypto.kdfCK(chainKey: ck)
         sendChainKey = ckResult.chainKey
 
-        let header = OMEMORatchetHeader(
-            dhPublicKey: dhSendPublicKeyBytes,
-            previousChainCount: previousSendCount,
-            messageNumber: sendMessageNumber
-        )
+        let messageNumber = sendMessageNumber
         sendMessageNumber += 1
 
-        let headerBytes = header.encode()
-        let payload = try OMEMOMessageCrypto.encrypt(
+        return try OMEMOMessageCrypto.encrypt(
             plaintext: plaintext,
             messageKey: ckResult.messageKey,
-            associatedData: associatedData + headerBytes
-        )
-
-        return OMEMORatchetMessage(header: header, payload: payload)
+            associatedData: associatedData
+        ) { ciphertext in
+            OMEMOMessage(
+                messageNumber: messageNumber,
+                previousChainCount: previousSendCount,
+                dhPublicKey: dhSendPublicKeyBytes,
+                ciphertext: ciphertext
+            )
+        }
     }
 
     // MARK: - Decryption
 
-    /// Decrypts and advances the receiving chain; performs a DH ratchet step when `header.dhPublicKey` is new. Rolls back on auth failure.
+    /// Decrypts and advances the receiving chain; performs a DH ratchet step when `dhPublicKey` is new. Rolls back on auth failure.
     mutating func decrypt(
-        message: OMEMORatchetMessage,
+        message authenticatedMessage: OMEMOAuthenticatedMessage,
         associatedData: [UInt8]
     ) throws -> [UInt8] {
-        // 1. Try skipped message keys first
-        let headerBytes = message.header.encode()
-        let fullAD = associatedData + headerBytes
+        let message = authenticatedMessage.message
 
-        if let plaintext = try trySkippedMessageKey(message: message, associatedData: fullAD) {
+        // 1. Try skipped message keys first
+        if let plaintext = try trySkippedMessageKey(authenticatedMessage, associatedData: associatedData) {
             return plaintext
         }
 
@@ -112,13 +111,13 @@ struct OMEMODoubleRatchetSession {
         let snapshot = self
 
         // 2. DH ratchet step if we received a new ratchet key
-        if message.header.dhPublicKey != dhRecvPublicKey {
-            try skipMessageKeys(until: message.header.previousChainCount)
-            try dhRatchetStep(peerPublicKey: message.header.dhPublicKey)
+        if message.dhPublicKey != dhRecvPublicKey {
+            try skipMessageKeys(until: message.previousChainCount)
+            try dhRatchetStep(peerPublicKey: message.dhPublicKey)
         }
 
         // 3. Skip to the correct message number
-        try skipMessageKeys(until: message.header.messageNumber)
+        try skipMessageKeys(until: message.messageNumber)
 
         // 4. Advance the receiving chain
         guard let ck = recvChainKey else {
@@ -131,9 +130,9 @@ struct OMEMODoubleRatchetSession {
         // 5. Decrypt and verify — rollback on auth failure
         do {
             return try OMEMOMessageCrypto.decrypt(
-                payload: message.payload,
+                authenticatedMessage,
                 messageKey: ckResult.messageKey,
-                associatedData: fullAD
+                associatedData: associatedData
             )
         } catch {
             self = snapshot
@@ -145,12 +144,12 @@ struct OMEMODoubleRatchetSession {
 
     /// Attempts decryption using a previously skipped message key.
     private mutating func trySkippedMessageKey(
-        message: OMEMORatchetMessage,
+        _ authenticatedMessage: OMEMOAuthenticatedMessage,
         associatedData: [UInt8]
     ) throws -> [UInt8]? {
         let keyID = SkippedKeyID(
-            publicKey: message.header.dhPublicKey,
-            messageNumber: message.header.messageNumber
+            publicKey: authenticatedMessage.message.dhPublicKey,
+            messageNumber: authenticatedMessage.message.messageNumber
         )
 
         guard let messageKey = skippedMessageKeys[keyID] else {
@@ -160,7 +159,7 @@ struct OMEMODoubleRatchetSession {
         // Decrypt BEFORE removing the key — if HMAC verification fails, the key
         // is preserved for retrying with the genuine (non-corrupted) message.
         let plaintext = try OMEMOMessageCrypto.decrypt(
-            payload: message.payload,
+            authenticatedMessage,
             messageKey: messageKey,
             associatedData: associatedData
         )
@@ -233,117 +232,76 @@ struct OMEMODoubleRatchetSession {
 
     /// Serializes the session state to bytes for persistent storage.
     func serialize() -> [UInt8] {
-        var bytes: [UInt8] = []
+        var writer = OMEMORecordWriter()
 
-        // DH send key pair (32 bytes)
-        bytes.append(contentsOf: dhSendKeyPair.rawRepresentation)
+        writer.append(dhSendKeyPair.rawRepresentation)
 
-        // DH recv public key: length (4 LE) + bytes
         if let recvKey = dhRecvPublicKey {
-            appendLE(UInt32(recvKey.count), to: &bytes)
-            bytes.append(contentsOf: recvKey)
+            writer.append(UInt32(recvKey.count))
+            writer.append(recvKey)
         } else {
-            appendLE(UInt32(0), to: &bytes)
+            writer.append(UInt32(0))
         }
 
-        // Root key (32 bytes)
-        bytes.append(contentsOf: rootKey)
+        writer.append(rootKey)
 
-        // Send chain key: flag (1) + optional 32 bytes
-        appendOptionalKey(sendChainKey, to: &bytes)
+        appendOptionalKey(sendChainKey, to: &writer)
+        appendOptionalKey(recvChainKey, to: &writer)
 
-        // Recv chain key: flag (1) + optional 32 bytes
-        appendOptionalKey(recvChainKey, to: &bytes)
+        writer.append(sendMessageNumber)
+        writer.append(recvMessageNumber)
+        writer.append(previousSendCount)
 
-        // Counters (4 LE each)
-        appendLE(sendMessageNumber, to: &bytes)
-        appendLE(recvMessageNumber, to: &bytes)
-        appendLE(previousSendCount, to: &bytes)
-
-        // Skipped keys: count (4 LE) + entries
-        appendLE(UInt32(skippedKeyOrder.count), to: &bytes)
+        writer.append(UInt32(skippedKeyOrder.count))
         for keyID in skippedKeyOrder {
-            bytes.append(contentsOf: keyID.publicKey)
-            appendLE(keyID.messageNumber, to: &bytes)
+            writer.append(keyID.publicKey)
+            writer.append(keyID.messageNumber)
             if let messageKey = skippedMessageKeys[keyID] {
-                bytes.append(contentsOf: messageKey)
+                writer.append(messageKey)
             }
         }
 
-        return bytes
+        return writer.bytes
     }
 
-    /// Restores a session from previously serialized bytes.
+    /// Restores a session from previously serialized bytes, which must hold nothing else.
     init(serialized bytes: [UInt8]) throws {
-        var offset = 0
+        var reader = OMEMORecordReader(bytes)
 
-        func readBytes(_ count: Int) throws -> [UInt8] {
-            guard offset + count <= bytes.count else { throw OMEMOCryptoError.invalidKeyLength }
-            let result = Array(bytes[offset ..< offset + count])
-            offset += count
-            return result
-        }
-
-        func readLE() throws -> UInt32 {
-            let b = try readBytes(4)
-            return UInt32(b[0]) | UInt32(b[1]) << 8 | UInt32(b[2]) << 16 | UInt32(b[3]) << 24
-        }
-
-        // DH send key pair
-        let sendKeyRaw = try readBytes(32)
-        self.dhSendKeyPair = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: sendKeyRaw)
+        self.dhSendKeyPair = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: reader.read(OMEMOCrypto.keyLength))
         self.dhSendPublicKeyBytes = Array(dhSendKeyPair.publicKey.rawRepresentation)
 
-        // DH recv public key
-        let recvKeyLen = try readLE()
-        if recvKeyLen > 0 {
-            self.dhRecvPublicKey = try readBytes(Int(recvKeyLen))
-        } else {
-            self.dhRecvPublicKey = nil
-        }
+        let recvKeyLen = try reader.readUInt32()
+        self.dhRecvPublicKey = recvKeyLen > 0 ? try reader.read(Int(recvKeyLen)) : nil
 
-        // Root key
-        self.rootKey = try readBytes(32)
+        self.rootKey = try reader.read(OMEMOCrypto.keyLength)
 
-        // Send chain key
-        let hasSendCK = try readBytes(1)[0]
-        self.sendChainKey = hasSendCK != 0 ? try readBytes(32) : nil
+        self.sendChainKey = try reader.readByte() != 0 ? reader.read(OMEMOCrypto.keyLength) : nil
+        self.recvChainKey = try reader.readByte() != 0 ? reader.read(OMEMOCrypto.keyLength) : nil
 
-        // Recv chain key
-        let hasRecvCK = try readBytes(1)[0]
-        self.recvChainKey = hasRecvCK != 0 ? try readBytes(32) : nil
+        self.sendMessageNumber = try reader.readUInt32()
+        self.recvMessageNumber = try reader.readUInt32()
+        self.previousSendCount = try reader.readUInt32()
 
-        // Counters
-        self.sendMessageNumber = try readLE()
-        self.recvMessageNumber = try readLE()
-        self.previousSendCount = try readLE()
-
-        // Skipped keys
-        let skippedCount = try readLE()
+        let skippedCount = try reader.readUInt32()
         self.skippedMessageKeys = [:]
         self.skippedKeyOrder = []
         for _ in 0 ..< skippedCount {
-            let publicKey = try readBytes(32)
-            let messageNumber = try readLE()
-            let messageKey = try readBytes(32)
-            let keyID = SkippedKeyID(publicKey: publicKey, messageNumber: messageNumber)
-            skippedMessageKeys[keyID] = messageKey
+            let keyID = try SkippedKeyID(publicKey: reader.read(OMEMOCrypto.keyLength), messageNumber: reader.readUInt32())
+            skippedMessageKeys[keyID] = try reader.read(OMEMOCrypto.keyLength)
             skippedKeyOrder.append(keyID)
         }
+        guard reader.isAtEnd else { throw OMEMOModuleError.invalidKeyData }
     }
 
     // MARK: - Serialization Helpers
 
-    private func appendLE(_ value: UInt32, to buffer: inout [UInt8]) {
-        buffer.append(contentsOf: withUnsafeBytes(of: value.littleEndian) { Array($0) })
-    }
-
-    private func appendOptionalKey(_ key: [UInt8]?, to buffer: inout [UInt8]) {
+    private func appendOptionalKey(_ key: [UInt8]?, to writer: inout OMEMORecordWriter) {
         if let key {
-            buffer.append(1)
-            buffer.append(contentsOf: key)
+            writer.append(UInt8(1))
+            writer.append(key)
         } else {
-            buffer.append(0)
+            writer.append(UInt8(0))
         }
     }
 }
@@ -358,29 +316,5 @@ struct SkippedKeyID: Hashable {
     func hash(into hasher: inout Hasher) {
         hasher.combine(publicKey)
         hasher.combine(messageNumber)
-    }
-}
-
-/// A Double Ratchet message: header + encrypted payload.
-struct OMEMORatchetMessage {
-    let header: OMEMORatchetHeader
-    let payload: OMEMOEncryptedPayload
-}
-
-/// Header of a Double Ratchet message.
-struct OMEMORatchetHeader {
-    /// Sender's current DH ratchet public key (32 bytes).
-    let dhPublicKey: [UInt8]
-    /// Number of messages in the previous sending chain.
-    let previousChainCount: UInt32
-    /// Message number in the current sending chain.
-    let messageNumber: UInt32
-
-    /// Encodes the header as bytes for inclusion in associated data.
-    func encode() -> [UInt8] {
-        var bytes = dhPublicKey
-        bytes.append(contentsOf: withUnsafeBytes(of: previousChainCount.littleEndian) { Array($0) })
-        bytes.append(contentsOf: withUnsafeBytes(of: messageNumber.littleEndian) { Array($0) })
-        return bytes
     }
 }

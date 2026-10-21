@@ -73,6 +73,7 @@ public final class PEPModule: XMPPModule, Sendable {
     public func retrieveItems(
         node: String,
         from jid: BareJID? = nil,
+        itemID: String? = nil,
         maxItems: Int? = nil
     ) async throws -> [PEPItem] {
         guard let context = state.withLock({ $0.context }) else { return [] }
@@ -85,7 +86,10 @@ public final class PEPModule: XMPPModule, Sendable {
         if let maxItems {
             attrs["max_items"] = "\(maxItems)"
         }
-        let items = XMLElement(name: "items", attributes: attrs)
+        var items = XMLElement(name: "items", attributes: attrs)
+        if let itemID {
+            items.addChild(XMLElement(name: "item", attributes: ["id": itemID]))
+        }
         pubsub.addChild(items)
         iq.element.addChild(pubsub)
 
@@ -93,14 +97,18 @@ public final class PEPModule: XMPPModule, Sendable {
         return parsePublishedItems(itemsElement)
     }
 
-    /// Retracts an item from a PEP node.
-    public func retractItem(node: String, itemID: String) async throws {
+    /// Retracts an item from a PEP node. With `notify`, the server tells the node's subscribers about the retraction.
+    public func retractItem(node: String, itemID: String, notify: Bool = false) async throws {
         guard let context = state.withLock({ $0.context }) else { return }
 
         var iq = XMPPIQ(type: .set, id: context.generateID())
         var pubsub = XMLElement(name: "pubsub", namespace: XMPPNamespaces.pubsub)
 
-        var retract = XMLElement(name: "retract", attributes: ["node": node])
+        var attrs = ["node": node]
+        if notify {
+            attrs["notify"] = "true"
+        }
+        var retract = XMLElement(name: "retract", attributes: attrs)
         let item = XMLElement(name: "item", attributes: ["id": itemID])
         retract.addChild(item)
         pubsub.addChild(retract)
@@ -171,6 +179,12 @@ public final class PEPModule: XMPPModule, Sendable {
 }
 
 public extension ServiceDiscoveryModule.InfoResult {
+    /// Whether the account whose disco#info this is can publish to its PEP service (XEP-0163 §6.1).
+    var supportsPEPPublishing: Bool {
+        identities.contains { $0.category == "pubsub" && $0.type == "pep" }
+            && features.contains(XMPPNamespaces.pubsubPublish)
+    }
+
     /// Whether the account whose disco#info this is may keep private data in PEP: XEP-0223 §5 requires the server
     /// to offer PEP and publish-options, which is what keeps the data private.
     var supportsPrivatePEPStorage: Bool {

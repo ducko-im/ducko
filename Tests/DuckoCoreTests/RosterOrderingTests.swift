@@ -59,8 +59,8 @@ extension RosterOrderingTests {
             switch field {
             case "alias": try await fixture.service.renameContact(original, newAlias: "Old alias", accountID: accountID)
             case "last-seen": await fixture.service.updateLastSeen(jid: jid, date: Date(), accountID: accountID)
-            case "block": await fixture.service.handleEvent(.contactBlocked(jid), accountID: accountID)
-            case "block-list": await fixture.service.handleEvent(.blockListLoaded([jid]), accountID: accountID)
+            case "block": await fixture.service.handleEvent(.contactBlocked(.bare(jid)), accountID: accountID)
+            case "block-list": await fixture.service.handleEvent(.blockListLoaded([.bare(jid)]), accountID: accountID)
             default: Issue.record("Unknown fixture")
             }
         }

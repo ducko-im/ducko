@@ -90,6 +90,24 @@ on findButtonByLabel(el, labelWanted, depth, maxDepth)
     return missing value
 end findButtonByLabel
 
+-- The first element whose value holds an "@", which in Preferences > Accounts is an account row.
+on findAccountRow(el, depth, maxDepth)
+    tell application "System Events"
+        if depth > maxDepth then return missing value
+        try
+            repeat with c in (UI elements of el)
+                try
+                    set v to value of c
+                    if v is not missing value and v contains "@" then return c
+                end try
+                set found to my findAccountRow(c, depth + 1, maxDepth)
+                if found is not missing value then return found
+            end repeat
+        end try
+    end tell
+    return missing value
+end findAccountRow
+
 on collectStaticTexts(el, depth, maxDepth)
     set acc to {}
     tell application "System Events"
@@ -332,6 +350,40 @@ EOF
     fi
 }
 
+# Select the first account in Preferences > Accounts and click an item of its
+# Actions pull-down, which only appears once the account is connected. Emit it
+# inside `tell application "System Events"`, not inside `tell process`.
+# Best-effort: selecting the account row drives a SwiftUI `List(selection:)`,
+# which synthetic clicks cannot reliably trigger.
+# Sets the AppleScript variable prefsWin to the Preferences window.
+# Args: menu_item_name [error_msg]
+ducko_as_click_account_action() {
+    local menu_item_name="$1"
+    local error_msg="${2:-}"
+    cat << EOF
+            set prefsWin to missing value
+            repeat with win in (windows of process "DuckoUITest")
+                set acctRow to my findAccountRow(win, 0, 30)
+                if acctRow is not missing value then
+                    set prefsWin to contents of win
+                    try
+                        click acctRow
+                    end try
+                    exit repeat
+                end if
+            end repeat
+            if prefsWin is missing value then return "ERROR: account row not found"
+            delay 0.4
+
+            -- A SwiftUI Menu bridges as a menu/pop-up button, not AXButton, so match by identifier alone.
+            set actionsMenu to my findByAttr(prefsWin, "AXIdentifier", "account-actions-menu", 0, 30)
+            if actionsMenu is missing value then return "ERROR: Actions menu not found (is an account row selected and connected?)"
+            tell process "DuckoUITest"
+EOF
+    ducko_as_click_context_menu_item "$menu_item_name" actionsMenu prefsWin "$error_msg" continue
+    echo "            end tell"
+}
+
 # Select the table row enclosing an element. A System Events `click` on a
 # combined SwiftUI row element is an AX press, which does not change the
 # NSTableView selection. Walk up to the AXRow and set it selected instead.
@@ -367,6 +419,31 @@ ducko_as_click_button_by_label() {
             set labeledButton to my findButtonByLabel(${window_var}, "${button_label}", 0, 30)
             if labeledButton is missing value then return "ERROR: ${error_msg}"
             click labeledButton
+EOF
+}
+
+# Wait for a Register press in the Welcome window to settle. Returns "ok" once the window has closed, since the
+# account is then registered and signed in, or the error the window shows. With form_shown_result, returns that
+# once the window shows the server's registration form instead.
+# Args: proc_var window_var [form_shown_result]
+ducko_as_await_registration() {
+    local proc_var="$1"
+    local window_var="$2"
+    local form_shown_result="${3:-}"
+    cat << EOF
+        set deadline to (current date) + 30
+        repeat until (current date) > deadline
+            delay 0.5
+            if not (exists window "Welcome" of ${proc_var}) then return "ok"
+            set errorText to my findByAttr(${window_var}, "AXIdentifier", "setup-error", 0, 30)
+            if errorText is not missing value then return "ERROR: " & (value of errorText)
+EOF
+    if [[ -n "$form_shown_result" ]]; then
+        echo "            if (my findByAttr(${window_var}, \"AXIdentifier\", \"register-server-form\", 0, 30)) is not missing value then return \"${form_shown_result}\""
+    fi
+    cat << 'EOF'
+        end repeat
+        return "ERROR: the registration did not finish"
 EOF
 }
 

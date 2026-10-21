@@ -1,9 +1,4 @@
-import Logging
-
-private let log = Logger(label: "im.ducko.xmpp.registrationclient")
-
-/// Lightweight client for XEP-0077 pre-auth registration.
-/// Manages its own connection lifecycle — connect, negotiate TLS, register, disconnect.
+/// XEP-0077 pre-auth registration helpers. `RegistrationSession` owns the connection.
 public enum XMPPRegistrationClient {
     public enum RegistrationClientError: Error {
         case connectionFailed(String)
@@ -11,6 +6,8 @@ public enum XMPPRegistrationClient {
         case registrationNotSupported
         case registrationFailed(String)
         case unexpectedResponse
+        /// The stream or connection has ended, so a new session has to start over.
+        case connectionClosed
     }
 
     /// Retrieves the registration form from a server without authenticating.
@@ -25,87 +22,13 @@ public enum XMPPRegistrationClient {
     static func retrieveForm(
         domain: String, host: String? = nil, port: UInt16 = 5222, transport: any XMPPTransport
     ) async throws -> RegistrationModule.RegistrationForm {
-        try await withRegistrationConnection(domain: domain, host: host, port: port, transport: transport) { connection, reader in
-            var iq = XMPPIQ(type: .get, id: "reg1")
-            let query = XMLElement(name: "query", namespace: XMPPNamespaces.register)
-            iq.element.addChild(query)
-            try await connection.send(XMPPStreamWriter.stanza(iq.element))
-
-            let response = try await awaitStanza(reader)
-            guard response.name == "iq",
-                  response.attribute("type") == "result",
-                  let queryResult = response.child(named: "query", namespace: XMPPNamespaces.register)
-            else {
-                throw RegistrationClientError.unexpectedResponse
-            }
-
-            return RegistrationModule.parseForm(queryResult)
-        }
-    }
-
-    /// Registers a new account on the server without authenticating first.
-    public static func register(
-        domain: String,
-        username: String,
-        password: String,
-        email: String? = nil,
-        host: String? = nil,
-        port: UInt16 = 5222
-    ) async throws {
-        try await register(domain: domain, username: username, password: password, email: email, host: host, port: port, transport: makeDefaultXMPPTransport())
-    }
-
-    static func register(
-        domain: String, username: String, password: String, email: String? = nil,
-        host: String? = nil, port: UInt16 = 5222, transport: any XMPPTransport
-    ) async throws {
-        try await withRegistrationConnection(domain: domain, host: host, port: port, transport: transport) { connection, reader in
-            var iq = XMPPIQ(type: .set, id: "reg1")
-            let query = RegistrationModule.buildRegistrationQuery(username: username, password: password, email: email)
-            iq.element.addChild(query)
-            try await connection.send(XMPPStreamWriter.stanza(iq.element))
-
-            let response = try await awaitStanza(reader)
-            guard response.name == "iq" else {
-                throw RegistrationClientError.unexpectedResponse
-            }
-
-            if response.attribute("type") == "error" {
-                let stanzaError = XMPPStanzaError.parse(from: response.child(named: "error"))
-                throw RegistrationClientError.registrationFailed(registrationFailureText(stanzaError))
-            }
-
-            guard response.attribute("type") == "result" else {
-                throw RegistrationClientError.unexpectedResponse
-            }
-
-            log.info("Registration successful")
-            log.debug("The registered account is \(username)@\(domain)")
-        }
-    }
-
-    private static func withRegistrationConnection<Result: Sendable>(
-        domain: String, host: String?, port: UInt16, transport: any XMPPTransport,
-        operation: (XMPPConnection, EventReader) async throws -> Result
-    ) async throws -> Result {
-        guard let names = IDNA.names(for: domain) else {
-            throw RegistrationClientError.connectionFailed("Invalid domain: \(domain)")
-        }
-        let connection = XMPPConnection(transport: transport)
-        let reader = EventReader(connection.events)
+        let session = try await RegistrationSession.open(domain: domain, host: host, port: port, transport: transport)
         do {
-            try Task.checkCancellation()
-            if let host {
-                try await connection.connect(host: host, port: port)
-            } else {
-                try await connection.connect(domain: names.lookup)
-            }
-            try await negotiateStream(connection: connection, reader: reader, domain: names.stream, serverName: names.lookup)
-            let result = try await operation(connection, reader)
-            await connection.disconnect()
-            return result
+            let form = try await session.fetchForm()
+            await session.close()
+            return form
         } catch {
-            await connection.disconnect()
+            await session.close()
             throw error
         }
     }

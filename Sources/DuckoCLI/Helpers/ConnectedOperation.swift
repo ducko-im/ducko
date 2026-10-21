@@ -14,7 +14,7 @@ enum ConnectedOperation {
     static func prepare(formatter: any CLIFormatter, account: String?, isInteractive: Bool = false) async throws -> Preparation {
         let environment = try CLIBootstrap.setUp(formatter: formatter, isInteractive: isInteractive).environment
         let selectedAccount = try await resolveAccount(account, environment: environment)
-        guard let password = CredentialHelper.getPassword(for: selectedAccount.jid.description, using: environment.credentialStore) else {
+        guard let password = try CredentialHelper.getPassword(for: selectedAccount.jid.description, using: environment.credentialStore) else {
             throw CLIError.noPassword
         }
         return Preparation(environment: environment, account: selectedAccount, password: password)

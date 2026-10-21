@@ -16,18 +16,25 @@ actor CLIEventHandler {
         case let .messageReceived(message):
             if message.hasClassifiedEvent { return }
             ringBell()
-        case .messageCarbonReceived, .messageCarbonSent,
-             .roomMessageReceived, .mucPrivateMessageReceived, .roomInviteReceived,
+        case let .roomMessageReceived(message), let .mucPrivateMessageReceived(message):
+            // An encrypted one prints and rings once stored, with its text or its notice.
+            if message.isEncrypted { return }
+            ringBell()
+        case let .messageCarbonSent(forwarded), let .messageCarbonReceived(forwarded):
+            // A retraction prints and rings nothing, and an encrypted one prints and rings once stored.
+            if !printsFromEvent(carbon: forwarded.message) { return }
+            ringBell()
+        case .roomInviteReceived,
              .jingleFileTransferReceived,
              .oobIQOfferReceived:
             ringBell()
-        case let .chatStateChanged(from, state):
-            handleChatState(from: from, state: state)
+        case let .chatStateChanged(from, state, _):
+            handleChatState(from: from.bareJID, state: state)
             return
         case .jingleFileTransferProgress,
              .omemoDeviceListReceived, .omemoSessionEstablished, .omemoSessionAdvanced:
             guard isInteractive else { break }
-        case .connected, .streamResumed, .disconnected, .authenticationFailed,
+        case .connected, .streamResumed, .disconnected, .authenticationFailed, .plainSignInRefused,
              .presenceReceived, .iqReceived,
              .rosterUpdated,
              .presenceUpdated, .presenceSubscriptionRequest,
@@ -52,9 +59,9 @@ actor CLIEventHandler {
         print(output)
     }
 
-    func handleEncryptedMessage(_ message: ChatMessage, accountID: UUID) {
+    func handleEncryptedMessage(_ message: ChatMessage, in conversation: Conversation, accountID: UUID) {
         ringBell()
-        print(formatter.formatEncryptedMessage(message, accountID: accountID))
+        print(formatter.formatEncryptedMessage(message, in: conversation, accountID: accountID))
     }
 
     private func handleChatState(from: BareJID, state: ChatState) {

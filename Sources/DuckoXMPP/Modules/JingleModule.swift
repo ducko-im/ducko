@@ -74,7 +74,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         case unsupportedAlgorithm(String)
     }
 
-    private struct ProxyInfo {
+    struct ProxyInfo {
         let jid: String
         let host: String
         let port: UInt16
@@ -82,7 +82,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
 
     /// A proxy bytestream this side has connected to but which carries nothing until the offering party activates it
     /// (XEP-0260 §2.4). Kept separate from the session's active connection so neither a transport wait nor a claim can take it early.
-    private struct PendingProxy {
+    struct PendingProxy {
         let connection: SOCKS5Connection
         let cid: String
     }
@@ -99,13 +99,13 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     /// How the peer ended a receive without failing it.
-    private enum PeerEnd {
+    enum PeerEnd {
         case ibbClosed
         case terminatedSuccess
     }
 
     /// The receiving side of a session. The transfer contract is copied in when the session is created.
-    private struct ReceiveState {
+    struct ReceiveState {
         let expectedSize: Int64
         let offeredChecksum: JingleChecksumInfo?
         let checksumPromised: Bool
@@ -129,13 +129,13 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     /// How the receiver confirmed a send.
-    private enum SendConfirmation {
+    enum SendConfirmation {
         case received
         case terminatedSuccess
     }
 
     /// The sending side of a session, created when a send starts and kept until the session ends.
-    private struct SendState {
+    struct SendState {
         let transport: JingleTransportKind
         var confirmation: SendConfirmation?
         /// Set while `sendFileData` runs, which then owns committing the session's successful end.
@@ -196,14 +196,14 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     /// Sentinel CID for connections accepted by the local listener.
-    private static let listenerCID = "direct-listener"
+    static let listenerCID = "direct-listener"
 
     /// Default block size for IBB transport (bytes per data chunk).
     private static let defaultIBBBlockSize = 4096
 
     // MARK: - State
 
-    private struct SessionResources {
+    struct SessionResources {
         let offerID: String
         var session: JingleSession?
         var connection: SOCKS5Connection?
@@ -214,6 +214,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         /// The direct candidate the peer nominated with candidate-used, kept so a connection the listener accepts
         /// afterwards is promoted at once.
         var nominatedDirectCID: String?
+        var nomination = CandidateNomination()
         var listener: SOCKS5Listener?
         var ibb: IBBSessionState?
         var transportWait: CheckedContinuation<Void, Error>?
@@ -233,6 +234,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
             await connection?.close()
             await pendingProxy?.connection.close()
             await pendingDirect?.close()
+            await nomination.dialed?.close()
             await listener?.close()
         }
 
@@ -262,15 +264,15 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         }
     }
 
-    private struct State {
+    struct State {
         var context: ModuleContext?
         var resources: [String: SessionResources] = [:]
         var cachedProxy65: ProxyInfo?
         var ibbSIDToJingleSID: [String: String] = [:]
     }
 
-    private let state: OSAllocatedUnfairLock<State>
-    private let timing: JingleTiming
+    let state: OSAllocatedUnfairLock<State>
+    let timing: JingleTiming
     private let localAddresses: @Sendable () -> [NetworkInterfaces.Address]
     private let startListener: @Sendable (SOCKS5Listener) async throws -> UInt16
 
@@ -334,19 +336,23 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     private func handleJingleIQ(_ iq: XMPPIQ, jingle: XMLElement) {
+        guard let context = state.withLock({ $0.context }) else { return }
         guard let actionStr = jingle.attribute("action"),
               let action = JingleAction(rawValue: actionStr),
-              let sid = jingle.attribute("sid") else { return }
+              let sid = jingle.attribute("sid") else {
+            log.debug("Rejecting a Jingle request without a known action or a sid")
+            replyBadRequest(to: iq, context: context)
+            return
+        }
 
-        let (context, session, hasResources) = state.withLock { ($0.context, $0.resources[sid]?.session, $0.resources[sid] != nil) }
-        guard let context else { return }
+        let (session, hasResources) = state.withLock { ($0.resources[sid]?.session, $0.resources[sid] != nil) }
 
         // `XMPPClient` dispatches IQs serially, so the sender stays verified for the handler below, and the conflict check
         // keeps a live sid from being replaced.
         if action == .sessionInitiate {
             guard !hasResources else {
                 log.debug("Rejecting session-initiate for a live sid: \(sid)")
-                replyError(to: iq, type: .cancel, condition: .conflict, jingleCondition: .tieBreak, context: context)
+                reply(.tieBreak, to: iq, context: context)
                 return
             }
         } else {
@@ -357,11 +363,23 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
             }
         }
 
+        if let refusal = refusal(of: jingle, action: action, sid: sid) {
+            log.debug("Refusing \(actionStr), sid: \(sid)")
+            reply(refusal, to: iq, context: context)
+            return
+        }
+        handle(action, jingle: jingle, iq: iq, sid: sid, context: context)
+    }
+
+    /// Handles a request that passed the session and payload checks, first acknowledging the actions that get no reply
+    /// of their own.
+    private func handle(_ action: JingleAction, jingle: XMLElement, iq: XMPPIQ, sid: String, context: ModuleContext) {
         switch action {
         case .sessionInitiate, .sessionAccept, .sessionTerminate, .sessionInfo,
              .transportInfo, .transportReplace, .contentAdd:
             acknowledgeIQ(iq, context: context)
-        case .transportAccept, .transportReject, .contentAccept, .contentReject, .contentRemove:
+        case .transportAccept, .transportReject, .contentAccept, .contentModify, .contentReject, .contentRemove,
+             .descriptionInfo, .securityInfo:
             break
         }
 
@@ -377,7 +395,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         case .transportReplace:
             handleTransportReplace(jingle, sid: sid, from: iq.from, context: context)
         case .transportAccept:
-            handleTransportAccept(iq, sid: sid, context: context)
+            handleTransportAccept(iq, jingle: jingle, sid: sid, context: context)
         case .transportReject:
             handleTransportReject(iq, sid: sid, context: context)
         case .sessionInfo:
@@ -386,12 +404,17 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
             handleContentAdd(jingle, sid: sid, context: context)
         case .contentAccept, .contentReject:
             replyOutOfOrder(to: iq, context: context)
+        case .contentModify:
+            // A file transfer keeps the direction it was offered with (XEP-0166 §7.2 lets the recipient refuse).
+            replyError(to: iq, type: .cancel, condition: .notAcceptable, context: context)
         case .contentRemove:
             handleContentRemove(jingle, iq: iq, sid: sid, context: context)
+        case .descriptionInfo, .securityInfo:
+            reply(.unsupportedInfo, to: iq, context: context)
         }
     }
 
-    private func acknowledgeIQ(_ iq: XMPPIQ, context: ModuleContext) {
+    func acknowledgeIQ(_ iq: XMPPIQ, context: ModuleContext) {
         guard let result = XMPPIQ.resultReply(for: iq) else { return }
         Task {
             do {
@@ -403,7 +426,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     /// Replies to `iq` with an error holding a stanza `condition` and, for Jingle errors, a `jingleCondition`.
-    private func replyError(
+    func replyError(
         to iq: XMPPIQ,
         type: XMPPStanzaError.ErrorType,
         condition: XMPPStanzaError.Condition,
@@ -460,7 +483,11 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         }
 
         let session = JingleSession(peer: fullJID, role: .responder, content: content)
-        let offerID = state.withLock { Self.addSession(session, sid: sid, state: &$0) }
+        guard let offerID = state.withLock({ Self.addSession(session, sid: sid, state: &$0) }) else {
+            log.debug("Refusing a session-initiate whose IBB stream another session holds, sid: \(sid)")
+            refuseSessionInitiate(sid: sid, peer: fullJID, reason: .failedTransport, context: context)
+            return
+        }
 
         let offer = JingleFileOffer(
             offerID: offerID,
@@ -484,10 +511,12 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         }
     }
 
-    /// Stores a new session, stamped so a later session reusing this sid is distinguishable, and with its receiving
-    /// state when this side is the responder. Returns the session's offer id. Must be called within a state.withLock.
+    /// Stores a new session, stamped so a later session reusing this sid is distinguishable. A responder's session
+    /// also gets its receiving state, and a session offered over IBB its stream. Returns the session's offer id, or
+    /// `nil` when another session holds that stream. Must be called within a state.withLock.
     @discardableResult
-    private static func addSession(_ session: JingleSession, sid: String, state: inout State) -> String {
+    private static func addSession(_ session: JingleSession, sid: String, state: inout State) -> String? {
+        if case let .ibb(transport) = session.content.transport, state.ibbSIDToJingleSID[transport.sid] != nil { return nil }
         var stamped = session
         let offerID = state.resources[sid]?.offerID ?? makeOfferID()
         if state.resources[sid] == nil { state.resources[sid] = SessionResources(offerID: offerID) }
@@ -496,7 +525,18 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         if stamped.role == .responder {
             state.resources[sid]?.receive = ReceiveState(content: stamped.content)
         }
+        if case let .ibb(transport) = stamped.content.transport { adoptIBBStream(transport, sid: sid, state: &state) }
         return stamped.offerID
+    }
+
+    /// Makes `transport` the session's stream, releasing one it replaces. Must be called within a state.withLock.
+    private static func adoptIBBStream(_ transport: IBBTransport, sid: String, state: inout State) {
+        if let previous = state.resources[sid]?.ibb, state.ibbSIDToJingleSID[previous.ibbSID] == sid {
+            state.ibbSIDToJingleSID.removeValue(forKey: previous.ibbSID)
+        }
+        state.resources[sid]?.ibb = IBBSessionState(ibbSID: transport.sid, blockSize: transport.blockSize)
+        state.ibbSIDToJingleSID[transport.sid] = sid
+        state.resources[sid]?.session?.selectedTransport = .ibb
     }
 
     /// The session under `sid`, when it is the one `offerID` names. A nil `offerID` names whichever session holds the sid.
@@ -594,6 +634,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
             guard let session = state.resources[sid]?.session, session.role == .initiator else { return nil }
             // Armed before the range check: a rejected range abandons the session, which cancels the deadline with it.
             startTransportDeadline(sid: sid, offerID: session.offerID, state: &state)
+            Self.takeResponderCandidates(in: jingle, sid: sid, state: &state)
             return session.content.description.size
         }
         guard let offeredSize else {
@@ -746,21 +787,17 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     private func handleTransportInfo(_ jingle: XMLElement, sid: String, context: ModuleContext) {
-        let transportElement = extractTransportElement(from: jingle)
-        guard let transportElement else {
-            log.warning("transport-info without transport element for sid: \(sid)")
-            return
-        }
-
-        if let candidateUsed = transportElement.child(named: "candidate-used"),
-           let cid = candidateUsed.attribute("cid") {
+        switch TransportInfoPayload(in: jingle) {
+        case let .candidateUsed(cid)?:
             handleCandidateUsed(sid: sid, cid: cid, context: context)
-        } else if transportElement.child(named: "candidate-error") != nil {
+        case .candidateError?:
             handleCandidateError(sid: sid, context: context)
-        } else if transportElement.child(named: "proxy-error") != nil {
+        case .proxyError?:
             handleProxyError(sid: sid, context: context)
-        } else if let activated = transportElement.child(named: "activated") {
-            handleProxyActivated(sid: sid, cid: activated.attribute("cid"))
+        case let .activated(cid)?:
+            handleProxyActivated(sid: sid, cid: cid)
+        case nil:
+            log.warning("transport-info without a transport payload for sid: \(sid)")
         }
     }
 
@@ -768,42 +805,43 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         let session = state.withLock { $0.resources[sid]?.session }
         guard let session, Self.acceptsSOCKS5Outcome(session) else { return }
 
-        // If we're the initiator and the peer selected a candidate, handle by type
-        guard session.role == .initiator else { return }
+        // Only the initiator settles the nomination, and as responder this side offers no candidates to be used.
+        guard session.role == .initiator, case let .socks5(transport) = session.content.transport,
+              let candidate = transport.candidates.first(where: { $0.cid == cid }) else { return }
+        recordPeerReport(.used(candidate), sid: sid, session: session, context: context)
+    }
 
-        if case let .socks5(transport) = session.content.transport {
-            let candidate = transport.candidates.first { $0.cid == cid }
-            guard let candidate else { return }
-
-            switch candidate.type {
-            case .direct:
-                // The peer nominated this side's listener. Its connection carries the file once the listener has also
-                // accepted it, in either order. The transport attempt closes the listener once its accept returns.
-                let wake = state.withLock { state -> CheckedContinuation<Void, Error>? in
-                    guard Self.socks5OutcomeOpen(sid: sid, offerID: session.offerID, in: state) else { return nil }
-                    state.resources[sid]?.nominatedDirectCID = cid
-                    return Self.promoteNominatedDirect(sid: sid, state: &state)
-                }
-                wake?.resume()
-            case .proxy:
-                Task {
-                    await connectAndActivateProxy(
-                        sid: sid, candidate: candidate, transportSID: transport.sid,
-                        session: session, context: context
-                    )
-                }
+    /// Uses this side's candidate that the peer chose, once the nomination settled on it.
+    func usePeerCandidate(_ candidate: SOCKS5Transport.Candidate, sid: String, session: JingleSession, context: ModuleContext) {
+        switch candidate.type {
+        case .direct:
+            // The peer nominated this side's listener. Its connection carries the file once the listener has also
+            // accepted it, in either order. The transport attempt closes the listener once its accept returns.
+            let wake = state.withLock { state -> CheckedContinuation<Void, Error>? in
+                guard Self.socks5OutcomeOpen(sid: sid, offerID: session.offerID, in: state) else { return nil }
+                state.resources[sid]?.nominatedDirectCID = candidate.cid
+                return Self.promoteNominatedDirect(sid: sid, state: &state)
+            }
+            wake?.resume()
+        case .proxy:
+            guard case let .socks5(transport) = session.content.transport else { return }
+            Task {
+                await connectAndActivateProxy(
+                    sid: sid, candidate: candidate, transportSID: transport.sid, session: session, context: context
+                )
             }
         }
     }
 
-    /// A proxy-error means the nominated proxy's bytestream is dead (XEP-0260 §2.4). The initiator falls back to IBB
-    /// itself. A responder cannot replace the transport, so it only closes its parked proxy socket and waits for the
+    /// A proxy-error means the nominated proxy's bytestream is dead (XEP-0260 §2.4). Both sides close a proxy socket they
+    /// parked, and the initiator falls back to IBB itself. A responder cannot replace the transport, so it waits for the
     /// initiator's transport-replace.
     private func handleProxyError(sid: String, context: ModuleContext) {
         log.debug("Peer reported a proxy error for sid: \(sid)")
         switch state.withLock({ $0.resources[sid]?.session?.role }) {
         case .initiator?:
-            handleCandidateError(sid: sid, context: context)
+            releasePendingProxy(sid: sid)
+            fallBackToIBB(sid: sid, context: context)
         case .responder?:
             releasePendingProxy(sid: sid)
         case nil:
@@ -812,7 +850,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     /// `SOCKS5Connection.connect` counts its timeout in seconds, while the module's waits are `Duration`s.
-    private static func seconds(_ duration: Duration) -> Double {
+    static func seconds(_ duration: Duration) -> Double {
         let components = duration.components
         return Double(components.seconds) + Double(components.attoseconds) / 1e18
     }
@@ -858,7 +896,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         do {
             try await connection.connect(
                 host: candidate.host, port: candidate.port,
-                destinationAddress: computeDestinationAddress(session: session),
+                destinationAddress: destinationAddress(in: session, candidateOfferedBy: .initiator),
                 timeout: Self.seconds(timing.proxyConnectWait)
             )
             try await activateProxy(
@@ -868,15 +906,15 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         } catch {
             log.debug("Proxy activation failed for sid \(sid): \(error)")
             await connection.close()
-            // A repeated nomination that fails after another dial published the transport, or after its session ended,
-            // decides nothing: falling back would close the transport that is carrying the file.
+            // A dial that fails after its session ended or switched to IBB decides nothing: falling back would close the
+            // transport that is carrying the file.
             let isCurrent = state.withLock { Self.socks5OutcomeOpen(sid: sid, offerID: session.offerID, in: $0) }
             guard isCurrent else { return }
             // XEP-0260 §2.4 asks the failing side to say so, and both sides to fall back rather than give up.
             sendTransportInfo(
                 sid: sid, session: session, context: context, transportChild: XMLElement(name: "proxy-error")
             )
-            handleCandidateError(sid: sid, context: context)
+            fallBackToIBB(sid: sid, context: context)
             return
         }
 
@@ -886,9 +924,8 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         )
 
         let published = state.withLock { state -> (continuation: CheckedContinuation<Void, Error>?, unselected: SOCKS5Connection?)? in
-            // Nothing collapses repeated nominations, so a peer that names its proxy again starts another dial. The
-            // first to publish owns the transport: a later winner would replace a socket an owner may already be
-            // reading, leaving that one open with nothing left to close it. The loser closes its own connection below.
+            // A dial that finishes after its session ended or switched to IBB publishes nothing, and closes its own
+            // connection below.
             guard Self.socks5OutcomeOpen(sid: sid, offerID: session.offerID, in: state) else { return nil }
             let unselected = state.resources[sid]?.takePendingDirect()
             return (Self.publishSOCKS5(connection, cid: cid, sid: sid, state: &state), unselected)
@@ -902,26 +939,30 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         published.continuation?.resume()
     }
 
+    /// The initiator's candidate-error decides nothing on a responder: the initiator follows it with a transport-replace
+    /// or a session-terminate.
     private func handleCandidateError(sid: String, context: ModuleContext) {
+        guard let session = state.withLock({ $0.resources[sid]?.session }), session.role == .initiator else { return }
+        recordPeerReport(.error, sid: sid, session: session, context: context)
+    }
+
+    /// Proposes IBB in place of a SOCKS5 transport that failed. A connection already published or awaiting proxy
+    /// activation keeps the session; one the listener accepted without a nomination is dropped with the rest.
+    func fallBackToIBB(sid: String, context: ModuleContext) {
         let ibbSID = Self.makeStreamID()
         let fallback = state.withLock { state -> (session: JingleSession, transport: IBBTransport)? in
-            // Only the responder connects to candidates, so the initiator's candidate-error decides nothing on the
-            // responder: the initiator follows it with a transport-replace or a session-terminate. A connection the peer
-            // nominated with candidate-used, published or still awaiting proxy activation, outweighs a candidate-error
-            // (XEP-0260 §2.4). One the listener accepted without a nomination is dropped with the rest.
             guard let session = state.resources[sid]?.session, session.role == .initiator,
                   Self.socks5OutcomeOpen(sid: sid, offerID: nil, in: state) else {
                 return nil
             }
             // Propose IBB fallback. Switching before the SOCKS5 resources close makes their late outcomes stale.
+            let transport = IBBTransport(sid: ibbSID, blockSize: Self.defaultIBBBlockSize)
             state.resources[sid]?.session?.transportState = .replacePending
-            state.resources[sid]?.session?.selectedTransport = .ibb
-            state.resources[sid]?.ibb = IBBSessionState(ibbSID: ibbSID, blockSize: Self.defaultIBBBlockSize)
-            state.ibbSIDToJingleSID[ibbSID] = sid
-            return (session, IBBTransport(sid: ibbSID, blockSize: Self.defaultIBBBlockSize))
+            Self.adoptIBBStream(transport, sid: sid, state: &state)
+            return (session, transport)
         }
         guard let fallback else {
-            log.debug("Ignoring candidate-error that calls for no fallback, sid: \(sid)")
+            log.debug("Ignoring a SOCKS5 failure that calls for no fallback, sid: \(sid)")
             return
         }
         cleanupTransport(sid: sid)
@@ -937,7 +978,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     /// Whether a SOCKS5 outcome can still decide the transport of the session under `sid` (the one `offerID` names, when
     /// given): it still takes SOCKS5, and no connection is published or parked awaiting activation to own it. Must be
     /// called within a state.withLock.
-    private static func socks5OutcomeOpen(sid: String, offerID: String?, in state: State) -> Bool {
+    static func socks5OutcomeOpen(sid: String, offerID: String?, in state: State) -> Bool {
         guard let session = session(sid, offerID: offerID, in: state), acceptsSOCKS5Outcome(session) else { return false }
         return state.resources[sid]?.connection == nil && state.resources[sid]?.pendingProxy == nil
     }
@@ -953,7 +994,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
 
     /// Makes `connection` the session's transport, returning the transport waiter to resume. Must be called within a
     /// state.withLock.
-    private static func publishSOCKS5(
+    static func publishSOCKS5(
         _ connection: SOCKS5Connection, cid: String, sid: String, state: inout State
     ) -> CheckedContinuation<Void, Error>? {
         state.resources[sid]?.connection = connection
@@ -972,22 +1013,6 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         return nil
     }
 
-    private func extractTransportElement(from jingle: XMLElement) -> XMLElement? {
-        // Try <content><transport> first, then <transport> directly under <jingle>
-        if let content = jingle.child(named: "content") {
-            if let transport = content.child(named: "transport", namespace: XMPPNamespaces.jingleS5B) {
-                return transport
-            }
-            if let transport = content.child(named: "transport", namespace: XMPPNamespaces.jingleIBB) {
-                return transport
-            }
-        }
-        if let transport = jingle.child(named: "transport", namespace: XMPPNamespaces.jingleS5B) {
-            return transport
-        }
-        return jingle.child(named: "transport", namespace: XMPPNamespaces.jingleIBB)
-    }
-
     // MARK: - Transport Replace/Accept/Reject
 
     /// Outcome of a transport-replace under the lock.
@@ -998,7 +1023,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     private func handleTransportReplace(_ jingle: XMLElement, sid: String, from: JID?, context: ModuleContext) {
-        let transportElement = extractTransportElement(from: jingle)
+        let transportElement = Self.transportElement(in: jingle)
         guard let transportElement,
               let ibbTransport = IBBTransport(from: transportElement) else {
             log.warning("transport-replace without valid IBB transport for sid: \(sid)")
@@ -1017,13 +1042,8 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
             if let owner = state.ibbSIDToJingleSID[ibbTransport.sid], owner != sid { return .rejected }
             guard state.resources[sid]?.connection == nil, state.resources[sid]?.receive?.isClaimed != true else { return .rejected }
 
-            if let previous = state.resources[sid]?.ibb, state.ibbSIDToJingleSID[previous.ibbSID] == sid {
-                state.ibbSIDToJingleSID.removeValue(forKey: previous.ibbSID)
-            }
-            state.resources[sid]?.ibb = IBBSessionState(ibbSID: ibbTransport.sid, blockSize: ibbTransport.blockSize)
-            state.ibbSIDToJingleSID[ibbTransport.sid] = sid
+            Self.adoptIBBStream(ibbTransport, sid: sid, state: &state)
             state.resources[sid]?.session?.transportState = .pending
-            state.resources[sid]?.session?.selectedTransport = .ibb
             return .accepted(state.resources[sid]?.takeTransportWait())
         }
 
@@ -1039,10 +1059,11 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         }
     }
 
-    private func handleTransportAccept(_ iq: XMPPIQ, sid: String, context: ModuleContext) {
+    private func handleTransportAccept(_ iq: XMPPIQ, jingle: XMLElement, sid: String, context: ModuleContext) {
         let accepted = state.withLock { state -> (isExpected: Bool, wake: CheckedContinuation<Void, Error>?) in
             // Only a replace this side proposed can be accepted; an unrequested one must not unsettle a transport in use.
             guard Self.isReplacePending(sid: sid, in: state) else { return (false, nil) }
+            state.resources[sid]?.ibb?.adoptBlockSize(acceptedIn: jingle)
             state.resources[sid]?.session?.transportState = .pending
             return (true, state.resources[sid]?.takeTransportWait())
         }
@@ -1061,13 +1082,6 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
             return
         }
         acknowledgeIQ(iq, context: context)
-    }
-
-    /// Whether this side proposed a transport-replace the peer has not yet answered. Must be called within a
-    /// state.withLock.
-    private static func isReplacePending(sid: String, in state: State) -> Bool {
-        guard case .replacePending? = state.resources[sid]?.session?.transportState else { return false }
-        return true
     }
 
     /// Fails a session no owner can end: reports `reason` locally and, unless `terminateReason` is `nil` because the peer
@@ -1200,7 +1214,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         case "close":
             handleIBBClose(iq, context: context)
         default:
-            break
+            replyBadRequest(to: iq, context: context)
         }
     }
 
@@ -1237,14 +1251,20 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     private func handleIBBOpen(_ iq: XMPPIQ, open element: XMLElement, context: ModuleContext) {
-        guard let ibbSID = element.attribute("sid") else { return }
-        let from = iq.from
-        let isKnown = state.withLock { Self.ibbSessionID(for: ibbSID, from: from, state: $0) != nil }
-        guard isKnown else {
-            replyIBBItemNotFound(to: iq, ibbSID: ibbSID, context: context)
+        guard let open = IBBOpenRequest(from: element) else {
+            replyBadRequest(to: iq, context: context)
             return
         }
-        acknowledgeIQ(iq, context: context)
+        let from = iq.from
+        let negotiatedBlockSize = state.withLock { state -> Int? in
+            guard let sid = Self.ibbSessionID(for: open.ibbSID, from: from, state: state) else { return nil }
+            return state.resources[sid]?.ibb?.blockSize
+        }
+        guard let negotiatedBlockSize else {
+            replyIBBItemNotFound(to: iq, ibbSID: open.ibbSID, context: context)
+            return
+        }
+        answer(open, negotiatedBlockSize: negotiatedBlockSize, to: iq, context: context)
     }
 
     /// Outcome of an IBB data stanza under the lock.
@@ -1259,17 +1279,18 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
 
     private func handleIBBData(_ iq: XMPPIQ, data element: XMLElement, context: ModuleContext) {
         guard let ibbSID = element.attribute("sid"),
-              let seqStr = element.attribute("seq"),
-              let seq = UInt16(seqStr),
+              let seq = element.attribute("seq").flatMap(UInt16.init),
               let base64Content = element.textContent else {
+            replyBadRequest(to: iq, context: context)
             return
         }
 
-        let decoded = Base64.decode(base64Content)
+        let decoded = Base64.decodeStrict(base64Content)
         let from = iq.from
         let outcome = state.withLock { state -> IBBDataOutcome in
+            // A stream the peer closed, or a session it ended, is closed to further data (XEP-0047 §2.3).
             guard let sid = Self.ibbSessionID(for: ibbSID, from: from, state: state),
-                  var receive = state.resources[sid]?.receive,
+                  var receive = state.resources[sid]?.receive, receive.peerEnd == nil,
                   var ibbState = state.resources[sid]?.ibb else { return .unknownStream }
 
             // Bytes are only worth holding once the user has taken the offer; until then the peer is sending uninvited.
@@ -1335,8 +1356,10 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     private func handleIBBClose(_ iq: XMPPIQ, context: ModuleContext) {
-        guard let child = iq.childElement,
-              let ibbSID = child.attribute("sid") else { return }
+        guard let ibbSID = iq.childElement?.attribute("sid") else {
+            replyBadRequest(to: iq, context: context)
+            return
+        }
 
         let from = iq.from
         let target = state.withLock { state -> (sid: String, role: JingleSession.Role)? in
@@ -1370,7 +1393,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     /// Holds the waits and tasks cleanup detached, for the caller to end outside the lock with its own error.
-    private struct SessionContinuations {
+    struct SessionContinuations {
         let transport: CheckedContinuation<Void, Error>?
         let wake: CheckedContinuation<Void, Error>?
         let checksumWait: CheckedContinuation<Void, Error>?
@@ -1887,49 +1910,6 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         }
     }
 
-    private func sendIBBOpen(
-        ibbSID: String, blockSize: Int,
-        peer: FullJID, context: ModuleContext
-    ) async throws {
-        var iq = XMPPIQ(type: .set, to: .full(peer), id: context.generateID())
-        let open = XMLElement(
-            name: "open",
-            namespace: XMPPNamespaces.ibb,
-            attributes: ["sid": ibbSID, "block-size": String(blockSize), "stanza": "iq"]
-        )
-        iq.element.addChild(open)
-        try await sendJingleIQ(iq, context: context, failure: JingleError.transportFailed)
-    }
-
-    private func sendIBBClose(
-        ibbSID: String,
-        peer: FullJID, context: ModuleContext
-    ) async throws {
-        var iq = XMPPIQ(type: .set, to: .full(peer), id: context.generateID())
-        let close = XMLElement(
-            name: "close",
-            namespace: XMPPNamespaces.ibb,
-            attributes: ["sid": ibbSID]
-        )
-        iq.element.addChild(close)
-        try await sendJingleIQ(iq, context: context, failure: JingleError.transportFailed)
-    }
-
-    private func sendIBBChunk(
-        ibbSID: String, seq: UInt16, chunk: [UInt8],
-        peer: FullJID, context: ModuleContext
-    ) async throws {
-        var iq = XMPPIQ(type: .set, to: .full(peer), id: context.generateID())
-        var dataElement = XMLElement(
-            name: "data",
-            namespace: XMPPNamespaces.ibb,
-            attributes: ["sid": ibbSID, "seq": String(seq)]
-        )
-        dataElement.addText(Base64.encode(chunk))
-        iq.element.addChild(dataElement)
-        try await sendJingleIQ(iq, context: context, failure: JingleError.transportFailed)
-    }
-
     /// Sends an IQ, reporting a failed exchange as the `JingleError` that `failure` makes from its readable detail.
     func sendJingleIQ(_ iq: XMPPIQ, context: ModuleContext, failure: (String) -> JingleError) async throws {
         do {
@@ -2177,40 +2157,17 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         }
         guard let session else { return }
 
-        let dstAddr = computeDestinationAddress(session: session)
-
-        // An initiator only waits on its own listener and leaves an unreachable peer to the IBB fallback: dialing the
-        // candidates a responder advertises needs its own responder-first address and activation handling, which
-        // nothing here verifies. A responder dials the candidates the initiator offered.
         switch session.role {
         case .initiator:
-            if let listener {
-                defer { cleanupListener(sid: sid) }
-                if let result = await awaitListenerConnection(listener, dstAddr: dstAddr) {
-                    handleConnectionSuccess(sid: sid, result: result, session: session, context: context)
-                    return
-                }
-            }
+            await connectAsInitiator(sid: sid, session: session, listener: listener, context: context)
         case .responder:
+            let dstAddr = destinationAddress(in: session, candidateOfferedBy: .initiator)
             if case let .socks5(transport) = session.content.transport, !transport.candidates.isEmpty,
                let result = await tryConnectCandidates(transport.candidates.sorted { $0.priority > $1.priority }, dstAddr: dstAddr) {
-                handleConnectionSuccess(sid: sid, result: result, session: session, context: context)
+                handleConnectionSuccess(sid: sid, result: (result.connection, result.candidate.cid), session: session, context: context)
                 return
             }
-        }
-        sendCandidateError(sid: sid, session: session, context: context)
-    }
-
-    private func awaitListenerConnection(
-        _ listener: SOCKS5Listener,
-        dstAddr: String
-    ) async -> (connection: SOCKS5Connection, cid: String)? {
-        do {
-            let connection = try await listener.accept(expectedDstAddr: dstAddr)
-            return (connection, Self.listenerCID)
-        } catch {
-            log.debug("Listener accept failed: \(error)")
-            return nil
+            sendCandidateError(sid: sid, session: session, context: context)
         }
     }
 
@@ -2218,7 +2175,8 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         let (connections, pending, listener) = state.withLock { state in
             let connection = state.resources[sid]?.connection
             state.resources[sid]?.connection = nil
-            let connections = [connection, state.resources[sid]?.takePendingDirect()].compactMap(\.self)
+            let connections = [connection, state.resources[sid]?.takePendingDirect(), state.resources[sid]?.nomination.takeDialed()]
+                .compactMap(\.self)
             return (connections, state.resources[sid]?.takePendingProxy(), state.resources[sid]?.takeListener())
         }
         for connection in connections {
@@ -2241,56 +2199,14 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         }
     }
 
-    private func cleanupListener(sid: String) {
+    func cleanupListener(sid: String) {
         let listener = state.withLock { $0.resources[sid]?.takeListener() }
         if let listener {
             Task { await listener.close() }
         }
     }
 
-    private func computeDestinationAddress(session: JingleSession) -> String {
-        guard case let .socks5(transport) = session.content.transport else { return "" }
-        let myJID = state.withLock { $0.context?.connectedJID()?.description ?? "" }
-        let initiatorJID: String
-        let targetJID: String
-        switch session.role {
-        case .initiator:
-            initiatorJID = myJID
-            targetJID = session.peer.description
-        case .responder:
-            initiatorJID = session.peer.description
-            targetJID = myJID
-        }
-        return SOCKS5Connection.destinationAddress(sid: transport.sid, initiatorJID: initiatorJID, targetJID: targetJID)
-    }
-
-    private func tryConnectCandidates(
-        _ candidates: [SOCKS5Transport.Candidate],
-        dstAddr: String
-    ) async -> (connection: SOCKS5Connection, cid: String)? {
-        for candidate in candidates {
-            let connection = SOCKS5Connection()
-            do {
-                // A proxy is optional, so a dial to one is bounded: waiting out the socket's own default would hold up
-                // every candidate behind it and the IBB fallback after those.
-                if case .proxy = candidate.type {
-                    try await connection.connect(
-                        host: candidate.host, port: candidate.port, destinationAddress: dstAddr,
-                        timeout: Self.seconds(timing.proxyConnectWait)
-                    )
-                } else {
-                    try await connection.connect(host: candidate.host, port: candidate.port, destinationAddress: dstAddr)
-                }
-                return (connection, candidate.cid)
-            } catch {
-                log.debug("SOCKS5 candidate \(candidate.cid) failed: \(error)")
-                await connection.close()
-            }
-        }
-        return nil
-    }
-
-    private func handleConnectionSuccess(
+    func handleConnectionSuccess(
         sid: String,
         result: (connection: SOCKS5Connection, cid: String),
         session: JingleSession,
@@ -2323,22 +2239,21 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         case .responder:
             sendCandidateUsed(sid: sid, cid: result.cid, session: session, context: context)
         case .initiator:
-            // The peer reached this side's listener, but this side dials none of the peer's candidates, and XEP-0260 §2.3
-            // has it report that without waiting for the nomination. The peer's candidate-used still nominates the listener
-            // (§2.4); a peer that settles the nomination only once both reports are in would otherwise wait on this one.
-            sendTransportInfo(sid: sid, session: session, context: context, transportChild: XMLElement(name: "candidate-error"))
+            // The peer reached this side's listener, which says nothing about the peer's candidates: this side's report
+            // comes from its own dial.
+            break
         }
     }
 
-    private func sendCandidateUsed(sid: String, cid: String, session: JingleSession, context: ModuleContext) {
+    func sendCandidateUsed(sid: String, cid: String, session: JingleSession, context: ModuleContext) {
         sendTransportInfo(sid: sid, session: session, context: context,
                           transportChild: XMLElement(name: "candidate-used", attributes: ["cid": cid]))
     }
 
     private func sendCandidateError(sid: String, session: JingleSession, context: ModuleContext) {
         let isCurrent = state.withLock { state -> Bool in
-            // A listener that times out after the peer's nominated proxy went live is not a failed transfer, and a dial for a
-            // session that ended says nothing about a later one reusing its sid.
+            // A dial that finishes after its session switched to IBB or ended reports nothing, since the transport is
+            // decided or the sid may name a later session.
             guard Self.socks5OutcomeOpen(sid: sid, offerID: session.offerID, in: state) else { return false }
             state.resources[sid]?.session?.transportState = .failed
             return true
@@ -2351,7 +2266,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
                           transportChild: XMLElement(name: "candidate-error"))
     }
 
-    private func sendTransportInfo(sid: String, session: JingleSession, context: ModuleContext, transportChild: XMLElement) {
+    func sendTransportInfo(sid: String, session: JingleSession, context: ModuleContext, transportChild: XMLElement) {
         guard case let .socks5(transport) = session.content.transport else { return }
         Task {
             var iq = XMPPIQ(type: .set, to: .full(session.peer), id: context.generateID())
@@ -2466,7 +2381,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
                 for (index, address) in addresses.enumerated() {
                     candidates.append(SOCKS5Transport.Candidate(
                         cid: context.generateID(), host: address.ip, port: port, jid: myJID,
-                        priority: UInt32(100 + addresses.count - index), type: .direct
+                        priority: SOCKS5Transport.CandidateType.direct.priority(localPreference: UInt16(clamping: 65535 - index)), type: .direct
                     ))
                 }
             } else {
@@ -2478,7 +2393,8 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         try checkPreparation(sid: sid, offerID: offerID)
         if let proxy {
             candidates.append(SOCKS5Transport.Candidate(
-                cid: context.generateID(), host: proxy.host, port: proxy.port, jid: proxy.jid, priority: 10, type: .proxy
+                cid: context.generateID(), host: proxy.host, port: proxy.port, jid: proxy.jid,
+                priority: SOCKS5Transport.CandidateType.proxy.priority(localPreference: .max), type: .proxy
             ))
         }
         return candidates

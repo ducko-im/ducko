@@ -72,7 +72,7 @@ extension DuckoCLI {
             )
 
             if server, messages.isEmpty {
-                let password = CredentialHelper.getPassword(for: selectedAccount.jid.description, using: env.credentialStore)
+                let password = try CredentialHelper.getPassword(for: selectedAccount.jid.description, using: env.credentialStore)
                 guard let password else { throw CLIError.noPassword }
                 messages = try await ConnectedOperation.run(environment: env, account: selectedAccount, password: password) {
                     let (serverMessages, _) = try await env.chatService.fetchServerHistory(

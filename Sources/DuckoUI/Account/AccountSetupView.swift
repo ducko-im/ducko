@@ -14,6 +14,10 @@ struct AccountSetupView: View {
     @State private var adiumImportCache: AdiumImportCache?
     @State private var isConnecting = false
     @State private var errorMessage: String?
+    /// A registration whose server asked for more than the username, password and email, holding its connection open.
+    @State private var pendingRegistration: PendingRegistration?
+    /// The server's form for `pendingRegistration`, as the user fills it in.
+    @State private var serverForm: RegistrationFormInfo?
 
     private enum SetupMode: String, CaseIterable {
         case importAdium = "Import"
@@ -63,7 +67,11 @@ struct AccountSetupView: View {
                     case .login:
                         loginFields
                     case .register:
-                        registerFields
+                        if let serverForm {
+                            serverFormFields(serverFormBinding(showing: serverForm))
+                        } else {
+                            registerFields
+                        }
                     }
                 }
 
@@ -72,42 +80,55 @@ struct AccountSetupView: View {
                         Text(errorMessage)
                             .foregroundStyle(.red)
                             .font(.callout)
+                            .accessibilityIdentifier("setup-error")
                     }
 
-                    Button {
-                        Task {
-                            switch mode {
-                            case .login:
-                                await connectAccount()
-                            case .register:
-                                await registerAccount()
-                            case .importAdium:
-                                break
+                    HStack {
+                        if serverForm != nil {
+                            Button("Cancel") {
+                                cancelPendingRegistration()
+                            }
+                            .accessibilityIdentifier("register-cancel-button")
+                        }
+
+                        Button {
+                            Task {
+                                switch mode {
+                                case .login:
+                                    await connectAccount()
+                                case .register:
+                                    await registerAccount()
+                                case .importAdium:
+                                    break
+                                }
+                            }
+                        } label: {
+                            if isConnecting {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text(mode == .login ? "Connect" : "Register")
                             }
                         }
-                    } label: {
-                        if isConnecting {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text(mode == .login ? "Connect" : "Register")
-                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isActionDisabled)
+                        .accessibilityIdentifier(mode == .login ? "connect-button" : "register-button")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isActionDisabled)
-                    .accessibilityIdentifier(mode == .login ? "connect-button" : "register-button")
                 }
             }
             .frame(maxWidth: 300, minHeight: reservedContentHeight, alignment: .top)
         }
         .padding(40)
         .frame(minWidth: 400, minHeight: 300)
+        .onChange(of: mode) { cancelPendingRegistration() }
+        .onDisappear { cancelPendingRegistration() }
     }
 
     /// Stable height reserved for the mode-dependent content below the picker.
     /// Sized to comfortably fit the tallest fixed layout (Register: four fields
     /// plus the action button and an error line) so toggling between modes does
-    /// not move anything above it.
+    /// not move anything above it. The server's registration form fills the
+    /// same space and whatever a taller window adds, and scrolls within it.
     private let reservedContentHeight: CGFloat = 220
 
     // MARK: - Fields
@@ -147,6 +168,25 @@ struct AccountSetupView: View {
             .accessibilityIdentifier("register-email-field")
     }
 
+    /// The server's fields, filled in with what was typed before.
+    private func serverFormFields(_ form: Binding<RegistrationFormInfo>) -> some View {
+        Form {
+            RegistrationFormFields(form: form)
+        }
+        .formStyle(.grouped)
+        .accessibilityIdentifier("register-server-form")
+    }
+
+    /// Binds the server's form, falling back to `shown` once the registration has ended. The fields can still write
+    /// while they leave the window, so force-unwrapping `serverForm` would crash. Edits made then are dropped.
+    private func serverFormBinding(showing shown: RegistrationFormInfo) -> Binding<RegistrationFormInfo> {
+        Binding {
+            serverForm ?? shown
+        } set: { form in
+            if serverForm != nil { serverForm = form }
+        }
+    }
+
     // MARK: - Computed
 
     private var subtitleText: String {
@@ -154,7 +194,9 @@ struct AccountSetupView: View {
         case .importAdium:
             "Import your accounts and chat history from Adium."
         case .login, .register:
-            "Enter your XMPP account details to get started."
+            serverForm == nil
+                ? "Enter your XMPP account details to get started."
+                : "The server asks for a few more details."
         }
     }
 
@@ -166,6 +208,7 @@ struct AccountSetupView: View {
         case .login:
             return jidString.isEmpty || password.isEmpty
         case .register:
+            if let serverForm { return !serverForm.canSubmit }
             return serverDomain.isEmpty || username.isEmpty || password.isEmpty
         }
     }
@@ -189,15 +232,44 @@ struct AccountSetupView: View {
         errorMessage = nil
         defer { isConnecting = false }
 
+        if let pendingRegistration, let serverForm {
+            await submit(serverForm, to: pendingRegistration)
+            return
+        }
         do {
-            _ = try await environment.accountService.registerAccount(
+            let outcome = try await environment.accountService.registerAccount(
                 domain: serverDomain,
                 username: username,
                 password: password,
                 email: email.isEmpty ? nil : email
             )
+            switch outcome {
+            case .registered:
+                break
+            case let .needsMoreFields(pending):
+                pendingRegistration = pending
+                serverForm = pending.form
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Whether it succeeds or fails, the registration's connection is closed, so a failure returns to the server,
+    /// username, password and email fields.
+    private func submit(_ form: RegistrationFormInfo, to pending: PendingRegistration) async {
+        do {
+            _ = try await pending.submit(form)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        cancelPendingRegistration()
+    }
+
+    private func cancelPendingRegistration() {
+        guard let pendingRegistration else { return }
+        self.pendingRegistration = nil
+        serverForm = nil
+        Task { await pendingRegistration.cancel() }
     }
 }

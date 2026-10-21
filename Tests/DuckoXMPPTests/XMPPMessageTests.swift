@@ -251,6 +251,7 @@ enum XMPPMessageTests {
             ("<message from='room@conference.example.com'><x xmlns='http://jabber.org/protocol/muc#user'><invite from='contact@example.com'/></x></message>", true),
             ("<message from='contact@example.com/res'><x xmlns='jabber:x:conference' jid='room@conference.example.com'/></message>", true),
             ("<message type='chat' from='room@conference.example.com/nick'><body>Hi</body><x xmlns='http://jabber.org/protocol/muc#user'/></message>", true),
+            ("<message type='chat' from='contact@example.com/res'><encrypted xmlns='urn:xmpp:omemo:2'><header sid='1'/></encrypted></message>", true),
             ("<message from='room@conference.example.com'><x xmlns='http://jabber.org/protocol/muc#user'><decline from='contact@example.com'/></x></message>", false),
             ("<message type='chat' from='contact@example.com/res'><body>Hi</body></message>", false)
         ])

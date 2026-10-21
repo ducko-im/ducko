@@ -5,13 +5,54 @@ struct RegistrationModuleTests {
     @Test
     func `Namespace constants`() {
         #expect(XMPPNamespaces.register == "jabber:iq:register")
-        #expect(XMPPNamespaces.registerFeature == "http://jabber.org/features/iq-register")
     }
 
     @Test
-    func `Module features`() {
+    func `Module advertises no feature of its own`() {
         let module = RegistrationModule()
-        #expect(module.features == [XMPPNamespaces.register])
+        #expect(module.features.isEmpty)
+    }
+
+    @Test
+    func `A legacy form keeps every field the server lists, in order, with its values`() throws {
+        let query = try stanza("""
+        <query xmlns='jabber:iq:register'><instructions>Choose</instructions><username>juliet</username>\
+        <nick/><password/><first/><last/><email/><registered/></query>
+        """)
+        let form = RegistrationModule.parseForm(query)
+        #expect(form.formType == .legacy)
+        #expect(form.isRegistered)
+        #expect(form.legacyFields == [
+            RegistrationModule.LegacyField(name: "username", value: "juliet"),
+            RegistrationModule.LegacyField(name: "nick"),
+            RegistrationModule.LegacyField(name: "password"),
+            RegistrationModule.LegacyField(name: "first"),
+            RegistrationModule.LegacyField(name: "last"),
+            RegistrationModule.LegacyField(name: "email")
+        ])
+    }
+
+    @Test
+    func `A form that sends the user elsewhere reports the page`() throws {
+        let query = try stanza("""
+        <query xmlns='jabber:iq:register'><instructions>Register on the web</instructions>\
+        <x xmlns='jabber:x:oob'><url>https://example.com/register</url></x></query>
+        """)
+        let form = RegistrationModule.parseForm(query)
+        #expect(form.redirectURL == "https://example.com/register")
+        #expect(form.legacyFields.isEmpty)
+    }
+
+    @Test
+    func `A legacy registration sends every field it was asked for with its value`() {
+        let query = RegistrationModule.buildRegistrationQuery(.legacy([
+            RegistrationModule.LegacyField(name: "username", value: "juliet"),
+            RegistrationModule.LegacyField(name: "password", value: "secret"),
+            RegistrationModule.LegacyField(name: "nick", value: "jules")
+        ]))
+        #expect(query.childText(named: "username") == "juliet")
+        #expect(query.childText(named: "password") == "secret")
+        #expect(query.childText(named: "nick") == "jules")
     }
 
     @Test
@@ -20,18 +61,13 @@ struct RegistrationModuleTests {
             formType: .legacy,
             instructions: "Please provide a username and password",
             isRegistered: false,
-            hasUsername: true,
-            hasPassword: true,
-            hasEmail: false,
-            dataFormFields: []
+            legacyFields: [RegistrationModule.LegacyField(name: "username"), RegistrationModule.LegacyField(name: "password")]
         )
         #expect(form.formType == .legacy)
         #expect(form.instructions == "Please provide a username and password")
         #expect(!form.isRegistered)
-        #expect(form.hasUsername)
-        #expect(form.hasPassword)
-        #expect(!form.hasEmail)
-        #expect(form.dataFormFields.isEmpty)
+        #expect(form.legacyFields.map(\.name) == ["username", "password"])
+        #expect(form.dataForm.fields.isEmpty)
     }
 
     @Test
@@ -45,14 +81,11 @@ struct RegistrationModuleTests {
             formType: .dataForm,
             instructions: nil,
             isRegistered: true,
-            hasUsername: true,
-            hasPassword: true,
-            hasEmail: true,
-            dataFormFields: fields
+            dataForm: DataForm(fields: fields)
         )
         #expect(form.formType == .dataForm)
         #expect(form.isRegistered)
-        #expect(form.dataFormFields.count == 3)
+        #expect(form.dataForm.fields.count == 3)
     }
 
     @Test

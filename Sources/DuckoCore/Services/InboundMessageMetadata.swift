@@ -10,17 +10,29 @@ struct InboundMessageMetadata {
     }
 
     let stanzaID: String?
+    let originID: String?
     let serverIdentifiers: [ServerIdentifier]
     let replyToID: String?
+    let replyToJID: String?
+    let replyFallback: FallbackIndication?
     let attachments: [Attachment]
 
     init(_ message: XMPPMessage) {
         self.stanzaID = message.id
+        self.originID = message.originID
         self.serverIdentifiers = message.element.children(named: "stanza-id")
             .filter { $0.namespace == XMPPNamespaces.stanzaID }
             .map { ServerIdentifier(id: $0.attribute("id"), by: $0.attribute("by")) }
-        self.replyToID = message.element.child(named: "reply", namespace: XMPPNamespaces.messageReply)?.attribute("id")
+        let reply = message.element.child(named: "reply", namespace: XMPPNamespaces.messageReply)
+        self.replyToID = reply?.attribute("id")
+        self.replyToJID = reply?.attribute("to")
+        self.replyFallback = message.fallbackIndication(for: XMPPNamespaces.messageReply)
         self.attachments = Self.parseAttachments(message)
+    }
+
+    /// The part of `body` that quotes the message replied to. An encrypted message's quote is in its decrypted body.
+    func replyFallbackRange(in body: String?) -> Range<Int>? {
+        body.flatMap { replyFallback?.bodyRange(in: $0) }
     }
 
     private static func parseAttachments(_ message: XMPPMessage) -> [Attachment] {

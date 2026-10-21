@@ -38,4 +38,37 @@ struct XMPPStanzaErrorTests {
     func `Display text prefers non-blank server text, then the condition phrase`(text: String?, expected: String) {
         #expect(XMPPStanzaError(errorType: .cancel, condition: .itemNotFound, text: text).displayText == expected)
     }
+
+    @Test
+    func `Parse keeps the application-specific condition`() throws {
+        let iq = try stanza("""
+        <iq type="error" id="s1" from="search.example.org"><error type="wait">\
+        <resource-constraint xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>\
+        <rate-limit xmlns="urn:xmpp:channel-search:0:error" retry-after="30"/>\
+        </error></iq>
+        """)
+
+        let error = try #require(XMPPStanzaError.parse(from: iq.child(named: "error")))
+
+        #expect(error.condition == .resourceConstraint)
+        let applicationCondition = try #require(error.applicationCondition)
+        #expect(applicationCondition.name == "rate-limit")
+        #expect(applicationCondition.namespace == "urn:xmpp:channel-search:0:error")
+        #expect(applicationCondition.attribute("retry-after") == "30")
+    }
+
+    @Test
+    func `Parse leaves the application condition empty when the error has none`() throws {
+        let iq = try stanza("""
+        <iq type="error" id="s1" from="search.example.org"><error type="cancel">\
+        <item-not-found xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>\
+        <text xmlns="urn:ietf:params:xml:ns:xmpp-stanzas">No such node</text>\
+        </error></iq>
+        """)
+
+        let error = try #require(XMPPStanzaError.parse(from: iq.child(named: "error")))
+
+        #expect(error.condition == .itemNotFound)
+        #expect(error.applicationCondition == nil)
+    }
 }

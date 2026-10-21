@@ -185,8 +185,10 @@ struct TranscriptRowsTests {
 
     @Test func `a reply carries its quote only while the quoted message is loaded`() {
         let quoted = message(at: 0, body: "the original")
-        var reply = message(at: 10, body: "the reply")
+        var reply = message(at: 10, body: "> the original\nthe reply")
         reply.replyToID = quoted.stanzaID
+        reply.replyFallbackRange = 0 ..< 15
+        reply.htmlBody = "<em>the reply</em>"
 
         let withQuoted = rows([quoted, reply])
         let withoutQuoted = rows([reply])
@@ -200,6 +202,51 @@ struct TranscriptRowsTests {
         #expect(loaded.replyQuote == TranscriptRow.ReplyQuote(senderName: "bob@example.com", previewText: "the original"))
         #expect(alone.replyQuote == nil)
         #expect(named.replyQuote == TranscriptRow.ReplyQuote(senderName: "Bob", previewText: "the original"))
+        // The reply's own quote of the message shows only while the message is not shown as the quote.
+        #expect(loaded.message.body == "the reply")
+        #expect(loaded.message.htmlBody == "<em>the reply</em>")
+        #expect(alone.message.body == "> the original\nthe reply")
+        #expect(alone.message.htmlBody == "&gt; the original<br><em>the reply</em>")
+    }
+
+    /// A 1:1 chat stores both messages under the contact's address, a room's private chat under the occupant's nickname.
+    @Test(arguments: [
+        ("bob@example.com", "bob@example.com/phone", false), ("bob@example.com", "alice@example.com", true),
+        ("bob", "room@conference.example.com/bob", false), ("bob", "room@conference.example.com/alice", true)
+    ])
+    func `a reply quotes the message of the author it names, among messages with one id`(sender: String, author: String, quotesOwnMessage: Bool) {
+        var theirs = message(at: 0, body: "theirs")
+        var own = message(at: 10, body: "own", isOutgoing: true)
+        theirs.stanzaID = "shared"
+        own.stanzaID = "shared"
+        theirs.fromJID = sender
+        own.fromJID = sender
+        var reply = message(at: 20, body: "the reply")
+        reply.replyToID = "shared"
+        reply.replyToJID = author
+
+        guard case let .message(row) = rows([theirs, own, reply])[2].kind else {
+            Issue.record("Expected a message row")
+            return
+        }
+
+        #expect(row.replyQuote?.previewText == (quotesOwnMessage ? "own" : "theirs"))
+    }
+
+    @Test func `a room reply finds the message it quotes by the room's stanza-id`() {
+        var quoted = message(at: 0, body: "the original")
+        quoted.type = "groupchat"
+        quoted.serverID = "room-assigned"
+        var reply = message(at: 10, body: "the reply")
+        reply.type = "groupchat"
+        reply.replyToID = "room-assigned"
+
+        guard case let .message(row) = rows([quoted, reply], chat: TranscriptRows.Details(isGroupchat: true))[1].kind else {
+            Issue.record("Expected a message row")
+            return
+        }
+
+        #expect(row.replyQuote?.previewText == "the original")
     }
 
     @Test func `a /me line names you by your own name in the chat and in History`() {

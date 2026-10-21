@@ -12,12 +12,6 @@ struct RegistrationFormSheet: View {
     @State private var isSubmitting = false
     @State private var submitSuccess = false
 
-    @State private var username = ""
-    @State private var password = ""
-    @State private var email = ""
-
-    @State private var dataFormFields: [RoomConfigField] = []
-
     var body: some View {
         VStack(spacing: 0) {
             if isLoading {
@@ -67,34 +61,21 @@ struct RegistrationFormSheet: View {
                 description: Text(errorMessage)
             )
         } else if let formInfo {
-            formContent(formInfo)
+            formContent(isRegistered: formInfo.isRegistered)
         }
     }
 
-    private func formContent(_ info: RegistrationFormInfo) -> some View {
+    private func formContent(isRegistered: Bool) -> some View {
         Form {
-            if info.isRegistered {
+            if isRegistered {
                 Section {
                     Label("You are currently registered on this server.", systemImage: "checkmark.circle")
                         .foregroundStyle(.green)
                 }
             }
 
-            if let instructions = info.instructions, !instructions.isEmpty {
-                Section("Instructions") {
-                    Text(instructions)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            switch info.formKind {
-            case .legacy:
-                legacyFormFields(info)
-            case .dataForm:
-                Section("Fields") {
-                    DataFormFieldsView(fields: $dataFormFields)
-                }
+            if let form = Binding($formInfo) {
+                RegistrationFormFields(form: form)
             }
 
             if let errorMessage {
@@ -111,40 +92,15 @@ struct RegistrationFormSheet: View {
         .formStyle(.grouped)
     }
 
-    private func legacyFormFields(_ info: RegistrationFormInfo) -> some View {
-        Section("Registration") {
-            if info.hasUsername {
-                TextField("Username", text: $username)
-                    .accessibilityIdentifier("registration-username-field")
-            }
-            if info.hasPassword {
-                SecureField("Password", text: $password)
-                    .accessibilityIdentifier("registration-password-field")
-            }
-            if info.hasEmail {
-                TextField("Email", text: $email)
-                    .accessibilityIdentifier("registration-email-field")
-            }
-        }
-    }
-
     private var canSubmit: Bool {
-        guard let formInfo else { return false }
-        switch formInfo.formKind {
-        case .legacy:
-            return !username.isEmpty || !password.isEmpty || !email.isEmpty
-        case .dataForm:
-            return !dataFormFields.isEmpty
-        }
+        formInfo?.canSubmit ?? false
     }
 
     // MARK: - Actions
 
     private func loadForm() async {
         do {
-            let info = try await environment.accountService.retrieveRegistrationForm(accountID: accountID)
-            formInfo = info
-            dataFormFields = info.dataFormFields
+            formInfo = try await environment.accountService.retrieveRegistrationForm(accountID: accountID)
             isLoading = false
         } catch {
             errorMessage = error.localizedDescription
@@ -158,20 +114,7 @@ struct RegistrationFormSheet: View {
         isSubmitting = true
         Task {
             do {
-                switch formInfo.formKind {
-                case .legacy:
-                    try await environment.accountService.submitRegistration(
-                        accountID: accountID,
-                        username: username,
-                        password: password,
-                        email: email.isEmpty ? nil : email
-                    )
-                case .dataForm:
-                    try await environment.accountService.submitRegistrationDataForm(
-                        accountID: accountID,
-                        fields: dataFormFields
-                    )
-                }
+                try await environment.accountService.submitRegistration(accountID: accountID, form: formInfo)
                 submitSuccess = true
                 isSubmitting = false
             } catch {

@@ -1175,18 +1175,19 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
     }
 
     struct IDGeneration {
+        /// The second client stands in for another of the account's clients, or for this one after a relaunch, both of which
+        /// start from a fresh state.
         @Test
-        func `IDs are sequential`() async {
-            let client = XMPPClient(
-                domain: "example.com",
-                credentials: .init(username: "user", password: "pass")
-            )
-            let id1 = client.generateID()
-            let id2 = client.generateID()
-            #expect(id1 == "ducko-1")
-            #expect(id2 == "ducko-2")
+        func `IDs never repeat within or across clients`() async {
+            let first = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "pass"))
+            let second = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "pass"))
 
-            await disconnectFast(client)
+            let ids = (0 ..< 100).flatMap { _ in [first.generateID(), second.generateID()] }
+
+            #expect(Set(ids).count == ids.count)
+
+            await disconnectFast(first)
+            await disconnectFast(second)
         }
     }
 

@@ -48,7 +48,7 @@ extension DuckoIntegrationTests.CLILayer {
                     }, timeout: TestTimeout.connect)
                     if let originalAvatar {
                         try? await harness.environment.avatarService.publishAvatar(
-                            imageData: originalAvatar.data, mimeType: originalAvatar.mimeType, accountID: alice.accountID
+                            imageData: originalAvatar.data, accountID: alice.accountID
                         )
                     } else {
                         try? await harness.environment.avatarService.removeAvatar(accountID: alice.accountID)
@@ -70,7 +70,9 @@ extension DuckoIntegrationTests.CLILayer {
                     let set = try await cli.run(["avatar", "set", pngPath.path])
                     #expect(set.exitCode == 0)
                     #expect(set.stdout.contains("Avatar published successfully."))
-                    #expect(set.stdout.contains("Hash:"))
+                    let publishedHash = try #require(
+                        set.stdout.split(separator: "\n").first { $0.hasPrefix("Hash: ") }?.dropFirst("Hash: ".count)
+                    )
                     #expect(set.stdout.contains("Size:"))
 
                     let outPath = FileManager.default.temporaryDirectory
@@ -81,10 +83,10 @@ extension DuckoIntegrationTests.CLILayer {
                     #expect(got.exitCode == 0)
                     #expect(got.stdout.contains("Saved avatar to"))
 
-                    // The saved bytes hashing to the fixture SHA-1 proves the CLI published exactly
-                    // what `set` sent and `get` read it back faithfully.
+                    // The saved bytes hashing to the hash `set` printed proves `get` read back exactly
+                    // the PNG that `set` published.
                     let savedData = try Data(contentsOf: outPath)
-                    #expect(sha1Hex(Array(savedData)) == AvatarFixtures.minimalPNGSHA1)
+                    #expect(sha1Hex(Array(savedData)) == String(publishedHash))
                 }
             }
         }

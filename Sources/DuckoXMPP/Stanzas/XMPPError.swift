@@ -68,11 +68,14 @@ public struct XMPPStanzaError: Sendable, Error {
     public let errorType: ErrorType
     public let condition: Condition
     public let text: String?
+    /// The application-specific condition: the `<error>` child qualified by a namespace other than the stanzas one.
+    public let applicationCondition: XMLElement?
 
-    public init(errorType: ErrorType, condition: Condition, text: String? = nil) {
+    public init(errorType: ErrorType, condition: Condition, text: String? = nil, applicationCondition: XMLElement? = nil) {
         self.errorType = errorType
         self.condition = condition
         self.text = text
+        self.applicationCondition = applicationCondition
     }
 
     /// Human-readable description: prefers non-blank `text`, falls back to a phrase for `condition`.
@@ -88,16 +91,21 @@ public struct XMPPStanzaError: Sendable, Error {
 
         var condition: Condition?
         var text: String?
-        for case let .element(child) in element.children where child.namespace == XMPPNamespaces.stanzas {
-            if child.name == "text" {
-                text = child.textContent
-            } else if let parsed = Condition(rawValue: child.name) {
-                condition = parsed
+        var applicationCondition: XMLElement?
+        for case let .element(child) in element.children {
+            if child.namespace == XMPPNamespaces.stanzas {
+                if child.name == "text" {
+                    text = child.textContent
+                } else if let parsed = Condition(rawValue: child.name) {
+                    condition = parsed
+                }
+            } else if child.namespace != element.namespace, applicationCondition == nil {
+                applicationCondition = child
             }
         }
 
         guard let condition else { return nil }
-        return XMPPStanzaError(errorType: errorType, condition: condition, text: text)
+        return XMPPStanzaError(errorType: errorType, condition: condition, text: text, applicationCondition: applicationCondition)
     }
 
     public enum ErrorType: String, Sendable {

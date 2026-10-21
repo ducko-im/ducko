@@ -6,6 +6,7 @@ public struct XMPPClientBuilder {
     private var interceptors: [any StanzaInterceptor] = []
     private var modules: [any XMPPModule] = []
     private var requireTLS: Bool = true
+    private var requiresSCRAM = false
     private var preferredResource: String?
     private var userAgent = SASL2UserAgent()
 
@@ -17,6 +18,11 @@ public struct XMPPClientBuilder {
     /// Sets whether TLS is required (default: `true`).
     public mutating func withRequireTLS(_ requireTLS: Bool) {
         self.requireTLS = requireTLS
+    }
+
+    /// Sets whether a sign-in that offers only PLAIN is refused before the password is sent (default: `false`).
+    public mutating func withRequiresSCRAM(_ requiresSCRAM: Bool) {
+        self.requiresSCRAM = requiresSCRAM
     }
 
     /// Sets a preferred resource for binding. Server may ignore it.
@@ -49,6 +55,7 @@ public struct XMPPClientBuilder {
             credentials: credentials,
             transport: transport,
             requireTLS: requireTLS,
+            requiresSCRAM: requiresSCRAM,
             preferredResource: preferredResource,
             userAgent: userAgent
         )

@@ -2,15 +2,19 @@ import CryptoKit
 
 /// Core cryptographic primitives for the OMEMO Double Ratchet and X3DH protocols.
 enum OMEMOCrypto {
+    /// The length of the keys a session record or an OMEMO message carries: Curve25519 and Ed25519 keys, and root,
+    /// chain and message keys.
+    static let keyLength = 32
+
     /// Root key derivation: advances the root key chain using a DH output.
     ///
-    /// Computes `HKDF-SHA256(salt=rootKey, ikm=dhOutput, info="OMEMO", output=64 bytes)`,
+    /// Computes `HKDF-SHA256(salt=rootKey, ikm=dhOutput, info="OMEMO Root Chain", output=64 bytes)`,
     /// then splits the result into a new root key (32 bytes) and chain key (32 bytes).
     static func kdfRK(rootKey: [UInt8], dhOutput: [UInt8]) -> KDFRKResult {
         let derived = hkdfSHA256(
             inputKeyMaterial: dhOutput,
             salt: rootKey,
-            info: Array("OMEMO".utf8),
+            info: Array("OMEMO Root Chain".utf8),
             outputByteCount: 64
         )
         return KDFRKResult(

@@ -13,6 +13,21 @@ enum Caps2HashAlgorithm: String, CaseIterable {
     }
 }
 
+extension String {
+    /// Whether the string sorts before `other` in the i;octet collation (RFC 4790 §9.3), which both caps hashes sort
+    /// by. It compares UTF-8 bytes, where `String`'s `<` compares normalized Unicode scalars.
+    func octetPrecedes(_ other: String) -> Bool {
+        utf8.lexicographicallyPrecedes(other.utf8)
+    }
+}
+
+extension Sequence<String> {
+    /// The strings in i;octet order.
+    func octetSorted() -> [String] {
+        sorted { $0.octetPrecedes($1) }
+    }
+}
+
 /// XEP-0390 capability hash input generation.
 ///
 /// Uses ASCII control characters as delimiters per XEP-0390 §5.2:
@@ -30,8 +45,7 @@ enum Caps2Hash {
         var result: [UInt8] = []
 
         // Features section: sort by i;octet (byte-wise), each terminated by 0x1f
-        let sortedFeatures = features.sorted()
-        for feature in sortedFeatures {
+        for feature in features.octetSorted() {
             result.append(contentsOf: Array(feature.utf8))
             result.append(0x1F)
         }
@@ -87,11 +101,12 @@ enum Caps2Hash {
     }
 
     private static func encodeForm(_ fields: [DataFormField]) -> [UInt8] {
-        var encodedFields: [[UInt8]] = fields.map { field in
+        var encodedFields: [[UInt8]] = fields.compactMap { field in
+            guard let variable = field.variable else { return nil }
             var bytes: [UInt8] = []
-            bytes.append(contentsOf: Array(field.variable.utf8))
+            bytes.append(contentsOf: Array(variable.utf8))
             bytes.append(0x1F)
-            for value in field.values.sorted() {
+            for value in field.values.octetSorted() {
                 bytes.append(contentsOf: Array(value.utf8))
                 bytes.append(0x1F)
             }

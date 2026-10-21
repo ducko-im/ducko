@@ -54,7 +54,8 @@ struct MessageInputView: View {
                     }
                     .onChange(of: windowState.editingMessage?.id) {
                         if let editing = windowState.editingMessage {
-                            windowState.draftText = editing.body
+                            // A reply is edited without its quote, which the correction re-sends as it was.
+                            windowState.draftText = editing.hidingReplyFallback().body
                             isInputFocused = true
                         }
                     }

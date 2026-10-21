@@ -159,10 +159,18 @@ private func saxStartElementNs(
         for i in 0 ..< Int(nb_attributes) {
             let base = i * 5
             guard let attrLocalname = attributes[base] else { continue }
-            let key = if let attrPrefix = attributes[base + 1] {
-                String(cString: attrPrefix) + ":" + String(cString: attrLocalname)
+            let key: String
+            if let attrPrefix = attributes[base + 1] {
+                let prefix = String(cString: attrPrefix)
+                key = prefix + ":" + String(cString: attrLocalname)
+                // Element names drop their prefix, but prefixed attributes keep theirs, so the element carries the
+                // prefix's declaration and stays well-formed when written out on its own. The xml prefix needs no
+                // declaration.
+                if prefix != "xml", let attrURI = attributes[base + 2] {
+                    attrs["xmlns:" + prefix] = String(cString: attrURI)
+                }
             } else {
-                String(cString: attrLocalname)
+                key = String(cString: attrLocalname)
             }
             if let valueStart = attributes[base + 3], let valueEnd = attributes[base + 4] {
                 let length = valueEnd - valueStart

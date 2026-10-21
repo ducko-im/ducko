@@ -40,6 +40,7 @@ struct JSONFormatter: CLIFormatter {
         }
         if message.isUndecryptable {
             dict["undecryptable"] = "true"
+            dict["notice"] = message.undecryptableNotice
         }
         if message.isEdited {
             dict["edited"] = "true"
@@ -80,6 +81,8 @@ struct JSONFormatter: CLIFormatter {
             encode(["type": "roster_empty", "account": accountID.uuidString])
         case let .bookmarks(accountID):
             encode(["type": "bookmarks_empty", "account": accountID.uuidString])
+        case let .blockList(accountID):
+            encode(["type": "block_list_empty", "account": accountID.uuidString])
         case .rooms:
             encode(["type": "rooms_empty"])
         case let .roomParticipants(room):
@@ -175,6 +178,7 @@ struct JSONFormatter: CLIFormatter {
         case let .streamResumed(jid): encode(["type": "stream_resumed", "jid": jid.description, "account": account])
         case let .disconnected(reason): formatDisconnect(reason, account: account)
         case let .authenticationFailed(message): encode(["type": "authentication_failed", "message": message, "account": account])
+        case .plainSignInRefused: encode(["type": "sign_in_refused", "reason": "plain_after_scram", "message": XMPPClientError.plainSignInRefused.localizedDescription, "account": account])
         case let .messageReceived(message): formatIncomingMessage(message, account: account)
         case let .messageCarbonReceived(forwarded): formatCarbonEvent(forwarded, isOutgoing: false, account: account)
         case let .messageCarbonSent(forwarded): formatCarbonEvent(forwarded, isOutgoing: true, account: account)
@@ -183,9 +187,9 @@ struct JSONFormatter: CLIFormatter {
         case let .presenceSubscriptionRevoked(from: jid): encode(["type": "subscription_revoked", "from": jid.description])
         case let .deliveryReceiptReceived(messageID, from): encode(["type": "delivery_receipt", "messageID": messageID, "from": from.bareJID.description, "account": account])
         case let .chatMarkerReceived(messageID, .displayed, from): encode(["type": "read_marker", "messageID": messageID, "from": from.bareJID.description, "account": account])
-        case let .messageCorrected(originalID, newBody, from): encode(["type": "message_corrected", "originalID": originalID, "newBody": newBody, "from": from.bareJID.description, "account": account])
+        case let .messageCorrected(originalID, newBody, _, from, messageType): encode(["type": "message_corrected", "originalID": originalID, "newBody": newBody, "from": from.bareJID.description, "message_type": messageType.rawValue, "account": account])
         case let .messageError(_, from, error): formatMessageError(from: from, error: error, account: account)
-        case let .messageRetracted(originalID, from): encode(["type": "message_retracted", "original_id": originalID, "from": from.bareJID.description, "account": account])
+        case let .messageRetracted(originalID, from, messageType): encode(["type": "message_retracted", "original_id": originalID, "from": from.bareJID.description, "message_type": messageType.rawValue, "account": account])
         case let .messageModerated(originalID, moderator, room, reason): formatModeratedMessage(originalID: originalID, moderator: moderator, room: room, reason: reason, account: account)
         case let .roomJoined(room, occupancy, isNewlyCreated): formatRoomJoinedEvent(room: room, occupancy: occupancy, isNewlyCreated: isNewlyCreated, account: account)
         case let .roomOccupantJoined(room, occupant): encode(["type": "room_occupant_joined", "room": room.description, "nickname": occupant.nickname, "account": account])
@@ -293,13 +297,13 @@ struct JSONFormatter: CLIFormatter {
         let jid = isOutgoing ? forwarded.message.to?.bareJID : forwarded.message.from?.bareJID
         let oob = forwarded.message.oobData
         let body = forwarded.message.body ?? oob.first?.url
-        guard let jid, let body else { return nil }
+        guard let jid, let body, printsFromEvent(carbon: forwarded.message) else { return nil }
         let jidKey = isOutgoing ? "to" : "from"
         let direction = isOutgoing ? "outgoing" : "incoming"
         var dict: [String: String] = [
             "type": "message", "direction": direction, "carbon": "true",
             jidKey: jid.description, "body": body,
-            "account": account, "timestamp": formatTimestamp(Date())
+            "account": account, "timestamp": formatTimestamp(forwarded.sentTime)
         ]
         if body.hasPrefix("/me ") {
             dict["action"] = "true"
@@ -336,7 +340,7 @@ struct JSONFormatter: CLIFormatter {
         let oob = message.oobData
         let body = message.body ?? oob.first?.url
         guard let body else { return nil }
-        var dict = incomingMessageFields(from: from, body: body, account: account)
+        var dict = incomingMessageFields(from: from, body: body, sentTime: sentTime(of: message), account: account)
         let extraOOB = oob.filter { $0.url != body }
         if !extraOOB.isEmpty {
             dict["attachments"] = extraOOB.map(\.url).joined(separator: ",")
@@ -344,16 +348,24 @@ struct JSONFormatter: CLIFormatter {
         return encode(dict)
     }
 
-    func formatEncryptedMessage(_ message: ChatMessage, accountID: UUID) -> String {
+    /// A room's message is a `room_message` record, and one in a room's private chat a `muc_private_message` record, as
+    /// a plaintext one is, with the room and the nickname.
+    func formatEncryptedMessage(_ message: ChatMessage, in conversation: Conversation, accountID: UUID) -> String {
         var dict = messageFields(message, accountJID: nil)
         dict["account"] = accountID.uuidString
+        if conversation.type == .groupchat || conversation.occupantNickname != nil {
+            dict["type"] = conversation.type == .groupchat ? "room_message" : "muc_private_message"
+            dict["room"] = conversation.jid.description
+            dict["nickname"] = conversation.occupantNickname ?? message.fromJID
+            dict["from"] = nil
+        }
         return encode(dict)
     }
 
-    private func incomingMessageFields(from: BareJID, body: String, account: String) -> [String: String] {
+    private func incomingMessageFields(from: BareJID, body: String, sentTime: Date, account: String) -> [String: String] {
         var dict = [
             "type": "message", "direction": "incoming", "from": from.description,
-            "body": body, "account": account, "timestamp": formatTimestamp(Date())
+            "body": body, "account": account, "timestamp": formatTimestamp(sentTime)
         ]
         if body.hasPrefix("/me ") {
             dict["action"] = "true"
@@ -465,6 +477,10 @@ struct JSONFormatter: CLIFormatter {
         if let name = bookmark.name { dict["name"] = name }
         if let nick = bookmark.nickname { dict["nickname"] = nick }
         return encode(dict)
+    }
+
+    func formatBlockListEntry(_ entry: BlockListEntry) -> String {
+        encode(["type": "block_list_entry", "jid": entry.jidString])
     }
 
     func formatRoomParticipant(_ participant: RoomParticipant) -> String {
@@ -581,7 +597,7 @@ struct JSONFormatter: CLIFormatter {
             "type": "room_message", "direction": "incoming",
             "room": from.bareJID.description, "nickname": nickname,
             "body": body, "account": account,
-            "timestamp": formatTimestamp(Date())
+            "timestamp": formatTimestamp(sentTime(of: message))
         ]
         if body.hasPrefix("/me ") {
             dict["action"] = "true"
@@ -603,7 +619,7 @@ struct JSONFormatter: CLIFormatter {
             "type": "muc_private_message", "direction": "incoming",
             "room": from.bareJID.description, "nickname": nickname,
             "body": body, "account": account,
-            "timestamp": formatTimestamp(Date())
+            "timestamp": formatTimestamp(sentTime(of: message))
         ]
         if body.hasPrefix("/me ") {
             dict["action"] = "true"
@@ -632,24 +648,12 @@ struct JSONFormatter: CLIFormatter {
         return encode(dict)
     }
 
+    func formatDataForm(_ form: DataFormInfo) -> String {
+        encode(DataFormOutput(type: "data_form", form: form))
+    }
+
     func formatRegistrationForm(_ form: RegistrationFormInfo) -> String {
-        var dict: [String: String] = [
-            "type": "registration_form",
-            "form_kind": form.formKind == .dataForm ? "data_form" : "legacy",
-            "is_registered": form.isRegistered ? "true" : "false"
-        ]
-        if let instructions = form.instructions { dict["instructions"] = instructions }
-        switch form.formKind {
-        case .legacy:
-            if form.hasUsername { dict["has_username"] = "true" }
-            if form.hasPassword { dict["has_password"] = "true" }
-            if form.hasEmail { dict["has_email"] = "true" }
-        case .dataForm:
-            for field in form.dataFormFields where field.isUserEditable {
-                dict["field_\(field.variable)"] = field.values.joined(separator: ",")
-            }
-        }
-        return encode(dict)
+        encode(RegistrationFormOutput(form: form))
     }
 
     func formatSearchedChannel(_ channel: SearchedChannel) -> String {

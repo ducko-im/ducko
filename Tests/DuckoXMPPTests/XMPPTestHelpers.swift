@@ -36,25 +36,30 @@ let testBindResult = """
 
 // MARK: - Connect Flow Simulation
 
-/// Simulates a connect handshake without TLS.
-func simulateNoTLSConnect(_ mock: MockTransport, postAuthFeatures: String = testFeaturesBind) async {
+/// Simulates a connect handshake without TLS, on streams the server opens with `serverStreamOpen`.
+func simulateNoTLSConnect(_ mock: MockTransport, postAuthFeatures: String = testFeaturesBind, serverStreamOpen: String = testServerStreamOpen) async {
     await mock.waitForSent(count: 1) // stream opening sent
-    await mock.simulateReceive(testServerStreamOpen)
+    await mock.simulateReceive(serverStreamOpen)
     await mock.simulateReceive(testFeaturesNoTLS)
     await mock.waitForSent(count: 2) // auth element sent
     await mock.simulateReceive("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
     await mock.waitForSent(count: 3) // post-auth stream opening sent
-    await mock.simulateReceive(testServerStreamOpen)
+    await mock.simulateReceive(serverStreamOpen)
     await mock.simulateReceive(postAuthFeatures)
     await mock.waitForSent(count: 4) // bind IQ sent
     await mock.simulateReceive(testBindResult)
 }
 
-/// Simulates a connect handshake without TLS, followed by a roster response.
-func simulateNoTLSConnect(_ mock: MockTransport, rosterResponse: String) async {
+/// Simulates a connect handshake without TLS, then answers the roster GET with `rosterQuery`.
+func simulateNoTLSConnect(_ mock: MockTransport, rosterQuery: String) async throws {
     await simulateNoTLSConnect(mock)
-    await mock.waitForSent(count: 5) // roster GET IQ sent
-    await mock.simulateReceive(rosterResponse)
+    try await answerRosterGet(on: mock, with: rosterQuery)
+}
+
+/// Answers the client's roster GET with a result carrying `rosterQuery`, under the request's own ID.
+func answerRosterGet(on mock: MockTransport, with rosterQuery: String) async throws {
+    let request = try await awaitOutgoingIQ(on: mock, type: .get, namespace: XMPPNamespaces.roster) { _ in true }
+    await mock.simulateReceive("<iq type='result' id='\(request.id)'>\(rosterQuery)</iq>")
 }
 
 /// Simulates a direct TLS connect handshake (TLS already active, no STARTTLS negotiation).
@@ -124,17 +129,20 @@ func makeStubModuleContext(
     sendIQ: @escaping ModuleContext.IQSender = { _, _ in nil },
     emitEvent: @Sendable @escaping (XMPPEvent) -> Void = { _ in },
     sendElement: @Sendable @escaping (XMLElement) async throws -> Void = { _ in },
-    serverStreamFeatures: @Sendable @escaping () -> XMLElement? = { nil }
+    serverStreamFeatures: @Sendable @escaping () -> XMLElement? = { nil },
+    connectedJID: FullJID? = FullJID.parse("user@example.com/res"),
+    dispatchDecryptedMessage: @Sendable @escaping (XMPPMessage) -> Void = { _ in }
 ) -> ModuleContext {
     ModuleContext(
         sendStanza: sendStanza,
         sendIQ: sendIQ,
         emitEvent: emitEvent,
         generateID: { "test-1" },
-        connectedJID: { FullJID.parse("user@example.com/res") },
+        connectedJID: { connectedJID },
         domain: "example.com",
         sendElement: sendElement,
-        serverStreamFeatures: serverStreamFeatures
+        serverStreamFeatures: serverStreamFeatures,
+        dispatchDecryptedMessage: dispatchDecryptedMessage
     )
 }
 
@@ -525,11 +533,30 @@ final class JingleInitiatorHarness: Sendable {
         ).toXML()
     }
 
+    /// The content of the responder's session-accept for this side's offer in session `sid`, offering `candidates`.
+    func acceptedContent(sid: String, candidates: [SOCKS5Transport.Candidate]) throws -> XMLElement {
+        let transportSID = try #require(offeredContent(sid: sid)?.child(named: "transport")?.attribute("sid"))
+        return JingleContent(
+            name: "a-file-offer", creator: "initiator", description: JingleFileDescription(name: "test.txt", size: 3),
+            transport: .socks5(SOCKS5Transport(sid: transportSID, candidates: candidates))
+        ).toXML()
+    }
+
     /// A content switching the transfer to IBB stream `ibbSID`.
     static func ibbContent(ibbSID: String = "ibb-sid") -> XMLElement {
         var content = XMLElement(name: "content", attributes: ["creator": "initiator", "name": "a-file-offer"])
         content.addChild(IBBTransport(sid: ibbSID, blockSize: 4096).toXML())
         return content
+    }
+
+    /// The peer's IBB `<open/>` of stream `ibbSID` in blocks of `blockSize` bytes.
+    static func ibbOpen(ibbSID: String = "ibb-sid", blockSize: Int = 4096) -> XMLElement {
+        ibbOpen(attributes: ["sid": ibbSID, "block-size": String(blockSize)])
+    }
+
+    /// An IBB `<open/>` with exactly `attributes`, for one that is malformed or asks for more.
+    static func ibbOpen(attributes: [String: String]) -> XMLElement {
+        XMLElement(name: "open", namespace: XMPPNamespaces.ibb, attributes: attributes)
     }
 
     /// An IBB data chunk carrying `bytes`.

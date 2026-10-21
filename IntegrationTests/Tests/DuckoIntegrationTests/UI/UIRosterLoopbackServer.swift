@@ -76,7 +76,12 @@ actor UIRosterLoopbackServer {
             } else if iq.type == "set" {
                 send("<iq type='result' id='\(id)'/>")
             } else if iq.type == "get" {
-                send("<iq type='error' id='\(id)'><error type='cancel'><service-unavailable xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>")
+                // An error to a request for the server, such as the disco#info query that decides whether blocking
+                // is used, carries the server's address, since the client drops a reply from any other address. An
+                // error to a contact's request carries none, so the client drops it and the Contact Info profile
+                // stays loading.
+                let from = element.attribute("to") == "example.com" ? " from='example.com'" : ""
+                send("<iq type='error' id='\(id)'\(from)><error type='cancel'><service-unavailable xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>")
             }
         }
     }

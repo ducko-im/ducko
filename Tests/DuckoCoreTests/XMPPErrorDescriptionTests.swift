@@ -29,7 +29,8 @@ struct XMPPErrorDescriptionTests {
         (XMPPRegistrationClient.RegistrationClientError.tlsNegotiationFailed, "Could not establish a secure connection to the server"),
         (XMPPRegistrationClient.RegistrationClientError.registrationNotSupported, "The server does not support account registration"),
         (XMPPRegistrationClient.RegistrationClientError.registrationFailed("The username is already taken"), "Registration failed: The username is already taken"),
-        (XMPPRegistrationClient.RegistrationClientError.unexpectedResponse, "Unexpected response from the server")
+        (XMPPRegistrationClient.RegistrationClientError.unexpectedResponse, "Unexpected response from the server"),
+        (XMPPRegistrationClient.RegistrationClientError.connectionClosed, "The server closed the connection, try registering again")
     ])
     func `RegistrationClientError renders a readable message`(
         error: XMPPRegistrationClient.RegistrationClientError, expected: String
@@ -43,6 +44,15 @@ struct XMPPErrorDescriptionTests {
         (RegistrationModule.RegistrationError.registrationNotSupported, "The server does not support account registration")
     ])
     func `RegistrationError renders a readable message`(error: RegistrationModule.RegistrationError, expected: String) {
+        let error: any Error = error
+        #expect(error.localizedDescription == expected)
+    }
+
+    @Test(arguments: [
+        (BlockingModule.BlockingError.notConnected, "Not connected to the server"),
+        (BlockingModule.BlockingError.blockingNotSupported, "The server does not support blocking")
+    ])
+    func `BlockingError renders a readable message`(error: BlockingModule.BlockingError, expected: String) {
         let error: any Error = error
         #expect(error.localizedDescription == expected)
     }
@@ -81,7 +91,8 @@ struct XMPPErrorDescriptionTests {
 
     @Test(arguments: [
         (ChannelSearchModule.ChannelSearchError.notConnected, "Not connected to the server"),
-        (ChannelSearchModule.ChannelSearchError.noSearchServiceFound, "The server does not offer channel search")
+        (ChannelSearchModule.ChannelSearchError.noSearchServiceFound, "The server does not offer channel search"),
+        (ChannelSearchModule.ChannelSearchError.rateLimited(retryAfter: 30), "The server is limiting channel searches")
     ])
     func `ChannelSearchError renders a readable message`(error: ChannelSearchModule.ChannelSearchError, expected: String) {
         let error: any Error = error

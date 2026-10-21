@@ -38,6 +38,24 @@ enum Caps2HashTests {
             #expect(input == expected)
         }
 
+        /// The angstrom sign normalizes to U+00C5, which sorts before U+00D0, but its bytes sort after.
+        @Test(arguments: [true, false])
+        func `Features and values are sorted by their bytes, not by their normalized characters`(features: Bool) {
+            let angstrom = "\u{212B}", eth = "\u{00D0}"
+            let input = features
+                ? Caps2Hash.generateHashInput(identities: [], features: [angstrom, eth])
+                : Caps2Hash.generateHashInput(identities: [], features: [], forms: [[
+                    DataFormField(variable: "FORM_TYPE", values: ["urn:x"]), DataFormField(variable: "f", values: [angstrom, eth])
+                ]])
+
+            let sorted = Array(eth.utf8) + [0x1F] + Array(angstrom.utf8) + [0x1F]
+            let expected: [UInt8] = features
+                ? sorted + [0x1C, 0x1C, 0x1C]
+                : [0x1C, 0x1C] + Array("FORM_TYPE".utf8) + [0x1F] + Array("urn:x".utf8) + [0x1F, 0x1E]
+                + Array("f".utf8) + [0x1F] + sorted + [0x1E, 0x1D, 0x1C]
+            #expect(input == expected)
+        }
+
         @Test
         func `Identity encoding uses correct separators`() {
             let identities = [
@@ -193,6 +211,18 @@ enum Caps2HashTests {
         }
 
         @Test
+        func `Fields without var are left out of the hash input`() {
+            let form: [DataFormField] = [
+                DataFormField(variable: "FORM_TYPE", values: ["urn:test"]),
+                DataFormField(variable: "field1", values: ["val1"])
+            ]
+            let fixedField = DataFormField(variable: nil, type: "fixed", values: ["Section"])
+            let input = Caps2Hash.generateHashInput(identities: [], features: [], forms: [form])
+            let inputWithFixedField = Caps2Hash.generateHashInput(identities: [], features: [], forms: [form + [fixedField]])
+            #expect(input == inputWithFixedField)
+        }
+
+        @Test
         func `Backward compatibility: empty forms produce same hash as no forms parameter`() {
             let identities = [
                 ServiceDiscoveryModule.Identity(category: "client", type: "pc", name: "Test")
@@ -244,14 +274,16 @@ enum Caps2HashTests {
 
     struct PresenceBroadcast {
         @Test
-        func `handleConnect sends presence with both XEP-0115 and XEP-0390 caps`() async throws {
+        func `initial presence carries both XEP-0115 and XEP-0390 caps`() async throws {
             let mock = MockTransport()
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
                 transport: mock, requireTLS: false
             )
-            await client.register(CapsModule())
+            let capsModule = CapsModule()
+            await client.register(PresenceModule(capsModule: capsModule))
+            await client.register(capsModule)
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             await simulateNoTLSConnect(mock)
@@ -276,69 +308,27 @@ enum Caps2HashTests {
     }
 
     struct PresenceReception {
-        @Test
-        func `Prefers XEP-0390 over XEP-0115 when both present`() async throws {
-            let mock = MockTransport()
-            let client = XMPPClient(
-                domain: "example.com",
-                credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
-            )
-            let capsModule = CapsModule()
-            await client.register(capsModule)
-
-            let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
-            await simulateNoTLSConnect(mock)
-            try await connectTask.value
-
-            // Cache features under the caps2 ver key
-            let caps2Ver = "sha-256.dGVzdGhhc2g="
-            capsModule.cacheFeatures(["caps2-feature"], for: caps2Ver)
-
-            // Simulate presence with both XEP-0115 and XEP-0390 caps
-            await mock.simulateReceive("""
-            <presence from='peer@example.com/res'>\
-            <c xmlns='http://jabber.org/protocol/caps' hash='sha-1' node='http://test' ver='oldver'/>\
-            <c xmlns='urn:xmpp:caps'>\
-            <hash xmlns='urn:xmpp:hashes:2' algo='sha-256'>dGVzdGhhc2g=</hash>\
-            </c>\
-            </presence>
-            """)
-            try? await Task.sleep(for: .milliseconds(100))
-
-            let peerJID = try #require(BareJID.parse("peer@example.com"))
-            // Should use caps2 ver, not the XEP-0115 ver
-            #expect(capsModule.isFeatureSupported("caps2-feature", by: peerJID))
-
-            await disconnectFast(client)
+        enum Advertised: CaseIterable {
+            case both
+            case unsupportedCaps2AndCaps
+            case capsOnly
         }
 
-        @Test
-        func `Falls back to XEP-0115 when no XEP-0390 element`() async throws {
-            let mock = MockTransport()
-            let client = XMPPClient(
-                domain: "example.com",
-                credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
-            )
-            let capsModule = CapsModule()
-            await client.register(capsModule)
+        @Test(arguments: Advertised.allCases)
+        func `XEP-0390 is asked about when it has a usable hash, else XEP-0115`(advertised: Advertised) async throws {
+            let peer = CapsPeer.make { _ in .failure(XMPPStanzaError(errorType: .cancel, condition: .itemNotFound)) }
+            let caps = "<c xmlns='\(XMPPNamespaces.caps)' hash='sha-1' node='http://test' ver='oldver'/>"
+            let caps2 = switch advertised {
+            case .both: "<c xmlns='\(XMPPNamespaces.caps2)'><hash xmlns='\(XMPPNamespaces.hashes2)' algo='sha-256'>dGVzdGhhc2g=</hash></c>"
+            case .unsupportedCaps2AndCaps: "<c xmlns='\(XMPPNamespaces.caps2)'><hash xmlns='\(XMPPNamespaces.hashes2)' algo='md5'>AAAA</hash></c>"
+            case .capsOnly: ""
+            }
 
-            let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
-            await simulateNoTLSConnect(mock)
-            try await connectTask.value
+            try peer.receive("<presence from='peer@example.com/res'>\(caps)\(caps2)</presence>")
+            try await peer.waitFor(questions: 1)
 
-            capsModule.cacheFeatures(["legacy-feature"], for: "legacyver")
-
-            await mock.simulateReceive(
-                "<presence from='peer@example.com/res'><c xmlns='http://jabber.org/protocol/caps' hash='sha-1' node='http://test' ver='legacyver'/></presence>"
-            )
-            try? await Task.sleep(for: .milliseconds(100))
-
-            let peerJID = try #require(BareJID.parse("peer@example.com"))
-            #expect(capsModule.isFeatureSupported("legacy-feature", by: peerJID))
-
-            await disconnectFast(client)
+            let expectedNode = advertised == .both ? "urn:xmpp:caps#sha-256.dGVzdGhhc2g=" : "http://test#oldver"
+            #expect(await peer.questionNodes == [expectedNode])
         }
     }
 }

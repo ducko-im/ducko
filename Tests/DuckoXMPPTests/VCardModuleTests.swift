@@ -318,6 +318,14 @@ enum VCardModuleTests {
             #expect(vcard?.organization == nil)
             #expect(vcard?.photoData == nil)
         }
+
+        @Test
+        func `A BINVAL holding only whitespace is no photo`() async throws {
+            let vcard = try await fetchVCard(respondingWith: "<PHOTO><TYPE>image/png</TYPE><BINVAL> \n\t </BINVAL></PHOTO>")
+
+            #expect(vcard?.photoData == nil)
+            #expect(vcard?.photoHash == nil)
+        }
     }
 
     // MARK: - Serialization Round-Trip

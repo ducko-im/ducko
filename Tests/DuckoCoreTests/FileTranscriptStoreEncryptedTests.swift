@@ -131,6 +131,34 @@ extension FileTranscriptStoreTests {
             }
         }
 
+        /// The placeholder came from outside the encryption, so it named no reply or file of its own, and a correction it
+        /// took first names none either.
+        @Test(arguments: [false, true])
+        func `A decrypted copy brings the reply and files only its encryption names, across a restart`(correctedFirst: Bool) async throws {
+            try await withTemporaryDirectory { dir in
+                let placeholder = encrypted(stanzaID: "ducko-6", serverID: "S1", isUndecryptable: true)
+                try await FileTranscriptStore(baseDirectory: dir).appendMessage(placeholder)
+                if correctedFirst {
+                    try await FileTranscriptStore(baseDirectory: dir).appendAmendment(
+                        TranscriptAmendment(action: .edit, targetMessageID: placeholder.id, body: "yes!"), conversationID: conversationID
+                    )
+                }
+                var copy = encrypted(stanzaID: "ducko-6", serverID: "S1", body: "> hi\nyes")
+                copy.replyToID = "ducko-0"
+                copy.replyToJID = Sender.me.jid
+                copy.replyFallbackRange = 0 ..< 5
+                copy.attachments = [Attachment(id: UUID(), url: "https://example.com/photo.jpg")]
+
+                _ = try await FileTranscriptStore(baseDirectory: dir).storeEncryptedMessage(copy, fromArchive: false)
+
+                let message = try #require(try await FileTranscriptStore(baseDirectory: dir).fetchMessages(for: conversationID, before: nil, limit: 10).first)
+                #expect(message.replyToID == "ducko-0")
+                #expect(message.replyToJID == Sender.me.jid)
+                #expect(message.replyFallbackRange == (correctedFirst ? nil : 0 ..< 5))
+                #expect(message.attachments.map(\.url) == ["https://example.com/photo.jpg"])
+            }
+        }
+
         @Test(arguments: [TranscriptAmendment.Action.retract, .edit])
         func `Decrypted text yields to a retraction and to a correction`(earlier: TranscriptAmendment.Action) async throws {
             try await withTemporaryDirectory { dir in

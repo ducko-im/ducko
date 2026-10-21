@@ -393,9 +393,10 @@ enum ChatServiceMUCTests {
             var notified = false
             service.onIncomingMessage = { _, _ in notified = true }
 
+            let stanza = makeEncryptedStanza(from: .bare(testRoomJID), id: "late-1")
             await service.ingestEncryptedMessage(
-                message: makeEncryptedStanza(from: .bare(testRoomJID), id: "late-1"), decryptedBody: "late",
-                isOutgoing: false, in: conversation, accountID: testAccountID
+                EncryptedArrival(stanza: stanza, content: EncryptedContent(encryptedOutcome(of: stanza, body: "late")), sender: "nick", isOutgoing: false, sentTime: Date()),
+                in: conversation, accountID: testAccountID
             )
 
             let isStored = try await store.fetchConversations(for: testAccountID).contains { $0.id == conversation.id }

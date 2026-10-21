@@ -6,7 +6,7 @@ enum DataFormParserTests {
         @Test
         func `Parses data form fields from XML element`() {
             let form = buildSampleForm()
-            let fields = parseDataForm(form)
+            let fields = parseDataForm(form).fields
 
             #expect(fields.count == 4)
 
@@ -34,31 +34,29 @@ enum DataFormParserTests {
         @Test
         func `Returns empty for non-data-form element`() {
             let element = XMLElement(name: "iq")
-            let fields = parseDataForm(element)
+            let fields = parseDataForm(element).fields
             #expect(fields.isEmpty)
         }
 
         @Test
-        func `Skips fields without var attribute`() {
-            var form = XMLElement(name: "x", namespace: XMPPNamespaces.dataForms, attributes: ["type": "form"])
+        func `Keeps the title, instructions, descriptions, required markers and fixed fields`() {
+            let form = parseDataForm(buildAnnotatedForm())
 
-            // Field without var (fixed type)
-            var fixedField = XMLElement(name: "field", attributes: ["type": "fixed"])
-            var fixedValue = XMLElement(name: "value")
-            fixedValue.addText("Instructions here")
-            fixedField.addChild(fixedValue)
-            form.addChild(fixedField)
+            #expect(form.title == "Sign Up")
+            #expect(form.instructions == ["Fill in the fields.", "Then submit."])
+            #expect(form.fields.map(\.variable) == [nil, "section-note", "username", "nick"])
 
-            // Field with var
-            var namedField = XMLElement(name: "field", attributes: ["var": "name", "type": "text-single"])
-            var namedValue = XMLElement(name: "value")
-            namedValue.addText("hello")
-            namedField.addChild(namedValue)
-            form.addChild(namedField)
+            let fixedWithoutVar = form.fields[0]
+            #expect(fixedWithoutVar.type == "fixed")
+            #expect(fixedWithoutVar.values == ["Account"])
 
-            let fields = parseDataForm(form)
-            #expect(fields.count == 1)
-            #expect(fields[0].variable == "name")
+            let username = form.fields[2]
+            #expect(username.isRequired)
+            #expect(username.description == "The name you sign in with")
+
+            let nick = form.fields[3]
+            #expect(!nick.isRequired)
+            #expect(nick.description == nil)
         }
     }
 
@@ -85,9 +83,19 @@ enum DataFormParserTests {
         }
 
         @Test
+        func `Submit leaves out fixed fields with and without var`() {
+            let fields = parseDataForm(buildAnnotatedForm()).fields
+            let submitForm = buildSubmitForm(fields)
+
+            let submittedFields = submitForm.children(named: "field")
+            #expect(submittedFields.map { $0.attribute("var") } == ["username", "nick"])
+            #expect(!submittedFields.contains { $0.attribute("type") == "fixed" })
+        }
+
+        @Test
         func `Round-trip parse and build preserves structure`() {
             let form = buildSampleForm()
-            var fields = parseDataForm(form)
+            var fields = parseDataForm(form).fields
             #expect(fields.count == 4)
 
             // Modify a value
@@ -147,6 +155,42 @@ private func buildSampleForm() -> XMLElement {
         broadcastField.addChild(option)
     }
     form.addChild(broadcastField)
+
+    return form
+}
+
+private func buildAnnotatedForm() -> XMLElement {
+    var form = XMLElement(name: "x", namespace: XMPPNamespaces.dataForms, attributes: ["type": "form"])
+
+    var title = XMLElement(name: "title")
+    title.addText("Sign Up")
+    form.addChild(title)
+    for text in ["Fill in the fields.", "Then submit."] {
+        var instructions = XMLElement(name: "instructions")
+        instructions.addText(text)
+        form.addChild(instructions)
+    }
+
+    var fixedWithoutVar = XMLElement(name: "field", attributes: ["type": "fixed"])
+    var fixedValue = XMLElement(name: "value")
+    fixedValue.addText("Account")
+    fixedWithoutVar.addChild(fixedValue)
+    form.addChild(fixedWithoutVar)
+
+    var fixedWithVar = XMLElement(name: "field", attributes: ["var": "section-note", "type": "fixed"])
+    var noteValue = XMLElement(name: "value")
+    noteValue.addText("Choose a name")
+    fixedWithVar.addChild(noteValue)
+    form.addChild(fixedWithVar)
+
+    var username = XMLElement(name: "field", attributes: ["var": "username", "type": "text-single"])
+    var description = XMLElement(name: "desc")
+    description.addText("The name you sign in with")
+    username.addChild(description)
+    username.addChild(XMLElement(name: "required"))
+    form.addChild(username)
+
+    form.addChild(XMLElement(name: "field", attributes: ["var": "nick", "type": "text-single"]))
 
     return form
 }

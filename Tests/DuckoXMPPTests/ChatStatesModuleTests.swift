@@ -1,4 +1,5 @@
 import DuckoTestSupport
+import struct os.OSAllocatedUnfairLock
 import Testing
 @testable import DuckoXMPP
 
@@ -42,11 +43,12 @@ enum ChatStatesModuleTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .chatStateChanged(from, state) = events.last else {
+            guard case let .chatStateChanged(from, state, messageType) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected chatStateChanged")
             }
-            #expect(from.description == "contact@example.com")
+            #expect(from.description == "contact@example.com/res")
             #expect(state == .composing)
+            #expect(messageType == .chat)
 
             await disconnectFast(client)
         }
@@ -70,7 +72,7 @@ enum ChatStatesModuleTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .chatStateChanged(_, state) = events.last else {
+            guard case let .chatStateChanged(_, state, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected chatStateChanged")
             }
             #expect(state == .active)
@@ -97,7 +99,7 @@ enum ChatStatesModuleTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .chatStateChanged(_, state) = events.last else {
+            guard case let .chatStateChanged(_, state, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected chatStateChanged")
             }
             #expect(state == .paused)
@@ -126,6 +128,22 @@ enum ChatStatesModuleTests {
             #expect(composingMsg != nil)
 
             await disconnectFast(client)
+        }
+
+        @Test
+        func `A standalone chat state carries nothing but the state`() async throws {
+            let sent = OSAllocatedUnfairLock<[XMPPMessage]>(initialState: [])
+            let module = ChatStatesModule()
+            module.setUp(makeStubModuleContext(sendStanza: { stanza, onAccepted in
+                onAccepted?()
+                sent.withLock { $0.append(XMPPMessage(element: stanza.element)) }
+            }))
+
+            try await module.sendChatState(.composing, to: #require(JID.parse("contact@example.com")))
+
+            let message = try #require(sent.withLock { $0.first })
+            #expect(message.element.children.count == 1)
+            #expect(message.chatState == .composing)
         }
     }
 
@@ -235,6 +253,27 @@ enum ChatStatesModuleTests {
         }
     }
 
+    struct ErrorBounce {
+        @Test
+        func `A bounced message's chat state is ignored`() throws {
+            let events = OSAllocatedUnfairLock<[XMPPEvent]>(initialState: [])
+            let module = ChatStatesModule()
+            module.setUp(makeStubModuleContext(emitEvent: { event in events.withLock { $0.append(event) } }))
+
+            for type in ["error", "chat"] {
+                try module.handleMessage(XMPPMessage(element: stanza(
+                    "<message from='contact@example.com/res' type='\(type)'><composing xmlns='\(XMPPNamespaces.chatStates)'/></message>"
+                )))
+            }
+
+            let emitted = events.withLock { $0 }
+            guard emitted.count == 1, case .chatStateChanged(_, .composing, .chat) = emitted.first else {
+                Issue.record("Expected only the chat message's state, got \(emitted)")
+                return
+            }
+        }
+    }
+
     struct StandaloneVsWithBody {
         @Test
         func `Standalone chat state (no body) still emits event`() async throws {
@@ -256,7 +295,7 @@ enum ChatStatesModuleTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .chatStateChanged(_, state) = events.last else {
+            guard case let .chatStateChanged(_, state, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected chatStateChanged")
             }
             #expect(state == .gone)

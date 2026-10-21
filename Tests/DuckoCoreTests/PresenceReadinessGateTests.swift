@@ -17,9 +17,10 @@ enum PresenceReadinessGateTests {
             let store = MockPersistenceStore()
             let credentials = MockCredentialStore()
             let transport = MockTransport()
+            let capsModule = CapsModule()
             let factory = MockXMPPClientFactory(
                 transport: transport,
-                modules: [PEPModule(), PresenceModule(), CapsModule()]
+                modules: [PEPModule(), PresenceModule(capsModule: capsModule), capsModule]
             )
             let accountService = AccountService(store: store, credentialStore: credentials, clientFactory: factory)
             let bookmarksService = BookmarksService()
@@ -35,10 +36,9 @@ enum PresenceReadinessGateTests {
                 try await accountService.connect(accountID: accountID, password: "secret")
             }
             await simulateNoTLSConnect(transport)
-            // The plain presence (stanza 5) goes out; the next stanza, caps, is blocked.
-            await transport.waitForSent(count: 5)
+            await transport.waitForBlockedSend()
 
-            // AccountService records `.connected` from the event yielded before presence/caps;
+            // AccountService records `.connected` from the event yielded before presence;
             // `connectedClient(for:)` (the same gate the service uses) returns non-nil only then.
             var connected = false
             for _ in 0 ..< 100 {

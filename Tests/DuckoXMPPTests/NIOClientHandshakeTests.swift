@@ -110,7 +110,7 @@ private func exerciseTLSRegistration(mode: String, useDefault: Bool) async throw
                     form = try await XMPPRegistrationClient.retrieveForm(domain: "localhost", host: "127.0.0.1", port: peer.port, transport: transport)
                 }
                 #expect(mode == "registration" || mode == "registration-direct")
-                #expect(form.hasUsername && form.hasPassword && form.hasEmail)
+                #expect(form.legacyFields.map(\.name) == ["username", "password", "email"])
                 #expect(form.instructions == "Local fixture")
             } catch {
                 if mode == "registration-error", case XMPPRegistrationClient.RegistrationClientError.unexpectedResponse = error {

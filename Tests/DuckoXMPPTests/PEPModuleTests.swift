@@ -342,8 +342,8 @@ enum PEPModuleTests {
             await disconnectFast(client)
         }
 
-        @Test
-        func `retractItem sends correct IQ structure`() async throws {
+        @Test(arguments: [false, true])
+        func `retractItem sends correct IQ structure`(notify: Bool) async throws {
             let mock = MockTransport()
             let pepModule = makePEPModule()
             let client = try await makeConnectedClient(mock: mock, pepModule: pepModule)
@@ -351,7 +351,7 @@ enum PEPModuleTests {
             await mock.clearSentBytes()
 
             let retractTask = Task {
-                try await pepModule.retractItem(node: testNode, itemID: "item-1")
+                try await pepModule.retractItem(node: testNode, itemID: "item-1", notify: notify)
             }
 
             await mock.waitForSent(count: 1)
@@ -361,6 +361,7 @@ enum PEPModuleTests {
             #expect(sentString.contains("<retract"))
             #expect(sentString.contains("node=\"\(testNode)\"") || sentString.contains("node='\(testNode)'"))
             #expect(sentString.contains("id=\"item-1\"") || sentString.contains("id='item-1'"))
+            #expect(sentString.contains("notify=\"true\"") == notify)
 
             if let iqID = extractIQID(from: sentString) {
                 await mock.simulateReceive("<iq type='result' id='\(iqID)'/>")

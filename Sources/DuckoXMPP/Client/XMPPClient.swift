@@ -1,6 +1,5 @@
 import Logging
 import struct os.OSAllocatedUnfairLock
-import Synchronization
 
 private let log = Logger(label: "im.ducko.xmpp.client")
 
@@ -31,20 +30,12 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     private var pendingIQs: [String: PendingIQ] = [:]
     private var pendingIQToken: UInt64 = 0
     private var pendingStreamClose: PendingStreamClose?
-    private final class IDGenerator: Sendable {
-        private let counter = Atomic<UInt64>(0)
-
-        func next() -> String {
-            let value = counter.wrappingAdd(1, ordering: .relaxed).oldValue &+ 1
-            return "ducko-\(value)"
-        }
-    }
-
-    private let idGenerator = IDGenerator()
     private let tlsInfoLock = OSAllocatedUnfairLock<TLSInfo?>(initialState: nil)
+    let verifiedSCRAMMechanismLock = OSAllocatedUnfairLock<String?>(initialState: nil)
     private let connectedJIDLock = OSAllocatedUnfairLock<FullJID?>(initialState: nil)
-    private let featuresLock = OSAllocatedUnfairLock<Set<String>>(initialState: [])
-    private let serverFeaturesLock = OSAllocatedUnfairLock<XMLElement?>(initialState: nil)
+    private let registeredModulesLock = OSAllocatedUnfairLock<[any XMPPModule]>(initialState: [])
+    /// The server's post-auth stream features and its stream header's `xml:lang`.
+    private let serverStreamLock = OSAllocatedUnfairLock<(features: XMLElement?, lang: String?)>(initialState: (nil, nil))
     /// Gate the PEP-reacting DuckoCore services (OMEMO, Avatar, Bookmarks) await before issuing PEP
     /// retrieves/publishes, so the server has seen this resource's entity caps via initial presence first
     /// (XEP-0163 §3.3.2). Lock-guarded for `nonisolated` reads, mirroring `connectedJIDLock`.
@@ -99,6 +90,8 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     }
 
     private let requireTLS: Bool
+    /// Refuses a sign-in whose only usable mechanism is PLAIN, before the password goes out.
+    private let requiresSCRAM: Bool
     private let preferredResource: String?
     private let userAgent: SASL2UserAgent
 
@@ -107,6 +100,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         credentials: Credentials,
         transport: (any XMPPTransport)? = nil,
         requireTLS: Bool = true,
+        requiresSCRAM: Bool = false,
         preferredResource: String? = nil,
         userAgent: SASL2UserAgent = SASL2UserAgent()
     ) {
@@ -120,6 +114,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         self.credentials = credentials
         self.connection = XMPPConnection(transport: transport ?? makeDefaultXMPPTransport())
         self.requireTLS = requireTLS
+        self.requiresSCRAM = requiresSCRAM
         self.preferredResource = preferredResource
         self.userAgent = userAgent
     }
@@ -130,8 +125,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         let key = ObjectIdentifier(type(of: module))
         modules[key] = module
         module.setUp(makeModuleContext())
-        let allFeatures = Set(modules.values.flatMap(\.features))
-        featuresLock.withLock { $0 = allFeatures }
+        registeredModulesLock.withLock { [modules] in $0 = Array(modules.values) }
     }
 
     public func module<M: XMPPModule>(ofType type: M.Type) -> M? {
@@ -161,7 +155,13 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     // MARK: - ID Generation
 
     public nonisolated func generateID() -> String {
-        idGenerator.next()
+        Self.makeStanzaID()
+    }
+
+    /// A random stanza ID, unique across launches and the account's other clients, since peers match corrections,
+    /// retractions and replies by ID.
+    static func makeStanzaID() -> String {
+        hexString((0 ..< 16).map { _ in UInt8.random(in: .min ... .max) })
     }
 
     // MARK: - Connect
@@ -215,6 +215,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
         do {
             let resumed = try await performHandshake(reader: reader)
+            serverStreamLock.withLock { $0.lang = reader.streamLang }
             // Runs before the reader starts. Until then the reader holds back what the server sent after the
             // handshake, so no module sees a stanza of this session before it knows whether the session was resumed.
             for module in modules.values {
@@ -233,7 +234,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
                 await disconnect()
                 throw error
             }
-            serverFeaturesLock.withLock { $0 = nil }
+            serverStreamLock.withLock { $0 = (nil, nil) }
             state = .disconnected
             // Open the gate so any service that started awaiting after `.connected` (yielded mid-chain,
             // before a caps/presence failure could land) resolves instead of hanging on a dead client.
@@ -244,7 +245,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     }
 
     /// Module lifecycle after handshake. Resume: `handleResume()` in dict order. Fresh: SM `<enable>` → `.connected`
-    /// → roster → non-PEP modules → presence + caps (caps last) → PEP publisher, per RFC 6121 / XEP-0163 ordering
+    /// → roster → non-PEP modules → caps-bearing initial presence → PEP publisher, per RFC 6121 / XEP-0163 ordering
     /// invariants.
     private func runPostHandshakeModules(resumed: Bool) async throws {
         try checkActiveSession()
@@ -253,7 +254,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
                 try await module.handleResume()
                 try checkActiveSession()
             }
-            // Resume re-sends neither presence nor caps, so the gate is already satisfied for the resumed
+            // Resume does not re-send presence, so the gate is already satisfied for the resumed
             // session; resolve it so any PEP-reacting service awaiting it proceeds.
             settleInitialPresenceReadiness(open: true)
             return
@@ -262,12 +263,10 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         // RFC 6121: Roster must be fetched before initial presence is sent.
         let rosterKey = ObjectIdentifier(RosterModule.self)
         let presenceKey = ObjectIdentifier(PresenceModule.self)
-        let capsKey = ObjectIdentifier(CapsModule.self)
         let smKey = ObjectIdentifier(StreamManagementModule.self)
         // OMEMOModule is the only connect-time PEP *publisher* (device-list + bundle); it is sequenced after
-        // caps below. Every other module keeps its original pre-presence timing so non-PEP startup work — e.g.
-        // CarbonsModule enabling carbons on the SASL1 fallback path — still completes before the resource is
-        // advertised as available.
+        // presence below. Every other module runs before presence, so non-PEP startup work, such as CarbonsModule
+        // enabling carbons on the SASL1 fallback path, completes before the resource is advertised as available.
         let omemoKey = ObjectIdentifier(OMEMOModule.self)
 
         // Drive SM `<enable>` before any other handleConnect so the race
@@ -290,26 +289,18 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             try await rosterModule.handleConnect()
             try checkActiveSession()
         }
-        // Non-PEP modules retain their original pre-presence ordering.
+        // Non-PEP modules run before presence.
         for (key, module) in modules
-            where key != rosterKey && key != presenceKey && key != capsKey && key != smKey && key != omemoKey {
+            where key != rosterKey && key != presenceKey && key != smKey && key != omemoKey {
             try await module.handleConnect()
             try checkActiveSession()
         }
         // XEP-0163 §3.3.2: the server gates PEP `+notify` delivery on having seen this resource's entity caps
-        // via initial presence, so the caps-bearing presence (`CapsModule`) must reach the server BEFORE any
-        // PEP publisher (the `OMEMOModule` device-list/bundle publish below, and the PEP-reacting DuckoCore
-        // services that await the readiness signal). Send the plain presence (`PresenceModule`, avatar hash)
-        // then the caps presence — caps last so it is the more recent of the two initial presences. The
-        // load-bearing guarantee is "server sees caps before any PEP publish," not "caps is the literal latest
-        // stanza forever" (`AvatarService` re-broadcasts a capless presence post-gate; servers retain caps from
-        // the last caps-bearing presence).
+        // via initial presence, so the initial presence, which carries the caps, must reach the server BEFORE
+        // any PEP publisher (the `OMEMOModule` device-list/bundle publish below, and the PEP-reacting DuckoCore
+        // services that await the readiness signal).
         if let presenceModule = modules[presenceKey] {
             try await presenceModule.handleConnect()
-            try checkActiveSession()
-        }
-        if let capsModule = modules[capsKey] {
-            try await capsModule.handleConnect()
             try checkActiveSession()
         }
         // Caps is on the wire — release the gated PEP-reacting services, then run the PEP publisher module.
@@ -329,8 +320,8 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
     // MARK: - Initial Presence Readiness
 
-    /// Suspends until the initial available presence AND entity caps have been sent on a fresh connect, or
-    /// returns immediately on a resumed session (where neither is re-sent). The PEP-reacting services
+    /// Suspends until the caps-bearing initial available presence has been sent on a fresh connect, or
+    /// returns immediately on a resumed session (where it is not re-sent). The PEP-reacting services
     /// (OMEMO, Avatar, Bookmarks) await this before issuing PEP retrieves/publishes so the server has seen
     /// this resource's caps first (XEP-0163 §3.3.2). Also resolves on connection failure / `disconnect()`,
     /// so a waiting service never hangs when presence never goes out.
@@ -481,7 +472,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             throw authenticationFailure(.invalidState("Resumed a session that was not requested"))
         }
         let sessionFeatures = sm.sessionFeatures
-        serverFeaturesLock.withLock { $0 = sessionFeatures }
+        serverStreamLock.withLock { $0.features = sessionFeatures }
         try await adoptResumedStream(jid: jid, retransmitQueue: retransmitQueue)
         return true
     }
@@ -501,7 +492,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     /// authenticated stream's `<features>` on the same stream, with no new stream header.
     private func awaitSASL2PostAuthFeatures(reader: EventReader) async throws {
         let postAuthFeatures = try await reader.awaitFeaturesElement()
-        serverFeaturesLock.withLock { $0 = postAuthFeatures }
+        serverStreamLock.withLock { $0.features = postAuthFeatures }
     }
 
     /// Performs the legacy SASL1 + sequential bind flow.
@@ -514,7 +505,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         await connection.resetStream()
         try await openStream()
         let features3 = try await reader.awaitFeatures()
-        serverFeaturesLock.withLock { $0 = features3 }
+        serverStreamLock.withLock { $0.features = features3 }
 
         // Attempt SM resume (before bind)
         if try await attemptSMResume(features: features3, reader: reader) {
@@ -760,7 +751,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         do {
             authElement = try authenticator.begin(
                 features: features, authcid: credentials.username, password: credentials.password,
-                channelBindingData: cbData
+                channelBindingData: cbData, requiresSCRAM: requiresSCRAM
             )
         } catch {
             throw authenticationFailure(error)
@@ -773,6 +764,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             let element = try await reader.awaitStanza()
 
             let response = authenticator.receive(element)
+            recordVerifiedSCRAMMechanism(authenticator.verifiedSCRAMMechanism)
             switch response {
             case let .continueWith(reply):
                 try await connection.send(XMPPStreamWriter.stanza(reply))
@@ -811,7 +803,8 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
                 password: credentials.password,
                 inlinePayloads: inlinePayloads,
                 userAgent: userAgent,
-                channelBindingData: cbData
+                channelBindingData: cbData,
+                requiresSCRAM: requiresSCRAM
             )
         } catch {
             throw authenticationFailure(error)
@@ -824,6 +817,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             let element = try await reader.awaitStanza()
 
             let response = authenticator.receive(element)
+            recordVerifiedSCRAMMechanism(authenticator.verifiedSCRAMMechanism)
             switch response {
             case let .continueWith(reply):
                 try await connection.send(XMPPStreamWriter.stanza(reply))
@@ -840,6 +834,10 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     }
 
     private func authenticationFailure(_ error: SASLAuthError) -> XMPPClientError {
+        if error == .plainRefused {
+            eventContinuation.yield(.plainSignInRefused)
+            return .plainSignInRefused
+        }
         let message = error.displayText
         eventContinuation.yield(.authenticationFailed(message))
         return .authenticationFailed(message)
@@ -1111,7 +1109,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
         state = .disconnected
         connectedJIDLock.withLock { $0 = nil }
-        serverFeaturesLock.withLock { $0 = nil }
+        serverStreamLock.withLock { $0 = (nil, nil) }
         tlsInfoLock.withLock { $0 = nil }
 
         for (id, pending) in pendingIQs {
@@ -1148,21 +1146,28 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             emitEvent: { [eventContinuation] event in
                 eventContinuation.yield(event)
             },
-            generateID: { [idGenerator] in
-                idGenerator.next()
+            generateID: {
+                Self.makeStanzaID()
             },
             connectedJID: { [connectedJIDLock] in
                 connectedJIDLock.withLock { $0 }
             },
             domain: domain,
-            availableFeatures: { [featuresLock] in
-                featuresLock.withLock { $0 }
+            // The registry is reached through a weak client, since it holds the modules that hold this context.
+            availableFeatures: { [weak self] in
+                Set(self?.registeredModulesLock.withLock { $0 }.flatMap(\.features) ?? [])
             },
             sendElement: { [weak self] element in
                 try await self?.connection.send(XMPPStreamWriter.stanza(element))
             },
-            serverStreamFeatures: { [serverFeaturesLock] in
-                serverFeaturesLock.withLock { $0 }
+            serverStreamFeatures: { [serverStreamLock] in
+                serverStreamLock.withLock { $0.features }
+            },
+            serverStreamLang: { [serverStreamLock] in
+                serverStreamLock.withLock { $0.lang }
+            },
+            dispatchDecryptedMessage: { [weak self] message in
+                self?.registeredModulesLock.withLock { $0 }.forEach { $0.handleDecryptedMessage(message) }
             }
         )
     }

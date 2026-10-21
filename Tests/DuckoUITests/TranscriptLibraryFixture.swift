@@ -107,7 +107,7 @@ struct TranscriptLibraryFixture {
     /// Waits out the scheduled search and every load it or a setter started.
     func settle() async throws {
         await state.pendingSearch?.value
-        try await waitUntil { !state.isLoading }
+        try await eventually { !state.isLoading }
     }
 
     private static func date(day index: Int) -> Date {

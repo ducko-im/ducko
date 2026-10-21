@@ -161,10 +161,17 @@ public final class VCardModule: XMPPModule, Sendable {
         try await fetchVCardImpl(cacheKey: jid, to: .bare(jid), forceRefresh: forceRefresh)
     }
 
-    /// Fetches the user's own vCard (no `to` attribute per XEP-0054).
+    /// Fetches the user's own vCard (no `to` attribute per XEP-0054). A server that holds none may answer item-not-found
+    /// (XEP-0153 §4.1.3), which reads as an empty vCard.
     public func fetchOwnVCard(forceRefresh: Bool = false) async throws -> VCard? {
         guard let context = state.withLock({ $0.context }), let bareJID = context.connectedJID()?.bareJID else { return nil }
-        return try await fetchVCardImpl(cacheKey: bareJID, to: nil, forceRefresh: forceRefresh)
+        do {
+            return try await fetchVCardImpl(cacheKey: bareJID, to: nil, forceRefresh: forceRefresh)
+        } catch let stanzaError as XMPPStanzaError where stanzaError.condition == .itemNotFound {
+            let empty = VCard()
+            state.withLock { $0.cache[bareJID] = empty }
+            return empty
+        }
     }
 
     // MARK: - Shared Fetch
@@ -222,8 +229,9 @@ public final class VCardModule: XMPPModule, Sendable {
         var photoHash: String?
         if let photo = element.child(named: "PHOTO") {
             photoType = photo.childText(named: "TYPE")
+            // A BINVAL of only whitespace holds no picture, as an empty one does (XEP-0153 §4.4).
             if let binval = photo.childText(named: "BINVAL"),
-               let decoded = Base64.decode(binval) {
+               let decoded = Base64.decode(binval), !decoded.isEmpty {
                 photoData = decoded
                 photoHash = sha1Hex(decoded)
             }

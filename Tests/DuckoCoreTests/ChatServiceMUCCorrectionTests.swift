@@ -50,7 +50,7 @@ enum ChatServiceMUCCorrectionTests {
 
             let from = try #require(JID.parse("room@conference.example.com/alice"))
             await service.handleEvent(
-                .messageCorrected(originalID: "msg-original", newBody: "Corrected text", from: from),
+                .messageCorrected(originalID: "msg-original", newBody: "Corrected text", replyFallbackRange: nil, from: from, messageType: .groupchat),
                 accountID: testAccountID
             )
 
@@ -72,7 +72,7 @@ enum ChatServiceMUCCorrectionTests {
 
             let attacker = try #require(JID.parse("room@conference.example.com/bob"))
             await service.handleEvent(
-                .messageCorrected(originalID: "msg-original", newBody: "Hacked text", from: attacker),
+                .messageCorrected(originalID: "msg-original", newBody: "Hacked text", replyFallbackRange: nil, from: attacker, messageType: .groupchat),
                 accountID: testAccountID
             )
 
@@ -121,10 +121,10 @@ enum ChatServiceMUCCorrectionTests {
 
             let other = try #require(JID.parse("room@conference.example.com/bob"))
             let own = try #require(JID.parse("room@conference.example.com/me"))
-            await service.handleEvent(.messageCorrected(originalID: "msg-own", newBody: "Hacked", from: other), accountID: accountID)
-            await service.handleEvent(.messageRetracted(originalID: "msg-own", from: other), accountID: accountID)
+            await service.handleEvent(.messageCorrected(originalID: "msg-own", newBody: "Hacked", replyFallbackRange: nil, from: other, messageType: .groupchat), accountID: accountID)
+            await service.handleEvent(.messageRetracted(originalID: "msg-own", from: other, messageType: .groupchat), accountID: accountID)
             // Armed: the user's own correction goes through.
-            await service.handleEvent(.messageCorrected(originalID: "msg-own", newBody: "Fixed", from: own), accountID: accountID)
+            await service.handleEvent(.messageCorrected(originalID: "msg-own", newBody: "Fixed", replyFallbackRange: nil, from: own, messageType: .groupchat), accountID: accountID)
 
             let amendments = await transcripts.amendments.map(\.amendment)
             #expect(amendments.map(\.action) == [.edit])
@@ -144,7 +144,7 @@ enum ChatServiceMUCCorrectionTests {
 
             let bareFrom = JID.bare(roomJID)
             await service.handleEvent(
-                .messageCorrected(originalID: "msg-original", newBody: "Spoofed text", from: bareFrom),
+                .messageCorrected(originalID: "msg-original", newBody: "Spoofed text", replyFallbackRange: nil, from: bareFrom, messageType: .groupchat),
                 accountID: testAccountID
             )
 

@@ -380,7 +380,7 @@ public final class FileTransferService {
             }
         case .jingleChecksumReceived:
             break
-        case .streamResumed, .authenticationFailed,
+        case .streamResumed, .authenticationFailed, .plainSignInRefused,
              .messageReceived, .presenceReceived, .iqReceived,
              .rosterUpdated,
              .presenceSubscriptionRequest,

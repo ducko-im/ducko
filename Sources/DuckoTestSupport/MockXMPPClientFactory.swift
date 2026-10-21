@@ -36,6 +36,7 @@ public struct MockXMPPClientFactory: XMPPClientFactory {
         )
         builder.withTransport(transportForAccount(account))
         builder.withRequireTLS(false)
+        builder.withRequiresSCRAM(account.requiresSCRAM)
         let sm = StreamManagementModule(previousState: resuming?.streamManagement)
         builder.withModule(sm)
         builder.withInterceptor(sm)

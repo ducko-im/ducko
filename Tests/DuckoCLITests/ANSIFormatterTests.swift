@@ -361,10 +361,11 @@ struct ANSIFormatterTests {
             formType: .legacy,
             instructions: "Register here",
             isRegistered: false,
-            hasUsername: true,
-            hasPassword: true,
-            hasEmail: false,
-            dataFormFields: []
+            legacyFields: [
+                RegistrationModule.LegacyField(name: "username"),
+                RegistrationModule.LegacyField(name: "password", value: "secret"),
+                RegistrationModule.LegacyField(name: "nick", value: "jules")
+            ]
         ))
         let output = formatter.formatRegistrationForm(form)
         #expect(output.contains("\u{001B}[1m")) // bold
@@ -372,6 +373,10 @@ struct ANSIFormatterTests {
         #expect(output.contains("Not registered"))
         #expect(output.contains("Username"))
         #expect(output.contains("Password"))
+        #expect(output.contains("********"))
+        #expect(!output.contains("secret"))
+        #expect(output.contains("Nickname"))
+        #expect(output.contains("jules"))
         #expect(!output.contains("Email"))
     }
 
@@ -380,12 +385,9 @@ struct ANSIFormatterTests {
             formType: .dataForm,
             instructions: nil,
             isRegistered: true,
-            hasUsername: false,
-            hasPassword: false,
-            hasEmail: false,
-            dataFormFields: [
+            dataForm: DataForm(fields: [
                 DataFormField(variable: "nick", type: "text-single", label: "Nickname", values: ["bob"])
-            ]
+            ])
         ))
         let output = formatter.formatRegistrationForm(form)
         #expect(output.contains("\u{001B}[36m")) // cyan for field labels

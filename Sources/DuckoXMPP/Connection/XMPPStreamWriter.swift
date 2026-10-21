@@ -1,11 +1,14 @@
 /// Serializes XMPP stream-level XML to UTF-8 bytes.
 enum XMPPStreamWriter {
+    /// The `xml:lang` of the streams this client opens.
+    static let lang = "en"
+
     /// Generates the XML declaration and `<stream:stream>` opening tag.
     static func streamOpening(
         to domain: String,
         from jid: String? = nil,
         version: String = "1.0",
-        xmlLang: String = "en"
+        xmlLang: String = lang
     ) -> [UInt8] {
         var xml = "<?xml version='1.0'?>"
         xml += "<stream:stream"

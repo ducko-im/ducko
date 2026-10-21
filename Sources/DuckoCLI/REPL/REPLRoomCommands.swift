@@ -172,16 +172,11 @@ func handleConfigREPLCommand(_ arguments: String, context: REPLContext, currentR
     switch arguments {
     case "":
         do {
-            let fields = try await context.environment.chatService.getRoomConfig(jidString: roomJID, accountID: context.accountID)
-            let visible = fields.filter(\.isUserEditable)
-            if visible.isEmpty {
-                print("No configuration fields.")
+            let form = try await context.environment.chatService.getRoomConfig(jidString: roomJID, accountID: context.accountID)
+            if form.fields.contains(where: \.isDisplayed) {
+                print(context.formatter.formatDataForm(form))
             } else {
-                for field in visible {
-                    let label = field.label ?? field.variable
-                    let value = field.values.joined(separator: ", ")
-                    print("  \(label): \(value)")
-                }
+                print("No configuration fields.")
             }
         } catch {
             print(context.formatter.formatError(error))
@@ -205,10 +200,12 @@ func handleModerateREPLCommand(_ arguments: String, context: REPLContext, curren
         return
     }
     do {
-        let messages = try await fetchHistory(
-            jid: bareJID, before: nil, limit: 20,
-            environment: context.environment, accountID: context.accountID
-        )
+        try await context.environment.chatService.loadConversations(for: context.accountID)
+        let conversations = await MainActor.run { context.environment.chatService.openConversations }
+        guard let room = conversations.first(where: { $0.jid == bareJID && $0.accountID == context.accountID && $0.type == .groupchat }) else {
+            throw CLIError.noConversation(roomJID)
+        }
+        let messages = try await context.environment.chatService.fetchMessageHistory(for: room.id, before: nil, limit: 20)
         guard let target = messages.last(where: { !$0.isRetracted && !$0.isOutgoing && $0.serverID != nil }),
               let serverID = target.serverID
         else {
@@ -216,7 +213,7 @@ func handleModerateREPLCommand(_ arguments: String, context: REPLContext, curren
             return
         }
         try await context.environment.chatService.moderateMessage(
-            serverID: serverID, in: bareJID,
+            serverID: serverID, in: room,
             reason: arguments.isEmpty ? nil : arguments, accountID: context.accountID
         )
         print("Moderated message (server-id: \(serverID)).")
@@ -248,9 +245,10 @@ func handlePMREPLCommand(_ arguments: String, context: REPLContext, currentRoom:
             print(usage)
             return
         }
-        try await context.environment.chatService.sendMUCPrivateMessage(
-            roomJIDString: roomJID, nickname: parsed.nickname, body: body, accountID: context.accountID
+        let privateChat = try await context.environment.chatService.openMUCPMConversation(
+            roomJIDString: roomJID, nickname: parsed.nickname, accountID: context.accountID
         )
+        try await context.environment.chatService.sendMessage(body, in: privateChat, accountID: context.accountID)
         print("PM to \(parsed.nickname) sent.")
     } catch {
         print(context.formatter.formatError(error))

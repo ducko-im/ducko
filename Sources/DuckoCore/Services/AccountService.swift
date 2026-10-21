@@ -8,6 +8,8 @@ public final class AccountService {
     public private(set) var accounts: [Account] = []
     public private(set) var connectionStates: [UUID: ConnectionState] = [:]
     public private(set) var certificateWarnings: [UUID: CertificateWarning] = [:]
+    /// Published on every connect attempt refused because the server offered only PLAIN after a SCRAM sign-in.
+    public internal(set) var signInSecurityWarnings: [UUID: SignInSecurityWarning] = [:]
 
     public struct CertificateWarning: Sendable {
         public let accountJID: String
@@ -15,9 +17,14 @@ public final class AccountService {
         public let newFingerprint: String
     }
 
-    private let store: any PersistenceStore
+    let store: any PersistenceStore
     private let credentialStore: any CredentialStore
     private let clientFactory: any XMPPClientFactory
+    /// Opens the unauthenticated connection a registration goes out on, to the server's address or, given one, `host`.
+    var openRegistrationSession: @Sendable (_ domain: String, _ host: String?, _ port: UInt16) async throws -> RegistrationSession = {
+        try await RegistrationSession.open(domain: $0, host: $1, port: $2)
+    }
+
     private struct AccountConnectionResources {
         var attemptID = UUID()
         var client: XMPPClient?
@@ -38,6 +45,8 @@ public final class AccountService {
     var onEvent: ((XMPPEvent, UUID) -> Void)?
     var onRosterSessionStarted: ((UUID, UUID, XMPPClient) -> Void)?
     var onRosterSessionEnded: ((UUID, UUID) -> Void)?
+    /// Awaited on every connect and reconnect before the client is built, so before the session can deliver anything.
+    var onSessionStarting: (@MainActor (UUID) async -> Void)?
     /// Fired at the start of a user-initiated `disconnect(accountID:)`, before the per-account event task is
     /// cancelled. `AppEnvironment` first cancels that account's dispatch tasks, then purges its feature caches
     /// synchronously, so stale events cannot repopulate cleared state. Not fired on
@@ -130,6 +139,7 @@ public final class AccountService {
         // teardown suspends. Stream-loss reconnect uses handleDisconnect and preserves its distinct policy.
         onRequestedDisconnect?(accountID)
         certificateWarnings[accountID] = nil
+        signInSecurityWarnings[accountID] = nil
         let detached = detachConnectionResources(for: accountID, terminal: true)
         // Published before the teardown suspends, so a status pick made meanwhile sees the account as disconnected.
         connectionStates[accountID] = .disconnected
@@ -285,7 +295,7 @@ public final class AccountService {
             let formType = form.first { $0.variable == "FORM_TYPE" }?.values.first
             guard formType == XMPPNamespaces.serverInfo else { continue }
             for field in form {
-                guard let type = ContactAddressType(rawValue: field.variable) else { continue }
+                guard let variable = field.variable, let type = ContactAddressType(rawValue: variable) else { continue }
                 for value in field.values {
                     addresses.append(ContactAddress(type: type, address: value))
                 }
@@ -338,7 +348,10 @@ public final class AccountService {
         return false
     }
 
-    /// Registers a new account on a server via XEP-0077 pre-auth registration.
+    /// Registers a new account on a server via XEP-0077 pre-auth registration. The server's form is fetched first, on
+    /// the connection the registration goes out on. When it asks for nothing beyond the username, password and email,
+    /// and each was typed, they are submitted and the account is created and signed in to. Otherwise the form comes
+    /// back to be completed.
     public func registerAccount(
         domain: String,
         username: String,
@@ -347,16 +360,28 @@ public final class AccountService {
         host: String? = nil,
         port: UInt16 = 5222,
         afterConnect: ((UUID) async throws -> Void)? = nil
-    ) async throws -> UUID {
-        try await XMPPRegistrationClient.register(
-            domain: domain,
-            username: username,
-            password: password,
-            email: email,
-            host: host,
-            port: port
-        )
-        return try await createAndConnect(jidString: "\(username)@\(domain)", password: password, afterConnect: afterConnect)
+    ) async throws -> RegistrationOutcome {
+        let session = try await openRegistrationSession(domain, host, port)
+        let form: RegistrationFormInfo
+        do {
+            form = try await RegistrationFormInfo(from: session.fetchForm()).filling(username: username, password: password, email: email)
+        } catch {
+            await session.close()
+            throw error
+        }
+        let pending = PendingRegistration(
+            form: form, session: session, typedUsername: username, typedPassword: password
+        ) { username, password in
+            try await self.createAndConnect(
+                jidString: "\(username)@\(domain)",
+                password: password,
+                host: host,
+                port: host == nil ? nil : Int(port),
+                afterConnect: afterConnect
+            )
+        }
+        guard form.asksOnlyForAccountDetails else { return .needsMoreFields(pending) }
+        return try await .registered(pending.submit(form))
     }
 
     /// Changes the password for a connected account via XEP-0077.
@@ -388,20 +413,10 @@ public final class AccountService {
         return RegistrationFormInfo(from: form)
     }
 
-    /// Submits a legacy registration form to a connected server or component (XEP-0077).
-    public func submitRegistration(
-        accountID: UUID, username: String, password: String, email: String? = nil, to jid: String? = nil
-    ) async throws {
+    /// Submits a completed registration form to a connected server or component (XEP-0077).
+    public func submitRegistration(accountID: UUID, form: RegistrationFormInfo, to jid: String? = nil) async throws {
         let regModule = try await registrationModule(for: accountID)
-        try await regModule.submitLegacy(username: username, password: password, email: email, to: parseOptionalJID(jid))
-    }
-
-    /// Submits a data form registration to a connected server or component (XEP-0077).
-    public func submitRegistrationDataForm(
-        accountID: UUID, fields: [RoomConfigField], to jid: String? = nil
-    ) async throws {
-        let regModule = try await registrationModule(for: accountID)
-        try await regModule.submitDataForm(fields.map { $0.toDataFormField() }, to: parseOptionalJID(jid))
+        try await regModule.submit(form.submission, to: parseOptionalJID(jid))
     }
 
     // MARK: - Wiring
@@ -516,6 +531,7 @@ public final class AccountService {
             throw error
         }
         guard connectionResources[accountID]?.attemptID == attemptID else { throw CancellationError() }
+        await onSessionStarting?(accountID)
 
         let resuming = connectionResources[accountID]?.resumeState
         connectionResources[accountID]?.resumeState = nil
@@ -533,7 +549,9 @@ public final class AccountService {
         startEventConsumption(for: accountID, client: client)
 
         do {
-            try await connect(client, account: account, resumeState: resuming?.streamManagement)
+            try await signIn(with: client, account: account) {
+                try await connect(client, account: account, resumeState: resuming?.streamManagement)
+            }
         } catch {
             onRosterSessionEnded?(accountID, attemptID)
             guard connectionResources[accountID]?.attemptID == attemptID else { throw error }
@@ -613,6 +631,9 @@ public final class AccountService {
             handleDisconnect(reason, accountID: accountID)
         case let .authenticationFailed(message):
             connectionStates[accountID] = .error(message)
+        case .plainSignInRefused:
+            connectionStates[accountID] = .error(XMPPClientError.plainSignInRefused.localizedDescription)
+            publishSignInSecurityWarning(accountID: accountID)
         case .messageReceived, .presenceReceived, .iqReceived,
              .rosterUpdated,
              .presenceUpdated, .presenceSubscriptionRequest,
@@ -675,7 +696,7 @@ public final class AccountService {
                 connectionStates[accountID] = .error("The server redirected too many times")
             } else {
                 connectionResources[accountID]?.redirectCount = count
-                redirectToHost(host: host, port: port, accountID: accountID)
+                redirectToHost(host: host, port: port, accountID: accountID, verifiedSCRAMMechanism: detached?.client?.verifiedSCRAMMechanism)
             }
         }
     }
@@ -718,7 +739,8 @@ public final class AccountService {
         }
     }
 
-    private func redirectToHost(host: String, port: UInt16?, accountID: UUID) {
+    /// `verifiedSCRAMMechanism` is the one the redirected client verified, whose sign-in may not have recorded it yet.
+    private func redirectToHost(host: String, port: UInt16?, accountID: UUID, verifiedSCRAMMechanism: String?) {
         let attemptID = UUID()
         connectionResources[accountID]?.attemptID = attemptID
         connectionStates[accountID] = .connecting
@@ -727,9 +749,14 @@ public final class AccountService {
             do {
                 let stored = try await store.fetchAccounts()
                 guard !Task.isCancelled, connectionResources[accountID]?.attemptID == attemptID else { return }
-                guard let account = stored.first(where: { $0.id == accountID }) else {
+                guard var account = stored.first(where: { $0.id == accountID }) else {
                     throw AccountServiceError.accountNotFound(accountID)
                 }
+                if let verifiedSCRAMMechanism {
+                    await requireSCRAM(for: account, verifiedWith: verifiedSCRAMMechanism)
+                    account.requiresSCRAM = true
+                }
+                await onSessionStarting?(accountID)
                 // Force TLS for redirects to prevent plaintext credential exposure via see-other-host injection.
                 let (client, sm) = await buildClient(account: account, resuming: nil, requireTLSOverride: true)
                 let muc = await client.module(ofType: MUCModule.self)
@@ -742,7 +769,9 @@ public final class AccountService {
                 connectionResources[accountID]?.muc = muc
                 onRosterSessionStarted?(accountID, attemptID, client)
                 startEventConsumption(for: accountID, client: client)
-                try await client.connect(host: host, port: port ?? 5222)
+                try await signIn(with: client, account: account) {
+                    try await client.connect(host: host, port: port ?? 5222)
+                }
             } catch {
                 onRosterSessionEnded?(accountID, attemptID)
                 guard !Task.isCancelled, connectionResources[accountID]?.attemptID == attemptID else { return }

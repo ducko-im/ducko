@@ -18,6 +18,9 @@ struct REPLCommand {
         case searchAll = "/searchall"
         case approve = "/approve"
         case deny = "/deny"
+        case block = "/block"
+        case unblock = "/unblock"
+        case blocklist = "/blocklist"
         case directedPresence = "/directed-presence"
         case unregisterAccount = "/unregister-account"
         case checkRegistration = "/check-registration"
@@ -57,13 +60,16 @@ struct REPLCommand {
             case .remove: ["  /remove <jid>            Remove contact from roster"]
             case .history: ["  /history <jid> [limit]   Show message history"]
             case .profile: ["  /profile                 View own vCard profile"]
-            case .reply: ["  /reply <jid> <message>   Reply to last incoming message"]
-            case .retract: ["  /retract <jid>           Retract last sent message"]
-            case .edit: ["  /edit <jid> <new-body>   Edit last sent message"]
+            case .reply: ["  /reply <jid> <message>   Reply to last incoming message; room/nick for a PM"]
+            case .retract: ["  /retract <jid>           Retract last sent message; room/nick for a PM"]
+            case .edit: ["  /edit <jid> <new-body>   Edit last sent message; room/nick for a PM"]
             case .search: ["  /search <jid> <query>    Search message history"]
             case .searchAll: ["  /searchall <query>       Search all conversations"]
             case .approve: ["  /approve <jid>           Approve subscription request"]
             case .deny: ["  /deny <jid>              Deny subscription request"]
+            case .block: ["  /block <jid>             Block a JID; a full JID blocks one device"]
+            case .unblock: ["  /unblock <jid>           Unblock a JID as the block list shows it"]
+            case .blocklist: ["  /blocklist               Show blocked addresses"]
             case .directedPresence: ["  /directed-presence <jid> Send directed presence to a JID"]
             case .unregisterAccount: ["  /unregister-account      Unregister account from server"]
             case .checkRegistration: ["  /check-registration [jid]  Show server registration form"]
@@ -97,8 +103,8 @@ struct REPLCommand {
 
         fileprivate func accepts(hasArguments: Bool) -> Bool {
             switch self {
-            case .send, .add, .remove, .reply, .retract, .edit, .search, .searchAll, .approve, .deny, .directedPresence, .encrypt, .pref: hasArguments
-            case .roster, .who, .profile, .unregisterAccount, .transfers, .connectionInfo, .help, .quit: !hasArguments
+            case .send, .add, .remove, .reply, .retract, .edit, .search, .searchAll, .approve, .deny, .block, .unblock, .directedPresence, .encrypt, .pref: hasArguments
+            case .roster, .who, .profile, .blocklist, .unregisterAccount, .transfers, .connectionInfo, .help, .quit: !hasArguments
             case .status, .history, .checkRegistration, .submitRegistration, .join, .leave, .members, .topic, .nick, .destroy, .voice, .kick, .pm, .affiliations, .config, .moderate, .sendfile, .senddirect, .accept, .decline, .rooms, .avatar: true
             }
         }

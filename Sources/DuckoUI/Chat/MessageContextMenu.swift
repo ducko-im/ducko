@@ -18,8 +18,11 @@ struct MessageContextMenu: View {
                 copyToPasteboard(message.body)
             }
 
-            Button("Reply") {
-                windowState.startReply(to: message)
+            // A room message is replied to by the stanza-id the room assigns once it echoes the message.
+            if message.replyReference != nil {
+                Button("Reply") {
+                    windowState.startReply(to: message)
+                }
             }
         }
 
@@ -37,9 +40,12 @@ struct MessageContextMenu: View {
                 }
             }
 
-            Button("Retract") {
-                Task {
-                    await windowState.retractMessage(message)
+            // A room message is retracted by the stanza-id the room assigns once it echoes the message.
+            if !windowState.isGroupchat || message.serverID != nil {
+                Button("Retract") {
+                    Task {
+                        await windowState.retractMessage(message)
+                    }
                 }
             }
         }

@@ -26,9 +26,9 @@ private func makeChatService(store: MockPersistenceStore, transcripts: MockTrans
 
 enum ChatServiceSendErrorTests {
     struct SendMessageRollback {
-        @Test
+        @Test(arguments: [false, true])
         @MainActor
-        func `sendMessage failure appends retract amendment and throws`() async throws {
+        func `sendMessage failure appends retract amendment and throws`(isReply: Bool) async throws {
             let store = makeStore()
             let transcripts = makeTranscripts()
             let credentials = MockCredentialStore()
@@ -49,11 +49,15 @@ enum ChatServiceSendErrorTests {
 
             let conversation = try await chatService.openConversation(for: contactJID, accountID: accountID)
             await chatService.selectConversation(conversation.id, accountID: accountID)
+            let quoted = ChatMessage(
+                id: UUID(), conversationID: conversation.id, stanzaID: "q1", fromJID: contactJID.description, body: "Lunch?",
+                timestamp: Date(), isOutgoing: false, isDelivered: true, isEdited: false, type: "chat"
+            )
 
             await transport.simulateSendFailure(TestError())
 
             await #expect(throws: TestError.self) {
-                try await chatService.sendMessage(to: contactJID, body: "hi", accountID: accountID)
+                try await chatService.sendMessage("hi", in: conversation, replyingTo: isReply ? quoted : nil, accountID: accountID)
             }
 
             let persistedMessages = await transcripts.messages
@@ -252,7 +256,7 @@ enum ChatServiceSendErrorTests {
     struct MUCPrivateMessageRollback {
         @Test
         @MainActor
-        func `sendMUCPrivateMessage failure appends retract amendment and throws`() async throws {
+        func `sendMessage failure in a private chat appends retract amendment and throws`() async throws {
             let store = makeStore()
             let transcripts = makeTranscripts()
             let transport = MockTransport()
@@ -277,9 +281,7 @@ enum ChatServiceSendErrorTests {
             await transport.simulateSendFailure(TestError())
 
             await #expect(throws: TestError.self) {
-                try await chatService.sendMUCPrivateMessage(
-                    roomJIDString: roomJID.description, nickname: "bob", body: "pm", accountID: accountID
-                )
+                try await chatService.sendMessage("pm", in: conversation, accountID: accountID)
             }
 
             let persistedMessages = await transcripts.messages

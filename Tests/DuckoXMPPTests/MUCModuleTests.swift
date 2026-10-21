@@ -1475,7 +1475,7 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             try await module.joinRoom(testRoomJID, nickname: "me")
             await mock.clearSentBytes()
 
-            let fields = try await withIQOperation(client: client, operation: {
+            let form = try await withIQOperation(client: client, operation: {
                 try await module.getRoomConfig(testRoomJID)
             }, respond: {
                 let request = try await awaitOutgoingIQ(on: mock, type: .get, namespace: "http://jabber.org/protocol/muc#owner") {
@@ -1490,6 +1490,8 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
                 <iq type='result' id='\(iqID)' from='room@conference.example.com'>\
                 <query xmlns='http://jabber.org/protocol/muc#owner'>\
                 <x xmlns='jabber:x:data' type='form'>\
+                <title>Configuration for room</title>\
+                <instructions>Complete this form to modify the configuration of your room.</instructions>\
                 <field var='FORM_TYPE' type='hidden'>\
                 <value>http://jabber.org/protocol/muc#roomconfig</value>\
                 </field>\
@@ -1501,8 +1503,10 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
                 </iq>
                 """)
             })
-            #expect(fields.count == 2)
-            let roomName = fields.first { $0.variable == "muc#roomconfig_roomname" }
+            #expect(form.title == "Configuration for room")
+            #expect(form.instructions == ["Complete this form to modify the configuration of your room."])
+            #expect(form.fields.count == 2)
+            let roomName = form.fields.first { $0.variable == "muc#roomconfig_roomname" }
             #expect(roomName?.values == ["Test Room"])
 
             await disconnectFast(client)

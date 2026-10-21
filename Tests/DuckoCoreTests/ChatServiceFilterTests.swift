@@ -8,11 +8,10 @@ private let contactJID = BareJID(localPart: "contact", domainPart: "example.com"
 private let roomJID = BareJID(localPart: "room", domainPart: "conference.example.com")!
 private let smiley = "\u{1F60A}"
 
-/// Connected `ChatService` whose filter pipeline is registered with real filters, so the outgoing
-/// message/correction paths can be asserted to run bodies through the pipeline (unlike the empty-pipeline
-/// `makeChatService` the other suites use).
+/// A connected `ChatService` whose filter pipeline holds `filters`, so what its sends put on `transport` and in the
+/// transcript can be read back.
 @MainActor
-private struct FilterHarness {
+struct FilterHarness {
     let store: MockPersistenceStore
     let transcripts: MockTranscriptStore
     let transport: MockTransport
@@ -22,7 +21,7 @@ private struct FilterHarness {
 }
 
 @MainActor
-private func makeFilterHarness(
+func makeFilterHarness(
     modules: [any XMPPModule], filters: [any MessageFilter]
 ) async throws -> FilterHarness {
     let store = MockPersistenceStore()
@@ -52,7 +51,7 @@ private func makeFilterHarness(
 }
 
 @MainActor
-private func seedPlaintextRoom(_ harness: FilterHarness) async throws -> Conversation {
+func seedPlaintextRoom(_ harness: FilterHarness) async throws -> Conversation {
     let conversation = Conversation(
         id: UUID(), accountID: harness.accountID, jid: roomJID, type: .groupchat,
         isPinned: false, isMuted: false, unreadCount: 0,
@@ -63,7 +62,7 @@ private func seedPlaintextRoom(_ harness: FilterHarness) async throws -> Convers
 }
 
 @MainActor
-private func seedPlaintextChat(_ harness: FilterHarness) async throws -> Conversation {
+func seedPlaintextChat(_ harness: FilterHarness) async throws -> Conversation {
     let conversation = Conversation(
         id: UUID(), accountID: harness.accountID, jid: contactJID, type: .chat,
         isPinned: false, isMuted: false, unreadCount: 0,
@@ -110,9 +109,7 @@ enum ChatServiceFilterTests {
             )
             await harness.transcripts.addMessage(original)
 
-            try await harness.chatService.sendGroupCorrection(
-                original: original, in: roomJID, newBody: "*hi* :)", accountID: harness.accountID
-            )
+            try await harness.chatService.sendCorrection(of: original, newBody: "*hi* :)", in: conversation, accountID: harness.accountID)
 
             let amendment = try #require(await harness.transcripts.amendments.last)
             #expect(amendment.amendment.action == .edit)
@@ -137,9 +134,7 @@ enum ChatServiceFilterTests {
             )
             await harness.transcripts.addMessage(original)
 
-            try await harness.chatService.sendCorrection(
-                original: original, to: contactJID, newBody: "*hi* :)", accountID: harness.accountID
-            )
+            try await harness.chatService.sendCorrection(of: original, newBody: "*hi* :)", in: conversation, accountID: harness.accountID)
 
             let amendment = try #require(await harness.transcripts.amendments.last)
             #expect(amendment.amendment.action == .edit)
@@ -156,7 +151,7 @@ enum ChatServiceFilterTests {
         @MainActor
         func `the room's echo of our own correction is filtered, so its amendment keeps htmlBody`() async throws {
             let harness = try await makeFilterHarness(modules: [MUCModule()], filters: [StylingFilter(), EmojiFilter()])
-            // The room's stored nickname "alice" tells `verifySender` the echo is our own.
+            // The room's stored nickname "alice" tells `isOwnMessage` the echo is our own.
             let conversation = try await seedPlaintextRoom(harness)
 
             let original = ChatMessage(
@@ -166,13 +161,11 @@ enum ChatServiceFilterTests {
             )
             await harness.transcripts.addMessage(original)
 
-            try await harness.chatService.sendGroupCorrection(
-                original: original, in: roomJID, newBody: "*hi* :)", accountID: harness.accountID
-            )
+            try await harness.chatService.sendCorrection(of: original, newBody: "*hi* :)", in: conversation, accountID: harness.accountID)
             // The room echoes back the body we sent (already emoji-transformed on the wire).
             let echoFrom = try #require(JID.parse("\(roomJID.description)/alice"))
             await harness.chatService.handleEvent(
-                .messageCorrected(originalID: "orig-1", newBody: "*hi* \(smiley)", from: echoFrom),
+                .messageCorrected(originalID: "orig-1", newBody: "*hi* \(smiley)", replyFallbackRange: nil, from: echoFrom, messageType: .groupchat),
                 accountID: harness.accountID
             )
 
@@ -202,7 +195,7 @@ enum ChatServiceFilterTests {
 
             let peerFrom = try #require(JID.parse("\(roomJID.description)/bob"))
             await harness.chatService.handleEvent(
-                .messageCorrected(originalID: "peer-1", newBody: "*hi*", from: peerFrom),
+                .messageCorrected(originalID: "peer-1", newBody: "*hi*", replyFallbackRange: nil, from: peerFrom, messageType: .groupchat),
                 accountID: harness.accountID
             )
 
@@ -211,6 +204,35 @@ enum ChatServiceFilterTests {
             #expect(amendment.amendment.body == "*hi*")
             let html = try #require(amendment.amendment.htmlBody)
             #expect(html.contains("<strong>hi</strong>"))
+
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+    }
+
+    struct SentReplyCarbon {
+        @Test
+        @MainActor
+        func `a sent carbon of a reply keeps the emoticon in its quote, so the quote's range still fits its body`() async throws {
+            let harness = try await makeFilterHarness(modules: [], filters: [StylingFilter(), EmojiFilter()])
+            _ = try await seedPlaintextChat(harness)
+            let reply = MessageReply(to: "c1", by: .bare(contactJID), quoting: ":) earlier")
+            var stanza = XMPPMessage(type: .chat, to: .bare(contactJID), id: "sent-1")
+            stanza.from = JID.parse("\(testJIDString)/phone")
+            stanza.body = reply.body(replying: "ok :)")
+            for element in reply.elements {
+                stanza.element.addChild(element)
+            }
+
+            await harness.chatService.handleEvent(
+                .messageCarbonSent(ForwardedMessage(message: stanza, timestamp: nil)), accountID: harness.accountID
+            )
+
+            let stored = try #require(await harness.transcripts.messages.first)
+            #expect(stored.body == "> :) earlier\nok :)")
+            #expect(stored.replyFallbackRange == 0 ..< 13)
+            // The display-only HTML covers only the reply's own text, which has no styling.
+            #expect(stored.htmlBody == nil)
+            #expect(stored.hidingReplyFallback().body == "ok :)")
 
             await harness.accountService.disconnect(accountID: harness.accountID)
         }

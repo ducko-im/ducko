@@ -9,7 +9,7 @@ public final class ChatModule: XMPPModule, Sendable {
     private let state: OSAllocatedUnfairLock<ModuleContext?>
 
     public var features: [String] {
-        [XMPPNamespaces.messageRetract, XMPPNamespaces.messageCorrect, XMPPNamespaces.oob]
+        [XMPPNamespaces.messageRetract, XMPPNamespaces.messageCorrect, XMPPNamespaces.messageReply, XMPPNamespaces.oob]
     }
 
     public init() {
@@ -21,27 +21,29 @@ public final class ChatModule: XMPPModule, Sendable {
     }
 
     public func handleMessage(_ message: XMPPMessage) throws {
-        guard message.messageType == .chat || message.messageType == .normal || message.messageType == .error, let from = message.from else { return }
+        guard let messageType = message.messageType, messageType == .chat || messageType == .normal || messageType == .error,
+              let from = message.from else { return }
 
         let context = state.withLock { $0 }
 
         // Error messages
-        if message.messageType == .error {
+        if messageType == .error {
             let stanzaError = XMPPStanzaError.parse(from: message.element.child(named: "error"))
                 ?? XMPPStanzaError(errorType: .cancel, condition: .undefinedCondition)
             context?.emitEvent(.messageError(messageID: message.id, from: from, error: stanzaError))
             return
         }
 
-        // Encrypted corrections/retractions are classified by OMEMOModule after decryption
-        if message.element.child(named: "encrypted", namespace: XMPPNamespaces.omemo) != nil {
+        // An encrypted message's corrections and retractions are only read from inside its encryption, by OMEMOModule
+        // after decryption. One encrypted with another method shows only its notice (XEP-0380).
+        if message.isEncrypted {
             return
         }
 
         // XEP-0424: Message retraction
         if let retract = message.element.child(named: "retract", namespace: XMPPNamespaces.messageRetract),
            let originalID = retract.attribute("id") {
-            context?.emitEvent(.messageRetracted(originalID: originalID, from: from))
+            context?.emitEvent(.messageRetracted(originalID: originalID, from: from, messageType: messageType))
             return
         }
 
@@ -49,7 +51,9 @@ public final class ChatModule: XMPPModule, Sendable {
         if let replace = message.element.child(named: "replace", namespace: XMPPNamespaces.messageCorrect),
            let originalID = replace.attribute("id"),
            let newBody = message.body {
-            context?.emitEvent(.messageCorrected(originalID: originalID, newBody: newBody, from: from))
+            context?.emitEvent(.messageCorrected(
+                originalID: originalID, newBody: newBody, replyFallbackRange: message.replyFallbackRange(in: newBody), from: from, messageType: messageType
+            ))
             return
         }
 
@@ -59,10 +63,10 @@ public final class ChatModule: XMPPModule, Sendable {
 
     // MARK: - Sending
 
-    /// Sends a chat message to the given JID.
+    /// Sends a chat message to the given JID. An encrypted message carries no body.
     public func sendMessage(
         to recipient: JID,
-        body: String,
+        body: String?,
         id: String? = nil,
         requestReceipt: Bool = false,
         markable: Bool = false,
@@ -71,7 +75,7 @@ public final class ChatModule: XMPPModule, Sendable {
     ) async throws {
         guard let context = state.withLock({ $0 }) else { return }
         let stanzaID = id ?? context.generateID()
-        var message = XMPPMessage(type: .chat, to: recipient, id: stanzaID)
+        var message = XMPPMessage(type: .chat, to: recipient, originID: stanzaID)
         message.body = body
         if requestReceipt {
             let request = XMLElement(name: "request", namespace: XMPPNamespaces.receipts)
@@ -91,72 +95,43 @@ public final class ChatModule: XMPPModule, Sendable {
         try await context.sendStanza(message)
     }
 
-    /// Sends a message correction (XEP-0308) replacing a previously sent message.
+    /// Sends a message correction (XEP-0308) replacing a previously sent message. A correction re-sends everything the
+    /// original carried (§4). `reply` re-adds the reply reference and puts its quote before `body`, and the other
+    /// arguments re-add the original's other elements.
     public func sendCorrection(
         to recipient: JID,
         body: String,
         replacingID: String,
+        reply: MessageReply? = nil,
         id: String? = nil,
-        includeChatState: Bool = true
+        requestReceipt: Bool = false,
+        markable: Bool = false,
+        includeChatState: Bool = true,
+        additionalElements: [XMLElement] = []
     ) async throws {
-        guard let context = state.withLock({ $0 }) else { return }
-        let stanzaID = id ?? context.generateID()
-        var message = XMPPMessage(type: .chat, to: recipient, id: stanzaID)
-        message.body = body
         let replace = XMLElement(
             name: "replace",
             namespace: XMPPNamespaces.messageCorrect,
             attributes: ["id": replacingID]
         )
-        message.element.addChild(replace)
-        if includeChatState {
-            let active = XMLElement(name: "active", namespace: XMPPNamespaces.chatStates)
-            message.element.addChild(active)
-        }
-        try await context.sendStanza(message)
-    }
-
-    /// Sends a reply (XEP-0461) to a specific message.
-    public func sendReply(
-        to recipient: JID,
-        body: String,
-        replyToID: String,
-        replyToJID: JID,
-        id: String? = nil,
-        includeChatState: Bool = true
-    ) async throws {
-        guard let context = state.withLock({ $0 }) else { return }
-        let stanzaID = id ?? context.generateID()
-        var message = XMPPMessage(type: .chat, to: recipient, id: stanzaID)
-        message.body = body
-        let reply = XMLElement(
-            name: "reply",
-            namespace: XMPPNamespaces.messageReply,
-            attributes: ["to": replyToJID.description, "id": replyToID]
+        try await sendMessage(
+            to: recipient, body: reply?.body(replying: body) ?? body, id: id,
+            requestReceipt: requestReceipt, markable: markable, includeChatState: includeChatState,
+            additionalElements: [replace] + (reply?.elements ?? []) + additionalElements
         )
-        message.element.addChild(reply)
-        if includeChatState {
-            let active = XMLElement(name: "active", namespace: XMPPNamespaces.chatStates)
-            message.element.addChild(active)
-        }
-        try await context.sendStanza(message)
     }
 
     /// Sends a message retraction (XEP-0424) for a previously sent message.
-    public func sendRetraction(to recipient: JID, originalID: String) async throws {
-        guard let context = state.withLock({ $0 }) else { return }
-        var message = XMPPMessage(type: .chat, to: recipient, id: context.generateID())
+    public func sendRetraction(to recipient: JID, originalID: String, includeChatState: Bool = true) async throws {
         let retract = XMLElement(
             name: "retract",
             namespace: XMPPNamespaces.messageRetract,
             attributes: ["id": originalID]
         )
-        message.element.addChild(retract)
-        let fallback = XMLElement(name: "fallback", namespace: XMPPNamespaces.fallbackIndication, attributes: ["for": XMPPNamespaces.messageRetract])
-        message.element.addChild(fallback)
-        message.body = retractionFallbackBody
         let store = XMLElement(name: "store", namespace: XMPPNamespaces.processingHints)
-        message.element.addChild(store)
-        try await context.sendStanza(message)
+        try await sendMessage(
+            to: recipient, body: retractionFallbackBody, includeChatState: includeChatState,
+            additionalElements: [retract, FallbackIndication(for: XMPPNamespaces.messageRetract).element, store]
+        )
     }
 }

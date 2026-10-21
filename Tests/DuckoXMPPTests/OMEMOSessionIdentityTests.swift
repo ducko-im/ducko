@@ -70,7 +70,7 @@ extension OMEMOModuleTests {
             try await connectTask.value
             await mock.simulateReceive(message.xmlString)
 
-            guard case let .omemoEncryptedMessageReceived(stanza, _, _) = try await received.value.last else {
+            guard case let .omemoEncryptedMessageReceived(stanza, _) = try await received.value.last else {
                 Issue.record("Expected an encrypted message")
                 return
             }
@@ -90,12 +90,13 @@ extension OMEMOModuleTests {
                 domain: "example.com", credentials: .init(username: "user", password: "pass"),
                 transport: mock, requireTLS: false
             )
-            await client.register(PresenceModule())
-            await client.register(CapsModule())
+            let capsModule = CapsModule()
+            await client.register(PresenceModule(capsModule: capsModule))
+            await client.register(capsModule)
             await client.register(omemo)
             let received = Task { try await collectEvents(from: client, until: isEncryptedMessage) }
 
-            // Holding the caps presence keeps `OMEMOModule.handleConnect`, which runs after it, from starting.
+            // Holding the caps-bearing presence keeps `OMEMOModule.handleConnect`, which runs after it, from starting.
             await mock.blockSends { $0.contains(XMPPNamespaces.caps) }
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             await simulateNoTLSConnect(mock)

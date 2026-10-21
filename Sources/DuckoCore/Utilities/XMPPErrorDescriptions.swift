@@ -14,6 +14,8 @@ extension XMPPClientError: LocalizedError {
         case .tlsRequired: "The server does not offer a secure connection"
         case let .tlsNegotiationFailed(reason): "Secure connection failed: \(reason)"
         case let .authenticationFailed(reason): "Authentication failed: \(reason)"
+        case .plainSignInRefused:
+            "Sign-in refused: the server offers only a sign-in that sends the password, and this account has signed in without sending it before"
         case let .bindingFailed(reason): "The server did not bind a resource: \(reason)"
         case let .sessionFailed(reason): "The server did not establish a session: \(reason)"
         case let .unexpectedStreamState(reason): "Unexpected response from the server: \(reason)"
@@ -38,6 +40,7 @@ extension XMPPRegistrationClient.RegistrationClientError: LocalizedError {
         case .registrationNotSupported: "The server does not support account registration"
         case let .registrationFailed(reason): "Registration failed: \(reason)"
         case .unexpectedResponse: "Unexpected response from the server"
+        case .connectionClosed: "The server closed the connection, try registering again"
         }
     }
 }
@@ -47,6 +50,15 @@ extension RegistrationModule.RegistrationError: LocalizedError {
         switch self {
         case .notConnected: notConnectedDescription
         case .registrationNotSupported: "The server does not support account registration"
+        }
+    }
+}
+
+extension BlockingModule.BlockingError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .notConnected: notConnectedDescription
+        case .blockingNotSupported: "The server does not support blocking"
         }
     }
 }
@@ -88,6 +100,7 @@ extension ChannelSearchModule.ChannelSearchError: LocalizedError {
         switch self {
         case .notConnected: notConnectedDescription
         case .noSearchServiceFound: "The server does not offer channel search"
+        case .rateLimited: "The server is limiting channel searches"
         }
     }
 }

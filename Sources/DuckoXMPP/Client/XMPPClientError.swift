@@ -7,6 +7,8 @@ public enum XMPPClientError: Error {
     case tlsRequired
     case tlsNegotiationFailed(String)
     case authenticationFailed(String)
+    /// Sign-in requires SCRAM, and the server offered only PLAIN, so the password was not sent.
+    case plainSignInRefused
     case bindingFailed(String)
     case sessionFailed(String)
     case unexpectedStreamState(String)

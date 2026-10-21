@@ -9,9 +9,7 @@ struct XMPPRegistrationClientTests {
         let task = registrationTask(transport: transport, register: register)
         do {
             try await negotiate(transport)
-            let request = try await awaitOutgoingIQ(on: transport.mock, type: register ? .set : .get, namespace: XMPPNamespaces.register) {
-                $0.contains("id=\"reg1\"")
-            }
+            let request = try await awaitOutgoingIQ(on: transport.mock, type: register ? .set : .get, namespace: XMPPNamespaces.register) { _ in true }
             if register {
                 #expect(request.xml.contains("<username>new-user</username>"))
             }
@@ -24,8 +22,7 @@ struct XMPPRegistrationClientTests {
         }
         let form = try await task.value
         if !register {
-            #expect(form?.hasUsername == true)
-            #expect(form?.hasPassword == true)
+            #expect(form?.legacyFields.map(\.name) == ["username", "password"])
         }
         #expect(await transport.disconnectCalls == 1)
         #expect(await transport.mock.isConnected == false)
@@ -57,9 +54,7 @@ struct XMPPRegistrationClientTests {
         do {
             if afterTLS {
                 try await negotiate(transport)
-                _ = try await awaitOutgoingIQ(on: transport.mock, type: register ? .set : .get, namespace: XMPPNamespaces.register) {
-                    $0.contains("id=\"reg1\"")
-                }
+                _ = try await awaitOutgoingIQ(on: transport.mock, type: register ? .set : .get, namespace: XMPPNamespaces.register) { _ in true }
             } else {
                 try await transport.awaitSent { $0.hasPrefix("<?xml") || $0.hasPrefix("<stream:stream") }
             }
@@ -81,9 +76,7 @@ struct XMPPRegistrationClientTests {
         let task = registrationTask(transport: transport, register: register)
         do {
             try await negotiate(transport)
-            let request = try await awaitOutgoingIQ(on: transport.mock, type: register ? .set : .get, namespace: XMPPNamespaces.register) {
-                $0.contains("id=\"reg1\"")
-            }
+            let request = try await awaitOutgoingIQ(on: transport.mock, type: register ? .set : .get, namespace: XMPPNamespaces.register) { _ in true }
             await transport.mock.simulateReceive("<iq type='error' id='\(request.id)'><error type='cancel'><conflict xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>")
         } catch {
             task.cancel()
@@ -108,15 +101,86 @@ struct XMPPRegistrationClientTests {
         #expect(await transport.mock.isConnected == false)
     }
 
+    @Test
+    func `form and registration go out on one connection with distinct ids`() async throws {
+        let transport = RegistrationTransport()
+        let task = Task {
+            let session = try await openSession(on: transport)
+            let form = try await session.fetchForm()
+            try await session.submit(.legacy(form.legacyFields.map { RegistrationModule.LegacyField(name: $0.name, value: "x") }))
+            await session.close()
+        }
+        do {
+            try await negotiate(transport)
+            let get = try await awaitOutgoingIQ(on: transport.mock, type: .get, namespace: XMPPNamespaces.register) { _ in true }
+            // A reply to another request is not the form.
+            await transport.mock.simulateReceive("<iq type='result' id='other'/>")
+            await transport.mock.simulateReceive("<iq type='result' id='\(get.id)'><query xmlns='jabber:iq:register'><username/><nick/></query></iq>")
+            let set = try await awaitOutgoingIQ(on: transport.mock, type: .set, namespace: XMPPNamespaces.register) { _ in true }
+            #expect(set.id != get.id)
+            #expect(set.xml.contains("<nick>x</nick>"))
+            await transport.mock.simulateReceive("<iq type='result' id='\(set.id)'/>")
+        } catch {
+            task.cancel()
+            await transport.disconnect()
+            _ = await task.result
+            throw error
+        }
+        try await task.value
+        #expect(await transport.connectCalls == 1)
+        #expect(await transport.disconnectCalls == 1)
+    }
+
+    @Test
+    func `a registration after the server closed the stream asks to start over without reconnecting`() async throws {
+        let transport = RegistrationTransport()
+        let opening = Task { try await openSession(on: transport) }
+        do {
+            try await negotiate(transport)
+        } catch {
+            opening.cancel()
+            await transport.disconnect()
+            _ = await opening.result
+            throw error
+        }
+        let session = try await opening.value
+        await transport.mock.simulateReceive("</stream:stream>")
+
+        let error = await #expect(throws: XMPPRegistrationClient.RegistrationClientError.self) {
+            try await session.submit(.legacy([RegistrationModule.LegacyField(name: "username", value: "new-user")]))
+        }
+        guard case .connectionClosed = error else {
+            Issue.record("Expected connectionClosed, got \(String(describing: error))")
+            return
+        }
+        await session.close()
+        #expect(await transport.connectCalls == 1)
+        #expect(await transport.mock.isConnected == false)
+    }
+
+    private func openSession(on transport: RegistrationTransport, domain: String = "example.com") async throws -> RegistrationSession {
+        try await RegistrationSession.open(domain: domain, host: "example.com", port: 5222, transport: transport)
+    }
+
     private func registrationTask(
         transport: RegistrationTransport, register: Bool, domain: String = "example.com"
     ) -> Task<RegistrationModule.RegistrationForm?, any Error> {
         Task {
-            if register {
-                try await XMPPRegistrationClient.register(domain: domain, username: "new-user", password: "secret", host: "example.com", transport: transport)
-                return nil
+            guard register else {
+                return try await XMPPRegistrationClient.retrieveForm(domain: domain, host: "example.com", transport: transport)
             }
-            return try await XMPPRegistrationClient.retrieveForm(domain: domain, host: "example.com", transport: transport)
+            let session = try await openSession(on: transport, domain: domain)
+            do {
+                try await session.submit(.legacy([
+                    RegistrationModule.LegacyField(name: "username", value: "new-user"),
+                    RegistrationModule.LegacyField(name: "password", value: "secret")
+                ]))
+            } catch {
+                await session.close()
+                throw error
+            }
+            await session.close()
+            return nil
         }
     }
 
@@ -143,31 +207,31 @@ struct XMPPRegistrationClientTests {
 
         switch err1 {
         case let .connectionFailed(msg): #expect(msg == "timeout")
-        case .tlsNegotiationFailed, .registrationNotSupported, .registrationFailed, .unexpectedResponse:
+        case .tlsNegotiationFailed, .registrationNotSupported, .registrationFailed, .unexpectedResponse, .connectionClosed:
             Issue.record("Wrong case")
         }
 
         switch err2 {
         case .tlsNegotiationFailed: break
-        case .connectionFailed, .registrationNotSupported, .registrationFailed, .unexpectedResponse:
+        case .connectionFailed, .registrationNotSupported, .registrationFailed, .unexpectedResponse, .connectionClosed:
             Issue.record("Wrong case")
         }
 
         switch err3 {
         case .registrationNotSupported: break
-        case .connectionFailed, .tlsNegotiationFailed, .registrationFailed, .unexpectedResponse:
+        case .connectionFailed, .tlsNegotiationFailed, .registrationFailed, .unexpectedResponse, .connectionClosed:
             Issue.record("Wrong case")
         }
 
         switch err4 {
         case let .registrationFailed(msg): #expect(msg == "conflict")
-        case .connectionFailed, .tlsNegotiationFailed, .registrationNotSupported, .unexpectedResponse:
+        case .connectionFailed, .tlsNegotiationFailed, .registrationNotSupported, .unexpectedResponse, .connectionClosed:
             Issue.record("Wrong case")
         }
 
         switch err5 {
         case .unexpectedResponse: break
-        case .connectionFailed, .tlsNegotiationFailed, .registrationNotSupported, .registrationFailed:
+        case .connectionFailed, .tlsNegotiationFailed, .registrationNotSupported, .registrationFailed, .connectionClosed:
             Issue.record("Wrong case")
         }
     }
@@ -256,6 +320,7 @@ private actor RegistrationTransport: XMPPTransport {
     }
 
     private let failConnect: Bool
+    private(set) var connectCalls = 0
     private(set) var disconnectCalls = 0
 
     init(failConnect: Bool = false) {
@@ -263,6 +328,7 @@ private actor RegistrationTransport: XMPPTransport {
     }
 
     func connect(host: String, port: UInt16) async throws {
+        connectCalls += 1
         try await mock.connect(host: host, port: port)
         if failConnect { throw XMPPClientError.connectionFailed("fixture") }
     }

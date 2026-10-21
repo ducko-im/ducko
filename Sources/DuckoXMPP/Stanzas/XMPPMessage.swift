@@ -86,15 +86,24 @@ public struct XMPPMessage: XMPPStanza {
     /// a correction, a retraction, an encrypted message), so a consumer of the raw `.messageReceived` leaves it alone.
     /// A room private message without a muc#user element is recognized only by its room, which the caller checks.
     public var hasClassifiedEvent: Bool {
-        if messageType == .groupchat { return true }
-        if element.child(named: "retract", namespace: XMPPNamespaces.messageRetract) != nil { return true }
-        if element.child(named: "replace", namespace: XMPPNamespaces.messageCorrect) != nil { return true }
-        if element.child(named: "encryption", namespace: XMPPNamespaces.eme) != nil { return true }
-        if element.child(named: "x", namespace: XMPPNamespaces.mucDirectInvite) != nil { return true }
-        guard let mucUser = element.child(named: "x", namespace: XMPPNamespaces.mucUser) else { return false }
-        if mucUser.child(named: "invite") != nil { return true }
-        guard messageType == .chat || messageType == .normal, case .full = from else { return false }
+        if messageType == .groupchat || carriesAmendment || isEncrypted || carriesInvite { return true }
+        guard element.child(named: "x", namespace: XMPPNamespaces.mucUser) != nil,
+              messageType == .chat || messageType == .normal, case .full = from else { return false }
         return true
+    }
+
+    /// Whether the message carries a room invite, mediated (XEP-0045) or direct (XEP-0249), so it is never shown as a
+    /// message of its own.
+    public var carriesInvite: Bool {
+        element.child(named: "x", namespace: XMPPNamespaces.mucDirectInvite) != nil
+            || element.child(named: "x", namespace: XMPPNamespaces.mucUser)?.child(named: "invite") != nil
+    }
+
+    /// Whether the message carries a correction (XEP-0308) or a retraction (XEP-0424), so it is never shown as a
+    /// message of its own.
+    public var carriesAmendment: Bool {
+        element.child(named: "retract", namespace: XMPPNamespaces.messageRetract) != nil
+            || element.child(named: "replace", namespace: XMPPNamespaces.messageCorrect) != nil
     }
 
     // MARK: - XEP-0066 Out-of-Band Data

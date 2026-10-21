@@ -5,6 +5,8 @@
 # `entire contents`, which collapses on the deeply-nested SwiftUI hierarchy on
 # macOS 26. The segmented Picker exposes each segment label via AXDescription
 # (AXTitle/name is empty there), so the Register segment is matched on that.
+# Waits for the outcome: the account registered and signed in, the server's own form shown because it asks for
+# more (continue with ducko-register-fields.sh), or the error the window shows.
 # Usage: ducko-register.sh SERVER USERNAME PASSWORD [EMAIL]
 #   SERVER:   The XMPP server domain (e.g., xmpp.example.com)
 #   USERNAME: Desired username (local part)
@@ -73,15 +75,14 @@ on run argv
         set registerBtn to my findByAttr(win, "AXIdentifier", "register-button", 0, 30)
         if registerBtn is missing value then return "ERROR: register-button not found"
         click registerBtn
-        return "ok"
+$(ducko_as_await_registration proc win MORE)
     end tell
 end run
 APPLESCRIPT
 )
 
-if [[ "$RESULT" == ok ]]; then
-    echo "Registration initiated for $USERNAME@$SERVER"
-else
-    echo "$RESULT" >&2
-    exit 1
-fi
+case "$RESULT" in
+    ok)   echo "Registered $USERNAME@$SERVER" ;;
+    MORE) echo "The server asks for more details: fill them with ducko-register-fields.sh fill, or read its web page with ducko-register-fields.sh redirect" ;;
+    *)    echo "$RESULT" >&2; exit 1 ;;
+esac

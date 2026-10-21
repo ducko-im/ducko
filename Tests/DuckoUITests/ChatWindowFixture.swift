@@ -17,7 +17,8 @@ struct ChatWindowFixture {
     let accountID: UUID
     let conversationID: UUID
 
-    /// `loads: false` leaves `load()` to the test, for the tests about what happens during it.
+    /// `loads: false` leaves `load()` to the test, for the tests about what happens during it. A private chat with a room's
+    /// occupant is opened by the occupant's address, `room@service/nick`.
     static func make(
         jidString: String = jidString,
         type: Conversation.ConversationType = .chat,
@@ -27,7 +28,8 @@ struct ChatWindowFixture {
     ) async throws -> ChatWindowFixture {
         let store = MockPersistenceStore()
         let transcripts = MockTranscriptStore()
-        let jid = try #require(BareJID.parse(jidString))
+        let address = try #require(JID.parse(jidString))
+        let occupantNickname: String? = if case let .full(occupant) = address { occupant.resourcePart } else { nil }
         let aliceJID = try #require(BareJID.parse("alice@example.com"))
         let account = Account(
             id: UUID(),
@@ -40,11 +42,12 @@ struct ChatWindowFixture {
         let conversation = Conversation(
             id: UUID(),
             accountID: account.id,
-            jid: jid,
+            jid: address.bareJID,
             type: type,
             isPinned: false,
             isMuted: false,
             unreadCount: 0,
+            occupantNickname: occupantNickname,
             createdAt: Date()
         )
         await store.addConversation(conversation)

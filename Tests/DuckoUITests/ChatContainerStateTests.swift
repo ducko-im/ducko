@@ -279,10 +279,10 @@ struct ChatContainerStateTests {
         await entered.wait()
         await openAndAwaitLoad(container, "b@example.com", id)
         let conversationB = try #require(container.state(for: key("b@example.com", id))?.conversation)
-        try await waitUntil { chatService.activeConversationID == conversationB.id }
+        try await eventually { chatService.activeConversationID == conversationB.id }
 
         await release.signal()
-        try await waitUntil { stateA.conversation != nil && !stateA.isLoading }
+        try await eventually { stateA.conversation != nil && !stateA.isLoading }
 
         #expect(chatService.activeConversationID == conversationB.id)
     }
@@ -302,12 +302,12 @@ struct ChatContainerStateTests {
         await entered.wait()
         await openAndAwaitLoad(container, "b@example.com", id)
         let conversationB = try #require(container.state(for: key("b@example.com", id))?.conversation)
-        try await waitUntil { chatService.activeConversationID == conversationB.id }
+        try await eventually { chatService.activeConversationID == conversationB.id }
 
         // Back on A before its conversation exists: `select` can't activate it, so A's own load must.
         container.select(key("a@example.com", id))
         await release.signal()
-        try await waitUntil { stateA.conversation != nil && !stateA.isLoading }
+        try await eventually { stateA.conversation != nil && !stateA.isLoading }
 
         #expect(chatService.activeConversationID == stateA.conversation?.id)
     }
@@ -319,7 +319,7 @@ struct ChatContainerStateTests {
         let id = fixture.accountID
         await openAndAwaitLoad(container, "a@example.com", id)
         let conversationA = try #require(container.state(for: key("a@example.com", id))?.conversation)
-        try await waitUntil { chatService.activeConversationID == conversationA.id }
+        try await eventually { chatService.activeConversationID == conversationA.id }
 
         // Hold B's load in its conversation upsert.
         let entered = AsyncSemaphore()
@@ -330,10 +330,10 @@ struct ChatContainerStateTests {
         await entered.wait()
 
         container.closeAll()
-        try await waitUntil { chatService.activeConversationID == nil }
+        try await eventually { chatService.activeConversationID == nil }
 
         await release.signal()
-        try await waitUntil { stateB.conversation != nil && !stateB.isLoading }
+        try await eventually { stateB.conversation != nil && !stateB.isLoading }
 
         #expect(chatService.activeConversationID == nil)
     }
@@ -346,7 +346,7 @@ struct ChatContainerStateTests {
         let id = fixture.accountID
         await openAndAwaitLoad(container, "a@example.com", id)
         let conversationA = try #require(container.state(for: key("a@example.com", id))?.conversation)
-        try await waitUntil { chatService.activeConversationID == conversationA.id }
+        try await eventually { chatService.activeConversationID == conversationA.id }
 
         // Hold B's load in its conversation upsert.
         let entered = AsyncSemaphore()
@@ -361,10 +361,10 @@ struct ChatContainerStateTests {
         let stateB = try #require(container.state(for: key("b@example.com", id)))
         await entered.wait()
 
-        try await waitUntil { chatService.activeConversationID == nil }
+        try await eventually { chatService.activeConversationID == nil }
 
         await release.signal()
-        try await waitUntil { stateB.conversation != nil && !stateB.isLoading }
+        try await eventually { stateB.conversation != nil && !stateB.isLoading }
 
         #expect(chatService.activeConversationID == stateB.conversation?.id)
     }
@@ -376,13 +376,13 @@ struct ChatContainerStateTests {
         let id = fixture.accountID
         await openAndAwaitLoad(container, "a@example.com", id)
         let conversationA = try #require(container.state(for: key("a@example.com", id))?.conversation)
-        try await waitUntil { chatService.activeConversationID == conversationA.id }
+        try await eventually { chatService.activeConversationID == conversationA.id }
 
         container.isWindowFocused = false
-        try await waitUntil { chatService.activeConversationID == nil }
+        try await eventually { chatService.activeConversationID == nil }
 
         container.isWindowFocused = true
-        try await waitUntil { chatService.activeConversationID == conversationA.id }
+        try await eventually { chatService.activeConversationID == conversationA.id }
     }
 
     @Test func `closing the selected tab of an unfocused chat window activates no other`() async throws {
@@ -393,9 +393,9 @@ struct ChatContainerStateTests {
         await openAndAwaitLoad(container, "a@example.com", id)
         await openAndAwaitLoad(container, "b@example.com", id)
         let conversationB = try #require(container.state(for: key("b@example.com", id))?.conversation)
-        try await waitUntil { chatService.activeConversationID == conversationB.id }
+        try await eventually { chatService.activeConversationID == conversationB.id }
         container.isWindowFocused = false
-        try await waitUntil { chatService.activeConversationID == nil }
+        try await eventually { chatService.activeConversationID == nil }
 
         container.close(key("b@example.com", id))
         // Armed: the neighbor took the selection, so only the window's focus stands between it and activation.
@@ -414,11 +414,11 @@ struct ChatContainerStateTests {
 
         await openAndAwaitLoad(container, "a@example.com", id)
         let stateA = try #require(container.state(for: key("a@example.com", id)))
-        try await waitUntil { !stateA.isLoading }
+        try await eventually { !stateA.isLoading }
         #expect(chatService.activeConversationID == nil)
 
         container.isWindowFocused = true
-        try await waitUntil { chatService.activeConversationID == stateA.conversation?.id }
+        try await eventually { chatService.activeConversationID == stateA.conversation?.id }
     }
 
     @Test func `a tab opened in the background leaves the selected tab and the active conversation alone`() async throws {
@@ -428,11 +428,11 @@ struct ChatContainerStateTests {
         let id = fixture.accountID
         await openAndAwaitLoad(container, "a@example.com", id)
         let conversationA = try #require(container.state(for: key("a@example.com", id))?.conversation)
-        try await waitUntil { chatService.activeConversationID == conversationA.id }
+        try await eventually { chatService.activeConversationID == conversationA.id }
 
         container.openInBackground("b@example.com", accountID: id)
         let stateB = try #require(container.state(for: key("b@example.com", id)))
-        try await waitUntil { stateB.conversation != nil && !stateB.isLoading }
+        try await eventually { stateB.conversation != nil && !stateB.isLoading }
 
         #expect(container.orderedTabs == [key("a@example.com", id), key("b@example.com", id)])
         #expect(container.selectedKey == key("a@example.com", id))
@@ -476,7 +476,7 @@ struct ChatContainerStateTests {
         container.isWindowFocused = true
         container.openInBackground("a@example.com", accountID: id)
         let stateA = try #require(container.state(for: key("a@example.com", id)))
-        try await waitUntil { stateA.conversation != nil && !stateA.isLoading }
+        try await eventually { stateA.conversation != nil && !stateA.isLoading }
         container.isWindowFocused = false
         container.isWindowFocused = true
         // Armed: the tab is selected and loaded in a focused window, so only the quiet opening keeps it inactive.
@@ -486,7 +486,7 @@ struct ChatContainerStateTests {
 
         // The user goes to the window, which ends the quiet opening.
         container.isOpeningQuietly = false
-        try await waitUntil { chatService.activeConversationID == stateA.conversation?.id }
+        try await eventually { chatService.activeConversationID == stateA.conversation?.id }
     }
 
     @Test func `a quiet opening that ends behind another window leaves the chat inactive`() async throws {
@@ -498,7 +498,7 @@ struct ChatContainerStateTests {
         container.isOpeningQuietly = true
         container.openInBackground("a@example.com", accountID: id)
         let stateA = try #require(container.state(for: key("a@example.com", id)))
-        try await waitUntil { stateA.conversation != nil && !stateA.isLoading }
+        try await eventually { stateA.conversation != nil && !stateA.isLoading }
 
         container.isOpeningQuietly = false
         await letScheduledActivationsRun()
@@ -610,17 +610,17 @@ struct ChatContainerStateTests {
         let container = fixture.container
         await openAndAwaitLoad(container, "a@example.com", id)
         container.isWindowFocused = false
-        try await waitUntil { chatService.activeConversationID == nil }
+        try await eventually { chatService.activeConversationID == nil }
 
         let relaunched = fixture.relaunched()
         _ = relaunched.restoreTabs()
         let state = try #require(relaunched.state(for: key("a@example.com", id)))
-        try await waitUntil { state.conversation != nil && !state.isLoading }
+        try await eventually { state.conversation != nil && !state.isLoading }
         await letScheduledActivationsRun()
         #expect(chatService.activeConversationID == nil)
 
         relaunched.isWindowFocused = true
-        try await waitUntil { chatService.activeConversationID == state.conversation?.id }
+        try await eventually { chatService.activeConversationID == state.conversation?.id }
     }
 
     @Test func `a MUC PM is a distinct tab from its room`() async throws {
@@ -739,10 +739,10 @@ struct ChatContainerStateTests {
         await openAndAwaitLoad(container, "a@example.com", id)
         let stateA = try #require(container.state(for: key("a@example.com", id)))
         let conversationA = try #require(stateA.conversation)
-        try await waitUntil { chatService.activeConversationID == conversationA.id }
+        try await eventually { chatService.activeConversationID == conversationA.id }
 
         let list = scrollUp(stateA)
-        try await waitUntil { chatService.activeConversationID == nil }
+        try await eventually { chatService.activeConversationID == nil }
 
         // What arrives meanwhile is below what is being read, so it counts as unread.
         var message = try XMPPMessage(type: .chat, to: .bare(#require(BareJID.parse("alice@example.com"))), id: "in-1")
@@ -757,8 +757,8 @@ struct ChatContainerStateTests {
         #expect(chatService.activeConversationID == nil)
 
         list.arrive(at: .newest)
-        try await waitUntil { chatService.activeConversationID == conversationA.id }
-        try await waitUntil { chatService.openConversations.first { $0.id == conversationA.id }?.unreadCount == 0 }
+        try await eventually { chatService.activeConversationID == conversationA.id }
+        try await eventually { chatService.openConversations.first { $0.id == conversationA.id }?.unreadCount == 0 }
     }
 
     @Test func `a chat sent back to its newest message while no list shows it is looked at again`() async throws {
@@ -770,13 +770,13 @@ struct ChatContainerStateTests {
         let stateA = try #require(container.state(for: key("a@example.com", id)))
         let conversationA = try #require(stateA.conversation)
         let list = scrollUp(stateA)
-        try await waitUntil { chatService.activeConversationID == nil }
+        try await eventually { chatService.activeConversationID == nil }
 
         // With no list attached there is no view to arrive anywhere, so the scroller is at the newest message at once.
         stateA.scroller.detach(list)
         stateA.scroller.scrollToNewest()
 
-        try await waitUntil { chatService.activeConversationID == conversationA.id }
+        try await eventually { chatService.activeConversationID == conversationA.id }
     }
 
     @Test func `selecting a scrolled-up tab leaves no conversation active and still shows what arrived`() async throws {
@@ -790,7 +790,7 @@ struct ChatContainerStateTests {
         _ = scrollUp(stateA)
         await openAndAwaitLoad(container, "b@example.com", id)
         let conversationB = try #require(container.state(for: key("b@example.com", id))?.conversation)
-        try await waitUntil { chatService.activeConversationID == conversationB.id }
+        try await eventually { chatService.activeConversationID == conversationB.id }
         let arrival = ChatMessage(
             id: UUID(), conversationID: conversationA.id, fromJID: "a@example.com", body: "while on the other tab", timestamp: Date(),
             isOutgoing: false, isDelivered: true, isEdited: false, type: "chat"
@@ -799,8 +799,8 @@ struct ChatContainerStateTests {
 
         container.select(key("a@example.com", id))
 
-        try await waitUntil { stateA.messages.contains { $0.id == arrival.id } }
-        try await waitUntil { chatService.activeConversationID == nil }
+        try await eventually { stateA.messages.contains { $0.id == arrival.id } }
+        try await eventually { chatService.activeConversationID == nil }
         await letScheduledActivationsRun()
         #expect(chatService.activeConversationID == nil)
     }
@@ -824,8 +824,8 @@ struct ChatContainerStateTests {
         container.close(key("b@example.com", id))
 
         #expect(container.selectedKey == key("a@example.com", id))
-        try await waitUntil { stateA.messages.contains { $0.id == arrival.id } }
-        try await waitUntil { chatService.activeConversationID == nil }
+        try await eventually { stateA.messages.contains { $0.id == arrival.id } }
+        try await eventually { chatService.activeConversationID == nil }
     }
 
     @Test func `closing the chat window returns every tab to its newest message`() async throws {
@@ -855,10 +855,10 @@ struct ChatContainerStateTests {
         let id = fixture.accountID
         await openAndAwaitLoad(container, "a@example.com", id)
         let conversationA = try #require(container.state(for: key("a@example.com", id))?.conversation)
-        try await waitUntil { chatService.activeConversationID == conversationA.id }
+        try await eventually { chatService.activeConversationID == conversationA.id }
 
         container.close(key("a@example.com", id))
 
-        try await waitUntil { chatService.activeConversationID == nil }
+        try await eventually { chatService.activeConversationID == nil }
     }
 }

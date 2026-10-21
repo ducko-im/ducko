@@ -12,8 +12,8 @@ private func omemoFingerprint(from identityKey: some Sequence<UInt8>) -> String 
 @MainActor @Observable
 public final class OMEMOService {
     private let omemoStore: any OMEMOStore
-    private weak var accountService: AccountService?
-    private weak var chatService: ChatService?
+    private(set) weak var accountService: AccountService?
+    private(set) weak var chatService: ChatService?
     /// Per-account seen-device classification cache (canonical home).
     ///
     /// Lives here (not on `OMEMOModule`) so it survives reconnects — modules are rebuilt per reconnect.
@@ -82,8 +82,8 @@ public final class OMEMOService {
     // MARK: - Module Building
 
     /// Creates a pre-configured OMEMOModule with persisted identity and sessions.
-    func buildModule(for accountJID: BareJID, accountID: UUID, pepModule: PEPModule) async -> OMEMOModule {
-        let module = OMEMOModule(pepModule: pepModule)
+    func buildModule(for accountJID: BareJID, accountID: UUID, pepModule: PEPModule, mucModule: MUCModule? = nil) async -> OMEMOModule {
+        let module = OMEMOModule(pepModule: pepModule, mucModule: mucModule)
         let jidString = accountJID.description
 
         wireIdentityKeyValidator(on: module, accountJID: jidString)
@@ -159,8 +159,8 @@ public final class OMEMOService {
         switch event {
         case let .omemoDeviceListReceived(jid, devices):
             await handleDeviceListReceived(jid: jid, devices: devices, accountID: accountID)
-        case let .omemoEncryptedMessageReceived(message, decryptedBody, _):
-            await handleEncryptedMessageReceived(message: message, decryptedBody: decryptedBody, accountID: accountID)
+        case let .omemoEncryptedMessageReceived(message, outcome):
+            await handleEncryptedMessageReceived(message, outcome: outcome, accountID: accountID)
         case let .omemoSessionEstablished(jid, deviceID, identityKey, consumedPreKeyID):
             await handleSessionEstablished(
                 jid: jid, deviceID: deviceID,
@@ -168,19 +168,14 @@ public final class OMEMOService {
             )
             await schedulePreKeyMaintenance(accountID: accountID, consumedPreKeyID: consumedPreKeyID)
         case .omemoSessionAdvanced:
-            // Any client, not only a connected one, since stanzas the server replays after a resume arrive before the
-            // account counts as connected again.
-            if let client = accountService?.client(for: accountID),
-               let omemoModule = await client.module(ofType: OMEMOModule.self) {
-                await saveModuleSessions(module: omemoModule, accountID: accountID)
-            }
+            await saveSessions(accountID: accountID)
         case .connected:
             await handleConnected(accountID: accountID)
         case .streamResumed:
             await schedulePreKeyMaintenance(accountID: accountID, consumedPreKeyID: nil)
         case .disconnected:
             break
-        case .authenticationFailed,
+        case .authenticationFailed, .plainSignInRefused,
              .messageReceived, .presenceReceived, .iqReceived,
              .rosterUpdated,
              .presenceUpdated, .presenceSubscriptionRequest,
@@ -243,8 +238,9 @@ public final class OMEMOService {
         return .proceed(trustedDeviceIDs: trusted)
     }
 
+    /// Encrypts a 1:1 message's `content`, the elements its envelope carries.
     func encryptMessage(
-        body: String,
+        content: [DuckoXMPP.XMLElement],
         to jid: BareJID,
         trustedDeviceIDs: [UInt32],
         accountID: UUID
@@ -261,7 +257,7 @@ public final class OMEMOService {
 
         let ownDeviceIDs = await trustedOwnDeviceIDs(accountID: accountID)
         let elements = try await omemoModule.encryptMessage(
-            plaintext: body, to: jid,
+            content: content, time: Date().formatted(.iso8601), to: jid,
             recipientDeviceIDs: trustedDeviceIDs, ownDeviceIDs: ownDeviceIDs
         )
 
@@ -330,9 +326,9 @@ public final class OMEMOService {
 
     // MARK: - Group Chat Encryption
 
-    /// Encrypts a message for all members of a group chat room.
+    /// Encrypts a room message's `content` for all members of the room.
     func encryptGroupMessage(
-        body: String,
+        content: [DuckoXMPP.XMLElement],
         roomJID: BareJID,
         memberJIDs: [BareJID],
         accountID: UUID
@@ -351,7 +347,7 @@ public final class OMEMOService {
 
         let ownDeviceIDs = await trustedOwnDeviceIDs(accountID: accountID)
         let elements = try await omemoModule.encryptGroupMessage(
-            plaintext: body, roomJID: roomJID,
+            content: content, time: Date().formatted(.iso8601), roomJID: roomJID,
             recipients: recipients, ownDeviceIDs: ownDeviceIDs
         )
         await saveModuleSessions(module: omemoModule, accountID: accountID)
@@ -392,45 +388,6 @@ public final class OMEMOService {
                 deviceID: deviceID, fingerprint: "", trustLevel: .undecided
             )
             try? await omemoStore.saveTrust(trust)
-        }
-    }
-
-    private func handleEncryptedMessageReceived(message xmppMessage: XMPPMessage, decryptedBody: String?, accountID: UUID) async {
-        guard let from = xmppMessage.from, let chatService else { return }
-        let senderJID = from.bareJID
-
-        // Capture the arrival tick now, before the first await, so the resource lock learned below advances in
-        // arrival order even if this handler interleaves with another inbound's handler on the MainActor.
-        let lockSequence = chatService.nextLockSequence()
-
-        let conversation: Conversation
-        do {
-            conversation = try await chatService.openConversation(for: senderJID, accountID: accountID)
-        } catch {
-            log.warning("Failed to open conversation for an OMEMO message: \(error)")
-            log.debug("The OMEMO message was from \(senderJID)")
-            return
-        }
-
-        let isOutgoing = await chatService.isOwnEncryptedMessage(from: from, in: conversation, accountID: accountID)
-
-        let outcome = await chatService.ingestEncryptedMessage(
-            message: xmppMessage, decryptedBody: decryptedBody, isOutgoing: isOutgoing,
-            in: conversation, accountID: accountID
-        )
-        // Only a new message from the contact that this device could read counts, for the RFC 6121 §5.1 resource lock
-        // and for switching encryption on. A copy already stored, as a stanza re-sent after a resume is, says nothing
-        // new. An echo of the user's own message says nothing about the contact, and a failed decrypt must not steer
-        // routing or ground encrypting the reply.
-        if let outcome, outcome != .duplicate, !isOutgoing, decryptedBody != nil {
-            chatService.learnResourceLock(from: from, accountID: accountID, sequence: lockSequence)
-            await chatService.enableEncryptionForContact(in: conversation.id, accountID: accountID)
-        }
-
-        // Persist session state after decryption (ratchet may have advanced)
-        if let client = accountService?.client(for: accountID),
-           let omemoModule = await client.module(ofType: OMEMOModule.self) {
-            await saveModuleSessions(module: omemoModule, accountID: accountID)
         }
     }
 
@@ -665,7 +622,7 @@ public final class OMEMOService {
         }
     }
 
-    private func saveModuleSessions(module: OMEMOModule, accountID: UUID) async {
+    func saveModuleSessions(module: OMEMOModule, accountID: UUID) async {
         guard let accountJID = accountJIDString(for: accountID) else { return }
         let entries = module.allSessionEntries()
         for entry in entries {

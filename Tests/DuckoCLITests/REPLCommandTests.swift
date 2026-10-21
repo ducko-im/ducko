@@ -9,8 +9,8 @@ struct REPLCommandTests {
     }
 
     @Test(arguments: [
-        "", "send", "/send a hi", "Send a hi", "/add", "/reply", "/remove", "/approve", "/deny", "/edit", "/retract", "/search", "/searchall", "/encrypt", "/pref", "/directed-presence",
-        "/roster extra", "/who extra", "/profile extra", "/transfers extra", "/connection-info extra", "/unregister-account extra", "help extra", "quit extra", "exit extra",
+        "", "send", "/send a hi", "Send a hi", "/add", "/reply", "/remove", "/approve", "/deny", "/block", "/unblock", "/edit", "/retract", "/search", "/searchall", "/encrypt", "/pref", "/directed-presence",
+        "/roster extra", "/who extra", "/profile extra", "/blocklist extra", "/transfers extra", "/connection-info extra", "/unregister-account extra", "help extra", "quit extra", "exit extra",
         "/joiner room", "/join\troom", "send\ta hi", "/pm\nAlice hi", "/unknown"
     ])
     func `unrecognized forms stay unknown`(input: String) {
@@ -23,6 +23,7 @@ struct REPLCommandTests {
         ("/reply alice@example.com hi", .reply), ("/retract alice@example.com", .retract),
         ("/edit alice@example.com revised", .edit), ("/search alice@example.com query", .search), ("/searchall two words", .searchAll),
         ("/approve alice@example.com", .approve), ("/deny alice@example.com", .deny),
+        ("/block alice@example.com/laptop", .block), ("/unblock alice@example.com", .unblock), ("/blocklist", .blocklist),
         ("/directed-presence alice@example.com", .directedPresence),
         ("/encrypt alice@example.com on", .encrypt), ("/pref chatstates off", .pref)
     ])
@@ -85,13 +86,16 @@ Commands:
   /remove <jid>            Remove contact from roster
   /history <jid> [limit]   Show message history
   /profile                 View own vCard profile
-  /reply <jid> <message>   Reply to last incoming message
-  /retract <jid>           Retract last sent message
-  /edit <jid> <new-body>   Edit last sent message
+  /reply <jid> <message>   Reply to last incoming message; room/nick for a PM
+  /retract <jid>           Retract last sent message; room/nick for a PM
+  /edit <jid> <new-body>   Edit last sent message; room/nick for a PM
   /search <jid> <query>    Search message history
   /searchall <query>       Search all conversations
   /approve <jid>           Approve subscription request
   /deny <jid>              Deny subscription request
+  /block <jid>             Block a JID; a full JID blocks one device
+  /unblock <jid>           Unblock a JID as the block list shows it
+  /blocklist               Show blocked addresses
   /directed-presence <jid> Send directed presence to a JID
   /unregister-account      Unregister account from server
   /check-registration [jid]  Show server registration form

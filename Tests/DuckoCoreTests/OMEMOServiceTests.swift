@@ -145,7 +145,7 @@ enum OMEMOServiceTests {
             let peer = try #require(BareJID(localPart: "peer", domainPart: "example.com"))
 
             await service.handleEvent(
-                .omemoEncryptedMessageReceived(message: makeEncryptedStanza(from: .bare(peer), id: "omemo-bad"), decryptedBody: nil, senderDeviceID: 0),
+                encryptedMessageEvent(makeEncryptedStanza(from: .bare(peer), id: "omemo-bad"), body: nil),
                 accountID: accountID
             )
 
@@ -153,7 +153,28 @@ enum OMEMOServiceTests {
             let message = try #require(await transcripts.messages.last)
             #expect(message.isUndecryptable)
             #expect(message.body.isEmpty)
-            #expect(message.previewText == ChatMessage.undecryptableText)
+            #expect(message.previewText == "This message could not be decrypted")
+        }
+    }
+
+    struct ErrorBounces {
+        /// The bounce returns a message sent from one of the user's devices, which no device can read as its own.
+        @Test(arguments: [XMPPMessage.MessageType.error, .chat])
+        @MainActor
+        func `A carbon of an error bounce files nothing, where any other would file its notice`(type: XMPPMessage.MessageType) async {
+            let transcripts = MockTranscriptStore()
+            let chatService = ChatService(store: MockPersistenceStore(), transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+            let service = makeOMEMOService(store: MockOMEMOStore())
+            service.setChatService(chatService)
+            var message = XMPPMessage(type: type, to: .bare(testAccountJID), id: "bounced")
+            message.from = JID.parse("peer@example.com")
+            message.element.addChild(DuckoXMPP.XMLElement(
+                name: "encryption", namespace: XMPPNamespaces.eme, attributes: ["namespace": XMPPNamespaces.omemo]
+            ))
+
+            await service.handleEncryptedCarbon(ForwardedMessage(message: message, timestamp: nil), isOutgoing: false, accountID: UUID())
+
+            #expect(await transcripts.messages.count == (type == .error ? 0 : 1))
         }
     }
 
@@ -207,9 +228,7 @@ enum OMEMOServiceTests {
 
             func receiveEncrypted(body: String?, stanzaID: String, from sender: BareJID? = nil) async {
                 await service.handleEvent(
-                    .omemoEncryptedMessageReceived(
-                        message: makeEncryptedStanza(from: .bare(sender ?? peer), id: stanzaID), decryptedBody: body, senderDeviceID: 0
-                    ),
+                    encryptedMessageEvent(makeEncryptedStanza(from: .bare(sender ?? peer), id: stanzaID), body: body),
                     accountID: accountID
                 )
             }
@@ -318,9 +337,10 @@ enum OMEMOServiceTests {
             // Armed: the switch is stored, so the older copy below disagrees with it.
             try #require(fixture.conversation?.encryptionEnabled == true)
 
+            let late = makeEncryptedStanza(from: .bare(fixture.peer), id: "late")
             await fixture.chatService.ingestEncryptedMessage(
-                message: makeEncryptedStanza(from: .bare(fixture.peer), id: "late"), decryptedBody: "late",
-                isOutgoing: false, in: fixture.seeded, accountID: fixture.accountID
+                EncryptedArrival(stanza: late, content: EncryptedContent(encryptedOutcome(of: late, body: "late")), sender: fixture.peer.description, isOutgoing: false, sentTime: Date()),
+                in: fixture.seeded, accountID: fixture.accountID
             )
 
             let conversation = try #require(fixture.conversation)

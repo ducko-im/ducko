@@ -76,21 +76,12 @@ func handleHistoryCommand(_ arguments: String, context: REPLContext) async {
 
 func handleRetractREPLCommand(_ jidString: String, context: REPLContext) async {
     do {
-        guard let original = try await lastOutgoingMessage(to: jidString, context: context), let stanzaID = original.stanzaID else {
+        let conversation = try await namedConversation(jidString, context: context)
+        guard let original = try await lastOutgoingMessage(in: conversation, context: context), let stanzaID = original.stanzaID else {
             print("No recent outgoing message to retract.")
             return
         }
-        if original.type == "groupchat" {
-            try await context.environment.chatService.retractGroupMessage(
-                original: original, inRoomJIDString: jidString,
-                accountID: context.accountID
-            )
-        } else {
-            try await context.environment.chatService.retractMessage(
-                original: original, toJIDString: jidString,
-                accountID: context.accountID
-            )
-        }
+        try await context.environment.chatService.retractMessage(original, in: conversation, accountID: context.accountID)
         print("Retracted message: \(stanzaID)")
     } catch {
         print(context.formatter.formatError(error))
@@ -106,21 +97,12 @@ func handleEditREPLCommand(_ arguments: String, context: REPLContext) async {
     let jidString = String(parts[0])
     let newBody = String(parts[1])
     do {
-        guard let original = try await lastOutgoingMessage(to: jidString, context: context), let stanzaID = original.stanzaID else {
+        let conversation = try await namedConversation(jidString, context: context)
+        guard let original = try await lastOutgoingMessage(in: conversation, context: context), let stanzaID = original.stanzaID else {
             print("No recent outgoing message to edit.")
             return
         }
-        if original.type == "groupchat" {
-            try await context.environment.chatService.sendGroupCorrection(
-                original: original, inRoomJIDString: jidString,
-                newBody: newBody, accountID: context.accountID
-            )
-        } else {
-            try await context.environment.chatService.sendCorrection(
-                original: original, toJIDString: jidString,
-                newBody: newBody, accountID: context.accountID
-            )
-        }
+        try await context.environment.chatService.sendCorrection(of: original, newBody: newBody, in: conversation, accountID: context.accountID)
         print("Edited message: \(stanzaID)")
     } catch {
         print(context.formatter.formatError(error))
@@ -136,20 +118,17 @@ func handleReplyREPLCommand(_ arguments: String, context: REPLContext) async {
     let jidString = String(parts[0])
     let body = String(parts[1])
     do {
-        let messages = try await recentMessages(with: jidString, context: context)
-        guard let lastIncoming = messages.last(where: { !$0.isOutgoing && $0.stanzaID != nil }),
-              let replyStanzaID = lastIncoming.stanzaID
+        let conversation = try await namedConversation(jidString, context: context)
+        let messages = try await recentMessages(in: conversation, context: context)
+        guard let lastIncoming = messages.last(where: { !$0.isOutgoing && $0.replyReference != nil }),
+              let replyReference = lastIncoming.replyReference
         else {
             print("No recent incoming message to reply to.")
             return
         }
-        try await context.environment.chatService.sendReply(
-            toJIDString: jidString, body: body,
-            replyToStanzaID: replyStanzaID,
-            accountID: context.accountID
-        )
+        try await context.environment.chatService.sendMessage(body, in: conversation, replyingTo: lastIncoming, accountID: context.accountID)
         print(context.formatter.formatMessage(ChatMessage.displayPlaceholder(
-            fromJID: jidString, body: body, replyToID: replyStanzaID
+            fromJID: jidString, body: body, replyToID: replyReference
         ), accountJID: context.accountJID))
     } catch {
         print(context.formatter.formatError(error))
@@ -253,15 +232,21 @@ func handleEncryptREPLCommand(_ arguments: String, context: REPLContext) async {
     }
 }
 
-private func recentMessages(with jidString: String, context: REPLContext) async throws -> [ChatMessage] {
-    guard let bareJID = BareJID.parse(jidString) else { throw CLIError.invalidJID(jidString) }
-    return try await fetchHistory(
-        jid: bareJID, before: nil, limit: 10,
-        environment: context.environment, accountID: context.accountID
-    )
+/// The conversation `address` names: the private chat with the occupant `room@service/nick`, or the chat or room
+/// with a bare address.
+private func namedConversation(_ address: String, context: REPLContext) async throws -> Conversation {
+    guard let jid = JID.parse(address) else { throw CLIError.invalidJID(address) }
+    guard let conversation = try await resolveConversation(jid: jid, environment: context.environment, accountID: context.accountID) else {
+        throw CLIError.noConversation(address)
+    }
+    return conversation
 }
 
-private func lastOutgoingMessage(to jidString: String, context: REPLContext) async throws -> ChatMessage? {
-    try await recentMessages(with: jidString, context: context)
+private func recentMessages(in conversation: Conversation, context: REPLContext) async throws -> [ChatMessage] {
+    try await context.environment.chatService.fetchMessageHistory(for: conversation.id, before: nil, limit: 10)
+}
+
+private func lastOutgoingMessage(in conversation: Conversation, context: REPLContext) async throws -> ChatMessage? {
+    try await recentMessages(in: conversation, context: context)
         .last { $0.isOutgoing && $0.stanzaID != nil && !$0.isRetracted }
 }

@@ -22,7 +22,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
     struct DeviceListTests {
         @Test func `parses device list XML`() {
             let xml = XMLElement(
-                name: "list", namespace: XMPPNamespaces.omemo,
+                name: "devices", namespace: XMPPNamespaces.omemo,
                 children: [
                     .element(XMLElement(name: "device", attributes: ["id": "12345"])),
                     .element(XMLElement(name: "device", attributes: ["id": "67890"]))
@@ -34,7 +34,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
         }
 
         @Test func `parses empty device list`() {
-            let xml = XMLElement(name: "list", namespace: XMPPNamespaces.omemo)
+            let xml = XMLElement(name: "devices", namespace: XMPPNamespaces.omemo)
             let module = makeModule()
             let devices = module.parseDeviceList(xml)
             #expect(devices.isEmpty)
@@ -42,7 +42,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
 
         @Test func `skips invalid device I ds`() {
             let xml = XMLElement(
-                name: "list", namespace: XMPPNamespaces.omemo,
+                name: "devices", namespace: XMPPNamespaces.omemo,
                 children: [
                     .element(XMLElement(name: "device", attributes: ["id": "123"])),
                     .element(XMLElement(name: "device", attributes: ["id": "notanumber"])),
@@ -87,132 +87,25 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
         }
     }
 
-    // MARK: - Key Serialization
-
-    struct KeySerializationTests {
-        @Test func `round trips ratchet message`() throws {
-            let header = OMEMORatchetHeader(
-                dhPublicKey: Array(repeating: 0xAB, count: 32),
-                previousChainCount: 5,
-                messageNumber: 10
-            )
-            let payload = OMEMOEncryptedPayload(
-                ciphertext: [1, 2, 3, 4, 5],
-                truncatedHMAC: Array(repeating: 0xCC, count: 16)
-            )
-            let original = OMEMORatchetMessage(
-                header: header, payload: payload
-            )
-            let module = makeModule()
-            let serialized = module.serializeRatchetMessage(original)
-            let deserialized = try module.deserializeRatchetMessage(
-                serialized
-            )
-            #expect(deserialized.header.dhPublicKey == header.dhPublicKey)
-            #expect(deserialized.header.previousChainCount == 5)
-            #expect(deserialized.header.messageNumber == 10)
-            #expect(deserialized.payload.ciphertext == [1, 2, 3, 4, 5])
-            #expect(deserialized.payload.truncatedHMAC == payload.truncatedHMAC)
-        }
-
-        @Test func `round trips key exchange`() throws {
-            let header = OMEMORatchetHeader(
-                dhPublicKey: Array(repeating: 0x11, count: 32),
-                previousChainCount: 0,
-                messageNumber: 0
-            )
-            let payload = OMEMOEncryptedPayload(
-                ciphertext: Array(repeating: 0x22, count: 48),
-                truncatedHMAC: Array(repeating: 0x33, count: 16)
-            )
-            let ratchetMsg = OMEMORatchetMessage(
-                header: header, payload: payload
-            )
-            let identity = OMEMOIdentityKeyPair()
-            let module = makeModule()
-            // Build key exchange data manually (same format as OMEMOModule)
-            var serialized: [UInt8] = []
-            module.appendBigEndian(7, to: &serialized) // signedPreKeyID
-            module.appendBigEndian(0xFFFF_FFFF, to: &serialized) // no OPK
-            serialized.append(contentsOf: identity.publicKeyBytes)
-            serialized.append(contentsOf: ratchetMsg.header.dhPublicKey)
-            serialized.append(
-                contentsOf: module.serializeRatchetMessage(ratchetMsg)
-            )
-            // Deserialize and verify
-            guard serialized.count >= 72 + 40 + 16 else {
-                Issue.record("Serialized data too short")
-                return
-            }
-            let spkID = module.readBigEndian(serialized, offset: 0)
-            let ik = Array(serialized[8 ..< 40])
-            let ratchetData = Array(serialized[72...])
-            let restored = try module.deserializeRatchetMessage(ratchetData)
-            #expect(spkID == 7)
-            #expect(ik == identity.publicKeyBytes)
-            #expect(
-                restored.header.dhPublicKey == header.dhPublicKey
-            )
-        }
-    }
-
-    // MARK: - SCE Envelope
-
-    struct SCETests {
-        @Test func `builds valid SCE envelope`() {
-            let module = makeModule()
-            let bytes = module.buildSCEEnvelope(body: "Hello")
-            let xml = String(decoding: bytes, as: UTF8.self)
-            let hasContent = xml.contains("<content")
-            #expect(hasContent)
-            let hasBody = xml.contains("Hello")
-            #expect(hasBody)
-            let hasRpad = xml.contains("<rpad>")
-            #expect(hasRpad)
-        }
-
-        @Test func `extracts body from SCE`() {
-            let module = makeModule()
-            let bytes = module.buildSCEEnvelope(body: "Test message")
-            let body = module.parseSCEBody(bytes)
-            #expect(body == "Test message")
-        }
-
-        @Test func `round trips special characters`() {
-            let module = makeModule()
-            let bytes = module.buildSCEEnvelope(
-                body: "Hello <world> & 'friends'"
-            )
-            let body = module.parseSCEBody(bytes)
-            #expect(body == "Hello <world> & 'friends'")
-        }
-    }
-
     // MARK: - Encrypted Element Building
 
     struct EncryptedElementTests {
         @Test func `builds encrypted element`() {
             let module = makeModule()
-            var key1 = XMLElement(
-                name: "key", attributes: ["rid": "100"]
-            )
-            key1.addText("base64data")
-            var key2 = XMLElement(
-                name: "key",
-                attributes: ["rid": "200", "kex": "true"]
-            )
-            key2.addText("kexdata")
+            let key1 = XMLElement(name: "key", attributes: ["rid": "100"])
+            let key2 = XMLElement(name: "key", attributes: ["rid": "200", "kex": "true"])
+            let key3 = XMLElement(name: "key", attributes: ["rid": "300"])
             let encrypted = module.buildEncryptedElement(
-                keys: [key1, key2],
+                keys: [(peerJID, key1), (ownJID, key2), (peerJID, key3)],
                 payload: "encryptedpayload",
                 senderDeviceID: 42
             )
             #expect(encrypted.namespace == XMPPNamespaces.omemo)
             let header = encrypted.child(named: "header")
             #expect(header?.attribute("sid") == "42")
-            let keys = header?.children(named: "key") ?? []
-            let keyCount = keys.count
-            #expect(keyCount == 2)
+            let keys = header?.children(named: "keys") ?? []
+            #expect(keys.map { $0.attribute("jid") } == [peerJID.description, ownJID.description])
+            #expect(keys.map { $0.children(named: "key").compactMap { $0.attribute("rid") } } == [["100", "300"], ["200"]])
             let payloadEl = encrypted.child(named: "payload")
             #expect(payloadEl?.textContent == "encryptedpayload")
         }
@@ -274,66 +167,6 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
                 associatedData: bobX3DH.associatedData
             )
             #expect(decrypted == contentKey)
-        }
-
-        @Test func `full message encrypt decrypt`() throws {
-            // Full flow: content key → encrypt payload → serialize →
-            // deserialize → decrypt payload
-            let contentKey: [UInt8] = (0 ..< 32).map { _ in
-                UInt8.random(in: 0 ... 255)
-            }
-            let plaintext = Array("Hello, OMEMO!".utf8)
-            let encrypted = try OMEMOMessageCrypto.encrypt(
-                plaintext: plaintext, messageKey: contentKey,
-                associatedData: []
-            )
-            let combined = encrypted.ciphertext + encrypted.truncatedHMAC
-            let encoded = Base64.encode(combined)
-            // Simulate wire: decode and split
-            let decoded = try #require(Base64.decode(encoded))
-            let ciphertext = Array(decoded.dropLast(16))
-            let hmac = Array(decoded.suffix(16))
-            let payload = OMEMOEncryptedPayload(
-                ciphertext: ciphertext, truncatedHMAC: hmac
-            )
-            let decrypted = try OMEMOMessageCrypto.decrypt(
-                payload: payload, messageKey: contentKey,
-                associatedData: []
-            )
-            #expect(decrypted == plaintext)
-        }
-
-        @Test func `key serialization round trip`() throws {
-            // Verify serialization/deserialization preserves ratchet
-            // message data through base64 encoding
-            let header = OMEMORatchetHeader(
-                dhPublicKey: (0 ..< 32).map { _ in
-                    UInt8.random(in: 0 ... 255)
-                },
-                previousChainCount: 3,
-                messageNumber: 7
-            )
-            let payload = OMEMOEncryptedPayload(
-                ciphertext: (0 ..< 64).map { _ in
-                    UInt8.random(in: 0 ... 255)
-                },
-                truncatedHMAC: (0 ..< 16).map { _ in
-                    UInt8.random(in: 0 ... 255)
-                }
-            )
-            let message = OMEMORatchetMessage(
-                header: header, payload: payload
-            )
-            let module = makeModule()
-            let bytes = module.serializeRatchetMessage(message)
-            let base64 = Base64.encode(bytes)
-            let decoded = try #require(Base64.decode(base64))
-            let restored = try module.deserializeRatchetMessage(decoded)
-            #expect(restored.header.dhPublicKey == header.dhPublicKey)
-            #expect(restored.header.previousChainCount == 3)
-            #expect(restored.header.messageNumber == 7)
-            #expect(restored.payload.ciphertext == payload.ciphertext)
-            #expect(restored.payload.truncatedHMAC == payload.truncatedHMAC)
         }
     }
 
@@ -451,7 +284,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
 
             let elements = try await task.value
             let header = elements.encrypted.child(named: "header")
-            let keys = header?.children(named: "key") ?? []
+            let keys = header?.child(named: "keys")?.children(named: "key") ?? []
             #expect(keys.count == 1)
             #expect(keys.first?.attribute("rid") == "\(dev2)")
 
@@ -923,7 +756,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
         /// Malformed bundle payload (well-formed PEP item containing payload
         /// that fails `parseBundleElement`) classifies as `.stale`, matching
         /// `fetchBundle`'s `bundleNotFound` semantics. Without this branch a
-        /// corrupt bundle node would stay listed forever.
+        /// corrupt bundle item would stay listed forever.
         @Test
         func `Malformed bundle payload classifies as stale`() async throws {
             let mock = MockTransport()
@@ -1003,11 +836,10 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             await disconnectFast(client)
         }
 
-        /// Retract IQs use itemID `"current"` so the publish and retract
-        /// sites cannot drift. A wrong itemID would be a silent no-op on
-        /// most PEP servers.
+        /// A retract names the device's item on the shared bundles node, the item its publish wrote. A wrong
+        /// item id would be a silent no-op on most PEP servers.
         @Test
-        func `Retract IQ uses itemID current`() async throws {
+        func `Retract IQ names the device's item on the bundles node`() async throws {
             let mock = MockTransport()
             let pepModule = PEPModule()
             let omemoModule = OMEMOModule(pepModule: pepModule)
@@ -1027,7 +859,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
                 return xml.contains("<retract")
             }
             let xml = try #require(retractIQ.map { String(decoding: $0, as: UTF8.self) })
-            #expect(xml.contains("<item id=\"current\"/>"))
+            #expect(xml.contains("<retract node=\"\(XMPPNamespaces.omemoBundles)\"><item id=\"99\"/>"))
 
             await disconnectFast(client)
         }
@@ -1511,10 +1343,10 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             #expect(bundleIQ.contains("<value>true</value>"))
             #expect(bundleIQ.contains("var=\"pubsub#access_model\""))
             #expect(bundleIQ.contains("<value>open</value>"))
-            // Bundle publish uses pepPublishOptions() with no maxItems argument.
-            #expect(!bundleIQ.contains("var=\"pubsub#max_items\""))
+            // Every device's bundle is an item of one node, which keeps them all.
+            #expect(bundleIQ.contains("var=\"pubsub#max_items\"") && bundleIQ.contains("<value>max</value>"))
 
-            // The device-list publish DOES carry max_items=1.
+            // The device-list publish caps max_items at 1.
             let deviceListIQ = String(decoding: artifacts.deviceListPublishIQ, as: UTF8.self)
             #expect(deviceListIQ.contains("var=\"pubsub#max_items\""))
             #expect(deviceListIQ.contains("<value>1</value>"))
@@ -1544,7 +1376,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             let retrieve = String(decoding: sent[4], as: UTF8.self)
             #expect(retrieve.contains("<items") && retrieve.contains(XMPPNamespaces.omemoDevices))
             let afterRetrieve = String(decoding: sent[5], as: UTF8.self)
-            #expect(afterRetrieve.contains("<publish") && afterRetrieve.contains(OMEMOModule.bundleNodePrefix))
+            #expect(afterRetrieve.contains("<publish") && afterRetrieve.contains(XMPPNamespaces.omemoBundles))
             // No device-list publish IQ was issued anywhere during connect.
             for bytes in sent {
                 let xml = String(decoding: bytes, as: UTF8.self)
@@ -1658,6 +1490,7 @@ func makeConnectedClient(
 }
 
 private let peerJID = BareJID(localPart: "peer", domainPart: "example.com")!
+private let ownJID = BareJID(localPart: "user", domainPart: "example.com")!
 
 /// Builds a `<iq type='result'>` carrying a device-list payload for the given
 /// device IDs.
@@ -1670,7 +1503,7 @@ private func makeDeviceListResultIQ(iqID: String, fromJID: BareJID, devices: [UI
     <iq type="result" id="\(iqID)" from="\(fromJID.description)">\
     <pubsub xmlns="http://jabber.org/protocol/pubsub">\
     <items node="urn:xmpp:omemo:2:devices">\
-    <item id="current"><list xmlns="urn:xmpp:omemo:2">\(deviceXML)</list></item>\
+    <item id="current"><devices xmlns="urn:xmpp:omemo:2">\(deviceXML)</devices></item>\
     </items></pubsub></iq>
     """
 }
@@ -1685,13 +1518,14 @@ private func makeItemNotFoundIQ(iqID: String, fromJID: BareJID) -> String {
     """
 }
 
-/// Wraps a published bundle element in the PEP `<iq type='result'>` items envelope keyed by the bundle node.
+/// Wraps a published bundle element in the PEP `<iq type='result'>` items envelope, as item `deviceID` of the shared
+/// bundles node.
 private func bundleResultIQ(iqID: String, fromJID: BareJID, deviceID: UInt32, bundleEl: XMLElement) -> String {
     """
     <iq type="result" id="\(iqID)" from="\(fromJID.description)">\
     <pubsub xmlns="http://jabber.org/protocol/pubsub">\
-    <items node="\(OMEMOModule.bundleNodePrefix)\(deviceID)">\
-    <item id="current">\(bundleEl.xmlString)</item>\
+    <items node="\(XMPPNamespaces.omemoBundles)">\
+    <item id="\(deviceID)">\(bundleEl.xmlString)</item>\
     </items></pubsub></iq>
     """
 }
@@ -1756,8 +1590,9 @@ func makeKEXMessage(to recipient: TestOMEMOIdentity, plaintext: String) async th
     let elements = try await encryptTask.value
     await disconnectFast(client)
 
+    // The initiator signs in with the recipient's credentials, so its envelope names that account as the sender.
     var message = XMLElement(name: "message", attributes: [
-        "from": "peer@example.com/i", "to": recipientJID.description
+        "from": "\(recipientJID)/i", "to": recipientJID.description
     ])
     message.addChild(elements.encrypted)
     return message
@@ -1770,17 +1605,14 @@ func isEncryptedMessage(_ event: XMPPEvent) -> Bool {
 
 /// The decrypted body of the last event, which `isEncryptedMessage` ends the collection on.
 func decryptedBody(in events: [XMPPEvent]) -> String? {
-    guard case let .omemoEncryptedMessageReceived(_, body, _) = events.last else { return nil }
-    return body
+    events.last.flatMap(decryptedMessage(of:))?.body
 }
 
-/// Extracts the bundle device ID from a captured `<iq>` whose pubsub items
-/// reference the bundle node `urn:xmpp:omemo:2:bundles:<deviceID>`.
+/// Extracts the bundle device ID, the item id, from a captured `<iq>` that fetches or publishes a bundle.
 private func extractBundleDeviceID(from bytes: [UInt8]) -> UInt32? {
     let xml = String(decoding: bytes, as: UTF8.self)
-    let prefix = "urn:xmpp:omemo:2:bundles:"
-    guard let nodeRange = xml.range(of: "node=\"\(prefix)") else { return nil }
-    let after = xml[nodeRange.upperBound...]
+    guard xml.contains("node=\"\(XMPPNamespaces.omemoBundles)\""), let itemRange = xml.range(of: "<item id=\"") else { return nil }
+    let after = xml[itemRange.upperBound...]
     guard let endQuote = after.firstIndex(of: "\"") else { return nil }
     return UInt32(after[after.startIndex ..< endQuote])
 }
@@ -1883,7 +1715,7 @@ private func respondToBundleProbes(
         case .itemNotFound:
             await mock.simulateReceive(makeItemNotFoundIQ(iqID: probeID, fromJID: pruneTestUserJID))
         case .empty:
-            await mock.simulateReceive(makeEmptyBundleResultIQ(iqID: probeID, deviceID: probedDeviceID))
+            await mock.simulateReceive(makeEmptyBundleResultIQ(iqID: probeID))
         case .healthy:
             let bundleIQ = try makeValidBundleResultIQ(
                 iqID: probeID, deviceID: probedDeviceID,
@@ -1905,8 +1737,8 @@ private func makeMalformedBundleResultIQ(iqID: String, deviceID: UInt32) -> Stri
     """
     <iq type="result" id="\(iqID)">\
     <pubsub xmlns="http://jabber.org/protocol/pubsub">\
-    <items node="urn:xmpp:omemo:2:bundles:\(deviceID)">\
-    <item id="current"><bundle xmlns="urn:xmpp:omemo:2"/></item>\
+    <items node="urn:xmpp:omemo:2:bundles">\
+    <item id="\(deviceID)"><bundle xmlns="urn:xmpp:omemo:2"/></item>\
     </items></pubsub></iq>
     """
 }
@@ -1953,7 +1785,7 @@ private func makeOwnDeviceListResultIQ(iqID: String, devices: [UInt32]) -> Strin
     <iq type="result" id="\(iqID)">\
     <pubsub xmlns="http://jabber.org/protocol/pubsub">\
     <items node="urn:xmpp:omemo:2:devices">\
-    <item id="current"><list xmlns="urn:xmpp:omemo:2">\(deviceXML)</list></item>\
+    <item id="current"><devices xmlns="urn:xmpp:omemo:2">\(deviceXML)</devices></item>\
     </items></pubsub></iq>
     """
 }
@@ -1962,11 +1794,11 @@ private func makeOwnDeviceListResultIQ(iqID: String, devices: [UInt32]) -> Strin
 /// `.transient` by `probeBundle` (a hostile or replicating server might
 /// answer empty for a sibling's live bundle, so empty-items is ambiguous and
 /// must not trigger retract).
-private func makeEmptyBundleResultIQ(iqID: String, deviceID: UInt32) -> String {
+private func makeEmptyBundleResultIQ(iqID: String) -> String {
     """
     <iq type="result" id="\(iqID)">\
     <pubsub xmlns="http://jabber.org/protocol/pubsub">\
-    <items node="urn:xmpp:omemo:2:bundles:\(deviceID)"/>\
+    <items node="urn:xmpp:omemo:2:bundles"/>\
     </pubsub></iq>
     """
 }

@@ -1,0 +1,34 @@
+{
+  "jid": "bob@example.org",
+  "deviceID": 27182818,
+  "identityKey": {
+    "seed": "JQariL9Akmkd7nF6qAevH7NwSCgZqFO1MFckL+7DORE=",
+    "publicKey": "n1aGroQpmNgyrhs21FGCTKcsCtkFb0HRVnIPVGBTM1U=",
+    "agreementPublicKey": "mIjuxWwmEavYej+appSaou4o7bOatHUpFl9o5OH+SEQ="
+  },
+  "signedPreKey": {
+    "id": 1,
+    "privateKey": "vOO1T1RpzwGAKJMcIHg1365ptTi/Vlh+j9n/z8CMNWg=",
+    "publicKey": "mCsNRZqsKJCMQs98V9PvlnmK/lC0x+aKLTTPh9t5bW0=",
+    "signature": "vJU/+XQA1+iAWQ20aN55vvVWfYEBEhV6Wdg/omkLDjtg4uvunw3rUgCNcqKJddQWjEZTqIJHIvxJlsgt/pR8Dw=="
+  },
+  "preKeys": [
+    {
+      "id": 1,
+      "privateKey": "eZ6E9WqeNJYIIp2Kq7vbEftPON73pio5bUCimVagjNU=",
+      "publicKey": "deLT0QpRbMofzPB4q7nom4b6dvK9Vh9ckAssnAbjfRo="
+    },
+    {
+      "id": 2,
+      "privateKey": "TPARlKXC56RRlQKFqbp3fimgoZGr5jrZ90IHjsjMEPQ=",
+      "publicKey": "Jd93qpobEemOYSm4CAIMecAe95HqvKwg/4Mp5yawpGo="
+    },
+    {
+      "id": 3,
+      "privateKey": "MSBjUeCwnvC202y4+peYI0RenosmfBm9yrJitQiij8I=",
+      "publicKey": "7E/VignN3/YDIL7iHC9n8VhJquf5mPlmovttDXazaAQ="
+    }
+  ],
+  "deviceList": "<devices xmlns=\"urn:xmpp:omemo:2\"><device id=\"27182818\" /></devices>",
+  "bundle": "<bundle xmlns=\"urn:xmpp:omemo:2\"><spk id=\"1\">mCsNRZqsKJCMQs98V9PvlnmK/lC0x+aKLTTPh9t5bW0=</spk><spks>vJU/+XQA1+iAWQ20aN55vvVWfYEBEhV6Wdg/omkLDjtg4uvunw3rUgCNcqKJddQWjEZTqIJHIvxJlsgt/pR8Dw==</spks><ik>n1aGroQpmNgyrhs21FGCTKcsCtkFb0HRVnIPVGBTM1U=</ik><prekeys><pk id=\"1\">deLT0QpRbMofzPB4q7nom4b6dvK9Vh9ckAssnAbjfRo=</pk><pk id=\"2\">Jd93qpobEemOYSm4CAIMecAe95HqvKwg/4Mp5yawpGo=</pk><pk id=\"3\">7E/VignN3/YDIL7iHC9n8VhJquf5mPlmovttDXazaAQ=</pk></prekeys></bundle>"
+}

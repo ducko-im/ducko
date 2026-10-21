@@ -4,6 +4,8 @@ enum CLIError: Error, LocalizedError {
     case noAccounts
     case accountNotFound(String)
     case noPassword
+    case noHiddenInput(field: String)
+    case hiddenInputTooLong(maxBytes: Int)
     case invalidJID(String)
     case connectionFailed(String)
     case connectionTimeout
@@ -15,10 +17,16 @@ enum CLIError: Error, LocalizedError {
     case noRoomSpecified
     case fileNotFound(String)
     case noConversationTarget
+    /// An address that names none of the account's conversations.
+    case noConversation(String)
     case invalidTransferMethod(String)
     case noIncomingOffers
     case malformedQuotedArgument(String)
     case omemoDeviceNotFound(deviceID: UInt32, jid: String)
+    case unlistedOption(String)
+    case notYesOrNo(String)
+    case registrationRedirected
+    case inputEnded(field: String)
 
     var errorDescription: String? {
         switch self {
@@ -28,6 +36,10 @@ enum CLIError: Error, LocalizedError {
             "Account not found: \(id)"
         case .noPassword:
             "No password provided. Run in a terminal to enter interactively."
+        case let .noHiddenInput(field):
+            "No \(field) provided. Run in a terminal to enter it interactively."
+        case let .hiddenInputTooLong(maxBytes):
+            "Hidden input can be at most \(maxBytes) bytes long."
         case let .invalidJID(jid):
             "Invalid JID: \(jid)"
         case let .connectionFailed(message):
@@ -50,6 +62,8 @@ enum CLIError: Error, LocalizedError {
             "File not found: \(path)"
         case .noConversationTarget:
             "No conversation target. Use: /sendfile [jid] <path>"
+        case let .noConversation(address):
+            "No conversation with \(address)"
         case let .invalidTransferMethod(method):
             "Invalid transfer method: \(method). Valid values: auto, http, jingle"
         case .noIncomingOffers:
@@ -58,6 +72,14 @@ enum CLIError: Error, LocalizedError {
             "Invalid nickname argument: \(detail). Quote nicknames containing spaces, e.g. \"Alice Smith\"."
         case let .omemoDeviceNotFound(deviceID, jid):
             "Device \(deviceID) not found for \(jid)."
+        case let .unlistedOption(value):
+            "\(value) is not one of the listed options."
+        case let .notYesOrNo(value):
+            "\(value) is not yes or no."
+        case .registrationRedirected:
+            "The server registers accounts only on the web page shown above."
+        case let .inputEnded(field):
+            "Input ended before \(field) had a value."
         }
     }
 }

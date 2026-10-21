@@ -87,7 +87,7 @@ private final class RosterUIFixture {
             let initial = try await server.next("jabber:iq:roster")
             await server.reply(to: initial, contents: "<query xmlns='jabber:iq:roster'><item jid='bob@example.com'/></query>")
         }
-        try await waitUntil { environment.rosterService.contact(jidString: "bob@example.com", accountID: id) != nil }
+        try await eventually { environment.rosterService.contact(jidString: "bob@example.com", accountID: id) != nil }
         await transport.clearSentBytes()
         return RosterUIFixture(server: server, environment: environment, accountID: id)
     }
@@ -99,7 +99,7 @@ private final class RosterUIFixture {
         await server.reply(to: mutation)
         let readback = try await server.next("type=\"get\"")
         await transport.simulateReceive("<iq type='set' id='removed'><query xmlns='jabber:iq:roster'><item jid='bob@example.com' subscription='remove'/></query></iq>")
-        try await waitUntil { self.environment.rosterService.contact(jidString: "bob@example.com", accountID: self.accountID) == nil }
+        try await eventually { self.environment.rosterService.contact(jidString: "bob@example.com", accountID: self.accountID) == nil }
         await server.reply(to: readback)
     }
 

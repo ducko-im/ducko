@@ -173,7 +173,7 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `jump-to-newest` | Round button at the bottom center of the message list, labelled "Jump to Newest Message", present only while the list is scrolled away from the newest message. | Chat |
 | `message-bubble-{id}` | Individual message bubble (id is ChatMessage.id) | Chat |
 | `retracted-message` | Retracted message tombstone | Chat |
-| `undecryptable-message` | Stand-in bubble for an encrypted message that could not be decrypted | Chat |
+| `undecryptable-message` | Stand-in bubble for an encrypted message that could not be decrypted. Its text says why, in the words the `/ducko-cli` skill's Plain output lists | Chat |
 | `setup-mode-picker` | Import/Login/Register segmented control | Account Setup |
 | `import-button` | Import & Connect / Import Logs button (Import mode) | Account Setup |
 | `import-done-button` | Done button after import completes | Account Setup |
@@ -184,9 +184,13 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `register-username-field` | Username field (Register mode) | Account Setup |
 | `register-password-field` | Password field (Register mode) | Account Setup |
 | `register-email-field` | Email field (Register mode) | Account Setup |
-| `register-button` | Register button (Register mode) | Account Setup |
+| `register-button` | Register button (Register mode). It first fetches the server's registration form. When `register-server-form` shows, the same button submits that form, disabled until each of its legacy fields and required data-form fields has a value | Account Setup |
+| `register-server-form` | The server's registration form in Register mode. It shows when the server asks for more than username, password and email, for an email none was typed for, or names a web page to register at. Its fields come filled in with what was typed, and use the `registration-*` and `data-form-field-*` identifiers below | Account Setup |
+| `register-cancel-button` | Cancel beside `register-button` while the server's registration form is shown: closes the connection and returns to the four fields | Account Setup |
+| `setup-error` | Error under the Login or Register fields. A failed submit of the server's registration form shows here too, back on the four fields | Account Setup |
 | `channel-search-field` | Channel search keyword field | Join Room |
-| `channel-search-button` | Channel search button | Join Room |
+| `channel-search-button` | Channel search button, disabled while `channel-search-wait` shows | Join Room |
+| `channel-search-wait` | "The server is limiting channel searches, try again in N s", counting down after the service rate-limited a search. Paging also stays disabled until it goes | Join Room |
 | `new-password-field` | New password field | Change Password |
 | `confirm-password-field` | Confirm password field | Change Password |
 | `encrypted-indicator` | Lock icon on encrypted messages | Chat |
@@ -194,7 +198,7 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `delivered-indicator` | One checkmark on a sent message that reached the contact | Chat |
 | `read-indicator` | Two checkmarks on a sent message the contact has read, shown instead of `delivered-indicator` | Chat |
 | `timeline-note` | Note between messages, such as encryption having been switched on by a contact's encrypted message | Chat, Chat History |
-| `encryption-menu` | Encryption menu button in chat header | Chat |
+| `encryption-menu` | Encryption menu button in chat header. A room's private chat has one only while its encryption is on, offering just Disable Encryption | Chat |
 | `device-fingerprints-sheet` | Device fingerprints sheet | Chat |
 | `device-row-{deviceID}` | Individual device row | Device Fingerprints |
 | `trust-button-{deviceID}` | Trust device button | Device Fingerprints |
@@ -206,12 +210,20 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `accept-file-transfer-button` | Accept button on an incoming file offer | Chat |
 | `decline-file-transfer-button` | Decline button on an incoming file offer | Chat |
 | `account-actions-menu` | Actions pull-down in the account detail, shown only while connected; its items carry no identifiers, so address them by title | Account Detail |
+| `blocked-contacts-view` | Blocked Contacts sheet, opened by the account's Actions ▸ Blocked Contacts…; Done or Escape closes it | Blocked Contacts |
+| `blocked-contacts-content` | Settled (non-loading) content; wait on this rather than the sheet container, which mounts while the block list request is still in flight | Blocked Contacts |
+| `blocked-contact-{jid}` | Address text of one block-list entry, a bare JID or a full JID that blocks one device. The roster shows a contact as blocked only through its bare-JID entry | Blocked Contacts |
+| `unblock-button-{jid}` | Unblock button of that entry. The row leaves once the server confirms | Blocked Contacts |
+| `block-address-field` | Address field for a new entry | Blocked Contacts |
+| `block-address-button` | Block button (Return), disabled while the field is empty. The row appears once the server confirms | Blocked Contacts |
+| `blocked-contacts-error` | Refused block or unblock, such as an invalid address or a server without blocking | Blocked Contacts |
 | `registration-form-sheet` | Registration form sheet | Registration |
 | `registration-form-content` | Settled (non-loading) content; wait on this rather than the sheet container, which mounts while the server request is still in flight | Registration |
-| `registration-submit-button` | Submit button in registration form | Registration |
-| `registration-username-field` | Username field in registration form | Registration |
-| `registration-password-field` | Password field in registration form | Registration |
-| `registration-email-field` | Email field in registration form | Registration |
+| `registration-submit-button` | Submit button in registration form, disabled until each of its legacy fields and required data-form fields has a value | Registration |
+| `registration-{name}-field` | Field of a legacy registration form, named by the element the server asked for: `username`, `password`, `email`, `nick`, `name`, `first`, `last` and the like | Registration, Account Setup |
+| `registration-instructions` | The server's instructions in a registration form | Registration, Account Setup |
+| `registration-redirect-link` | Link to the web page the server names for registering, labelled with its address. An address that is not http or https shows as plain text without this identifier | Registration, Account Setup |
+| `data-form-field-{var}` | Field of a data form, named by its var, in a registration form or the room config form | Registration, Account Setup, Room Settings |
 | `contact-info-button` | Profile-info (i) button in chat header | Chat |
 | `history-button` | History (clock) button in chat header | Chat |
 | `disconnected-strip` | "You're offline" strip under the chat header | Chat |
@@ -228,10 +240,13 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `contact-info-block` | Block/Unblock button, shown only once the account's roster is loaded. A window opened while disconnected shows `Not connected to the server` in its Profile section; close and reopen it after connecting, since Get Info only raises the existing window. Choosing Offline in a running session hides the contact rows, so to reach that state open the contact's chat while online, run `ducko-status-menu.sh offline`, then `ducko-chat-header.sh info` | Contact Info |
 | `contact-info-remove` | Remove Contact button, shown under the same condition as `contact-info-block` | Contact Info |
 | `roster-notice` | Persistent contact-change notice, with a “Dismiss notice” button and Escape shortcut | Contacts |
+| `sign-in-security-keep-refusing` | "Keep Refusing" in the Sign-In Refused alert, shown when an account that has signed in with SCRAM meets a server offering only PLAIN. Hides the alert until the next refused sign-in. Find it by its label, as `ducko-sign-in-security.sh` does: the identifier is set on an alert button | Contacts |
+| `sign-in-security-reset` | "Reset Sign-In Security…" in the same alert, opening its confirmation. Find it by its label | Contacts |
+| `sign-in-security-reset-confirm` | "Reset and Sign In" in that confirmation: clears the account's requirement and signs in. Find it by its label | Contacts |
 | `contact-info-roster-notice` | Persistent removal notice, with a “Dismiss notice” button and Escape shortcut | Contact Info |
 | `contact-context-remove` | "Remove Contact…" context-menu item (asks for confirmation) | Contacts |
 
-The `account-actions-menu` items, in menu order: Connection Info… (only when the account has TLS info), Server Info…, Change Password…, Check Registration…, Unregister Account…. Never press Unregister Account… in a test run, because accepting its confirmation unregisters the account from the server.
+The `account-actions-menu` items, in menu order: Connection Info… (only when the account has TLS info), Server Info…, Blocked Contacts…, Change Password…, Check Registration…, Unregister Account…. Never press Unregister Account… in a test run, because accepting its confirmation unregisters the account from the server. A script opens one with the generated `ducko_as_click_account_action "<item>"` snippet, which selects the first account row first.
 
 ## Context Menu Features
 
@@ -245,7 +260,7 @@ Right-click a contact row in the contact list:
 - **Pin / Unpin** — pin or unpin the contact to the top of the list
 - **Mute / Unmute** — mute or unmute notifications
 - **Rename** — set a local alias for the contact
-- **Block / Unblock** — block or unblock the contact
+- **Block / Unblock** — block or unblock the contact's bare address; entries for one of its devices stay, and the Blocked Contacts sheet manages those
 - **Remove Contact…** — remove from roster after a confirmation
 
 ### Room Row
@@ -284,7 +299,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-search.sh` | Toggle the Cmd+F find bar of whichever Ducko window is frontmost, the chat window or Chat History, and optionally search | `[QUERY]` (optional) |
 | `ducko-history-search.sh` | Raise the open Chat History window, press ⌥⌘F and type a query into its toolbar field, which searches all conversations | `QUERY` |
 | `ducko-contact-search.sh` | Reveal the contact-list search (⌘F), optionally filter the roster | `[QUERY]` (optional) |
-| `ducko-reply.sh` | Right-click a message and select Reply | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
+| `ducko-reply.sh` | Right-click a message and select Reply. A room message offers Reply only once the room has echoed it | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
 | `ducko-sort.sh` | Open the View menu (Sort Contacts / Hide Offline), optionally select sort/filter (`hideOffline` is also ⌘⇧H with Contacts focused) | `[alphabetical\|byStatus\|recentConversation\|hideOffline]` (optional) |
 | `ducko-join-room.sh` | Raise Contacts, open the Join Room sheet, fill room JID + nickname, join. Succeeds once the sheet has closed and the room's row (`room-row-{jid}`) has appeared. A room new to the server then has its Room Settings sheet open on Contacts | `ROOM_JID [NICKNAME]` |
 | `ducko-toggle-sidebar.sh` | Toggle participant sidebar in active groupchat window | none |
@@ -301,9 +316,9 @@ Right-click a participant in the chat window sidebar:
 | `ducko-account-status.sh` | Set one account's status from its submenu in the menu-bar extra, leaving the other accounts alone (needs 2+ enabled accounts and Show Ducko in Menu Bar). Not covered by the integration suite | `ACCOUNT <available\|away\|xa\|dnd\|offline>` (`ACCOUNT`: display name or JID as shown in the menu) |
 | `ducko-bookmarks.sh` | Open the Bookmarks sheet from the File menu (⌘⇧B) | none |
 | `ducko-add-bookmark.sh` | Add a bookmark via the Bookmarks sheet. Succeeds once the Add Bookmark sheet has closed and the bookmark's row (`bookmark-row-{jid}`) has appeared | `ROOM_JID [NICKNAME]` |
-| `ducko-remove-bookmark.sh` | Remove a bookmark from the Bookmarks sheet. On macOS 27 it fails with "remove button not found", because the bookmark row's identifier masks its children's. Remove the bookmark with the copy's CLI instead: `vm gui 'DUCKO_PROFILE=<profile> /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko bookmarks remove ROOM_JID'`, with the profile `uitest` unless the run set one. The app keeps listing the bookmark until it reconnects, since the removal is sent without `notify` and the app gets no push | `ROOM_JID` |
+| `ducko-remove-bookmark.sh` | Remove a bookmark from the Bookmarks sheet. On macOS 27 it fails with "remove button not found", because the bookmark row's identifier masks its children's. Remove the bookmark with the copy's CLI instead: `vm gui 'DUCKO_PROFILE=<profile> /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko bookmarks remove ROOM_JID'`, with the profile `uitest` unless the run set one. The removal is sent with `notify`, so the app drops the bookmark once the server pushes the retraction | `ROOM_JID` |
 | `ducko-leave-room.sh` | Leave a room via context menu | `ROOM_JID` |
-| `ducko-retract.sh` | Retract a message via context menu | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
+| `ducko-retract.sh` | Retract a message via context menu. A room message offers Retract only once the room has echoed it | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
 | `ducko-moderate.sh` | Moderate (remove) a message via context menu | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
 | `ducko-reveal.sh` | Reveal a message's saved files in Finder via context menu | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
 | `ducko-copy-code-block.sh` | Copy a code block through its "Copy Code" accessibility action and print what the clipboard then holds. Fails when the clipboard does not change. Targets `DUCKO_PID` when set, else the running `DuckoUITest` | `[TEXT]` (optional, matches the first code block whose code contains TEXT; default: last code block) |
@@ -316,7 +331,10 @@ Right-click a participant in the chat window sidebar:
 | `ducko-room-topic.sh` | View or set the room topic | `[TEXT]` (optional; no args prints current topic) |
 | `ducko-channel-search.sh` | Search for channels in the Join Room dialog | `QUERY` |
 | `ducko-connection-info.sh` | Open Connection Info from Preferences > Accounts (best-effort), or close it with the shared PID-targeted Swift AX helper | `[open\|close]`; close targets `DUCKO_PID` when set, else the running `DuckoUITest` |
-| `ducko-register.sh` | Register a new account via in-band registration | `SERVER USERNAME PASSWORD [EMAIL]` |
+| `ducko-sign-in-security.sh` | Answer the Sign-In Refused alert on Contacts: `keep` presses Keep Refusing, `reset` presses Reset Sign-In Security… and then Reset and Sign In. Succeeds once Contacts shows no dialog. A reset that fails leaves the Sign-In Security Reset Failed alert, with the reason and an OK button, so the script reports that a dialog is still shown. To stage the alert, point the account at the `/ducko-cli` stub server, which offers only PLAIN, and set the requirement in the profile's store as that skill's `account reset-security` section shows | `<keep\|reset>` |
+| `ducko-register.sh` | Register a new account via in-band registration and wait for the outcome: registered and signed in, the server's own form shown because it asks for more (it then names `ducko-register-fields.sh`), or the window's error | `SERVER USERNAME PASSWORD [EMAIL]` |
+| `ducko-register-fields.sh` | Use after `ducko-register.sh` reported the server's form. `fill` types each value into the field of that name (`registration-{name}-field`, else `data-form-field-{name}`), presses Register and waits for the account or the window's error. `redirect` prints the address of the page the server sends the user to | `fill [NAME VALUE]...` or `redirect` |
+| `ducko-blocked-contacts.sh` | `open` opens the Blocked Contacts sheet from the first account's Actions pull-down in Preferences > Accounts and waits for its list (best-effort, like `ducko-connection-info.sh`). On the open sheet, `list` prints its entries, `add` blocks an address and waits for its row, and `remove` presses the entry's Unblock and waits for the row to go. A failed change reports the sheet's error | `<open\|list\|add\|remove> [JID]` (`JID` only, and required, for `add` and `remove`) |
 | `ducko-change-password.sh` | Change account password via Preferences > Accounts (best-effort; needs a connected account and a `List(selection:)` that synthetic clicks may not trigger) | `NEW_PASSWORD` |
 | `ducko-toggle-preference.sh` | Toggle any preference checkbox by identifier | `IDENTIFIER` (e.g., chatStatesToggle, encryptByDefaultToggle, tofuToggle, contacts-compact-toggle) |
 | `ducko-menu-bar.sh` | Toggle menu bar icon visibility in General preferences | none |
@@ -347,7 +365,7 @@ For first-time setup when no account exists:
 
 **Complete the Welcome screen first.** On a fresh profile the first-run Welcome onboarding window holds key/first-responder status. Contact-list actions like Add Contact are gated behind a focus check (Contacts must be the key window), and synthetic automation can't force that focus while Welcome is up — so contact/chat steps silently fail until Welcome is gone. Welcome can't simply be dismissed; you must *complete* it by logging in through it, or keep it from appearing by seeding the profile's account from the CLI (see Notes). The Welcome screen defaults to **Import** mode, and `ducko-login.sh` assumes **Login** mode is already selected, so select the Login segment of the `setup-mode-picker` segmented control *before* running it.
 
-The Welcome scripts (`ducko-login.sh`, `ducko-register.sh`, `ducko-import.sh`) walk the Welcome window via the recursive `findByAttr` handler (like `ducko-select-mode.sh`) and gate their success message on the osascript result, so a missing field reports an error instead of false success. The login screen's identifiers are covered by `UILoginTests` (which drives them through the test harness's Swift AX helpers, not this script); the register/import segments have no integration test, so for all three the script's traversal and success-gating are verified by construction.
+The Welcome scripts (`ducko-login.sh`, `ducko-register.sh`, `ducko-register-fields.sh`, `ducko-import.sh`) walk the Welcome window via the recursive `findByAttr` handler (like `ducko-select-mode.sh`) and gate their success message on the osascript result, so a missing field reports an error instead of false success. The login screen's identifiers are covered by `UILoginTests` (which drives them through the test harness's Swift AX helpers, not this script); the register/import segments have no integration test, so for all of them the script's traversal and success-gating are verified by construction.
 
 ```bash
 vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
@@ -685,7 +703,7 @@ vm ui ducko-add-bookmark.sh "room@conference.example.com" "mynick"
 vm ui ducko-screenshot.sh "bookmark-added.png"
 
 # 4. Remove the bookmark through the copy's CLI (ducko-remove-bookmark.sh fails on macOS 27, see its row),
-#    and confirm it from the server's list, since the app keeps listing it until it reconnects
+#    and confirm it from the server's list. The app drops its row once the server pushes the retraction
 vm gui 'DUCKO_PROFILE=uitest /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko bookmarks remove room@conference.example.com'
 vm gui 'DUCKO_PROFILE=uitest /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko bookmarks list'
 
@@ -924,7 +942,7 @@ To allow these scripts in `settings.local.json` without prompts:
 - Keep apostrophes out of osascript heredoc bodies. `/bin/bash` 3.2, which the scripts' shebang selects, rejects a `$(… << EOF …)` body with an odd apostrophe count, while Homebrew bash 5 accepts it, so check with `/bin/bash -n` rather than a bare `bash -n`.
 - Limit `ducko-helpers.sh` and the wrapper scripts to bash builtins and the commands DuckoScriptTests stubs. Its capture fixture runs them with a PATH holding only stubs plus `cat` and `dirname`, and rejects absolute command paths.
 - Idle auto-away switches the status to Away after about five minutes without mouse movement or key presses, so an unattended run can observe Away unexpectedly. AX actions and clicks without movement don't count as input. Set the status explicitly (e.g. `ducko-status-menu.sh available`), which cancels auto-away, before asserting on it.
-- The scripts marked best-effort in the Script Reference table (`ducko-chat-tabs.sh`, `ducko-connection-info.sh`, `ducko-change-password.sh`, `ducko-room-config-save.sh`) hit osascript limitations covered authoritatively by the integration suite instead; each table row names the specific control. `UIPreferencesTests` covers `ducko-connection-info.sh` and `ducko-change-password.sh`, and `UIMUCTests` covers the Room Settings Save.
+- The scripts marked best-effort in the Script Reference table (`ducko-chat-tabs.sh`, `ducko-connection-info.sh`, `ducko-blocked-contacts.sh`, `ducko-change-password.sh`, `ducko-room-config-save.sh`) hit osascript limitations covered authoritatively by the integration suite instead; each table row names the specific control. `UIPreferencesTests` covers `ducko-connection-info.sh`, the opening of the Blocked Contacts sheet and `ducko-change-password.sh`, and `UIMUCTests` covers the Room Settings Save.
 - The contact list and chat windows are both singletons (`Window`). The chat window holds all open conversations as bottom tabs (`chat-tab-bar`); `ducko-send.sh` targets the active tab in the frontmost chat window. Contact Info is a `WindowGroup` keyed by `ContactInfoRef`.
 - Pass runtime values as arguments to `osascript -` and read them with `on run argv`. Keep them out of the generated AppleScript source.
 - Credentials are arguments, never hardcoded.
@@ -952,4 +970,4 @@ To allow these scripts in `settings.local.json` without prompts:
 - Allow about ten seconds for a quit, since the app disconnects first, and confirm the process has exited before launching the next instance on the same profile. An instance can ignore the quit request, and a launch then runs beside it. Stop a stuck one by PID.
 - To let the user try relaunch behavior, run the debug binary in a loop that starts it again whenever it exits, such as `while [ ! -f "$STOP_FILE" ]; do DUCKO_PROFILE=<name> .build/debug/DuckoApp; sleep 1; done`, so ⌘Q shows the relaunch without a terminal. To end it, create the stop file, then quit the instance by PID.
 - The chat window's saved tabs are the `chatSavedTabs` key in the profile's debug defaults domain: `im.ducko.dev.uitest` for the copy launched without a `DUCKO_PROFILE`, `im.ducko.dev.<profile>` under one, and `im.ducko.dev` only for a debug Ducko run outside these scripts. To return a profile to no saved tabs, delete the key while no instance of that profile runs, since a running one writes it again on its next tab change.
-- A sheet that fetches on appear needs an identifier on its settled (non-loading) content, not only on the sheet container: the container mounts while the request is in flight, so a wait on it passes before the fetch resolves and cannot fail when the fetch breaks. `server-info-content` and `registration-form-content` follow this; give new loading sheets the same pair.
+- A sheet that fetches on appear needs an identifier on its settled (non-loading) content, not only on the sheet container: the container mounts while the request is in flight, so a wait on it passes before the fetch resolves and cannot fail when the fetch breaks. `server-info-content`, `blocked-contacts-content` and `registration-form-content` follow this; give new loading sheets the same pair.

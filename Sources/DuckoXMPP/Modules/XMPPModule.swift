@@ -16,6 +16,9 @@ public protocol XMPPModule: AnyObject, Sendable {
     func handleDisconnect() async
     /// Called for each incoming `<message>` stanza.
     func handleMessage(_ message: XMPPMessage) throws
+    /// Called for a message rebuilt from an encrypted one, whose elements were inside the encryption. A module that
+    /// acts on those elements in the clear acts on them here, and leaves them alone next to an encrypted payload.
+    func handleDecryptedMessage(_ message: XMPPMessage)
     /// Called for each incoming `<presence>` stanza.
     func handlePresence(_ presence: XMPPPresence) throws
     /// Called for each incoming `<iq>` stanza (after IQ tracking).
@@ -33,6 +36,7 @@ public extension XMPPModule {
     func handleResume() async throws {}
     func handleDisconnect() async {}
     func handleMessage(_ message: XMPPMessage) throws {}
+    func handleDecryptedMessage(_ message: XMPPMessage) {}
     func handlePresence(_ presence: XMPPPresence) throws {}
     func handleIQ(_ iq: XMPPIQ) throws -> Bool {
         false

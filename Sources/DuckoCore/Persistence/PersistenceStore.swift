@@ -6,6 +6,12 @@ public protocol PersistenceStore: Sendable {
     func fetchAccounts() async throws -> [Account]
     func saveAccount(_ account: Account) async throws
     func deleteAccount(_ id: UUID) async throws
+    /// Writes only the account's learned SCRAM requirement, which `saveAccount` leaves as stored.
+    func setRequiresSCRAM(_ requiresSCRAM: Bool, accountID: UUID) async throws
+    /// The channel search services' rate limits the account waits out, by service address.
+    func fetchChannelSearchLimits(accountID: UUID) async throws -> [String: ChannelSearchLimit]
+    /// Writes only the account's channel search rate limits, which `saveAccount` leaves as stored.
+    func setChannelSearchLimits(_ limits: [String: ChannelSearchLimit], accountID: UUID) async throws
 
     // MARK: - Contacts
 

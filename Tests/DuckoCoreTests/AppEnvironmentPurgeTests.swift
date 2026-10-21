@@ -128,6 +128,7 @@ extension AppEnvironmentPurgeTests {
         try await env.rosterService.loadContacts(for: id)
         await env.presenceService.handleEvent(.presenceSubscriptionRequest(from: peer), accountID: id)
         await env.chatService.handleEvent(.roomInviteReceived(RoomInvite(room: peer, from: .bare(peer))), accountID: id)
+        env.chatService.learnChatStateUse(of: .contact(peer), uses: false, accountID: id)
         env.bookmarksService.setBookmarksForTesting([RoomBookmark(jidString: peer.description)], accountID: id)
         env.avatarService.setOwnAvatarHashForTesting(name, accountID: id)
         env.profileService.setOwnProfileForTesting(ProfileInfo(), accountID: id)
@@ -139,8 +140,9 @@ extension AppEnvironmentPurgeTests {
         return (id, peer)
     }
 
-    /// `shown` covers what a disconnect keeps and a delete drops: the account's contact and your profile as open chats and
-    /// the Contacts header still show them, and the OMEMO seen-device classifications.
+    /// `shown` covers what a disconnect keeps and a delete drops: the account's contact and your profile, which open
+    /// chats and the Contacts header still show; the OMEMO seen-device classifications; and which peers send no chat
+    /// states.
     private static func assertCaches(_ env: AppEnvironment, account: (id: UUID, peer: BareJID), present: Bool, shown: Bool) async {
         #expect((env.rosterService.contact(jidString: account.peer.description, accountID: account.id) != nil) == present)
         #expect((env.rosterService.knownContact(jidString: account.peer.description, accountID: account.id) != nil) == shown)
@@ -150,5 +152,6 @@ extension AppEnvironmentPurgeTests {
         #expect((env.avatarService.ownAvatarHash(for: account.id) != nil) == present)
         #expect((env.profileService.ownProfile(for: account.id) != nil) == shown)
         #expect(await env.omemoService.loadSeenDevices(accountID: account.id.uuidString).isEmpty == !shown)
+        #expect(env.chatService.sendsChatStates(to: .contact(account.peer), accountID: account.id) == !shown)
     }
 }

@@ -3,6 +3,7 @@ import Foundation
 
 public actor MockPersistenceStore: PersistenceStore {
     public var accounts: [Account] = []
+    public var channelSearchLimits: [UUID: [String: ChannelSearchLimit]] = [:]
     private var fetchAccountsError: Error?
 
     public func setFetchAccountsError(_ error: Error?) {
@@ -107,9 +108,10 @@ public actor MockPersistenceStore: PersistenceStore {
 
     public func saveAccount(_ account: Account) async throws {
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
-            let version = accounts[index].rosterVersion
+            let stored = accounts[index]
             accounts[index] = account
-            accounts[index].rosterVersion = version
+            accounts[index].rosterVersion = stored.rosterVersion
+            accounts[index].requiresSCRAM = stored.requiresSCRAM
         } else {
             accounts.append(account)
         }
@@ -117,6 +119,21 @@ public actor MockPersistenceStore: PersistenceStore {
 
     public func deleteAccount(_ id: UUID) async throws {
         accounts.removeAll { $0.id == id }
+        channelSearchLimits[id] = nil
+    }
+
+    public func setRequiresSCRAM(_ requiresSCRAM: Bool, accountID: UUID) async throws {
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        accounts[index].requiresSCRAM = requiresSCRAM
+    }
+
+    public func fetchChannelSearchLimits(accountID: UUID) async throws -> [String: ChannelSearchLimit] {
+        channelSearchLimits[accountID] ?? [:]
+    }
+
+    public func setChannelSearchLimits(_ limits: [String: ChannelSearchLimit], accountID: UUID) async throws {
+        guard accounts.contains(where: { $0.id == accountID }) else { return }
+        channelSearchLimits[accountID] = limits.isEmpty ? nil : limits
     }
 
     // MARK: - Contacts

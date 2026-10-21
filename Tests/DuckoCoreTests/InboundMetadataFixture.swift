@@ -30,6 +30,9 @@ func verifyPersistedInboundMetadata(origin: InboundMetadataOrigin, hasReply: Boo
         let message = try #require(try await reloaded.fetchMessages(for: conversation.id, before: nil, limit: 10).first)
         #expect(message.stanzaID == "incoming-id")
         #expect(message.replyToID == (hasReply ? "original-id" : nil))
+        #expect(message.replyToJID == (hasReply ? "bob@example.com" : nil))
+        #expect(message.body == (hasReply ? "> earlier\nreply body" : "reply body"))
+        #expect(message.replyFallbackRange == (hasReply ? 0 ..< 10 : nil))
         #expect(message.attachments.count == 1)
         #expect(message.attachments.first?.url == "https://example.com/image.png")
         #expect(message.attachments.first?.mimeType == "image/png")
@@ -39,7 +42,7 @@ func verifyPersistedInboundMetadata(origin: InboundMetadataOrigin, hasReply: Boo
         case .live, .carbonReceived, .carbonSent: #expect(message.serverID == "trusted-id")
         case .room: #expect(message.serverID == "room-id")
         case .privateRoom:
-            #expect(message.serverID == nil)
+            #expect(message.serverID == "trusted-id")
             #expect(conversation.occupantNickname == "Bob")
         }
         #expect(message.isOutgoing == (origin == .carbonSent))
@@ -59,8 +62,13 @@ private func metadataStanza(origin: InboundMetadataOrigin, hasReply: Bool) throw
     }
     var stanza = XMPPMessage(type: origin == .room ? .groupchat : .chat, to: .bare(outgoing ? peer : account), id: "incoming-id")
     stanza.from = try .full(#require(FullJID(bareJID: sender, resourcePart: "Bob")))
-    stanza.body = "reply body"
-    if hasReply { stanza.element.addChild(DuckoXMPP.XMLElement(name: "reply", namespace: XMPPNamespaces.messageReply, attributes: ["id": "original-id", "to": peer.description])) }
+    let reply = MessageReply(to: "original-id", by: .bare(peer), quoting: "earlier")
+    stanza.body = hasReply ? reply.body(replying: "reply body") : "reply body"
+    if hasReply {
+        for element in reply.elements {
+            stanza.element.addChild(element)
+        }
+    }
     for (id, by) in [("forged-id", peer.description), ("trusted-id", account.description), ("room-id", room.description)] {
         stanza.element.addChild(DuckoXMPP.XMLElement(name: "stanza-id", namespace: XMPPNamespaces.stanzaID, attributes: ["id": id, "by": by]))
     }

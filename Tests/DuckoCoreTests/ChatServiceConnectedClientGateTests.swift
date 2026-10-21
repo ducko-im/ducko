@@ -58,13 +58,9 @@ enum ChatServiceConnectedClientGateTests {
             let chatService = makeChatService(store: store, transcripts: transcripts)
             chatService.setAccountService(accountService)
 
-            // `sendMessage` checks `connectedClient` BEFORE any conversation
-            // / transcript work, so the gate fires immediately when the
-            // account never connected. (`sendCorrection` and `retractMessage`
-            // validate the original message first, so they would surface
-            // `.notOutgoingMessage` instead — same gate, but a separate
-            // pre-condition would have to be staged to reach it from a unit
-            // test.)
+            // `sendMessage` checks `connectedClient` before any transcript work, so the gate fires for an account
+            // that never connected. `sendCorrection` and `retractMessage` check the stored conversation and the
+            // original message first, so reaching their gate needs both staged.
             let accountID = try await accountService.createAccount(jidString: testJIDString)
 
             await #expect(throws: ChatService.ChatServiceError.self) {

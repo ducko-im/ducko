@@ -228,15 +228,26 @@ enum JingleSOCKS5Tests {
         }
 
         @Test
-        func `An initiator ignores its SOCKS5 failure after switching to IBB`() async throws {
+        func `An initiator reports nothing for a dial that fails after switching to IBB`() async throws {
             let harness = JingleInitiatorHarness()
-            let (sid, probe) = try await Self.startAttempt(harness)
+            let sid = try await harness.initiate()
+            // The responder's candidate takes the connection but never answers the greeting, so the dial waits on it.
+            let responder = SOCKS5Listener()
+            let port = try await responder.start()
+            let candidate = SOCKS5Transport.Candidate(
+                cid: "responder-direct", host: "127.0.0.1", port: port, jid: JingleInitiatorHarness.peer.description, priority: 100, type: .direct
+            )
+            try harness.receive(
+                action: JingleAction.sessionAccept.rawValue, sid: sid, payload: [harness.acceptedContent(sid: sid, candidates: [candidate])]
+            )
 
-            // The peer's candidate-error switches this side to IBB and closes the listener its attempt waits on.
-            try harness.receive(action: "transport-info", sid: sid, payload: [Self.candidateError()])
+            // The peer's proxy-error switches this side to IBB while its dial still runs.
+            try harness.receive(action: "transport-info", sid: sid, payload: [JingleInitiatorHarness.socks5Info(XMLElement(name: "proxy-error"))])
             #expect(try await harness.sentJingle(action: JingleAction.transportReplace.rawValue) != nil)
+            // A handshake naming another stream fails the dial.
+            _ = try? await responder.accept(expectedDstAddr: "another-stream", timeout: 2)
             #expect(try await harness.sentJingle(action: JingleAction.transportInfo.rawValue, timeout: .seconds(1)) == nil)
-            withExtendedLifetime(probe) {}
+            await responder.close()
         }
 
         @Test
@@ -244,10 +255,9 @@ enum JingleSOCKS5Tests {
             let harness = JingleInitiatorHarness()
             let (sid, probe) = try await Self.startAttempt(harness)
 
-            // A second attempt would find the listener busy and report a failure while the first one still runs.
+            // A second attempt would find the listener busy and close it, ending the handshake the first one holds open.
             try harness.receive(action: JingleAction.sessionAccept.rawValue, sid: sid)
-            #expect(try await harness.sentJingle(action: JingleAction.transportInfo.rawValue, timeout: .seconds(1)) == nil)
-            withExtendedLifetime(probe) {}
+            #expect(!probe.awaitClosed())
         }
 
         @Test
@@ -335,7 +345,7 @@ enum JingleSOCKS5Tests {
 
         @Test
         func `A proxy failure that lands after switching to IBB leaves the fallback in place`() async throws {
-            // The dial is given long enough to still be running when the peer's candidate-error switches to IBB, so its
+            // The dial is given long enough to still be running when the peer's proxy-error switches to IBB, so its
             // failure arrives afterwards — the case where a stale proxy outcome could tear down a settled fallback.
             let harness = JingleInitiatorHarness(
                 timing: JingleTiming(proxyConnectWait: .seconds(1)), answerIQ: Self.answerWithFailingProxy
@@ -343,14 +353,14 @@ enum JingleSOCKS5Tests {
             let sid = try await harness.initiate()
 
             try harness.receive(action: "transport-info", sid: sid, payload: [JingleInitiatorHarness.candidateUsed(harness.offeredCandidate(type: "proxy"))])
-            // Armed before the candidate-error lands. The dial has to still be running, or this exercises the reverse
+            // Armed before the proxy-error lands. The dial has to still be running, or this exercises the reverse
             // ordering, where the failure switches to IBB first and every assertion below holds for the wrong reason.
             // Whether the dial blocks depends on the network, so it is asserted rather than assumed. A host that answers
             // or refuses TEST-NET-1 immediately fails here instead of passing green.
             #expect(try await harness.sentJingle(action: JingleAction.transportInfo.rawValue, timeout: .milliseconds(50)) == nil)
             #expect(harness.sentJingleCount(action: JingleAction.transportReplace.rawValue) == 0)
 
-            try harness.receive(action: "transport-info", sid: sid, payload: [Self.candidateError()])
+            try harness.receive(action: "transport-info", sid: sid, payload: [JingleInitiatorHarness.socks5Info(XMLElement(name: "proxy-error"))])
             #expect(try await harness.sentJingle(action: JingleAction.transportReplace.rawValue) != nil)
 
             let failure = try await harness.event(timeout: .seconds(2)) { event in
@@ -405,8 +415,8 @@ enum JingleSOCKS5Tests {
             return ("sid-1", peer)
         }
 
-        /// This side dials none of the responder's candidates, and XEP-0260 §2.3 has it say so even when the responder
-        /// reached its listener, since a responder can wait for both sides' reports before using the stream.
+        /// This side's report covers only its own dial, not the responder reaching its listener. With no responder
+        /// candidates to reach, it reports candidate-error (XEP-0260 §2.3).
         @Test
         func `An initiator reached on its listener reports it used none of the peer's candidates`() async throws {
             let harness = JingleInitiatorHarness()
@@ -421,8 +431,8 @@ enum JingleSOCKS5Tests {
             withExtendedLifetime(peer) {}
         }
 
-        /// An initiator reports candidate-error even when this side's connection works, since it dials none of this side's
-        /// candidates. Only the initiator decides a fallback, so the working stream stays and carries the file.
+        /// An initiator reports candidate-error even when this side's connection works, since this side offers no candidates
+        /// of its own. Only the initiator decides a fallback, so the working stream stays and carries the file.
         @Test
         func `A responder keeps its connected stream after the initiator's candidate-error`() async throws {
             let harness = JingleInitiatorHarness()
@@ -476,7 +486,6 @@ enum JingleSOCKS5Tests {
             let sid = try await harness.initiate()
             try harness.receive(action: JingleAction.sessionAccept.rawValue, sid: sid)
             let peer = try await harness.connectToDirectCandidate(sid: sid)
-            // Armed: this side's own report goes out once its listener accepted the peer's connection.
             #expect(try await harness.sentJingle(action: JingleAction.transportInfo.rawValue) != nil)
 
             try harness.receive(
@@ -516,7 +525,7 @@ enum JingleSOCKS5Tests {
             #expect(try await harness.sentJingle(action: JingleAction.transportInfo.rawValue) != nil)
 
             if !nominateFirst {
-                // Armed: the listener accepted the connection, yet nothing may use it before the nomination.
+                // Nothing may use the listener's connection before the nomination.
                 let early = try await boundedOutcome(timeout: .milliseconds(200)) { try await wait.value }
                 #expect(early == nil)
                 await #expect(throws: JingleModule.JingleError.transportFailed("No connection is open for the transfer")) {
@@ -604,7 +613,6 @@ enum JingleSOCKS5Tests {
             let sid = try await harness.initiate()
             try harness.receive(action: JingleAction.sessionAccept.rawValue, sid: sid)
             let peer = try await harness.connectToDirectCandidate(sid: sid)
-            // Armed: this side's own report goes out once its listener accepted, and parked, the peer's connection.
             #expect(try await harness.sentJingle(action: JingleAction.transportInfo.rawValue) != nil)
 
             #expect(try await harness.event { if case .jingleFileTransferFailed(sid, .timeout) = $0 { true } else { false } } != nil)

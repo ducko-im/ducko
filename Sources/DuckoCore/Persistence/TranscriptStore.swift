@@ -36,15 +36,17 @@ public protocol TranscriptStore: Sendable {
     // MARK: - Lookup
 
     /// Locates a message by locally-assigned UUID. Unlike `findMessage(stanzaID:)`,
-    /// the UUID is unique per persisted message and survives MAM-imported
-    /// `ducko-N` counter duplicates from prior sessions.
+    /// the UUID is unique per persisted message, while a stanza ID is unique only per sender and can
+    /// recur across senders.
     func findMessage(id: UUID, conversationID: UUID) async throws -> ChatMessage?
     func findMessage(stanzaID: String, conversationID: UUID) async throws -> ChatMessage?
     /// All messages sharing `stanzaID` within the conversation. Unlike `findMessage(stanzaID:)`
     /// (first match only), this returns every match across date files so callers can disambiguate
-    /// `ducko-N` counter collisions. Implementations must perform a full multi-file scan, not the
+    /// stanza ID collisions. Implementations must perform a full multi-file scan, not the
     /// single-valued stanza-index fast path.
     func findMessages(stanzaID: String, conversationID: UUID) async throws -> [ChatMessage]
+    /// Locates a message by the server ID it was stored with or had recorded later by a `serverIDAssigned` amendment.
+    func findMessage(serverID: String, conversationID: UUID) async throws -> ChatMessage?
     func messageExists(stanzaID: String, conversationID: UUID) async throws -> Bool
     func messageExists(serverID: String, conversationID: UUID) async throws -> Bool
     /// XEP-0359 stanza-id values are unique only *per sender*, so callers that

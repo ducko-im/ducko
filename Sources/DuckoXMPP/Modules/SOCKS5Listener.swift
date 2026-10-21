@@ -224,9 +224,8 @@ actor SOCKS5Listener {
 
         // 4. Read domain address length + address + port
         let addrLenBytes = try receive(1)
-        let addrLen = Int(addrLenBytes[0])
-        let addrBytes = try receive(addrLen)
-        _ = try receive(2) // port (ignored)
+        let addrBytes = try receive(Int(addrLenBytes[0]))
+        let portBytes = try receive(2)
 
         // 5. Validate DST.ADDR (hex string — ASCII safe)
         let receivedAddr = String(decoding: addrBytes, as: UTF8.self)
@@ -236,13 +235,8 @@ actor SOCKS5Listener {
             )
         }
 
-        // 6. Send success response
-        let response: [UInt8] = [
-            0x05, 0x00, 0x00, 0x01,
-            0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00
-        ]
-        try SOCKS5Connection.sendAll(fd: fd, data: response)
+        // 6. Send success response, whose BND.ADDR and BND.PORT echo DST.ADDR and DST.PORT (XEP-0065 §5.3.2)
+        try SOCKS5Connection.sendAll(fd: fd, data: [0x05, 0x00, 0x00, 0x03] + addrLenBytes + addrBytes + portBytes)
 
         log.info("SOCKS5 server handshake completed for \(expectedDstAddr)")
     }

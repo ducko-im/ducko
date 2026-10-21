@@ -5,19 +5,23 @@ public struct Bookmark: Sendable {
     public let autojoin: Bool
     public let nickname: String?
     public let password: String?
+    /// The `<extensions/>` element as received, kept whole so a republish carries other clients' data.
+    public let extensions: XMLElement?
 
     public init(
         jid: BareJID,
         name: String? = nil,
         autojoin: Bool = false,
         nickname: String? = nil,
-        password: String? = nil
+        password: String? = nil,
+        extensions: XMLElement? = nil
     ) {
         self.jid = jid
         self.name = name
         self.autojoin = autojoin
         self.nickname = nickname
         self.password = password
+        self.extensions = extensions
     }
 
     // MARK: - Parsing
@@ -41,7 +45,8 @@ public struct Bookmark: Sendable {
             name: name,
             autojoin: autojoin,
             nickname: nickname,
-            password: password
+            password: password,
+            extensions: payload.child(named: "extensions")
         )
     }
 
@@ -69,6 +74,10 @@ public struct Bookmark: Sendable {
             var pw = XMLElement(name: "password")
             pw.addText(password)
             conference.addChild(pw)
+        }
+
+        if let extensions {
+            conference.addChild(extensions)
         }
 
         return conference

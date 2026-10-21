@@ -6,6 +6,8 @@ import CryptoKit
 /// drives the `<auth>` → `<challenge>` → `<response>` → `<success>` exchange.
 struct SASLAuthenticator {
     private var activeMechanism: ActiveMechanism?
+    /// The SCRAM mechanism whose server signature checked out, once the exchange has succeeded with one.
+    private(set) var verifiedSCRAMMechanism: String?
 
     /// Creates an authenticator with a specific mechanism (for testing with known nonces).
     init(mechanism: ActiveMechanism? = nil) {
@@ -15,12 +17,13 @@ struct SASLAuthenticator {
     // MARK: - Negotiation
 
     /// Parses `<mechanisms>` from stream features, selects the strongest available,
-    /// and produces the initial `<auth>` element.
+    /// and produces the initial `<auth>` element. `requiresSCRAM` refuses an offer that leaves only PLAIN.
     mutating func begin(
         features: XMLElement,
         authcid: String,
         password: String,
-        channelBindingData: [UInt8]? = nil
+        channelBindingData: [UInt8]? = nil,
+        requiresSCRAM: Bool = false
     ) throws(SASLAuthError) -> XMLElement {
         let offeredNames = parseMechanisms(features)
         let channelBinding = try chooseChannelBinding(
@@ -29,11 +32,9 @@ struct SASLAuthenticator {
             offeredMechanisms: offeredNames,
             isSASL2: false
         )
-        let preferenceOrder = buildSASLPreferenceOrder(channelBinding: channelBinding)
-
-        guard let selected = preferenceOrder.first(where: { offeredNames.contains($0) }) else {
-            throw SASLAuthError.noSupportedMechanism
-        }
+        let selected = try selectSASLMechanism(
+            offered: offeredNames, channelBinding: channelBinding, requiresSCRAM: requiresSCRAM
+        )
 
         var mechanism = createMechanism(selected, channelBinding: channelBinding)
         let auth = mechanism.start(authcid: authcid, password: password)
@@ -56,6 +57,9 @@ struct SASLAuthenticator {
             .failure(.parse(failure: stanza))
         default:
             .failure(.invalidState("Unexpected SASL element: \(stanza.name)"))
+        }
+        if case .success = response {
+            verifiedSCRAMMechanism = mechanism.scramMechanismName
         }
 
         activeMechanism = mechanism
@@ -93,6 +97,15 @@ struct SASLAuthenticator {
         case scram256(SCRAM<SHA256>)
         case scram1(SCRAM<Insecure.SHA1>)
         case plain(SASLPlain)
+
+        /// Its name when it is SCRAM, whose success carries the server's proof of knowing the password.
+        var scramMechanismName: String? {
+            switch self {
+            case let .scram256(m): m.mechanismName
+            case let .scram1(m): m.mechanismName
+            case .plain: nil
+            }
+        }
 
         mutating func start(authcid: String, password: String) -> XMLElement {
             switch self {

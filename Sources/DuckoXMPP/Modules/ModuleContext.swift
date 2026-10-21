@@ -21,6 +21,10 @@ public struct ModuleContext: Sendable {
     public let sendElement: @Sendable (XMLElement) async throws -> Void
     /// Returns the server's post-auth stream features, or `nil` if not yet available.
     public let serverStreamFeatures: @Sendable () -> XMLElement?
+    /// Returns the `xml:lang` of the server's stream header, which stanzas without their own inherit, or `nil`.
+    public let serverStreamLang: @Sendable () -> String?
+    /// Hands a message rebuilt from an encrypted one to every module's `handleDecryptedMessage`.
+    public let dispatchDecryptedMessage: @Sendable (XMPPMessage) -> Void
 
     public init(
         sendStanza: @escaping StanzaSender,
@@ -31,7 +35,9 @@ public struct ModuleContext: Sendable {
         domain: String,
         availableFeatures: @Sendable @escaping () -> Set<String> = { [] },
         sendElement: @Sendable @escaping (XMLElement) async throws -> Void = { _ in },
-        serverStreamFeatures: @Sendable @escaping () -> XMLElement? = { nil }
+        serverStreamFeatures: @Sendable @escaping () -> XMLElement? = { nil },
+        serverStreamLang: @Sendable @escaping () -> String? = { nil },
+        dispatchDecryptedMessage: @Sendable @escaping (XMPPMessage) -> Void = { _ in }
     ) {
         self.sendStanzaImpl = sendStanza
         self.sendIQImpl = sendIQ
@@ -42,6 +48,8 @@ public struct ModuleContext: Sendable {
         self.availableFeatures = availableFeatures
         self.sendElement = sendElement
         self.serverStreamFeatures = serverStreamFeatures
+        self.serverStreamLang = serverStreamLang
+        self.dispatchDecryptedMessage = dispatchDecryptedMessage
     }
 
     /// Sends a stanza over the connection. `onAccepted` runs once the client has taken the stanza for its session, before

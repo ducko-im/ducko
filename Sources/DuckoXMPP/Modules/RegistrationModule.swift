@@ -13,32 +13,49 @@ public final class RegistrationModule: XMPPModule, Sendable {
         case dataForm
     }
 
+    /// One element of a legacy registration form (XEP-0077 §14.1).
+    public struct LegacyField: Sendable, Equatable {
+        public let name: String
+        public var value: String
+
+        public init(name: String, value: String = "") {
+            self.name = name
+            self.value = value
+        }
+    }
+
     public struct RegistrationForm: Sendable {
         public let formType: FormType
         public let instructions: String?
         public let isRegistered: Bool
-        public let hasUsername: Bool
-        public let hasPassword: Bool
-        public let hasEmail: Bool
-        public let dataFormFields: [DataFormField]
+        /// The elements a legacy form asks for, in the server's order, with any value it filled in.
+        public let legacyFields: [LegacyField]
+        /// Where the server sends the user to register instead (`jabber:x:oob`).
+        public let redirectURL: String?
+        /// The server's `jabber:x:data` form, empty for a legacy form.
+        public let dataForm: DataForm
 
         public init(
             formType: FormType,
             instructions: String?,
             isRegistered: Bool,
-            hasUsername: Bool,
-            hasPassword: Bool,
-            hasEmail: Bool,
-            dataFormFields: [DataFormField]
+            legacyFields: [LegacyField] = [],
+            redirectURL: String? = nil,
+            dataForm: DataForm = DataForm()
         ) {
             self.formType = formType
             self.instructions = instructions
             self.isRegistered = isRegistered
-            self.hasUsername = hasUsername
-            self.hasPassword = hasPassword
-            self.hasEmail = hasEmail
-            self.dataFormFields = dataFormFields
+            self.legacyFields = legacyFields
+            self.redirectURL = redirectURL
+            self.dataForm = dataForm
         }
+    }
+
+    /// What a registration sends back: every legacy field the form asked for, or the completed data form.
+    public enum Submission: Sendable {
+        case legacy([LegacyField])
+        case dataForm([DataFormField])
     }
 
     public enum RegistrationError: Error {
@@ -53,10 +70,6 @@ public final class RegistrationModule: XMPPModule, Sendable {
     }
 
     private let state: OSAllocatedUnfairLock<State>
-
-    public var features: [String] {
-        [XMPPNamespaces.register]
-    }
 
     public init() {
         self.state = OSAllocatedUnfairLock(initialState: State())
@@ -88,43 +101,18 @@ public final class RegistrationModule: XMPPModule, Sendable {
         return Self.parseForm(result)
     }
 
-    public func submitLegacy(
-        username: String,
-        password: String,
-        email: String? = nil,
-        to jid: JID? = nil
-    ) async throws {
+    /// Submits a registration to the server or a specific entity.
+    public func submit(_ submission: Submission, to jid: JID? = nil) async throws {
         guard let context = state.withLock({ $0.context }) else {
             throw RegistrationError.notConnected
         }
 
         var iq = XMPPIQ(type: .set, id: context.generateID())
         if let jid { iq.to = jid }
-
-        let query = Self.buildRegistrationQuery(username: username, password: password, email: email)
-        iq.element.addChild(query)
+        iq.element.addChild(Self.buildRegistrationQuery(submission))
         _ = try await context.sendIQ(iq)
-        log.info("Submitted a legacy registration")
-        log.debug("The legacy registration went to \(jid?.description ?? "the server")")
-    }
-
-    /// Submits a data form registration.
-    public func submitDataForm(_ fields: [DataFormField], to jid: JID? = nil) async throws {
-        guard let context = state.withLock({ $0.context }) else {
-            throw RegistrationError.notConnected
-        }
-
-        var iq = XMPPIQ(type: .set, id: context.generateID())
-        if let jid { iq.to = jid }
-
-        var query = XMLElement(name: "query", namespace: XMPPNamespaces.register)
-        let form = buildSubmitForm(fields)
-        query.addChild(form)
-
-        iq.element.addChild(query)
-        _ = try await context.sendIQ(iq)
-        log.info("Submitted a data form registration")
-        log.debug("The data form registration went to \(jid?.description ?? "the server")")
+        log.info("Submitted a registration")
+        log.debug("The registration went to \(jid?.description ?? "the server")")
     }
 
     /// Changes the password for the currently authenticated account.
@@ -167,53 +155,56 @@ public final class RegistrationModule: XMPPModule, Sendable {
         log.info("Registration cancelled")
     }
 
+    /// The element names a legacy form can ask for (XEP-0077 §14.1).
+    static let legacyFieldNames: Set<String> = [
+        "username", "nick", "password", "name", "first", "last", "email", "address", "city", "state", "zip",
+        "phone", "url", "date", "misc", "text", "key"
+    ]
+
     static func parseForm(_ element: XMLElement) -> RegistrationForm {
         let instructions = element.childText(named: "instructions")
         let isRegistered = element.child(named: "registered") != nil
+        let redirectURL = element.child(named: "x", namespace: XMPPNamespaces.oob)?.childText(named: "url")
 
         if let formElement = element.child(named: "x", namespace: XMPPNamespaces.dataForms) {
-            let fields = parseDataForm(formElement)
             return RegistrationForm(
                 formType: .dataForm,
                 instructions: instructions,
                 isRegistered: isRegistered,
-                hasUsername: fields.contains { $0.variable == "username" },
-                hasPassword: fields.contains { $0.variable == "password" },
-                hasEmail: fields.contains { $0.variable == "email" },
-                dataFormFields: fields
+                redirectURL: redirectURL,
+                dataForm: parseDataForm(formElement)
             )
         }
 
-        // Legacy form
+        let legacyFields = element.children.compactMap { node -> LegacyField? in
+            guard case let .element(child) = node,
+                  child.namespace == nil || child.namespace == XMPPNamespaces.register,
+                  legacyFieldNames.contains(child.name)
+            else { return nil }
+            return LegacyField(name: child.name, value: child.textContent ?? "")
+        }
         return RegistrationForm(
             formType: .legacy,
             instructions: instructions,
             isRegistered: isRegistered,
-            hasUsername: element.child(named: "username") != nil,
-            hasPassword: element.child(named: "password") != nil,
-            hasEmail: element.child(named: "email") != nil,
-            dataFormFields: []
+            legacyFields: legacyFields,
+            redirectURL: redirectURL
         )
     }
 
     /// Builds the XEP-0077 `<query>` element.
-    static func buildRegistrationQuery(username: String, password: String, email: String?) -> XMLElement {
+    static func buildRegistrationQuery(_ submission: Submission) -> XMLElement {
         var query = XMLElement(name: "query", namespace: XMPPNamespaces.register)
-
-        var usernameEl = XMLElement(name: "username")
-        usernameEl.addText(username)
-        query.addChild(usernameEl)
-
-        var passwordEl = XMLElement(name: "password")
-        passwordEl.addText(password)
-        query.addChild(passwordEl)
-
-        if let email {
-            var emailEl = XMLElement(name: "email")
-            emailEl.addText(email)
-            query.addChild(emailEl)
+        switch submission {
+        case let .legacy(fields):
+            for field in fields {
+                var element = XMLElement(name: field.name)
+                element.addText(field.value)
+                query.addChild(element)
+            }
+        case let .dataForm(fields):
+            query.addChild(buildSubmitForm(fields))
         }
-
         return query
     }
 }

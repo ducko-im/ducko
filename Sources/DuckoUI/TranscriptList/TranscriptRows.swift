@@ -30,10 +30,10 @@ enum TranscriptRows {
         linkPreview: (ChatMessage) -> LinkPreview?
     ) -> [TranscriptRow] {
         let positions = computeMessagePositions(items)
-        var messagesByStanzaID: [String: ChatMessage] = [:]
+        var messagesByReference: [String: [ChatMessage]] = [:]
         for case let .message(message) in items {
-            if let stanzaID = message.stanzaID {
-                messagesByStanzaID[stanzaID] = message
+            if let reference = message.replyReference {
+                messagesByReference[reference, default: []].append(message)
             }
         }
         let transfersByID = Dictionary(transfers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -49,9 +49,10 @@ enum TranscriptRows {
             let isFirstOfDay = startsDay(at: index, in: items)
             switch item {
             case let .message(message):
-                let replied = message.replyToID.flatMap { messagesByStanzaID[$0] }
+                let replied = message.replyToID.flatMap { messagesByReference[$0] }?.last { $0.isQuoted(by: message) }
                 rows.append(TranscriptRow(id: message.id, kind: .message(TranscriptRow.Message(
-                    message: message,
+                    // A reply's body keeps its quote only when the answered message is not found to draw as `replyQuote`.
+                    message: replied == nil ? message.showingReplyFallback() : message.hidingReplyFallback(),
                     position: positions[message.id] ?? MessagePosition(isFirstInGroup: true, isLastInGroup: true),
                     isGroupchat: chat.isGroupchat,
                     startsDay: isFirstOfDay,
@@ -93,7 +94,7 @@ enum TranscriptRows {
             switch item {
             case let .message(message):
                 TranscriptRow(id: message.id, kind: .message(TranscriptRow.Message(
-                    message: message,
+                    message: message.showingReplyFallback(),
                     position: positions[message.id] ?? MessagePosition(isFirstInGroup: true, isLastInGroup: true),
                     isGroupchat: details.isGroupchat,
                     startsDay: false,

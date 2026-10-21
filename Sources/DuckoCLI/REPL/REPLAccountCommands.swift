@@ -38,66 +38,21 @@ func handleCheckRegistrationREPLCommand(_ arguments: String, context: REPLContex
 func handleSubmitRegistrationREPLCommand(_ arguments: String, context: REPLContext) async {
     let jid = arguments.isEmpty ? nil : arguments
     do {
-        let form = try await context.environment.accountService.retrieveRegistrationForm(
+        var form = try await context.environment.accountService.retrieveRegistrationForm(
             accountID: context.accountID, from: jid
         )
         print(context.formatter.formatRegistrationForm(form))
+        guard form.hasFields else { throw CLIError.registrationRedirected }
 
-        switch form.formKind {
-        case .legacy:
-            try await submitLegacyRegistration(form: form, jid: jid, context: context)
-        case .dataForm:
-            try await submitDataFormRegistration(form: form, jid: jid, context: context)
-        }
+        print("\nEnter registration details (press Enter to keep a value):")
+        try promptForRegistrationValues(&form, formatter: context.formatter)
+        try await context.environment.accountService.submitRegistration(
+            accountID: context.accountID, form: form, to: jid
+        )
         print("Registration submitted successfully.")
     } catch {
         print(context.formatter.formatError(error))
     }
-}
-
-private func submitLegacyRegistration(form: RegistrationFormInfo, jid: String?, context: REPLContext) async throws {
-    print("\nEnter registration details (press Enter to skip):")
-    var username = ""
-    var password = ""
-    var email = ""
-    if form.hasUsername {
-        print("Username: ", terminator: "")
-        username = readLine()?.trimmingCharacters(in: .whitespaces) ?? ""
-    }
-    if form.hasPassword {
-        guard let enteredPassword = CredentialHelper.getPassword() else { throw CLIError.noPassword }
-        password = enteredPassword
-    }
-    if form.hasEmail {
-        print("Email: ", terminator: "")
-        email = readLine()?.trimmingCharacters(in: .whitespaces) ?? ""
-    }
-    try await context.environment.accountService.submitRegistration(
-        accountID: context.accountID,
-        username: username,
-        password: password,
-        email: email.isEmpty ? nil : email,
-        to: jid
-    )
-}
-
-private func submitDataFormRegistration(form: RegistrationFormInfo, jid: String?, context: REPLContext) async throws {
-    var fields = form.dataFormFields
-    print("\nEnter field values (press Enter to keep current):")
-    for index in fields.indices where fields[index].isUserEditable {
-        let label = fields[index].displayLabel
-        let current = fields[index].values.joined(separator: ", ")
-        print("\(label) [\(current)]: ", terminator: "")
-        let fieldInput = readLine()?.trimmingCharacters(in: .whitespaces) ?? ""
-        if !fieldInput.isEmpty {
-            fields[index].values = [fieldInput]
-        }
-    }
-    try await context.environment.accountService.submitRegistrationDataForm(
-        accountID: context.accountID,
-        fields: fields,
-        to: jid
-    )
 }
 
 func handleAvatarREPLCommand(_ arguments: String, context: REPLContext) async {

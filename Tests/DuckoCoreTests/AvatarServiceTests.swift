@@ -87,7 +87,7 @@ private func answerGet(_ transport: MockTransport, sentIndex: Int, from: String?
 
 /// A vCard result body, optionally carrying a `<PHOTO>` whose `<BINVAL>` is `binval`. A nil `binval` yields a
 /// photo-less vCard (the on-demand fallback "no avatar" case).
-private func vcardBody(binval: String?, type: String = "image/png") -> String {
+func vcardBody(binval: String?, type: String = "image/png") -> String {
     guard let binval else { return "<vCard xmlns='vcard-temp'/>" }
     return "<vCard xmlns='vcard-temp'><PHOTO><TYPE>\(type)</TYPE><BINVAL>\(binval)</BINVAL></PHOTO></vCard>"
 }
@@ -111,7 +111,7 @@ private func avatarMetadataElement(id: String, type: String = "image/png") -> St
 /// `<metadata><info id=…>` element `handleAvatarMetadataPublished` parses to drive the data fetch. A nil `id`
 /// omits the `<info>` `id` attribute and an empty `id` emits `<info id=''/>` — both are the malformed cases
 /// `handleAvatarMetadataPublished` ignores, since XEP-0084 requires the id.
-private func avatarMetadataItem(id: String?, type: String = "image/png") -> PEPItem {
+func avatarMetadataItem(id: String?, type: String = "image/png") -> PEPItem {
     var metadata = DuckoXMPP.XMLElement(name: "metadata", namespace: XMPPNamespaces.avatarMetadata)
     var attributes = ["type": type]
     if let id { attributes["id"] = id }
@@ -128,7 +128,7 @@ private func fetchPeerContact(_ connected: ConnectedAvatarService) async throws 
 // MARK: - Avatar Payload Fixtures
 
 /// All over-cap payloads derive from `AvatarLimits.maxBytes` so the cap can move without rewriting the tests.
-private enum AvatarPayloads {
+enum AvatarPayloads {
     /// A minimal valid 1×1 PNG, base64-encoded — the accepted (under-cap) payload.
     static let validPNGBase64 =
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -153,7 +153,7 @@ private enum AvatarPayloads {
 
 /// Vends a fresh transport per connect so a same-account reconnect lands on a new transport while the first
 /// stays alive to answer an in-flight IQ. `@Sendable` because the factory closure may run off the main actor.
-private final class TransportVendor: Sendable {
+final class TransportVendor: Sendable {
     private let transports: OSAllocatedUnfairLock<[MockTransport]>
 
     init(_ list: [MockTransport]) {
@@ -166,7 +166,7 @@ private final class TransportVendor: Sendable {
 }
 
 @MainActor
-private struct PresenceModuleFixture {
+struct PresenceModuleFixture {
     let service: AvatarService
     let accountService: AccountService
     let transport1: MockTransport
@@ -179,18 +179,21 @@ private struct PresenceModuleFixture {
     let presenceService: PresenceService
 }
 
-/// Connects an `AvatarService` whose client also carries a `PresenceModule`, without which `publishAvatar`,
-/// `removeAvatar` and the own-vCard reload on sign-in or resume return early.
-/// Returns the first transport/client plus a second transport the reconnect will land on.
+/// Connects an `AvatarService` whose client also carries a `PresenceModule` and a `ServiceDiscoveryModule`, without
+/// which `publishAvatar`, `removeAvatar` and the own-vCard reload on sign-in or resume return early. It also carries a
+/// `MUCModule` for room presence. Returns the first transport and client, plus a second transport for the reconnect.
 @MainActor
-private func connectWithPresenceModule() async throws -> PresenceModuleFixture {
+func connectWithPresenceModule() async throws -> PresenceModuleFixture {
     let store = MockPersistenceStore()
     let transport1 = MockTransport()
     let transport2 = MockTransport()
     let vendor = TransportVendor([transport1, transport2])
     let factory = MockXMPPClientFactory(
         transportForAccount: { _ in vendor.next() },
-        modulesForAccount: { _ in [VCardModule(), PEPModule(), PresenceModule()] }
+        modulesForAccount: { _ in
+            let presenceModule = PresenceModule()
+            return [VCardModule(), PEPModule(), ServiceDiscoveryModule(), presenceModule, MUCModule(presenceModule: presenceModule)]
+        }
     )
     let accountService = makeAccountService(store: store, clientFactory: factory)
 
@@ -221,12 +224,14 @@ private func connectWithPresenceModule() async throws -> PresenceModuleFixture {
     )
 }
 
-/// Waits for the first sent stanza matching `predicate` and acks it with an empty result IQ.
+/// Waits for the first sent stanza matching `predicate`, acks it with an empty result IQ and returns it.
 @MainActor
-private func ackMatchedSet(_ transport: MockTransport, where predicate: @escaping @Sendable (String) -> Bool) async throws {
+@discardableResult
+func ackMatchedSet(_ transport: MockTransport, where predicate: @escaping @Sendable (String) -> Bool) async throws -> String {
     let stanza = try #require(await transport.waitForSent(matching: predicate))
     let id = try #require(extractIQID(from: stanza))
     await transport.simulateReceive("<iq type='result' id='\(id)'/>")
+    return stanza
 }
 
 /// Drives a second connect of the same account onto `transport2` and waits until the account's connected client
@@ -249,11 +254,20 @@ private func reconnectOnto(
     return current
 }
 
-private func isVCardSet(_ stanza: String) -> Bool {
+/// Answers the account's own disco#info query on `transport`, listing PEP publishing when `pep` is true.
+@MainActor
+func answerAccountDiscoInfo(on transport: MockTransport, pep: Bool = true) async throws {
+    let query = try await sentStanza(on: transport, containing: XMPPNamespaces.discoInfo)
+    let id = try #require(extractIQID(from: query))
+    let pepInfo = pep ? "<identity category='pubsub' type='pep'/><feature var='\(XMPPNamespaces.pubsubPublish)'/>" : ""
+    await transport.simulateReceive("<iq type='result' id='\(id)'><query xmlns='\(XMPPNamespaces.discoInfo)'>\(pepInfo)</query></iq>")
+}
+
+func isVCardSet(_ stanza: String) -> Bool {
     stanza.contains("vcard-temp") && stanza.contains("type=\"set\"")
 }
 
-private func isOwnVCardGet(_ stanza: String) -> Bool {
+func isOwnVCardGet(_ stanza: String) -> Bool {
     stanza.contains("vcard-temp") && stanza.contains("type=\"get\"")
 }
 
@@ -263,14 +277,17 @@ enum AvatarServiceTests {
     struct OwnAvatarReload {
         @Test(arguments: [false, true])
         @MainActor
-        func `signing in or resuming loads the own avatar hash and advertises it in presence`(resumed: Bool) async throws {
+        func `signing in or resuming loads the own avatar hash and advertises it to contacts and rooms`(resumed: Bool) async throws {
             let fixture = try await connectWithPresenceModule()
             let fullJID = try #require(FullJID.parse("\(testJIDString)/ducko"))
             let event: XMPPEvent = resumed ? .streamResumed(fullJID) : .connected(fullJID)
+            let mucModule = try #require(await fixture.client1.module(ofType: MUCModule.self))
+            try await mucModule.rejoinRoom(#require(BareJID.parse("room@conference.example.com")), nickname: "alice")
 
             let task = Task { @MainActor in
                 await fixture.service.handleEvent(event, accountID: fixture.accountID)
             }
+            try await answerAccountDiscoInfo(on: fixture.transport1)
             let getStanza = try await sentStanza(on: fixture.transport1, matching: isOwnVCardGet)
             let getID = try #require(extractIQID(from: getStanza))
             await fixture.transport1.simulateReceive(
@@ -280,7 +297,10 @@ enum AvatarServiceTests {
 
             let hash = try #require(fixture.service.ownAvatarHash(for: fixture.accountID))
             let sent = await fixture.transport1.sentBytes.map { String(decoding: $0, as: UTF8.self) }
-            #expect(sent.contains { $0.contains("<presence") && $0.contains("<photo>\(hash)</photo>") })
+            #expect(sent.contains { $0.contains("<presence") && !$0.contains(" to=") && $0.contains("<photo>\(hash)</photo>") })
+            #expect(sent.contains {
+                $0.contains("to=\"room@conference.example.com/alice\"") && $0.contains("<photo>\(hash)</photo>")
+            })
 
             await fixture.accountService.disconnect(accountID: fixture.accountID)
         }
@@ -295,7 +315,7 @@ enum AvatarServiceTests {
 
             let task = Task { @MainActor in
                 await connected.service.handleEvent(
-                    .vcardAvatarHashReceived(from: connected.peerJID, hash: hash), accountID: connected.accountID
+                    .vcardAvatarHashReceived(from: .bare(connected.peerJID), hash: hash), accountID: connected.accountID
                 )
             }
             try await answerGet(
@@ -319,7 +339,7 @@ enum AvatarServiceTests {
 
             let task = Task { @MainActor in
                 await connected.service.handleEvent(
-                    .vcardAvatarHashReceived(from: connected.peerJID, hash: hash), accountID: connected.accountID
+                    .vcardAvatarHashReceived(from: .bare(connected.peerJID), hash: hash), accountID: connected.accountID
                 )
             }
             try await answerGet(
@@ -343,7 +363,7 @@ enum AvatarServiceTests {
 
             let task = Task { @MainActor in
                 await connected.service.handleEvent(
-                    .vcardAvatarHashReceived(from: connected.peerJID, hash: hash), accountID: connected.accountID
+                    .vcardAvatarHashReceived(from: .bare(connected.peerJID), hash: hash), accountID: connected.accountID
                 )
             }
             try await answerGet(
@@ -355,7 +375,7 @@ enum AvatarServiceTests {
             #expect(contact.avatarHash == hash)
 
             await connected.service.handleEvent(
-                .vcardAvatarHashReceived(from: connected.peerJID, hash: hash), accountID: connected.accountID
+                .vcardAvatarHashReceived(from: .bare(connected.peerJID), hash: hash), accountID: connected.accountID
             )
             // No second fetch: still just 4 handshake + 1 vCard get.
             let sentCount = await connected.transport.sentBytes.count
@@ -372,7 +392,7 @@ enum AvatarServiceTests {
 
             let task = Task { @MainActor in
                 await connected.service.handleEvent(
-                    .vcardAvatarHashReceived(from: connected.peerJID, hash: hash), accountID: connected.accountID
+                    .vcardAvatarHashReceived(from: .bare(connected.peerJID), hash: hash), accountID: connected.accountID
                 )
             }
             try await answerGet(
@@ -387,7 +407,7 @@ enum AvatarServiceTests {
             #expect(contact.avatarHash == hash)
 
             await connected.service.handleEvent(
-                .vcardAvatarHashReceived(from: connected.peerJID, hash: hash), accountID: connected.accountID
+                .vcardAvatarHashReceived(from: .bare(connected.peerJID), hash: hash), accountID: connected.accountID
             )
             let sentCount = await connected.transport.sentBytes.count
             #expect(sentCount == 5)
@@ -424,6 +444,34 @@ enum AvatarServiceTests {
             let contact = try await fetchPeerContact(connected)
             #expect(contact.avatarData != nil)
             #expect(contact.avatarHash == hash)
+
+            await connected.accountService.disconnect(accountID: connected.accountID)
+        }
+
+        @Test
+        @MainActor
+        func `the PNG form of a PEP avatar is fetched when another form is listed first`() async throws {
+            let connected = try await connectAvatarService()
+            var metadata = DuckoXMPP.XMLElement(name: "metadata", namespace: XMPPNamespaces.avatarMetadata)
+            metadata.addChild(DuckoXMPP.XMLElement(name: "info", attributes: ["id": "jpeg-hash", "type": "image/jpeg"]))
+            metadata.addChild(DuckoXMPP.XMLElement(name: "info", attributes: ["id": "png-hash", "type": "image/png"]))
+
+            let task = Task { @MainActor in
+                await connected.service.handleEvent(
+                    .pepItemsPublished(from: connected.peerJID, node: XMPPNamespaces.avatarMetadata, items: [PEPItem(id: "png-hash", payload: metadata)]),
+                    accountID: connected.accountID
+                )
+            }
+            await connected.transport.waitForSent(count: 5)
+            let request = await String(decoding: connected.transport.sentBytes[4], as: UTF8.self)
+            #expect(request.contains("<item id=\"png-hash\""))
+            try await answerGet(
+                connected.transport, sentIndex: 4, from: "peer@example.com",
+                body: pepItemsBody(node: XMPPNamespaces.avatarData, itemID: "png-hash", payload: avatarDataElement(AvatarPayloads.validPNGBase64))
+            )
+            await task.value
+
+            #expect(try await fetchPeerContact(connected).avatarHash == "png-hash")
 
             await connected.accountService.disconnect(accountID: connected.accountID)
         }
@@ -795,6 +843,29 @@ enum AvatarServiceTests {
 
         @Test
         @MainActor
+        func `a vCard avatar's type is read from its data rather than its TYPE label`() async throws {
+            let connected = try await connectAvatarService()
+
+            let task = Task { @MainActor in
+                await connected.service.fetchAvatar(for: connected.peerJID, accountID: connected.accountID)
+            }
+            try await answerGet(
+                connected.transport, sentIndex: 4, from: "peer@example.com",
+                body: pepItemsBody(node: XMPPNamespaces.avatarMetadata)
+            )
+            try await answerGet(
+                connected.transport, sentIndex: 5, from: "peer@example.com",
+                body: vcardBody(binval: AvatarPayloads.validPNGBase64, type: "image/jpeg")
+            )
+            let result = await task.value
+
+            #expect(result?.mimeType == "image/png")
+
+            await connected.accountService.disconnect(accountID: connected.accountID)
+        }
+
+        @Test
+        @MainActor
         func `fetchAvatar drops an over-cap vCard avatar when PEP has none`() async throws {
             let connected = try await connectAvatarService()
 
@@ -855,7 +926,7 @@ enum AvatarServiceTests {
             let accountID = UUID()
             func failure(publishing data: Data) async -> String? {
                 do {
-                    try await service.publishAvatar(imageData: data, mimeType: "image/png", accountID: accountID)
+                    try await service.publishAvatar(imageData: data, accountID: accountID)
                     return nil
                 } catch {
                     return error.localizedDescription
@@ -864,7 +935,7 @@ enum AvatarServiceTests {
             let png = Data(base64Encoded: AvatarPayloads.validPNGBase64) ?? Data()
 
             #expect(await failure(publishing: Data("not a picture".utf8)) == AvatarService.AvatarServiceError.notAPicture.localizedDescription)
-            #expect(await failure(publishing: Data(count: AvatarLimits.maxBytes + 1)) == AvatarService.AvatarServiceError.pictureTooLarge.localizedDescription)
+            #expect(await failure(publishing: Data(count: AvatarLimits.maxPictureFileBytes + 1)) == AvatarService.AvatarServiceError.pictureTooLarge.localizedDescription)
             #expect(await failure(publishing: png) == AvatarService.AvatarServiceError.notConnected(accountID).localizedDescription)
         }
     }
@@ -879,10 +950,9 @@ enum AvatarServiceTests {
             fixture.service.setOwnAvatarHashForTesting("preexisting-hash", accountID: fixture.accountID)
 
             let publishTask = Task { @MainActor in
-                try await fixture.service.publishAvatar(
-                    imageData: Self.pngData, mimeType: "image/png", accountID: fixture.accountID
-                )
+                try await fixture.service.publishAvatar(imageData: Self.pngData, accountID: fixture.accountID)
             }
+            try await answerAccountDiscoInfo(on: fixture.transport1)
             // Ack the two PEP publishes so the flow advances into updateVCardPhoto's fetchOwnVCard.
             try await ackMatchedSet(fixture.transport1) { $0.contains("publish") && $0.contains(XMPPNamespaces.avatarData) }
             try await ackMatchedSet(fixture.transport1) { $0.contains("publish") && $0.contains(XMPPNamespaces.avatarMetadata) }
@@ -898,7 +968,7 @@ enum AvatarServiceTests {
 
             // Now answer the stale fetch: the captured client is no longer current, so the guard fires.
             await fixture.transport1.simulateReceive("<iq type='result' id='\(getID)'><vCard xmlns='vcard-temp'/></iq>")
-            try await publishTask.value
+            _ = try await publishTask.value
 
             let sent1 = await fixture.transport1.sentBytes.map { String(decoding: $0, as: UTF8.self) }
             #expect(!sent1.contains(where: isVCardSet))
@@ -918,6 +988,7 @@ enum AvatarServiceTests {
                 try await fixture.service.removeAvatar(accountID: fixture.accountID)
             }
             // removeAvatar publishes a single empty metadata item before reaching clearVCardPhoto's fetchOwnVCard.
+            try await answerAccountDiscoInfo(on: fixture.transport1)
             try await ackMatchedSet(fixture.transport1) { $0.contains("publish") && $0.contains(XMPPNamespaces.avatarMetadata) }
 
             let getStanza = try #require(await fixture.transport1.waitForSent(matching: isOwnVCardGet))
@@ -948,7 +1019,7 @@ extension AvatarServiceTests {
         let connected = try await connectAvatarService()
         let original = try await fetchPeerContact(connected)
         let task = Task {
-            await connected.service.handleEvent(.vcardAvatarHashReceived(from: connected.peerJID, hash: "delayed-hash"), accountID: connected.accountID)
+            await connected.service.handleEvent(.vcardAvatarHashReceived(from: .bare(connected.peerJID), hash: "delayed-hash"), accountID: connected.accountID)
         }
         let requested = try await boundedOutcome {
             _ = await connected.transport.waitForSent(matching: { $0.contains("vcard-temp") })

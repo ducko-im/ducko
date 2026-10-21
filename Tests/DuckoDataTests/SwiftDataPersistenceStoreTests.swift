@@ -79,6 +79,7 @@ struct SwiftDataPersistenceStoreTests {
             account.requireTLS = false
             account.rosterVersion = "v1"
             account.certificateFingerprint = "AA:BB"
+            account.requiresSCRAM = true
             account.importedFrom = "Adium"
             try await store.saveAccount(account)
 
@@ -101,6 +102,7 @@ struct SwiftDataPersistenceStoreTests {
             account.resource = nil
             account.rosterVersion = nil
             account.certificateFingerprint = nil
+            account.requiresSCRAM = false
             account.importedFrom = nil
             try await store.saveAccount(account)
             let cleared = try #require(try await store.fetchAccounts().first)
@@ -110,7 +112,38 @@ struct SwiftDataPersistenceStoreTests {
             #expect(cleared.resource == nil)
             #expect(cleared.rosterVersion == "v1")
             #expect(cleared.certificateFingerprint == nil)
+            #expect(cleared.requiresSCRAM)
             #expect(cleared.importedFrom == nil)
+        }
+
+        @Test
+        func `setRequiresSCRAM sets and clears the requirement`() async throws {
+            let store = try outer.makeStore()
+            let account = outer.makeAccount()
+            try await store.saveAccount(account)
+
+            try await store.setRequiresSCRAM(true, accountID: account.id)
+            #expect(try await store.fetchAccounts().first?.requiresSCRAM == true)
+
+            try await store.setRequiresSCRAM(false, accountID: account.id)
+            #expect(try await store.fetchAccounts().first?.requiresSCRAM == false)
+        }
+
+        @Test
+        func `Channel search limits are kept with the account until it is deleted`() async throws {
+            let store = try outer.makeStore()
+            var account = outer.makeAccount()
+            try await store.saveAccount(account)
+            let limits = ["search.example.com": ChannelSearchLimit(notBefore: Date(timeIntervalSince1970: 1000), consecutiveCount: 2)]
+
+            try await store.setChannelSearchLimits(limits, accountID: account.id)
+            account.displayName = "Alice"
+            try await store.saveAccount(account)
+            #expect(try await store.fetchChannelSearchLimits(accountID: account.id) == limits)
+
+            try await store.deleteAccount(account.id)
+            try await store.saveAccount(account)
+            #expect(try await store.fetchChannelSearchLimits(accountID: account.id).isEmpty)
         }
 
         private func expectInsertedAccount(_ inserted: Account, matches account: Account) {
@@ -126,6 +159,7 @@ struct SwiftDataPersistenceStoreTests {
             #expect(inserted.requireTLS == false)
             #expect(inserted.rosterVersion == account.rosterVersion)
             #expect(inserted.certificateFingerprint == "AA:BB")
+            #expect(inserted.requiresSCRAM)
             #expect(inserted.importedFrom == "Adium")
         }
 

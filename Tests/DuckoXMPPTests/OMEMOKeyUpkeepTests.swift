@@ -4,8 +4,8 @@ import Testing
 @testable import DuckoXMPP
 
 extension OMEMOModuleTests {
-    /// XEP-0384: a key exchange must name one of this device's pre-keys. One that fails to decrypt shows only when it
-    /// carried a message of its own.
+    /// XEP-0384: a key exchange must name one of this device's pre-keys. One that fails to decrypt shows whenever it
+    /// carries a payload.
     struct KeyExchangeTests {
         private let recipient: TestOMEMOIdentity
 
@@ -20,12 +20,12 @@ extension OMEMOModuleTests {
             let module = makeInstalledModule(identity: identity, peer: StubPEPPeer())
             var encrypted = try #require(message.child(named: "encrypted", namespace: XMPPNamespaces.omemo))
             if namesNone {
-                encrypted = try replacingPreKeyID(with: 0xFFFF_FFFF, in: encrypted)
+                encrypted = try removingPreKeyID(from: encrypted)
             }
 
             let sender = try #require(FullJID.parse("peer@example.com/i"))
 
-            #expect(throws: OMEMOModuleError.unknownPreKey) {
+            #expect(throws: namesNone ? OMEMOModuleError.invalidKeyData : .unknownPreKey) {
                 _ = try module.decryptIncomingMessage(encrypted, from: .full(sender))
             }
         }
@@ -105,6 +105,77 @@ extension OMEMOModuleTests {
             #expect(try module.decryptIncomingMessage(messages[1], from: .full(peerJID)).body == "two")
         }
 
+        @Test func `A copy of a repeated key exchange on a later connection leaves the session as it was`() async throws {
+            let messages = try await makeRepeatingKEXMessages(to: recipient, plaintexts: ["one", "two"])
+            let earlier = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
+            for message in messages {
+                _ = try earlier.decryptIncomingMessage(message, from: .full(peerJID))
+            }
+            // The next connection still holds the pre-key until upkeep retires it.
+            let module = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
+            module.restoreSessions(earlier.allSessionEntries())
+            let session = earlier.allSessionEntries().map(\.sessionData)
+
+            #expect(throws: OMEMOModuleError.replayedKeyExchange) {
+                _ = try module.decryptIncomingMessage(messages[0], from: .full(peerJID))
+            }
+            #expect(module.allSessionEntries().map(\.sessionData) == session)
+        }
+
+        @Test func `A sender repeats its key exchange until a message from the device confirms the session`() async throws {
+            let recipient = recipient
+            let senderModule = try makeInstalledModule(
+                identity: makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1]).data, peer: StubPEPPeer(account: peerJID) { _ in bundleItems(for: recipient) }
+            )
+            let recipientModule = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
+            func send(_ plaintext: String) async throws -> XMLElement {
+                try await senderModule.encryptMessage(plaintext: plaintext, to: recipientJID, recipientDeviceIDs: [200], ownDeviceIDs: []).encrypted
+            }
+
+            let unanswered = try await [send("one"), send("two")]
+            for encrypted in unanswered {
+                _ = try recipientModule.decryptIncomingMessage(encrypted, from: .full(peerJID))
+            }
+            let reply = try await recipientModule.encryptMessage(
+                plaintext: "back", to: peerJID.bareJID, recipientDeviceIDs: [100], ownDeviceIDs: []
+            ).encrypted
+            let replyBody = try senderModule.decryptIncomingMessage(reply, from: .full(#require(FullJID.parse("user@example.com/r")))).body
+            let answered = try await send("three")
+
+            #expect(unanswered.map(isKeyExchange) == [true, true])
+            #expect(!isKeyExchange(reply))
+            #expect(replyBody == "back")
+            #expect(!isKeyExchange(answered))
+            #expect(try recipientModule.decryptIncomingMessage(answered, from: .full(peerJID)).body == "three")
+        }
+
+        @Test func `A key exchange marked with 1 is read as one`() async throws {
+            let message = try await makeKEXMessage(to: recipient, plaintext: "secret")
+            let module = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
+            let encrypted = try marking(#require(message.child(named: "encrypted", namespace: XMPPNamespaces.omemo)), kex: "1")
+
+            #expect(try module.decryptIncomingMessage(encrypted, from: .full(peerJID)).body == "secret")
+        }
+
+        @Test func `A session stored in the earlier encoding counts as none, so the next message starts a key exchange`() async throws {
+            let recipient = recipient
+            let module = try makeInstalledModule(
+                identity: makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1]).data, peer: StubPEPPeer { _ in bundleItems(for: recipient) }
+            )
+            let ratchetOnly = try OMEMODoubleRatchetSession(
+                asInitiatorWithSharedSecret: Array(repeating: 1, count: 32), peerSignedPreKey: recipient.signedPreKey.publicKeyBytes
+            ).serialize()
+
+            module.restoreSessions([OMEMOModule.StoredSessionEntry(
+                jid: recipientJID, deviceID: 200, sessionData: ratchetOnly, associatedData: Array(repeating: 0, count: 64)
+            )])
+            let encrypted = try await module.encryptMessage(
+                plaintext: "hi", to: recipientJID, recipientDeviceIDs: [200], ownDeviceIDs: []
+            ).encrypted
+
+            #expect(isKeyExchange(encrypted))
+        }
+
         @Test func `A new key exchange naming a used pre-key replaces the session`() async throws {
             let first = try await makeKEXMessage(to: recipient, plaintext: "old")
             let restarted = try await makeKEXMessage(to: recipient, plaintext: "new")
@@ -171,15 +242,18 @@ extension OMEMOModuleTests {
             }
         }
 
+        /// A correction or retraction next to the payload is outside the encryption, so it hides no failure.
         @Test(arguments: ["message", "correction", "retraction", "keyOnly"])
-        func `A failed decrypt shows only when the stanza was a message of its own`(kind: String) throws {
+        func `A failed decrypt shows whenever the stanza has a payload`(kind: String) throws {
             let peer = StubPEPPeer()
             let module = makeInstalledModule(identity: recipient.data, peer: peer)
             var message = XMLElement(name: "message", attributes: ["from": "peer@example.com/i", "id": "m1"])
             var header = XMLElement(name: "header", attributes: ["sid": "1"])
+            var keys = XMLElement(name: "keys", attributes: ["jid": recipientJID.description])
             var key = XMLElement(name: "key", attributes: ["rid": "200"])
             key.addText("AAAA")
-            header.addChild(key)
+            keys.addChild(key)
+            header.addChild(keys)
             var encrypted = XMLElement(name: "encrypted", namespace: XMPPNamespaces.omemo)
             encrypted.addChild(header)
             if kind != "keyOnly" {
@@ -196,7 +270,7 @@ extension OMEMOModuleTests {
 
             try module.handleMessage(XMPPMessage(element: message))
 
-            #expect(peer.undecryptableMessageIDs == (kind == "message" ? ["m1"] : []))
+            #expect(peer.undecryptableMessageIDs == (kind == "keyOnly" ? [] : ["m1"]))
         }
     }
 
@@ -374,9 +448,12 @@ private final class StubPEPPeer: Sendable {
     }
 
     private let recorded = OSAllocatedUnfairLock(initialState: Recorded())
+    private let account: FullJID
     private let answer: @Sendable (XMLElement) async throws -> XMLElement?
 
-    init(answer: @escaping @Sendable (XMLElement) async throws -> XMLElement? = { _ in nil }) {
+    /// `account` is the JID the module is signed in as.
+    init(account: FullJID = FullJID.parse("user@example.com/res")!, answer: @escaping @Sendable (XMLElement) async throws -> XMLElement? = { _ in nil }) {
+        self.account = account
         self.answer = answer
     }
 
@@ -386,7 +463,8 @@ private final class StubPEPPeer: Sendable {
                 recorded.withLock { $0.iqs.append(iq.element) }
                 return try await answer(iq.element)
             },
-            emitEvent: { [recorded] event in recorded.withLock { $0.events.append(event) } }
+            emitEvent: { [recorded] event in recorded.withLock { $0.events.append(event) } },
+            connectedJID: account
         )
     }
 
@@ -395,7 +473,7 @@ private final class StubPEPPeer: Sendable {
     }
 
     var bundlePublishes: [XMLElement] {
-        iqs.filter { $0.xmlString.contains("<publish") && $0.xmlString.contains(OMEMOModule.bundleNodePrefix) }
+        iqs.filter { $0.xmlString.contains("<publish") && $0.xmlString.contains(XMPPNamespaces.omemoBundles) }
     }
 
     var sessionEstablishedPreKeyIDs: [UInt32?] {
@@ -409,7 +487,7 @@ private final class StubPEPPeer: Sendable {
     var encryptedMessageIDs: [String?] {
         recorded.withLock { recorded in
             recorded.events.compactMap { event in
-                if case let .omemoEncryptedMessageReceived(message, _, _) = event { message.id } else { nil }
+                if case let .omemoEncryptedMessageReceived(message, _) = event { message.id } else { nil }
             }
         }
     }
@@ -417,7 +495,7 @@ private final class StubPEPPeer: Sendable {
     var undecryptableMessageIDs: [String] {
         recorded.withLock { recorded in
             recorded.events.compactMap { event in
-                if case let .omemoEncryptedMessageReceived(message, nil, _) = event { message.id } else { nil }
+                if case let .omemoEncryptedMessageReceived(message, .undecryptable) = event { message.id } else { nil }
             }
         }
     }
@@ -425,54 +503,42 @@ private final class StubPEPPeer: Sendable {
 
 /// A module with `identity` installed, as an established session installs it, talking to `peer`.
 private func makeInstalledModule(identity: OMEMOModule.OMEMOIdentityData, peer: StubPEPPeer) -> OMEMOModule {
-    let pepModule = PEPModule()
-    pepModule.setUp(peer.context)
-    let module = OMEMOModule(pepModule: pepModule)
-    module.setUp(peer.context)
-    module.configureIdentity(identity)
-    module.handleSessionEstablished(resumed: true)
-    return module
+    makeInstalledOMEMOModule(identity: identity, context: peer.context)
 }
 
 /// The `<pubsub>` answer to a bundle fetch, carrying `identity`'s bundle.
-private func bundleItems(for identity: TestOMEMOIdentity) -> XMLElement {
+func bundleItems(for identity: TestOMEMOIdentity) -> XMLElement {
     let bundle = OMEMOPreKeyManager.buildBundle(
         deviceID: OMEMODeviceID(value: identity.data.deviceID),
         identityKeyPair: identity.identityKeyPair,
         signedPreKey: identity.signedPreKey,
         preKeys: identity.preKeys
     )
-    var item = XMLElement(name: "item", attributes: ["id": "current"])
+    var item = XMLElement(name: "item", attributes: ["id": "\(identity.data.deviceID)"])
     item.addChild(OMEMOModule(pepModule: PEPModule()).buildBundleElement(bundle))
-    var items = XMLElement(name: "items", attributes: ["node": "\(OMEMOModule.bundleNodePrefix)\(identity.data.deviceID)"])
+    var items = XMLElement(name: "items", attributes: ["node": XMPPNamespaces.omemoBundles])
     items.addChild(item)
     var pubsub = XMLElement(name: "pubsub", namespace: XMPPNamespaces.pubsub)
     pubsub.addChild(items)
     return pubsub
 }
 
-/// `encrypted` with the pre-key id of its key exchange set to `preKeyID`.
-private func replacingPreKeyID(with preKeyID: UInt32, in encrypted: XMLElement) throws -> XMLElement {
-    let header = try #require(encrypted.child(named: "header"))
-    var newHeader = XMLElement(name: "header", attributes: header.attributes)
-    for key in header.children(named: "key") {
-        guard key.attribute("kex") == "true" else {
-            newHeader.addChild(key)
-            continue
-        }
+/// `encrypted` with the required pre-key id field left out of its key exchange.
+private func removingPreKeyID(from encrypted: XMLElement) throws -> XMLElement {
+    try mappingKeys(in: encrypted) { key in
+        guard key.attribute("kex") == "true" else { return key }
         let text = try #require(key.textContent)
-        var bytes = try #require(Base64.decode(text))
-        bytes.replaceSubrange(4 ..< 8, with: [24, 16, 8, 0].map { UInt8(preKeyID >> $0 & 0xFF) })
+        let bytes = try #require(Base64.decode(text))
+        // The key exchange opens with the pre-key id: tag 0x08 and a one-byte varint for the small ids used here.
+        try #require(bytes.first == 0x08 && bytes[1] < 0x80)
         var newKey = XMLElement(name: "key", attributes: key.attributes)
-        newKey.addText(Base64.encode(bytes))
-        newHeader.addChild(newKey)
+        newKey.addText(Base64.encode(Array(bytes.dropFirst(2))))
+        return newKey
     }
-    return rebuilding(encrypted, header: newHeader)
 }
 
-/// The `<encrypted>` elements of messages from one sender to `recipient`. The first starts the session with a key
-/// exchange, and each later one repeats that key exchange around its own ratchet message, as a sender does until it
-/// hears back (XEP-0384 §4.3).
+/// The `<encrypted>` elements of messages from one sender to `recipient`, which has not answered, so each carries the
+/// sender's key exchange around its own ratchet message (XEP-0384 §4.3).
 private func makeRepeatingKEXMessages(to recipient: TestOMEMOIdentity, plaintexts: [String]) async throws -> [XMLElement] {
     let mock = MockTransport()
     let pepModule = PEPModule()
@@ -492,48 +558,45 @@ private func makeRepeatingKEXMessages(to recipient: TestOMEMOIdentity, plaintext
         )
     }
     await disconnectFast(client)
-
-    // Signed pre-key id, pre-key id, identity key and ephemeral key come before the ratchet message.
-    let kexText = try #require(encrypted[0].child(named: "header")?.children(named: "key").first { $0.attribute("kex") == "true" }?.textContent)
-    let kexHeader = try Array(#require(Base64.decode(kexText)).prefix(72))
-    return try [encrypted[0]] + encrypted.dropFirst().map { try wrappingInKeyExchange($0, header: kexHeader) }
+    return encrypted
 }
 
-/// `encrypted` with its key wrapped in the key exchange `header`, as a repeated key exchange carries it.
-private func wrappingInKeyExchange(_ encrypted: XMLElement, header kexHeader: [UInt8]) throws -> XMLElement {
-    let header = try #require(encrypted.child(named: "header"))
-    var newHeader = XMLElement(name: "header", attributes: header.attributes)
-    for key in header.children(named: "key") {
-        let text = try #require(key.textContent)
-        let ratchetMessage = try #require(Base64.decode(text))
-        var attributes = key.attributes
-        attributes["kex"] = "true"
-        var newKey = XMLElement(name: "key", attributes: attributes)
-        newKey.addText(Base64.encode(kexHeader + ratchetMessage))
-        newHeader.addChild(newKey)
+/// `encrypted` with its keys' `kex` attribute set to `value`.
+private func marking(_ encrypted: XMLElement, kex value: String) throws -> XMLElement {
+    try mappingKeys(in: encrypted) { key in
+        var key = key
+        key.setAttribute("kex", value: value)
+        return key
     }
-    return rebuilding(encrypted, header: newHeader)
 }
 
 /// `encrypted` as if sent by the device `deviceID`.
 private func replacingSenderDevice(with deviceID: UInt32, in encrypted: XMLElement) throws -> XMLElement {
-    let header = try #require(encrypted.child(named: "header"))
-    var attributes = header.attributes
-    attributes["sid"] = "\(deviceID)"
-    var newHeader = XMLElement(name: "header", attributes: attributes)
-    for key in header.children(named: "key") {
-        newHeader.addChild(key)
-    }
-    return rebuilding(encrypted, header: newHeader)
+    try mappingKeys(in: encrypted, senderDeviceID: deviceID) { $0 }
 }
 
 private func senderDeviceID(of encrypted: XMLElement) throws -> UInt32 {
     try #require(encrypted.child(named: "header")?.attribute("sid").flatMap(UInt32.init))
 }
 
-private func rebuilding(_ encrypted: XMLElement, header: XMLElement) -> XMLElement {
+/// `encrypted` with each `<key>` replaced by `transform`'s result, and the sender device replaced when one is given.
+private func mappingKeys(
+    in encrypted: XMLElement, senderDeviceID: UInt32? = nil, _ transform: (XMLElement) throws -> XMLElement
+) throws -> XMLElement {
+    let header = try #require(encrypted.child(named: "header"))
+    var newHeader = XMLElement(name: "header", attributes: header.attributes)
+    if let senderDeviceID {
+        newHeader.setAttribute("sid", value: "\(senderDeviceID)")
+    }
+    for keys in header.children(named: "keys") {
+        var newKeys = XMLElement(name: "keys", attributes: keys.attributes)
+        for key in keys.children(named: "key") {
+            try newKeys.addChild(transform(key))
+        }
+        newHeader.addChild(newKeys)
+    }
     var newEncrypted = XMLElement(name: "encrypted", namespace: XMPPNamespaces.omemo)
-    newEncrypted.addChild(header)
+    newEncrypted.addChild(newHeader)
     if let payload = encrypted.child(named: "payload") {
         newEncrypted.addChild(payload)
     }
@@ -543,8 +606,8 @@ private func rebuilding(_ encrypted: XMLElement, header: XMLElement) -> XMLEleme
 /// The pre-key ids a bundle publish carries, in ascending order.
 private func publishedPreKeyIDs(in publish: XMLElement) -> [String] {
     let bundle = publish.child(named: "pubsub")?.child(named: "publish")?.child(named: "item")?.child(named: "bundle")
-    let preKeys = bundle?.child(named: "prekeys")?.children(named: "preKeyPublic") ?? []
-    return preKeys.compactMap { $0.attribute("preKeyId") }.sorted()
+    let preKeys = bundle?.child(named: "prekeys")?.children(named: "pk") ?? []
+    return preKeys.compactMap { $0.attribute("id") }.sorted()
 }
 
 private extension OMEMOModule.OMEMOIdentityData {

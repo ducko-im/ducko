@@ -56,6 +56,13 @@ struct Base64Tests {
     func `Decode rejects mismatched padding`() {
         #expect(Base64.decode("AB=A") == nil) // 3rd is = but 4th is not
     }
+
+    @Test(arguments: ["\n", "\r", " ", "\t"])
+    func `Only the strict decode rejects whitespace`(whitespace: String) {
+        #expect(Base64.decode("AQ\(whitespace)ID") == [1, 2, 3])
+        #expect(Base64.decodeStrict("AQ\(whitespace)ID") == nil)
+        #expect(Base64.decodeStrict("AQID") == [1, 2, 3])
+    }
 }
 
 // MARK: - SASL PLAIN Tests

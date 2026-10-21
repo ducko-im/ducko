@@ -12,7 +12,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 try await harness.setUp(accounts: ["alice": TestCredentials.alice])
 
                 let alice = try #require(harness.accounts["alice"])
-                let bobJID = try harness.jid(for: TestCredentials.bob)
+                let bobJID = try JID.bare(harness.jid(for: TestCredentials.bob))
                 let blocking = try await harness.module(BlockingModule.self, for: "alice")
                 try await Self.ensureBobUnblocked(alice: alice, blocking: blocking, bobJID: bobJID)
 
@@ -31,7 +31,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 try await harness.setUp(accounts: ["alice": TestCredentials.alice])
 
                 let alice = try #require(harness.accounts["alice"])
-                let bobJID = try harness.jid(for: TestCredentials.bob)
+                let bobJID = try JID.bare(harness.jid(for: TestCredentials.bob))
                 let blocking = try await harness.module(BlockingModule.self, for: "alice")
                 try await Self.ensureBobUnblocked(alice: alice, blocking: blocking, bobJID: bobJID)
 
@@ -72,7 +72,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 try await harness.setUp(accounts: ["alice": TestCredentials.alice])
 
                 let alice = try #require(harness.accounts["alice"])
-                let bobJID = try harness.jid(for: TestCredentials.bob)
+                let bobJID = try JID.bare(harness.jid(for: TestCredentials.bob))
                 let blocking = try await harness.module(BlockingModule.self, for: "alice")
                 try await Self.ensureBobUnblocked(alice: alice, blocking: blocking, bobJID: bobJID)
 
@@ -98,7 +98,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 try await harness.setUp(accounts: ["alice": TestCredentials.alice])
 
                 let alice = try #require(harness.accounts["alice"])
-                let bobJID = try harness.jid(for: TestCredentials.bob)
+                let bobJID = try JID.bare(harness.jid(for: TestCredentials.bob))
                 let blocking = try await harness.module(BlockingModule.self, for: "alice")
                 try await Self.ensureBobUnblocked(alice: alice, blocking: blocking, bobJID: bobJID)
 
@@ -111,6 +111,27 @@ extension DuckoIntegrationTests.ProtocolLayer {
             }
         }
 
+        @Test @MainActor func `A device-only entry shows in the block list and leaves the contact unblocked`() async throws {
+            try await TestHarness.withHarness { harness in
+                try await harness.setUp(accounts: ["alice": TestCredentials.alice])
+
+                let alice = try #require(harness.accounts["alice"])
+                let bobJID = try harness.jid(for: TestCredentials.bob)
+                let device = "\(bobJID)/ducko-blocking-test"
+                let rosterService = harness.environment.rosterService
+                harness.addCleanup {
+                    try? await rosterService.unblockContact(jidString: device, accountID: alice.accountID)
+                }
+
+                try await rosterService.blockContact(jidString: device, accountID: alice.accountID)
+                try await alice.waitForCondition({ rosterService.blockList(for: alice.accountID).contains { $0.jidString == device } })
+                #expect(rosterService.contact(jidString: bobJID.description, accountID: alice.accountID)?.isBlocked != true)
+
+                try await rosterService.unblockContact(jidString: device, accountID: alice.accountID)
+                try await alice.waitForCondition({ !rosterService.blockList(for: alice.accountID).contains { $0.jidString == device } })
+            }
+        }
+
         // MARK: - Helpers
 
         /// If `.blockListLoaded` placed bob in the block list, unblock him
@@ -119,7 +140,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
         /// because `.blockListLoaded` may fire before setUp's initial roster response
         /// await registers, consuming the event without inspecting it.
         private static func ensureBobUnblocked(
-            alice: ConnectedAccount, blocking: BlockingModule, bobJID: BareJID
+            alice: ConnectedAccount, blocking: BlockingModule, bobJID: JID
         ) async throws {
             try? await alice.waitForCondition(
                 { blocking.blockedJIDs.contains(bobJID) },
@@ -139,7 +160,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
         /// failure still triggers teardown via the LIFO cleanup chain.
         @MainActor
         private static func registerUnblockCleanup(
-            blocking: BlockingModule, bobJID: BareJID, harness: TestHarness
+            blocking: BlockingModule, bobJID: JID, harness: TestHarness
         ) {
             harness.addCleanup {
                 try? await blocking.unblockContact(jid: bobJID)

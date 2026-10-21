@@ -39,10 +39,11 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 }
 
                 let newBody = "msg-\(UUID().uuidString.prefix(8))"
-                try await aliceMUC.sendCorrection(to: roomJID, body: newBody, replacingID: originalID)
+                let replace = DuckoXMPP.XMLElement(name: "replace", namespace: XMPPNamespaces.messageCorrect, attributes: ["id": originalID])
+                try await aliceMUC.sendMessage(to: roomJID, body: newBody, additionalElements: [replace])
 
                 _ = try await bob.waitForEvent { event in
-                    if case let .messageCorrected(origID, correctedBody, from: _) = event,
+                    if case let .messageCorrected(origID, correctedBody, _, from: _, messageType: _) = event,
                        origID == originalID, correctedBody == newBody {
                         return true
                     }
@@ -120,10 +121,14 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 let stanzaID = try #require(Self.roomStanzaID(from: receivedMessage.element, roomJID: roomJID))
 
-                // Alice moderates via service.
+                // Alice moderates via service. Joining stored the room, which the cache holds once loaded.
+                try await harness.environment.chatService.loadConversations(for: alice.accountID)
+                let room = try #require(harness.environment.chatService.openConversations.first {
+                    $0.jid == roomJID && $0.accountID == alice.accountID && $0.type == .groupchat
+                })
                 try await harness.environment.chatService.moderateMessage(
                     serverID: stanzaID,
-                    inRoomJIDString: roomJID.description,
+                    in: room,
                     reason: "inappropriate",
                     accountID: alice.accountID
                 )
