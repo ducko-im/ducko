@@ -113,7 +113,7 @@ struct PlainFormatter: CLIFormatter {
         case let .roomOccupantJoined(room, occupant): "\(room): \(occupant.nickname) joined"
         case let .roomOccupantLeft(room, occupant, reason, _): formatOccupantLeftMUC(room: room, occupant: occupant, reason: reason)
         case let .roomOccupantNickChanged(room, oldNickname, occupant, _): "\(room): \(oldNickname) is now known as \(occupant.nickname)"
-        case let .roomSubjectChanged(room, subject, setter): formatRoomSubject(room: room, subject: subject, setter: setter)
+        case let .roomSubjectChanged(room, subject, setter): roomSubjectText(room: room, subject: subject, setter: setter)
         case let .roomInviteReceived(invite): formatRoomInviteMUC(invite)
         case let .roomMessageReceived(message): formatIncomingRoomMessage(message)
         case let .mucPrivateMessageReceived(message): formatIncomingPrivateMessage(message)
@@ -144,12 +144,6 @@ struct PlainFormatter: CLIFormatter {
     private func formatModeratedMessage(originalID: String, moderator: String, room: BareJID, reason: String?) -> String {
         let reasonStr = reason.map { ": \($0)" } ?? ""
         return "[moderated] message moderated by \(moderator) in \(room) (id: \(originalID))\(reasonStr)"
-    }
-
-    private func formatRoomSubject(room: BareJID, subject: String?, setter: JID?) -> String {
-        let who = setter?.bareJID.description ?? "someone"
-        let topic = subject ?? "(cleared)"
-        return "\(room): topic changed by \(who): \(topic)"
     }
 
     private func formatTransferProgress(sid: String, bytesTransferred: Int64, totalBytes: Int64) -> String {
@@ -374,7 +368,7 @@ struct PlainFormatter: CLIFormatter {
         }
     }
 
-    func formatTypingIndicator(from jid: BareJID, state: ChatState) -> String? {
+    func formatTypingIndicator(from jid: JID, state: ChatState) -> String? {
         state == .composing ? "[\(jid) is typing…]" : nil
     }
 

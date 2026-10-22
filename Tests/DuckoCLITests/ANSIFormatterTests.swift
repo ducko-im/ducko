@@ -349,7 +349,7 @@ struct ANSIFormatterTests {
 
     @Test func `typing indicator uses dim`() throws {
         let jid = try #require(BareJID.parse("alice@example.com"))
-        let output = try #require(formatter.formatTypingIndicator(from: jid, state: .composing))
+        let output = try #require(formatter.formatTypingIndicator(from: .bare(jid), state: .composing))
         #expect(output.contains("\u{001B}[2m")) // dim
         #expect(output.contains("typing"))
     }

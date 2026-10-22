@@ -101,13 +101,26 @@ struct PlainRoomFormatterTests {
         #expect(output.contains("was banned"))
     }
 
-    @Test func `format event room subject changed`() throws {
+    struct SubjectCase: Sendable, CustomTestStringConvertible {
+        let subject: String?
+        let setter: String
+        let line: String?
+
+        var testDescription: String {
+            "\(subject ?? "no subject") from \(setter)"
+        }
+    }
+
+    @Test(arguments: [
+        SubjectCase(subject: "New topic", setter: "chat@conference.example.com/alice", line: "chat@conference.example.com: topic changed by alice: New topic"),
+        SubjectCase(subject: nil, setter: "chat@conference.example.com/alice", line: "chat@conference.example.com: topic cleared by alice"),
+        SubjectCase(subject: "New topic", setter: "chat@conference.example.com", line: "chat@conference.example.com: topic: New topic"),
+        SubjectCase(subject: nil, setter: "chat@conference.example.com", line: nil)
+    ])
+    func `format event room subject names the occupant who set it`(subjectCase: SubjectCase) throws {
         let room = try #require(BareJID.parse("chat@conference.example.com"))
-        let setter = JID.parse("alice@example.com")
-        let output = try #require(formatter.formatEvent(.roomSubjectChanged(room: room, subject: "New topic", setter: setter), accountID: UUID()))
-        #expect(output.contains("topic changed"))
-        #expect(output.contains("New topic"))
-        #expect(output.contains("alice@example.com"))
+        let event = XMPPEvent.roomSubjectChanged(room: room, subject: subjectCase.subject, setter: JID.parse(subjectCase.setter))
+        #expect(formatter.formatEvent(event, accountID: UUID()) == subjectCase.line)
     }
 
     @Test func `format event room invite received`() throws {
@@ -305,13 +318,14 @@ struct JSONRoomFormatterTests {
 
     @Test func `format event room subject changed is valid JSON`() throws {
         let room = try #require(BareJID.parse("chat@conference.example.com"))
-        let setter = JID.parse("alice@example.com")
+        let setter = JID.parse("chat@conference.example.com/alice")
         let output = try #require(formatter.formatEvent(.roomSubjectChanged(room: room, subject: "New topic", setter: setter), accountID: UUID()))
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_subject_changed")
         #expect(json["subject"] == "New topic")
-        #expect(json["setter"] == "alice@example.com")
+        #expect(json["setter"] == "chat@conference.example.com")
+        #expect(json["nickname"] == "alice")
     }
 
     @Test func `format event room invite is valid JSON`() throws {

@@ -447,12 +447,14 @@ struct JSONFormatter: CLIFormatter {
         ])
     }
 
-    func formatTypingIndicator(from jid: BareJID, state: ChatState) -> String? {
-        encode([
+    func formatTypingIndicator(from jid: JID, state: ChatState) -> String? {
+        var dict: [String: String] = [
             "type": "typing",
-            "jid": jid.description,
+            "jid": jid.bareJID.description,
             "state": state.rawValue
-        ])
+        ]
+        if let nickname = occupantNickname(jid) { dict["nickname"] = nickname }
+        return encode(dict)
     }
 
     // MARK: - Room Formatting
@@ -584,6 +586,7 @@ struct JSONFormatter: CLIFormatter {
         ]
         if let subject { dict["subject"] = subject }
         if let setter { dict["setter"] = setter.bareJID.description }
+        if let nickname = occupantNickname(setter) { dict["nickname"] = nickname }
         return encode(dict)
     }
 

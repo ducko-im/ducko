@@ -357,7 +357,7 @@ struct JSONFormatterTests {
 
     @Test func `typing indicator composing`() throws {
         let jid = try #require(BareJID.parse("alice@example.com"))
-        let output = try #require(formatter.formatTypingIndicator(from: jid, state: .composing))
+        let output = try #require(formatter.formatTypingIndicator(from: .bare(jid), state: .composing))
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "typing")
@@ -366,11 +366,20 @@ struct JSONFormatterTests {
 
     @Test func `typing indicator paused`() throws {
         let jid = try #require(BareJID.parse("alice@example.com"))
-        let output = try #require(formatter.formatTypingIndicator(from: jid, state: .paused))
+        let output = try #require(formatter.formatTypingIndicator(from: .bare(jid), state: .paused))
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "typing")
         #expect(json["state"] == "paused")
+    }
+
+    @Test func `typing indicator names a room occupant`() throws {
+        let occupant = try #require(JID.parse("chat@conference.example.com/alice"))
+        let output = try #require(formatter.formatTypingIndicator(from: occupant, state: .composing))
+        let data = try #require(output.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+        #expect(json["jid"] == "chat@conference.example.com")
+        #expect(json["nickname"] == "alice")
     }
 
     // MARK: - formatRegistrationForm

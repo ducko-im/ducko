@@ -28,8 +28,10 @@ actor CLIEventHandler {
              .jingleFileTransferReceived,
              .oobIQOfferReceived:
             ringBell()
-        case let .chatStateChanged(from, state, _):
-            handleChatState(from: from.bareJID, state: state)
+        case let .chatStateChanged(from, state, messageType):
+            // A room's occupant is named by the nickname in its address, as its room lines are; a contact by its bare address.
+            let typist: JID = messageType == .groupchat ? from : .bare(from.bareJID)
+            handleChatState(from: typist, state: state)
             return
         case .jingleFileTransferProgress,
              .omemoDeviceListReceived, .omemoSessionEstablished, .omemoSessionAdvanced:
@@ -64,7 +66,7 @@ actor CLIEventHandler {
         print(formatter.formatEncryptedMessage(message, in: conversation, accountID: accountID))
     }
 
-    private func handleChatState(from: BareJID, state: ChatState) {
+    private func handleChatState(from: JID, state: ChatState) {
         guard isInteractive else { return }
         if let output = formatter.formatTypingIndicator(from: from, state: state) {
             print(output)

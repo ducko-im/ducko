@@ -80,10 +80,10 @@ func resolveConversation(jid: JID, environment: AppEnvironment, accountID: UUID)
 /// the room's address, so an occupant's address `room@service/nick` names the private chat with them, and a bare
 /// address the chat or room.
 func conversation(with jid: JID, among conversations: [Conversation], accountID: UUID) -> Conversation? {
-    let occupantNickname: String? = if case let .full(occupant) = jid { occupant.resourcePart } else { nil }
+    let nickname = occupantNickname(jid)
     // Scope by account: `openConversations` is a cross-account union, so a bare-JID match alone could
     // resolve another account's conversation when the same peer is rostered on two accounts.
-    return conversations.first { $0.jid == jid.bareJID && $0.accountID == accountID && $0.occupantNickname == occupantNickname }
+    return conversations.first { $0.jid == jid.bareJID && $0.accountID == accountID && $0.occupantNickname == nickname }
 }
 
 /// Prints a search's results. Those of all conversations name each day's conversation on a line before its messages.

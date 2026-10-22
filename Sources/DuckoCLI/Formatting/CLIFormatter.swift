@@ -19,7 +19,8 @@ protocol CLIFormatter: Sendable {
     /// message, except that a `/me` line the user sent from another device names the row's sender address rather than
     /// the account's. A room's message names its sender as a room line does, `room/nick`, after `[PM]` in a private chat.
     func formatEncryptedMessage(_ message: ChatMessage, in conversation: Conversation, accountID: UUID) -> String
-    func formatTypingIndicator(from jid: BareJID, state: ChatState) -> String?
+    /// `jid` is `room/nick` for an occupant typing in a room, and a bare address otherwise.
+    func formatTypingIndicator(from jid: JID, state: ChatState) -> String?
     func formatRoom(_ room: DiscoveredRoom) -> String
     func formatRoomParticipant(_ participant: RoomParticipant) -> String
     func formatRoomParticipantGroupHeader(_ group: RoomParticipantGroup) -> String
@@ -119,7 +120,24 @@ func formatByteCount(_ bytes: Int64) -> String {
 }
 
 func nicknameFromJID(_ jid: JID) -> String {
-    FullJID.parse(jid.description)?.resourcePart ?? jid.bareJID.description
+    occupantNickname(jid) ?? jid.bareJID.description
+}
+
+/// The nickname a room occupant's address carries, or nil for the room's own address.
+func occupantNickname(_ jid: JID?) -> String? {
+    guard case let .full(occupant) = jid else { return nil }
+    return occupant.resourcePart
+}
+
+/// A room subject change as text, or nil for an empty subject from the room's own address. A room without a subject
+/// sends such an empty one to each occupant who joins (XEP-0045).
+func roomSubjectText(room: BareJID, subject: String?, setter: JID?) -> String? {
+    switch (subject, occupantNickname(setter)) {
+    case (nil, nil): nil
+    case let (nil, nickname?): "\(room): topic cleared by \(nickname)"
+    case let (subject?, nickname?): "\(room): topic changed by \(nickname): \(subject)"
+    case let (subject?, nil): "\(room): topic: \(subject)"
+    }
 }
 
 /// A search result day as text. The day is given as its UTC date, the span one transcript file covers.

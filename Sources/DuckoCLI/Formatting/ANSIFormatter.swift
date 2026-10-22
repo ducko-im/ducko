@@ -171,10 +171,8 @@ struct ANSIFormatter: CLIFormatter {
         return "\(Color.dim)\u{2298} message moderated by \(moderator) in \(room) (id: \(originalID))\(reasonStr)\(Color.reset)"
     }
 
-    private func formatRoomSubject(room: BareJID, subject: String?, setter: JID?) -> String {
-        let who = setter?.bareJID.description ?? "someone"
-        let topic = subject ?? "(cleared)"
-        return "\(Color.yellow)\(room): topic changed by \(who): \(topic)\(Color.reset)"
+    private func formatRoomSubject(room: BareJID, subject: String?, setter: JID?) -> String? {
+        roomSubjectText(room: room, subject: subject, setter: setter).map { "\(Color.yellow)\($0)\(Color.reset)" }
     }
 
     private func formatTransferProgress(sid: String, bytesTransferred: Int64, totalBytes: Int64) -> String {
@@ -411,7 +409,7 @@ struct ANSIFormatter: CLIFormatter {
         return "\(Color.green)\(bar)\(Color.reset)"
     }
 
-    func formatTypingIndicator(from jid: BareJID, state: ChatState) -> String? {
+    func formatTypingIndicator(from jid: JID, state: ChatState) -> String? {
         state == .composing ? "\(Color.dim)[\(jid) is typing…]\(Color.reset)" : nil
     }
 

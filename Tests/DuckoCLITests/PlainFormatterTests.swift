@@ -527,14 +527,20 @@ struct PlainFormatterTests {
 
     @Test func `format typing indicator typing`() throws {
         let jid = try #require(BareJID.parse("alice@example.com"))
-        let output = try #require(formatter.formatTypingIndicator(from: jid, state: .composing))
+        let output = try #require(formatter.formatTypingIndicator(from: .bare(jid), state: .composing))
         #expect(output.contains("typing"))
         #expect(output.contains("alice@example.com"))
     }
 
+    @Test func `format typing indicator names a room occupant`() throws {
+        let occupant = try #require(JID.parse("chat@conference.example.com/alice"))
+        let output = formatter.formatTypingIndicator(from: occupant, state: .composing)
+        #expect(output == "[chat@conference.example.com/alice is typing…]")
+    }
+
     @Test func `format typing indicator not typing`() throws {
         let jid = try #require(BareJID.parse("alice@example.com"))
-        let output = formatter.formatTypingIndicator(from: jid, state: .paused)
+        let output = formatter.formatTypingIndicator(from: .bare(jid), state: .paused)
         #expect(output == nil)
     }
 
