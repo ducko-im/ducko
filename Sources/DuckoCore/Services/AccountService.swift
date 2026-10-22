@@ -25,6 +25,12 @@ public final class AccountService {
         try await RegistrationSession.open(domain: $0, host: $1, port: $2)
     }
 
+    /// The wait before reconnect attempt `attempt`, counted from 0 since the account was last connected or the user last
+    /// connected it.
+    var reconnectDelay: @Sendable (_ attempt: Int) -> Duration = { attempt in
+        .seconds(min(pow(2.0, Double(attempt)), 60.0) + Double.random(in: 0 ... 5))
+    }
+
     private struct AccountConnectionResources {
         var attemptID = UUID()
         var client: XMPPClient?
@@ -684,7 +690,9 @@ public final class AccountService {
         case let .streamError(condition, text):
             connectionResources[accountID]?.resumeState = Self.resumeContext(streamManagement: detached?.streamManagement, muc: detached?.muc)
             connectionStates[accountID] = .error(Self.streamErrorMessage(condition: condition, text: text))
-            scheduleReconnect(accountID: accountID)
+            if Self.isRetryable(condition) {
+                scheduleReconnect(accountID: accountID)
+            }
         case let .connectionLost(detail):
             connectionResources[accountID]?.resumeState = Self.resumeContext(streamManagement: detached?.streamManagement, muc: detached?.muc)
             connectionStates[accountID] = .error(Self.connectionLostMessage(detail))
@@ -782,15 +790,47 @@ public final class AccountService {
 
     private func scheduleReconnect(accountID: UUID) {
         let attempt = connectionResources[accountID]?.reconnectAttempts ?? 0
-        guard attempt < 5 else { return }
-
         connectionResources[accountID]?.reconnectAttempts = attempt + 1
-        let delay = min(pow(2.0, Double(attempt)), 30.0) + Double.random(in: 0 ... 5)
+        let delay = reconnectDelay(attempt)
 
         connectionResources[accountID]?.reconnectTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled else { return }
-            try? await self?.performConnect(accountID: accountID)
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            do {
+                try await performConnect(accountID: accountID)
+            } catch {
+                // A requested disconnect, a newer connect, or a drop that schedules its own retry cancels this task.
+                guard !Task.isCancelled, Self.isRetryable(error) else { return }
+                scheduleReconnect(accountID: accountID)
+            }
+        }
+    }
+
+    /// Whether a failed reconnect can succeed later without the user changing the account or the password.
+    private nonisolated static func isRetryable(_ error: any Error) -> Bool {
+        if error is CancellationError || error is AccountServiceError { return false }
+        guard let clientError = error as? XMPPClientError else { return true }
+        switch clientError {
+        case .authenticationFailed, .plainSignInRefused, .tlsRequired, .invalidDomain:
+            return false
+        case .notConnected, .alreadyConnected, .connectionFailed, .sendFailed, .tlsNegotiationFailed, .bindingFailed, .sessionFailed,
+             .unexpectedStreamState, .timeout, .streamManagementBusy:
+            return true
+        }
+    }
+
+    /// Whether a session the server ended with `condition` can come back by itself. A conflict means another session
+    /// took the resource over, so reconnecting would only take it back.
+    private nonisolated static func isRetryable(_ condition: XMPPStreamError?) -> Bool {
+        guard let condition else { return true }
+        switch condition {
+        case .connectionTimeout, .internalServerError, .remoteConnectionFailed, .reset, .resourceConstraint, .seeOtherHost,
+             .systemShutdown, .undefinedCondition:
+            return true
+        case .badFormat, .badNamespacePrefix, .conflict, .hostGone, .hostUnknown, .improperAddressing, .invalidFrom,
+             .invalidNamespace, .invalidXML, .notAuthorized, .notWellFormed, .policyViolation, .restrictedXML,
+             .unsupportedEncoding, .unsupportedFeature, .unsupportedStanzaType, .unsupportedVersion:
+            return false
         }
     }
 }

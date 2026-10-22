@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep reconnecting after a lost connection until the server is reachable again, instead of staying offline after one failed attempt, and stop reconnecting when the server ends the session for a reason that won't clear by itself, such as another session taking it over
+
 ## [0.10.0] - 2026-10-21
 
 ### Added

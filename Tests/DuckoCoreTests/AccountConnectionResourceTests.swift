@@ -79,6 +79,66 @@ struct AccountConnectionResourceTests {
     }
 
     @Test
+    func `a failed reconnect schedules the next one, however many failed before`() async throws {
+        let transport = MockTransport()
+        let factory = AccountConnectionFactoryProbe(transports: [transport])
+        let service = AccountService(store: MockPersistenceStore(), credentialStore: MockCredentialStore(), clientFactory: factory)
+        service.reconnectDelay = { _ in .zero }
+        let id = try await service.createAccount(jidString: "alice@example.com")
+        let (_, connection) = try await driveMockConnect(service, accountID: id, transport: transport)
+
+        // Every client after the first fails to connect, so each retry fails like an unreachable server.
+        await transport.simulateDisconnect()
+        // Well past the handful of attempts a capped retry would make.
+        try await eventually { await factory.requestCount > 7 }
+
+        await service.disconnect(accountID: id)
+        _ = await connection.result
+    }
+
+    @Test(arguments: [("system-shutdown", true), ("conflict", false)])
+    func `a stream error reconnects only when its condition can clear by itself`(condition: String, reconnects: Bool) async throws {
+        let transport = MockTransport()
+        let factory = AccountConnectionFactoryProbe(transports: [transport])
+        let service = AccountService(store: MockPersistenceStore(), credentialStore: MockCredentialStore(), clientFactory: factory)
+        service.reconnectDelay = { _ in .zero }
+        let id = try await service.createAccount(jidString: "alice@example.com")
+        let (_, connection) = try await driveMockConnect(service, accountID: id, transport: transport)
+
+        await transport.simulateReceive("<error><\(condition) xmlns='urn:ietf:params:xml:ns:xmpp-streams'/></error>")
+        try await eventually { service.client(for: id) == nil }
+        try await Task.sleep(for: .milliseconds(200))
+
+        let reconnected = await factory.requestCount > 1
+        #expect(reconnected == reconnects)
+        await service.disconnect(accountID: id)
+        _ = await connection.result
+    }
+
+    @Test
+    func `a reconnect refused for the password is not retried`() async throws {
+        let original = MockTransport()
+        let refused = MockTransport()
+        let factory = AccountConnectionFactoryProbe(transports: [original, refused])
+        let service = AccountService(store: MockPersistenceStore(), credentialStore: MockCredentialStore(), clientFactory: factory)
+        service.reconnectDelay = { _ in .zero }
+        let id = try await service.createAccount(jidString: "alice@example.com", requireTLS: false)
+        let (_, connection) = try await driveMockConnect(service, accountID: id, transport: original)
+
+        await original.simulateDisconnect()
+        try await exchange(refused, matching: "<stream:stream", response: testServerStreamOpen + testFeaturesNoTLS)
+        try await exchange(refused, matching: "<auth", response: "<failure xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><not-authorized/></failure>")
+        try await eventually {
+            if case .error = service.connectionStates[id] { await factory.requestCount == 2 } else { false }
+        }
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(await factory.requestCount == 2)
+        await service.disconnect(accountID: id)
+        _ = await connection.result
+    }
+
+    @Test
     func `redirect forces TLS and disconnect invalidates its suspended factory`() async throws {
         let original = MockTransport()
         let redirected = MockTransport()
