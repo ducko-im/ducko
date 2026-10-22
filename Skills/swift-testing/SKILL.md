@@ -195,6 +195,7 @@ Structure every test with clear phases:
 - Unsafe mutable counters captured by async callbacks → use an actor or thread-safe container.
 - `#require` nested inside another `#require`'s argument → fails to compile with "recursive expansion of macro 'require(_:_:sourceLocation:)'"; bind the inner `try #require(...)` to a local first. `#require` inside `#expect` (`#expect(try #require(optional).count == 1)`) compiles with Swift 6.4, and a single macro nested inside an ordinary call (`Foo(bar: #require(x))`) is fine.
 - Key-path argument to a rethrowing call that is the whole `#expect`/`#require` condition (`#expect(!s.contains(where: \.isNumber))`) → fails macro expansion with "call can throw, but it is not marked with 'try' and the error is not handled"; bind the result to a local first (`let hasNumber = s.contains(where: \.isNumber)`, then `#expect(!hasNumber)`). A closure also compiles, but SwiftFormat's `preferKeyPath` rule, on by default, can rewrite it back into the key path.
+- Static fixture of a `@MainActor` suite referenced in `@Test(arguments:)` → fails to compile with "main actor-isolated static property '…' cannot be accessed from outside of the actor" (or "static method '…' cannot be called from outside of the actor"), because the arguments are evaluated outside the actor; mark those statics `nonisolated`.
 
 
 ## Verification checklist
