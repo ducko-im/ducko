@@ -1623,12 +1623,17 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     /// The content to echo back in a session-accept. XEP-0260 §2.2 forbids the responder from offering any host and port
     /// the initiator already offered, so the initiator's candidate list is dropped while the transport's stream id and
     /// the file description are echoed unchanged. This side dials rather than listening, so it advertises none of its
-    /// own in their place.
+    /// own in their place. The senders are stated even when the offer left them to XEP-0166's default, for a peer that
+    /// does not apply it.
     private static func acceptedContent(from content: JingleContent) -> JingleContent {
-        guard case let .socks5(transport) = content.transport, !transport.candidates.isEmpty else { return content }
+        let transport: JingleTransportDescription = if case let .socks5(socks5) = content.transport {
+            .socks5(SOCKS5Transport(sid: socks5.sid))
+        } else {
+            content.transport
+        }
         return JingleContent(
-            name: content.name, creator: content.creator, senders: content.senders,
-            description: content.description, transport: .socks5(SOCKS5Transport(sid: transport.sid))
+            name: content.name, creator: content.creator, senders: content.effectiveSenders,
+            description: content.description, transport: transport
         )
     }
 

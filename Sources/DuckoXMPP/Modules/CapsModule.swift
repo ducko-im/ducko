@@ -97,8 +97,12 @@ public final class CapsModule: XMPPModule, Sendable {
             return
         }
 
-        guard let capsChild = presence.element.child(named: "c", namespace: XMPPNamespaces.caps),
-              let ver = capsChild.attribute("ver") else {
+        let capsChild = presence.element.child(named: "c", namespace: XMPPNamespaces.caps)
+        guard let capsChild, let ver = capsChild.attribute("ver") else {
+            // An advertisement this module cannot use still replaces the previous one, whose features may be gone.
+            if capsChild != nil || presence.element.child(named: "c", namespace: XMPPNamespaces.caps2) != nil {
+                _ = state.withLock { $0.advertisements.removeValue(forKey: from) }
+            }
             return
         }
         let queryNode = capsChild.attribute("node").map { "\($0)#\(ver)" }

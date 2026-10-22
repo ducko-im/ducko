@@ -478,6 +478,25 @@ enum CapsModuleTests {
             #expect(try peer.module.features(of: Self.peer("laptop")) == ["urn:xmpp:ping"])
         }
 
+        @Test(arguments: [
+            ("<c xmlns='\(XMPPNamespaces.caps2)'><hash xmlns='\(XMPPNamespaces.hashes2)' algo='sha3-256'>AAAA</hash></c>", true),
+            ("<c xmlns='\(XMPPNamespaces.caps)' hash='sha-1' node='https://peer.example'/>", true),
+            ("<status>Away</status>", false)
+        ])
+        func `A presence whose caps element is unusable forgets what the session advertised, one without caps keeps it`(
+            children: String, forgetsAdvertisement: Bool
+        ) async throws {
+            let peer = CapsPeer.make { CapsPeer.result(to: $0, query: Self.identityXML + "<feature var='urn:xmpp:ping'/>") }
+            try peer.receive(Self.capsPresence(from: "laptop"))
+            try await peer.waitFor(questions: 1)
+            try #require(try peer.module.features(of: Self.peer("laptop")) != nil)
+
+            try peer.receive("<presence from='peer@example.com/laptop'>\(children)</presence>")
+
+            let expected: Set<String>? = forgetsAdvertisement ? nil : ["urn:xmpp:ping"]
+            #expect(try peer.module.features(of: Self.peer("laptop")) == expected)
+        }
+
         @Test
         func `An identity in a reply whose iq carries xml:lang is hashed with it`() async throws {
             let identity = ServiceDiscoveryModule.Identity(category: "client", type: "pc", lang: "en", name: "Peer")

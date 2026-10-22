@@ -684,6 +684,18 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
             #expect(harness.offeredCandidates(action: JingleAction.sessionAccept.rawValue, sid: "sid-echo").isEmpty)
         }
 
+        /// XEP-0166: an omitted `senders` means `both`.
+        @Test
+        func `A session-accept states the senders an offer left to the default`() async throws {
+            let harness = JingleInitiatorHarness()
+            try harness.receiveOffer(sid: "sid-senders")
+
+            try await harness.module.acceptFileTransfer(sid: "sid-senders")
+
+            let accepted = try #require(harness.offeredContent(action: JingleAction.sessionAccept.rawValue, sid: "sid-senders"))
+            #expect(accepted.attribute("senders") == "both")
+        }
+
         @Test
         func `An offer the peer rejects ends its session and throws`() async throws {
             let harness = JingleInitiatorHarness { iq in
