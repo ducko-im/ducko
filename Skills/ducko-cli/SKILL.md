@@ -152,7 +152,7 @@ ducko history --limit 5 -- '-123\40chat.example.com@facebook.adium-import'
 
 ### `account list`
 
-List all configured accounts. Supports `--output` format.
+List all configured accounts. Supports `--output` format. With `--output json` it prints one JSON object per line rather than an array, and `isEnabled` is the string `"true"` or `"false"`.
 
 ```
 ducko account list
@@ -163,7 +163,9 @@ ducko account list --output json
 
 Add a new XMPP account. By default it connects to verify credentials and saves the password. Password is prompted interactively if `--password` is omitted. `--host`/`--port` override the connection endpoint (a bare `--port` without `--host` is rejected). With `--no-connect` the account is persisted *without* connecting or verifying credentials — offline/manual setup; the password is still saved.
 
-When authentication fails, the command exits 1 and prints `Error: Authentication failed: <reason>`, where the reason is readable text such as "Incorrect username or password". To observe that failure as JSON, add the account with `--no-connect`, then run a connecting subcommand with `--output json` (e.g. `profile`, which uses the first account unless `--account <uuid>` is passed). It emits `{"account":"<uuid>","message":"<reason>","type":"authentication_failed"}`.
+When authentication fails, the command exits 1 and prints `Error: Authentication failed: <reason>`, where the reason is readable text such as "Incorrect username or password".
+
+`account add` has no `--output` option, so to observe that failure as JSON, add the account with `--no-connect` and run a connecting subcommand with `--output json`, such as `profile`. It uses the first account unless `--account <uuid>` is passed. It emits `{"account":"<uuid>","condition":"not-authorized","kind":"credentials_rejected","message":"<reason>","type":"authentication_failed"}`. `kind` is `credentials_rejected` for a rejected password, `temporary` for a server failure that can clear by itself, and `other` for anything else. `condition` is the server's raw SASL condition and is absent when the server sent none.
 
 ```
 ducko account add alice@example.com
@@ -517,7 +519,7 @@ To stage a pending subscription request, read the requester's `roster list --out
 
 ## Stream-Level Smoke Testing
 
-To exercise STARTTLS negotiation, stream features, injected server data, or a whole session with a made-up roster without a live server, follow [references/stub-server-smoke-testing.md](references/stub-server-smoke-testing.md).
+To exercise STARTTLS negotiation, stream features, a rejected server certificate, injected server data, or a whole session with a made-up roster without a live server, follow [references/stub-server-smoke-testing.md](references/stub-server-smoke-testing.md).
 
 ## Connection Smoke Testing
 

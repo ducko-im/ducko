@@ -35,6 +35,7 @@ public final class AppEnvironment {
         linkPreviewFetcher: any LinkPreviewFetcher = NoOpLinkPreviewFetcher(),
         downloadsDirectory: URL = .downloadsDirectory,
         clientFactory: any XMPPClientFactory = DefaultXMPPClientFactory(),
+        networkPath: NetworkPathSource? = nil,
         onExternalEvent: (@Sendable (XMPPEvent, UUID) -> Void)? = nil
     ) {
         let resolvedCredentialStore = credentialStore ?? CredentialStoreFactory.makeDefault()
@@ -43,7 +44,10 @@ public final class AppEnvironment {
         let chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: pipeline)
         let presenceService = PresenceService()
         let rosterService = RosterService(store: store)
-        let accountService = AccountService(store: store, credentialStore: resolvedCredentialStore, clientFactory: clientFactory)
+        let accountService = AccountService(
+            store: store, credentialStore: resolvedCredentialStore, clientFactory: clientFactory, networkPath: networkPath
+        )
+        accountService.retriesFailedConnects = true
         let bookmarksService = BookmarksService()
         bookmarksService.autoJoinEnabled = true
         let avatarService = AvatarService(store: store)
@@ -168,6 +172,7 @@ public final class AppEnvironment {
     /// FileTransferService Jingle tasks). Does not disconnect accounts — that stays with
     /// `AccountService.disconnectAll`.
     public func shutdown(within deadline: Duration) async {
+        accountService.stopNetworkMonitoring()
         let tasks = takePendingTasks()
             + chatService.takePendingTasks()
             + fileTransferService.takePendingTasks()

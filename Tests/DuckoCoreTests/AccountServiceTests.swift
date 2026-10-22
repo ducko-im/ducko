@@ -465,23 +465,50 @@ enum AccountServiceTests {
         }
     }
 
-    struct IsAuthenticationError {
-        @Test
-        func `returns true for authenticationFailed`() {
-            let error: any Error = XMPPClientError.authenticationFailed("not-authorized")
-            #expect(AccountService.isAuthenticationError(error))
+    struct IsCredentialsRejected {
+        @Test(arguments: [
+            (AuthenticationFailure.Kind.credentialsRejected, true),
+            (.temporary, false),
+            (.other, false)
+        ])
+        func `holds only for a rejected password`(kind: AuthenticationFailure.Kind, rejected: Bool) {
+            let error: any Error = XMPPClientError.authenticationFailed(AuthenticationFailure(kind: kind, message: "denied"))
+            #expect(AccountService.isCredentialsRejected(error) == rejected)
         }
 
         @Test
-        func `returns false for other XMPPClientError cases`() {
-            #expect(!AccountService.isAuthenticationError(XMPPClientError.notConnected))
-            #expect(!AccountService.isAuthenticationError(XMPPClientError.timeout))
-            #expect(!AccountService.isAuthenticationError(XMPPClientError.tlsRequired))
+        func `returns false for other errors`() {
+            #expect(!AccountService.isCredentialsRejected(XMPPClientError.notConnected))
+            #expect(!AccountService.isCredentialsRejected(XMPPClientError.untrustedCertificate(.notTrusted)))
+            #expect(!AccountService.isCredentialsRejected(TestError()))
+        }
+    }
+
+    struct RetryClassification {
+        @Test(arguments: [
+            (XMPPClientError.sessionSetupFailed(XMPPClientError.timeout), false),
+            (.untrustedCertificate(.nameMismatch), false),
+            (.authenticationFailed(AuthenticationFailure(kind: .credentialsRejected, message: "denied")), false),
+            (.authenticationFailed(AuthenticationFailure(kind: .other, message: "disabled")), false),
+            (.authenticationFailed(AuthenticationFailure(kind: .temporary, message: "later")), true),
+            (.connectionFailed("unreachable"), true),
+            (.timeout, true)
+        ])
+        func `a failed connect is retried only when it can succeed later`(error: XMPPClientError, retryable: Bool) {
+            #expect(AccountService.isRetryable(error) == retryable)
         }
 
-        @Test
-        func `returns false for unrelated errors`() {
-            #expect(!AccountService.isAuthenticationError(TestError()))
+        @Test(arguments: [
+            (XMPPClientError.timeout as any Error, true),
+            (XMPPClientError.connectionFailed("unreachable"), true),
+            (XMPPClientError.sendFailed("Broken pipe"), true),
+            (XMPPClientError.notConnected, true),
+            (XMPPStanzaError(errorType: .wait, condition: .resourceConstraint), true),
+            (XMPPStanzaError(errorType: .cancel, condition: .notAllowed), false),
+            (OMEMOModuleError.notSetUp, false)
+        ])
+        func `a failed session setup is retried only when it was transient`(error: any Error & Sendable, transient: Bool) {
+            #expect(AccountService.isTransient(error) == transient)
         }
     }
 

@@ -18,8 +18,17 @@ struct FormatterEventContractTests {
         let cases: [EventExpectation] = [
             .init(.streamResumed(full), "stream resumed as alice@example.com/laptop", "\u{001B}[32mstream resumed as alice@example.com/laptop\(reset)",
                   ["type": "stream_resumed", "jid": full.description, "account": account]),
-            .init(.authenticationFailed("denied"), "authentication failed: denied", "\u{001B}[31mauthentication failed: denied\(reset)",
-                  ["type": "authentication_failed", "message": "denied", "account": account]),
+            .init(
+                .authenticationFailed(AuthenticationFailure(kind: .credentialsRejected, message: "denied", serverCondition: "not-authorized")),
+                "authentication failed: denied", "\u{001B}[31mauthentication failed: denied\(reset)",
+                ["type": "authentication_failed", "kind": "credentials_rejected", "condition": "not-authorized", "message": "denied", "account": account]
+            ),
+            .init(.authenticationFailed(AuthenticationFailure(kind: .temporary, message: "later")),
+                  "authentication failed: later", "\u{001B}[31mauthentication failed: later\(reset)",
+                  ["type": "authentication_failed", "kind": "temporary", "message": "later", "account": account]),
+            .init(.disconnected(.setupFailed(XMPPClientError.timeout)),
+                  "disconnected: The server did not respond in time", "\u{001B}[31mdisconnected: The server did not respond in time\(reset)",
+                  ["type": "disconnected", "reason": "setup_failed", "message": "The server did not respond in time", "account": account]),
             .init(.plainSignInRefused, "\(refusal). Run 'ducko account reset-security <jid>' to send the password anyway.",
                   "\u{001B}[31m\(refusal). Run 'ducko account reset-security <jid>' to send the password anyway.\(reset)",
                   ["type": "sign_in_refused", "reason": "plain_after_scram", "message": refusal, "account": account]),

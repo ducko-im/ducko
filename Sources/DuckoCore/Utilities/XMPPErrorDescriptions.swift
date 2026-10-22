@@ -13,12 +13,14 @@ extension XMPPClientError: LocalizedError {
         case let .sendFailed(reason): "Could not send data to the server: \(reason)"
         case .tlsRequired: "The server does not offer a secure connection"
         case let .tlsNegotiationFailed(reason): "Secure connection failed: \(reason)"
-        case let .authenticationFailed(reason): "Authentication failed: \(reason)"
+        case let .untrustedCertificate(reason): "The server's certificate is not trusted: \(reason.displayText)"
+        case let .authenticationFailed(failure): "Authentication failed: \(failure.message)"
         case .plainSignInRefused:
             "Sign-in refused: the server offers only a sign-in that sends the password, and this account has signed in without sending it before"
         case let .bindingFailed(reason): "The server did not bind a resource: \(reason)"
         case let .sessionFailed(reason): "The server did not establish a session: \(reason)"
         case let .unexpectedStreamState(reason): "Unexpected response from the server: \(reason)"
+        case let .sessionSetupFailed(error): error.localizedDescription
         case .timeout: "The server did not respond in time"
         case .streamManagementBusy: "Stream management is busy"
         case let .invalidDomain(domain): "Invalid server domain: \(domain)"

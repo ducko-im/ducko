@@ -470,6 +470,37 @@ enum XMPPClientSASL2Tests {
         }
     }
 
+    struct ServerFailure {
+        @Test(arguments: [
+            ("not-authorized", AuthenticationFailure.Kind.credentialsRejected),
+            ("temporary-auth-failure", .temporary),
+            ("account-disabled", .other)
+        ])
+        func `A refused sign-in is classified by its condition, on the error and the event`(
+            condition: String, kind: AuthenticationFailure.Kind
+        ) async throws {
+            let mock = MockTransport()
+            let (client, _) = await makeClient(mock: mock)
+            let events = Task { try await collectEvents(from: client) { if case .authenticationFailed = $0 { true } else { false } } }
+
+            let connectTask = Task { try await client.connectWithTLS(host: "example.com", port: 5223) }
+            await simulateSASL2Handshake(
+                mock, features: testFeaturesSASL2,
+                replies: ["<failure xmlns='urn:xmpp:sasl:2'><\(condition) xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/></failure>"],
+                postAuthFeatures: nil
+            )
+
+            let error = await #expect(throws: XMPPClientError.self) { try await connectTask.value }
+            guard case let .authenticationFailed(thrown) = error, case let .authenticationFailed(emitted) = try await events.value.last else {
+                Issue.record("Expected authenticationFailed, got \(String(describing: error))")
+                return
+            }
+            #expect(thrown.kind == kind)
+            #expect(thrown.serverCondition == condition)
+            #expect(emitted == thrown)
+        }
+    }
+
     struct UnsupportedStep {
         @Test
         func `A continue is aborted and fails sign-in with readable text`() async {
@@ -487,11 +518,11 @@ enum XMPPClientSASL2Tests {
             await #expect(throws: XMPPClientError.self) { try await connectTask.value }
             #expect(await sentElements(on: mock).contains { $0.name == "abort" && $0.namespace == XMPPNamespaces.sasl2 })
             let failure = try? await events.value.last
-            guard case let .authenticationFailed(message) = failure else {
+            guard case let .authenticationFailed(authFailure) = failure else {
                 Issue.record("Expected authenticationFailed, got \(String(describing: failure))")
                 return
             }
-            #expect(message == SASLAuthError.unsupportedSignInStep.displayText)
+            #expect(authFailure == AuthenticationFailure(kind: .other, message: SASLAuthError.unsupportedSignInStep.displayText))
         }
     }
 }

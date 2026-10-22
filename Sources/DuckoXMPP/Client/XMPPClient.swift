@@ -9,7 +9,7 @@ private let log = Logger(label: "im.ducko.xmpp.client")
 /// Incoming stanzas are routed to registered ``XMPPModule``s. Domain-level events
 /// are exposed via ``events``.
 public actor XMPPClient { // swiftlint:disable:this type_body_length
-    private let connection: XMPPConnection
+    let connection: XMPPConnection
     /// U-label canonical form, used for stream headers and JID construction.
     private let domain: String
     /// A-label form of `domain` for DNS/SRV resolution and TLS SNI; equals `domain` for ASCII
@@ -39,7 +39,13 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     /// Gate the PEP-reacting DuckoCore services (OMEMO, Avatar, Bookmarks) await before issuing PEP
     /// retrieves/publishes, so the server has seen this resource's entity caps via initial presence first
     /// (XEP-0163 §3.3.2). Lock-guarded for `nonisolated` reads, mirroring `connectedJIDLock`.
-    private let presenceReadinessLock = OSAllocatedUnfairLock<PresenceReadiness>(initialState: PresenceReadiness())
+    let presenceReadinessLock = OSAllocatedUnfairLock<PresenceReadiness>(initialState: PresenceReadiness())
+    /// Gate a `<message>` send awaits until the session's setup has completed.
+    let sessionReadinessLock = OSAllocatedUnfairLock<SessionReadiness>(initialState: .closed)
+    /// How long sign-in and session setup may take before the connection is closed.
+    let signInTimeout: Duration
+    /// Set when `signInTimeout` closed the connection, so the sign-in reports a timeout.
+    var signInDeadlineFired = false
 
     private struct PendingIQ {
         let continuation: CheckedContinuation<XMLElement?, any Error>
@@ -53,14 +59,6 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     private struct PendingStreamClose {
         let continuation: CheckedContinuation<Bool, Never>
         let timeoutTask: Task<Void, Never>
-    }
-
-    /// `isOpen` flips true once the caps-bearing presence is on the wire (fresh connect), immediately on
-    /// resume, or on teardown so late awaits never hang; `waiters` holds services suspended in
-    /// ``awaitInitialPresenceSent()`` until then.
-    private struct PresenceReadiness {
-        var isOpen: Bool = false
-        var waiters: [CheckedContinuation<Void, Never>] = []
     }
 
     private let eventContinuation: AsyncStream<XMPPEvent>.Continuation
@@ -102,7 +100,8 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         requireTLS: Bool = true,
         requiresSCRAM: Bool = false,
         preferredResource: String? = nil,
-        userAgent: SASL2UserAgent = SASL2UserAgent()
+        userAgent: SASL2UserAgent = SASL2UserAgent(),
+        signInTimeout: Duration = .seconds(60)
     ) {
         let (stream, continuation) = AsyncStream.makeStream(of: XMPPEvent.self)
         self.events = stream
@@ -117,6 +116,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         self.requiresSCRAM = requiresSCRAM
         self.preferredResource = preferredResource
         self.userAgent = userAgent
+        self.signInTimeout = signInTimeout
     }
 
     // MARK: - Module Registration
@@ -198,9 +198,11 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             throw XMPPClientError.alreadyConnected
         }
         state = .connecting
-        // Re-gate the readiness signal for this attempt; resumes any stale waiter left over from a prior
+        signInDeadlineFired = false
+        // Re-gate the readiness signals for this attempt; resumes any stale waiter left over from a prior
         // attempt so a reconnect on the same instance can't strand it against the new gate.
         settleInitialPresenceReadiness(open: false)
+        settleSessionReadiness(.pending([]))
 
         do {
             try await establish()
@@ -208,10 +210,13 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             log.error("Connection failed: \(error)")
             state = .disconnected
             settleInitialPresenceReadiness(open: true)
+            settleSessionReadiness(.closed)
             throw error
         }
 
         let reader = EventReader(connection.events)
+        let deadline = startSignInDeadline()
+        var readerStarted = false
 
         do {
             let resumed = try await performHandshake(reader: reader)
@@ -222,26 +227,47 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
                 module.handleSessionEstablished(resumed: resumed)
             }
             startReader(reader: reader)
+            readerStarted = true
             try await runPostHandshakeModules(resumed: resumed)
             try checkActiveSession()
+            deadline.cancel()
+            if !resumed {
+                (modules[ObjectIdentifier(StreamManagementModule.self)] as? StreamManagementModule)?.completeSessionSetup()
+            }
+            settleSessionReadiness(.ready)
             // Emit `.streamResumed` after resume handlers; resumption skips roster fetch.
             if resumed, let fullJID = connectedJIDLock.withLock({ $0 }) {
                 eventContinuation.yield(.streamResumed(fullJID))
             }
         } catch {
-            log.error("Handshake failed: \(error)")
-            if disconnectInFlight {
-                await disconnect()
-                throw error
-            }
-            serverStreamLock.withLock { $0 = (nil, nil) }
-            state = .disconnected
-            // Open the gate so any service that started awaiting after `.connected` (yielded mid-chain,
-            // before a caps/presence failure could land) resolves instead of hanging on a dead client.
-            settleInitialPresenceReadiness(open: true)
-            await connection.disconnect()
-            throw error
+            deadline.cancel()
+            throw await endFailedSignIn(error, readerStarted: readerStarted)
         }
+    }
+
+    /// Ends a sign-in that failed with `error` and returns what the connect throws. Once the reader has started, the
+    /// session's modules have too, so it ends the way any session does.
+    private func endFailedSignIn(_ error: any Error, readerStarted: Bool) async -> any Error {
+        log.error("Handshake failed: \(error)")
+        if disconnectInFlight {
+            await disconnect()
+            return error
+        }
+        if readerStarted {
+            if Task.isCancelled || error is CancellationError {
+                await cleanUp(reason: .requested)
+                return CancellationError()
+            }
+            await cleanUp(reason: .setupFailed(error))
+            return XMPPClientError.sessionSetupFailed(error)
+        }
+        serverStreamLock.withLock { $0 = (nil, nil) }
+        state = .disconnected
+        // Release any waiter so it does not hang on a client whose sign-in failed.
+        settleInitialPresenceReadiness(open: true)
+        settleSessionReadiness(.closed)
+        await connection.disconnect()
+        return signInDeadlineFired ? XMPPClientError.timeout : error
     }
 
     /// Module lifecycle after handshake. Resume: `handleResume()` in dict order. Fresh: SM `<enable>` → `.connected`
@@ -315,40 +341,6 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         try Task.checkCancellation()
         guard !disconnectInFlight, case .connected = state else {
             throw XMPPClientError.notConnected
-        }
-    }
-
-    // MARK: - Initial Presence Readiness
-
-    /// Suspends until the caps-bearing initial available presence has been sent on a fresh connect, or
-    /// returns immediately on a resumed session (where it is not re-sent). The PEP-reacting services
-    /// (OMEMO, Avatar, Bookmarks) await this before issuing PEP retrieves/publishes so the server has seen
-    /// this resource's caps first (XEP-0163 §3.3.2). Also resolves on connection failure / `disconnect()`,
-    /// so a waiting service never hangs when presence never goes out.
-    public nonisolated func awaitInitialPresenceSent() async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            // Re-check the flag inside the critical section before suspending, so a `settle` that runs
-            // between an out-of-lock check and the append can't leave the continuation orphaned.
-            let alreadyOpen = presenceReadinessLock.withLock { state -> Bool in
-                if state.isOpen { return true }
-                state.waiters.append(continuation)
-                return false
-            }
-            if alreadyOpen { continuation.resume() }
-        }
-    }
-
-    /// Resolves all current waiters, setting the gate's open state. Idempotent. `open: true` opens the gate
-    /// (caps sent, or teardown so late awaits never hang); `open: false` re-gates for a new attempt.
-    private func settleInitialPresenceReadiness(open: Bool) {
-        let waiters = presenceReadinessLock.withLock { state -> [CheckedContinuation<Void, Never>] in
-            state.isOpen = open
-            let pending = state.waiters
-            state.waiters.removeAll()
-            return pending
-        }
-        for waiter in waiters {
-            waiter.resume()
         }
     }
 
@@ -630,7 +622,12 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     }
 
     /// `onAccepted` runs once the stanza is taken for this session, before the write. See `ModuleContext.sendStanza`.
+    /// A `<message>` waits until the session's setup has completed, so it never goes out on a session that ends before
+    /// it is set up.
     public func send(_ stanza: any XMPPStanza, onAccepted: ModuleContext.StanzaAcceptanceHandler? = nil) async throws {
+        if stanza.element.name == "message" {
+            try await awaitSessionReady()
+        }
         guard acceptsStanzas else {
             throw XMPPClientError.notConnected
         }
@@ -838,9 +835,9 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             eventContinuation.yield(.plainSignInRefused)
             return .plainSignInRefused
         }
-        let message = error.displayText
-        eventContinuation.yield(.authenticationFailed(message))
-        return .authenticationFailed(message)
+        let failure = AuthenticationFailure(error)
+        eventContinuation.yield(.authenticationFailed(failure))
+        return .authenticationFailed(failure)
     }
 
     /// Processes inline feature results from Bind 2 (SM enabled, carbons, etc.).
@@ -962,7 +959,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             let condition = XMPPStreamError.parse(from: element)
 
             // Handle see-other-host redirect (RFC 6120 §4.9.3.19)
-            if condition == .seeOtherHost, let (host, port) = parseSeeOtherHost(from: element) {
+            if condition == .seeOtherHost, let (host, port) = Self.parseSeeOtherHost(from: element) {
                 Task { [weak self] in
                     guard let self else { return }
                     await cleanUp(reason: mapDisconnectReason(.redirect(host: host, port: port)))
@@ -996,27 +993,6 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         default:
             break
         }
-    }
-
-    /// Extracts host and optional port from a `<see-other-host>` stream error element.
-    private func parseSeeOtherHost(from element: XMLElement) -> (String, UInt16?)? {
-        guard let value = element.child(named: "see-other-host", namespace: XMPPNamespaces.streams)?.textContent,
-              !value.isEmpty else { return nil }
-        // IPv6: [host]:port
-        if value.hasPrefix("["), let closeBracket = value.firstIndex(of: "]") {
-            let host = String(value[value.index(after: value.startIndex) ..< closeBracket])
-            let afterBracket = value.index(after: closeBracket)
-            if afterBracket < value.endIndex, value[afterBracket] == ":",
-               let port = UInt16(value[value.index(after: afterBracket)...]) {
-                return (host, port)
-            }
-            return (host, nil)
-        }
-        // host:port or host
-        let parts = value.split(separator: ":", maxSplits: 1)
-        let host = String(parts[0])
-        let port = parts.count > 1 ? UInt16(parts[1]) : nil
-        return (host, port)
     }
 
     private func dispatchMessage(_ element: XMLElement) {
@@ -1120,8 +1096,9 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             pendingStreamClose = nil
             pending.continuation.resume(returning: false)
         }
-        // Resolve any service still awaiting the readiness signal so it doesn't hang on this dead client.
+        // Resolve any service still awaiting the readiness signals so it doesn't hang on this dead client.
         settleInitialPresenceReadiness(open: true)
+        settleSessionReadiness(.closed)
 
         eventContinuation.yield(.disconnected(reason))
         // Terminal: callers drop instance and rebuild on reconnect. `finish()` releases any pending for-await consumers.
@@ -1168,6 +1145,12 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             },
             dispatchDecryptedMessage: { [weak self] message in
                 self?.registeredModulesLock.withLock { $0 }.forEach { $0.handleDecryptedMessage(message) }
+            },
+            reportConnectionLost: { [weak self] detail in
+                Task { [weak self] in
+                    guard let self else { return }
+                    await cleanUp(reason: mapDisconnectReason(.connectionLost(detail)))
+                }
             }
         )
     }

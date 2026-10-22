@@ -25,6 +25,8 @@ public struct ModuleContext: Sendable {
     public let serverStreamLang: @Sendable () -> String?
     /// Hands a message rebuilt from an encrypted one to every module's `handleDecryptedMessage`.
     public let dispatchDecryptedMessage: @Sendable (XMPPMessage) -> Void
+    /// Ends the session as a lost connection, giving `detail` as the reason.
+    public let reportConnectionLost: @Sendable (String) -> Void
 
     public init(
         sendStanza: @escaping StanzaSender,
@@ -37,7 +39,8 @@ public struct ModuleContext: Sendable {
         sendElement: @Sendable @escaping (XMLElement) async throws -> Void = { _ in },
         serverStreamFeatures: @Sendable @escaping () -> XMLElement? = { nil },
         serverStreamLang: @Sendable @escaping () -> String? = { nil },
-        dispatchDecryptedMessage: @Sendable @escaping (XMPPMessage) -> Void = { _ in }
+        dispatchDecryptedMessage: @Sendable @escaping (XMPPMessage) -> Void = { _ in },
+        reportConnectionLost: @Sendable @escaping (String) -> Void = { _ in }
     ) {
         self.sendStanzaImpl = sendStanza
         self.sendIQImpl = sendIQ
@@ -50,6 +53,7 @@ public struct ModuleContext: Sendable {
         self.serverStreamFeatures = serverStreamFeatures
         self.serverStreamLang = serverStreamLang
         self.dispatchDecryptedMessage = dispatchDecryptedMessage
+        self.reportConnectionLost = reportConnectionLost
     }
 
     /// Sends a stanza over the connection. `onAccepted` runs once the client has taken the stanza for its session, before

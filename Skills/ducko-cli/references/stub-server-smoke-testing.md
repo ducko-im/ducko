@@ -1,6 +1,6 @@
 # Stub-Server Smoke Testing
 
-Exercise stream-level behavior (STARTTLS negotiation, stream features, injected or malformed server data) through the CLI against a local stub instead of a live server, or run a whole session against a stub that serves a made-up roster.
+Exercise stream-level behavior (STARTTLS negotiation, stream features, a rejected server certificate, injected or malformed server data) through the CLI against a local stub instead of a live server, or run a whole session against a stub that serves a made-up roster.
 
 ## Point the CLI at the Stub
 
@@ -26,6 +26,20 @@ Failures exit 1 with `Error: <summary>[: <reason>]`. `account check-registration
 ## Pair Negative Scenarios with a Control
 
 A rejection only means something when a control that differs in the dimension under test reaches the code beyond it. For example, a stub that answers `<starttls/>` with `<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>` plus an injected `<message>` in one send expects `Secure connection failed: The server sent unexpected data after agreeing to start TLS`. Its control sends only the `<proceed/>`, so the client starts a real TLS ClientHello. Answering that with non-TLS junk such as `HTTP/1.1 400 Bad Request\r\n\r\n` yields a handshake reason (e.g. `Secure connection failed: record overflow`), which proves the upgrade was reached.
+
+## Rejected Server Certificate
+
+To check how a rejected certificate is reported, run the repo's TLS fixture peer instead of a hand-written stub. It prints one JSON line carrying its `port` on stdout, then accepts a single connection within 10 seconds and exits. An account keeps the port it was added with and a JID can't be added twice, so every run needs a fresh peer and a fresh throwaway profile. Run the whole sequence as one command, so the connect lands inside the peer's window:
+
+```
+/opt/homebrew/bin/python3 Tests/DuckoXMPPTests/Fixtures/xmpp-tls-peer.py client-untrusted > <scratch>/peer.json &
+sleep 1
+PORT=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["port"])' <scratch>/peer.json)
+DUCKO_PROFILE=<unique> .build/debug/DuckoCLI account add alice@localhost --password x --host 127.0.0.1 --port "$PORT" --no-connect
+DUCKO_PROFILE=<unique> .build/debug/DuckoCLI profile
+```
+
+The fixture's root is in no trust store, so `profile` exits 1 with `Error: The server's certificate is not trusted: Not signed by a trusted authority`. A connect that misses the window, or reuses an earlier peer's port, fails with "Could not connect to the server" instead.
 
 ## Probe a Real Server's Raw Replies
 

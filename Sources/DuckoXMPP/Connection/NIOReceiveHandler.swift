@@ -15,7 +15,14 @@ struct NIOHandshakeResult: Sendable {
 final class NIOReceiveHandler: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
     private var continuation: AsyncStream<[UInt8]>.Continuation?
-    private var handshake: (result: EventLoopPromise<NIOHandshakeResult>, continuation: AsyncStream<[UInt8]>.Continuation)?
+    private var handshake: PendingHandshake?
+
+    private struct PendingHandshake {
+        let result: EventLoopPromise<NIOHandshakeResult>
+        let continuation: AsyncStream<[UInt8]>.Continuation
+        /// Why the certificate was rejected, once the trust check has said.
+        var trustFailure: CertificateTrustFailure?
+    }
 
     func stop() {
         continuation?.finish()
@@ -27,7 +34,7 @@ final class NIOReceiveHandler: ChannelInboundHandler {
     }
 
     func prepareHandshake(_ result: EventLoopPromise<NIOHandshakeResult>, continuation: AsyncStream<[UInt8]>.Continuation, timeout: Duration) {
-        handshake = (result, continuation)
+        handshake = PendingHandshake(result: result, continuation: continuation)
         let owner = NIOLoopBound(self, eventLoop: result.futureResult.eventLoop)
         let deadline = result.futureResult.eventLoop.scheduleTask(in: TimeAmount(timeout)) {
             owner.value.failHandshake(XMPPClientError.timeout)
@@ -35,8 +42,20 @@ final class NIOReceiveHandler: ChannelInboundHandler {
         result.futureResult.whenComplete { _ in deadline.cancel() }
     }
 
+    /// Records why the pending handshake's certificate was rejected, so the handshake fails with that reason. A rejection
+    /// arriving once the handshake has settled changes nothing.
+    func recordTrustFailure(_ reason: CertificateTrustFailure) {
+        handshake?.trustFailure = reason
+    }
+
     func failHandshake(_ error: any Error) {
-        handshake?.result.fail(error)
+        if let reason = handshake?.trustFailure {
+            handshake?.result.fail(XMPPClientError.untrustedCertificate(reason))
+        } else if let error = error as? NIOSSLExtraError, error == .failedToValidateHostname {
+            handshake?.result.fail(XMPPClientError.untrustedCertificate(.nameMismatch))
+        } else {
+            handshake?.result.fail(error)
+        }
         handshake = nil
     }
 

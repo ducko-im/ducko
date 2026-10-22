@@ -211,9 +211,9 @@ enum SASLAuthenticatorTests {
             (SASLAuthError.serverFailure(condition: "not-authorized", text: "Invalid credentials"), "Invalid credentials"),
             (SASLAuthError.serverFailure(condition: "not-authorized", text: nil), "Incorrect username or password"),
             (SASLAuthError.serverFailure(condition: "not-authorized", text: "  "), "Incorrect username or password"),
-            (SASLAuthError.serverFailure(condition: "x-custom", text: nil), "x-custom")
+            (SASLAuthError.serverFailure(condition: "x-custom", text: nil), "The server refused the sign-in")
         ])
-        func `Server failure display text prefers server text, then condition phrase, then raw condition`(error: SASLAuthError, expected: String) {
+        func `Server failure display text prefers server text, then condition phrase, then a general refusal`(error: SASLAuthError, expected: String) {
             #expect(error.displayText == expected)
         }
 

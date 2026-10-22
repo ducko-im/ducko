@@ -3,7 +3,7 @@ public enum XMPPEvent: Sendable {
     case connected(FullJID)
     case streamResumed(FullJID)
     case disconnected(DisconnectReason)
-    case authenticationFailed(String)
+    case authenticationFailed(AuthenticationFailure)
     /// The sign-in was refused before the password went out, as ``XMPPClientError/plainSignInRefused`` describes.
     case plainSignInRefused
     case messageReceived(XMPPMessage)
@@ -88,6 +88,8 @@ public enum DisconnectReason: Sendable {
     case streamError(XMPPStreamError?, text: String?)
     case connectionLost(String)
     case redirect(host: String, port: UInt16?)
+    /// A step after sign-in failed with this error, so the session ended and cannot be resumed.
+    case setupFailed(any Error)
 }
 
 /// Reason for MUC self-ping failure per XEP-0410.

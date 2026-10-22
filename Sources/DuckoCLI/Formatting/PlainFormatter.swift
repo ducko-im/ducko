@@ -95,7 +95,7 @@ struct PlainFormatter: CLIFormatter {
         case let .connected(jid): "connected as \(jid)"
         case let .streamResumed(jid): "stream resumed as \(jid)"
         case let .disconnected(reason): formatDisconnect(reason)
-        case let .authenticationFailed(message): "authentication failed: \(message)"
+        case let .authenticationFailed(failure): "authentication failed: \(failure.message)"
         case .plainSignInRefused: plainSignInRefusedLine
         case let .messageReceived(message): formatIncomingMessage(message)
         case let .messageCarbonReceived(forwarded): formatCarbonEvent(forwarded, isOutgoing: false)
@@ -287,6 +287,8 @@ struct PlainFormatter: CLIFormatter {
         case let .redirect(host, port):
             let target = port.map { "\(host):\($0)" } ?? host
             return "redirected to \(target)"
+        case let .setupFailed(error):
+            return "disconnected: \(error.localizedDescription)"
         }
     }
 

@@ -54,6 +54,9 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
         var location: String?
         var connectedJID: FullJID?
         var serverFeatures: XMLElement?
+        /// Set from the start of a fresh session until its setup completes. Such a session cannot be resumed, since the
+        /// steps its setup did not finish would not run again.
+        var setupPending: Bool = false
     }
 
     /// Single in-flight `<r/>` → `<a h='N'/>` waiter. Resumed by exactly one
@@ -101,7 +104,7 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
     /// Returns a snapshot of SM session state for resumption, or `nil` if not resumable.
     public nonisolated var resumeState: SMResumeState? {
         state.withLock { state in
-            guard let resumptionId = state.resumptionId,
+            guard !state.setupPending, let resumptionId = state.resumptionId,
                   let connectedJID = state.connectedJID else { return nil }
             return SMResumeState(
                 resumptionId: resumptionId,
@@ -116,7 +119,7 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
     }
 
     public nonisolated var isResumable: Bool {
-        state.withLock { $0.resumptionId != nil && $0.connectedJID != nil }
+        state.withLock { !$0.setupPending && $0.resumptionId != nil && $0.connectedJID != nil }
     }
 
     /// Whether SM is currently enabled on the live stream. Callers gate the
@@ -134,13 +137,19 @@ public final class StreamManagementModule: XMPPModule, StanzaInterceptor, Sendab
     // MARK: - Lifecycle
 
     /// A fresh session drops the resume fields carried in from the previous session, so a later reconnect does not try
-    /// to resume that one. An inline enable has already replaced them by now, so those stay.
+    /// to resume that one. An inline enable has already replaced them by now, so those stay. Either way the session is
+    /// not resumable until `completeSessionSetup()`.
     public func handleSessionEstablished(resumed: Bool) {
-        guard !resumed else { return }
         state.withLock { state in
-            guard !state.enabled else { return }
+            state.setupPending = !resumed
+            guard !resumed, !state.enabled else { return }
             Self.clearResumeFields(&state)
         }
+    }
+
+    /// Makes a fresh session resumable once its setup has completed.
+    public func completeSessionSetup() {
+        state.withLock { $0.setupPending = false }
     }
 
     public func handleConnect() async throws {

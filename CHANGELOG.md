@@ -9,10 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Add a `nickname` field to the CLI's JSON typing and room subject records when a room occupant is typing or set the subject
+- Add `kind` and `condition` fields to the CLI's JSON `authentication_failed` record, telling a rejected password apart from a temporary server failure, and a `setup_failed` disconnect reason
 
 ### Fixed
 
 - Keep reconnecting after a lost connection until the server is reachable again, instead of staying offline after one failed attempt, and stop reconnecting when the server ends the session for a reason that won't clear by itself, such as another session taking it over
+- Keep retrying an account that cannot connect at launch or after its server redirects it, and wait while there is no network instead of retrying, showing "No network connection" until it returns
+- Notice a lost network within seconds, and a server that stopped answering within 30 seconds of a keepalive ping, instead of only at the next five-minute ping
+- Say why a server's certificate is not trusted, such as that it was issued for a different server or has expired, and stop retrying a connection whose certificate was rejected
+- Ask for an imported account's password again only when the server rejects it, and list the account as failed with its own reason for any other sign-in failure
+- End a session whose setup fails after connecting and start a fresh one when the failure can clear by itself, instead of leaving the account half connected
+- Give up on a sign-in the server stops answering after a minute and try again, instead of waiting indefinitely
 - Keep the wait a server asks for between channel searches when the app and the CLI search at the same time, and honor a wait given in fractions of a second
 - Keep other apps' data in a bookmark as they wrote it when Ducko saves the bookmark again
 - Name the occupant in the REPL's room typing and topic lines, and print no topic line when joining a room that has none

@@ -307,11 +307,12 @@ struct AdiumOnboardingImportView: View {
                 succeededAccountIDs.insert(account.id)
                 accountResults.append(AccountResult(id: account.id, jid: account.uid, success: true, error: nil))
             } catch {
-                if AccountService.isAuthenticationError(error) {
+                switch OnboardingImportFailure.classify(error) {
+                case .credentialsRejected:
                     authErrorMessages[account.id] = "Authentication failed. Please check your password."
                     passwords[account.id] = ""
-                } else {
-                    accountResults.append(AccountResult(id: account.id, jid: account.uid, success: false, error: error.localizedDescription))
+                case let .failed(message):
+                    accountResults.append(AccountResult(id: account.id, jid: account.uid, success: false, error: message))
                 }
             }
         }

@@ -25,6 +25,22 @@ struct XMPPErrorDescriptionTests {
     }
 
     @Test(arguments: [
+        (XMPPClientError.untrustedCertificate(.nameMismatch), "The server's certificate is not trusted: Issued for a different server"),
+        (XMPPClientError.untrustedCertificate(.outsideValidityPeriod), "The server's certificate is not trusted: Expired or not valid yet"),
+        (XMPPClientError.untrustedCertificate(.notTrusted), "The server's certificate is not trusted: Not signed by a trusted authority"),
+        (
+            XMPPClientError.authenticationFailed(AuthenticationFailure(kind: .credentialsRejected, message: "Incorrect username or password")),
+            "Authentication failed: Incorrect username or password"
+        ),
+        // The setup step's own error carries the one label.
+        (XMPPClientError.sessionSetupFailed(XMPPClientError.timeout), "The server did not respond in time")
+    ])
+    func `XMPPClientError sign-in cases render a readable message`(error: XMPPClientError, expected: String) {
+        let error: any Error = error
+        #expect(error.localizedDescription == expected)
+    }
+
+    @Test(arguments: [
         (XMPPRegistrationClient.RegistrationClientError.connectionFailed("Invalid domain: bad"), "Could not connect to the server: Invalid domain: bad"),
         (XMPPRegistrationClient.RegistrationClientError.tlsNegotiationFailed, "Could not establish a secure connection to the server"),
         (XMPPRegistrationClient.RegistrationClientError.registrationNotSupported, "The server does not support account registration"),

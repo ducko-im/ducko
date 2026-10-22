@@ -286,8 +286,15 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
     }
 
     struct AuthFailure {
-        @Test
-        func `Auth failure emits event and throws`() async throws {
+        @Test(arguments: [
+            ("not-authorized", AuthenticationFailure.Kind.credentialsRejected, "Incorrect username or password"),
+            ("temporary-auth-failure", .temporary, "Temporary server failure, try again later"),
+            ("account-disabled", .other, "The account is disabled"),
+            ("unknown-condition", .other, "The server refused the sign-in")
+        ])
+        func `Auth failure emits event and throws, classified by its condition`(
+            condition: String, kind: AuthenticationFailure.Kind, message: String
+        ) async throws {
             let mock = MockTransport()
             let client = XMPPClient(
                 domain: "example.com",
@@ -309,21 +316,22 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             await mock.simulateReceive(testFeaturesNoTLS)
             await mock.waitForSent(count: 2) // auth element
             await mock.simulateReceive(
-                "<failure xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><not-authorized/></failure>"
+                "<failure xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><\(condition)/></failure>"
             )
 
-            do {
-                try await connectTask.value
-                throw XMPPClientError.unexpectedStreamState("Should have thrown")
-            } catch is XMPPClientError {
-                // Expected
+            let expected = AuthenticationFailure(kind: kind, message: message, serverCondition: condition)
+            let error = await #expect(throws: XMPPClientError.self) { try await connectTask.value }
+            guard case let .authenticationFailed(thrown) = error else {
+                Issue.record("Expected authenticationFailed, got \(String(describing: error))")
+                return
             }
+            #expect(thrown == expected)
 
             let events = try await eventsTask.value
-            guard case let .authenticationFailed(message) = events.last else {
+            guard case let .authenticationFailed(failure) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected authenticationFailed event")
             }
-            #expect(message == "Incorrect username or password")
+            #expect(failure == expected)
 
             await disconnectFast(client)
         }

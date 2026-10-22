@@ -532,14 +532,28 @@ enum StreamManagementModuleTests {
         }
 
         @Test
-        func `A fresh session keeps the session an inline enable started`() throws {
+        func `A fresh session keeps the session an inline enable started, resumable once its setup completes`() throws {
             let sm = try StreamManagementModule(previousState: Self.carriedState())
             sm.setUp(makeStubModuleContext())
 
             sm.processInlineEnabled(Self.enabled)
             sm.handleSessionEstablished(resumed: false)
+            #expect(sm.resumeState == nil)
+            #expect(!sm.isResumable)
 
+            sm.completeSessionSetup()
             #expect(sm.resumeState?.resumptionId == "sm-new")
+            #expect(sm.isResumable)
+        }
+
+        @Test
+        func `A resumed session is resumable at once`() throws {
+            let sm = try StreamManagementModule(previousState: Self.carriedState())
+            sm.setUp(makeStubModuleContext())
+
+            sm.handleSessionEstablished(resumed: true)
+
+            #expect(sm.resumeState?.resumptionId == "sm-old")
         }
 
         @Test

@@ -129,12 +129,12 @@ actor NIOTransport: XMPPTransport {
                 let usesIPIdentity = if case .v4? = try? SocketAddress(ipAddress: serverName, port: 0) { true } else { false }
                 if usesIPIdentity { configuration.certificateVerification = .noHostnameVerification }
                 let context = try NIOSSLContext(configuration: configuration)
-                let handler: NIOSSLClientHandler = if usesIPIdentity {
-                    try NIOSSLClientHandler(context: context, serverHostname: nil) { chain, promise in
-                        verifyIPCertificateChain(chain, ipAddress: serverName, trustRoots: roots, promise: promise)
+                let owner = NIOLoopBound(receiver, eventLoop: channel.eventLoop)
+                // NIOSSL still checks the host name itself after this callback, except for an IP identity.
+                let handler = try NIOSSLClientHandler(context: context, serverHostname: usesIPIdentity ? nil : serverName) { chain, promise in
+                    verifyCertificateChain(chain, serverName: serverName, trustRoots: roots, promise: promise) { reason in
+                        owner.value.recordTrustFailure(reason)
                     }
-                } else {
-                    try NIOSSLClientHandler(context: context, serverHostname: serverName)
                 }
                 try channel.pipeline.syncOperations.addHandler(handler, position: .first)
             }.get()

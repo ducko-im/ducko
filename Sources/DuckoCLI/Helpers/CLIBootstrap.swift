@@ -28,6 +28,8 @@ enum CLIBootstrap {
             store: store,
             transcripts: transcripts,
             omemoStore: omemoStore,
+            // Only a session that stays connected watches the network.
+            networkPath: isInteractive ? .system : nil,
             onExternalEvent: { event, accountID in
                 Task {
                     await eventHandler.handleEvent(event, accountID: accountID)
@@ -36,6 +38,8 @@ enum CLIBootstrap {
         )
         // A short-lived command that joined the account's rooms would show everyone in them a join and a leave.
         environment.bookmarksService.autoJoinEnabled = false
+        // A failed connect ends the command instead of retrying, so a script does not hang.
+        environment.accountService.retriesFailedConnects = false
         // Plaintext messages print from their events. An encrypted one prints once stored, which a duplicate never is.
         environment.chatService.onIncomingMessage = { message, conversation in
             guard message.isEncrypted, let accountID = conversation.accountID else { return }

@@ -51,7 +51,7 @@ struct AccountServiceSignInSecurityTests {
             return
         }
         #expect(await second.sentBytes.count == 1)
-        #expect(!AccountService.isAuthenticationError(error))
+        #expect(!AccountService.isCredentialsRejected(error))
         try await eventually { nextService.signInSecurityWarnings[account.id]?.accountJID == testJIDString }
     }
 

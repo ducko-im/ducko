@@ -6,7 +6,7 @@ public final class AccountService {
     // MARK: - Published State
 
     public private(set) var accounts: [Account] = []
-    public private(set) var connectionStates: [UUID: ConnectionState] = [:]
+    public internal(set) var connectionStates: [UUID: ConnectionState] = [:]
     public private(set) var certificateWarnings: [UUID: CertificateWarning] = [:]
     /// Published on every connect attempt refused because the server offered only PLAIN after a SCRAM sign-in.
     public internal(set) var signInSecurityWarnings: [UUID: SignInSecurityWarning] = [:]
@@ -25,13 +25,18 @@ public final class AccountService {
         try await RegistrationSession.open(domain: $0, host: $1, port: $2)
     }
 
-    /// The wait before reconnect attempt `attempt`, counted from 0 since the account was last connected or the user last
-    /// connected it.
+    /// The wait before reconnect attempt `attempt`, counted from 0 since a session's setup last completed or the user
+    /// last connected the account.
     var reconnectDelay: @Sendable (_ attempt: Int) -> Duration = { attempt in
         .seconds(min(pow(2.0, Double(attempt)), 60.0) + Double.random(in: 0 ... 5))
     }
 
-    private struct AccountConnectionResources {
+    /// Whether a connect that fails before its session starts, for a reason that can clear by itself, is retried.
+    public var retriesFailedConnects = false
+    /// How long a live session may leave the ping sent on a network change unanswered before it counts as lost.
+    var networkProbeTimeout: Duration = .seconds(5)
+
+    struct AccountConnectionResources {
         var attemptID = UUID()
         var client: XMPPClient?
         var streamManagement: StreamManagementModule?
@@ -42,11 +47,21 @@ public final class AccountService {
         var reconnectTask: Task<Void, Never>?
         var reconnectAttempts = 0
         var redirectCount = 0
+        /// When the scheduled retry is due, from scheduling until it starts connecting.
+        var retryDue: ContinuousClock.Instant?
+
+        /// A scheduled retry waits for a network route.
+        var awaitingRoute: Bool {
+            retryDue != nil && reconnectTask == nil
+        }
     }
 
-    private var connectionResources: [UUID: AccountConnectionResources] = [:]
+    var connectionResources: [UUID: AccountConnectionResources] = [:]
     private var isAppActive: Bool = true
     private var hasRunLaunchConnect = false
+    /// Whether the network has a route, as the path source last reported. Assumed until it reports otherwise.
+    var hasNetworkRoute = true
+    var networkMonitorTask: Task<Void, Never>?
     private weak var omemoService: OMEMOService?
     var onEvent: ((XMPPEvent, UUID) -> Void)?
     var onRosterSessionStarted: ((UUID, UUID, XMPPClient) -> Void)?
@@ -88,10 +103,17 @@ public final class AccountService {
         }
     }
 
-    public init(store: any PersistenceStore, credentialStore: any CredentialStore, clientFactory: any XMPPClientFactory = DefaultXMPPClientFactory()) {
+    /// With `networkPath`, retries wait while no route exists and live sessions are checked on every network change.
+    public init(
+        store: any PersistenceStore, credentialStore: any CredentialStore, clientFactory: any XMPPClientFactory = DefaultXMPPClientFactory(),
+        networkPath: NetworkPathSource? = nil
+    ) {
         self.store = store
         self.credentialStore = credentialStore
         self.clientFactory = clientFactory
+        if let networkPath {
+            startNetworkMonitoring(networkPath)
+        }
     }
 
     // MARK: - Lifecycle
@@ -105,6 +127,7 @@ public final class AccountService {
 
     public func connect(accountID: UUID, password: String) async throws {
         connectionResources[accountID, default: AccountConnectionResources()].password = password
+        connectionResources[accountID]?.redirectCount = 0
         cancelReconnect(for: accountID, resetAttempts: true)
         try await performConnect(accountID: accountID)
     }
@@ -168,14 +191,15 @@ public final class AccountService {
             connectionResources[accountID]?.muc = nil
             connectionResources[accountID]?.eventTask = nil
             connectionResources[accountID]?.reconnectTask = nil
+            connectionResources[accountID]?.retryDue = nil
         }
         return detached
     }
 
     public func disconnectAll() async {
-        // Include accounts whose delayed reconnect has no live client yet.
+        // Include accounts whose delayed or paused reconnect has no live client yet.
         let ids = connectionResources.compactMap { id, resources in
-            resources.client != nil || resources.reconnectTask != nil ? id : nil
+            resources.client != nil || resources.reconnectTask != nil || resources.retryDue != nil ? id : nil
         }
         for id in ids {
             await disconnect(accountID: id)
@@ -348,10 +372,10 @@ public final class AccountService {
         return accountID
     }
 
-    /// Whether the error represents an XMPP authentication failure (wrong password, etc.).
-    public nonisolated static func isAuthenticationError(_ error: Error) -> Bool {
-        if case .authenticationFailed = error as? XMPPClientError { return true }
-        return false
+    /// Whether the server rejected the username or password.
+    public nonisolated static func isCredentialsRejected(_ error: any Error) -> Bool {
+        guard case let .authenticationFailed(failure) = error as? XMPPClientError else { return false }
+        return failure.kind == .credentialsRejected
     }
 
     /// Registers a new account on a server via XEP-0077 pre-auth registration. The server's form is fetched first, on
@@ -512,11 +536,10 @@ public final class AccountService {
 
     // MARK: - Private: Connection
 
-    private func performConnect(accountID: UUID) async throws {
+    func performConnect(accountID: UUID) async throws {
         guard connectionResources[accountID] != nil else { throw CancellationError() }
         let attemptID = UUID()
         connectionResources[accountID]?.attemptID = attemptID
-        connectionResources[accountID]?.redirectCount = 0
         // Published before the store fetch, so a requested teardown sees the attempt while the fetch is pending.
         connectionStates[accountID] = .connecting
 
@@ -565,7 +588,14 @@ public final class AccountService {
             // management has none left, and the rooms are dropped with it.
             connectionResources[accountID]?.resumeState = Self.resumeContext(streamManagement: sm, muc: muc)
             connectionStates[accountID] = .error(error.localizedDescription)
+            // A running retry is the account's reconnect task, and its own failure reschedules it.
+            if retriesFailedConnects, Self.isRetryable(error), connectionResources[accountID]?.reconnectTask == nil {
+                scheduleReconnect(accountID: accountID)
+            }
             throw error
+        }
+        if connectionResources[accountID]?.attemptID == attemptID {
+            connectionResources[accountID]?.reconnectAttempts = 0
         }
     }
 
@@ -612,12 +642,15 @@ public final class AccountService {
         }
     }
 
+    /// Events count only while the attempt that started consuming them is the account's current one, so a replaced
+    /// client's teardown cannot detach the attempt that replaced it.
     private func startEventConsumption(for accountID: UUID, client: XMPPClient) {
         connectionResources[accountID]?.eventTask?.cancel()
+        let attemptID = connectionResources[accountID]?.attemptID
 
         connectionResources[accountID]?.eventTask = Task { [weak self] in
             for await event in client.events {
-                guard let self, !Task.isCancelled, connectionResources[accountID]?.client === client else { return }
+                guard let self, !Task.isCancelled, connectionResources[accountID]?.attemptID == attemptID else { return }
                 handleEvent(event, accountID: accountID)
             }
         }
@@ -627,16 +660,14 @@ public final class AccountService {
         switch event {
         case let .connected(jid), let .streamResumed(jid):
             connectionStates[accountID] = .connected(jid)
-            connectionResources[accountID]?.reconnectAttempts = 0
-            connectionResources[accountID]?.redirectCount = 0
             checkCertificateFingerprint(accountID: accountID)
             if let client = connectionResources[accountID]?.client {
                 Task { await applyCSIState(to: client) }
             }
         case let .disconnected(reason):
             handleDisconnect(reason, accountID: accountID)
-        case let .authenticationFailed(message):
-            connectionStates[accountID] = .error(message)
+        case let .authenticationFailed(failure):
+            connectionStates[accountID] = .error(XMPPClientError.authenticationFailed(failure).localizedDescription)
         case .plainSignInRefused:
             connectionStates[accountID] = .error(XMPPClientError.plainSignInRefused.localizedDescription)
             publishSignInSecurityWarning(accountID: accountID)
@@ -678,6 +709,9 @@ public final class AccountService {
         "Connection lost: \(detail)"
     }
 
+    /// Shown while a retry waits for a network route.
+    static let noNetworkMessage = "No network connection"
+
     // MARK: - Private: Disconnect Handling
 
     private func handleDisconnect(_ reason: DisconnectReason, accountID: UUID) {
@@ -705,6 +739,13 @@ public final class AccountService {
             } else {
                 connectionResources[accountID]?.redirectCount = count
                 redirectToHost(host: host, port: port, accountID: accountID, verifiedSCRAMMechanism: detached?.client?.verifiedSCRAMMechanism)
+            }
+        case let .setupFailed(error):
+            // A session whose setup did not complete is never resumed.
+            connectionResources[accountID]?.resumeState = nil
+            connectionStates[accountID] = .error(error.localizedDescription)
+            if Self.isTransient(error) {
+                scheduleReconnect(accountID: accountID)
             }
         }
     }
@@ -742,6 +783,7 @@ public final class AccountService {
     private func cancelReconnect(for accountID: UUID, resetAttempts: Bool) {
         connectionResources[accountID]?.reconnectTask?.cancel()
         connectionResources[accountID]?.reconnectTask = nil
+        connectionResources[accountID]?.retryDue = nil
         if resetAttempts {
             connectionResources[accountID]?.reconnectAttempts = 0
         }
@@ -780,42 +822,62 @@ public final class AccountService {
                 try await signIn(with: client, account: account) {
                     try await client.connect(host: host, port: port ?? 5222)
                 }
+                guard connectionResources[accountID]?.attemptID == attemptID else { return }
+                connectionResources[accountID]?.reconnectAttempts = 0
+                connectionResources[accountID]?.redirectCount = 0
             } catch {
                 onRosterSessionEnded?(accountID, attemptID)
                 guard !Task.isCancelled, connectionResources[accountID]?.attemptID == attemptID else { return }
                 connectionStates[accountID] = .error(error.localizedDescription)
+                // The retry dials the configured host and keeps the redirect count, so a server that goes on
+                // redirecting to an unreachable host is still cut off.
+                if Self.isRetryable(error) {
+                    scheduleReconnect(accountID: accountID)
+                }
             }
         }
     }
 
-    private func scheduleReconnect(accountID: UUID) {
+    /// Schedules the account's next retry after the backoff for the attempts made so far. It waits for a network route
+    /// when there is none.
+    func scheduleReconnect(accountID: UUID) {
         let attempt = connectionResources[accountID]?.reconnectAttempts ?? 0
         connectionResources[accountID]?.reconnectAttempts = attempt + 1
-        let delay = reconnectDelay(attempt)
-
-        connectionResources[accountID]?.reconnectTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self else { return }
-            do {
-                try await performConnect(accountID: accountID)
-            } catch {
-                // A requested disconnect, a newer connect, or a drop that schedules its own retry cancels this task.
-                guard !Task.isCancelled, Self.isRetryable(error) else { return }
-                scheduleReconnect(accountID: accountID)
-            }
-        }
+        connectionResources[accountID]?.retryDue = .now + reconnectDelay(attempt)
+        startScheduledRetry(for: accountID)
     }
 
     /// Whether a failed reconnect can succeed later without the user changing the account or the password.
-    private nonisolated static func isRetryable(_ error: any Error) -> Bool {
+    nonisolated static func isRetryable(_ error: any Error) -> Bool {
         if error is CancellationError || error is AccountServiceError { return false }
         guard let clientError = error as? XMPPClientError else { return true }
         switch clientError {
-        case .authenticationFailed, .plainSignInRefused, .tlsRequired, .invalidDomain:
+        case let .authenticationFailed(failure):
+            return failure.kind == .temporary
+        case .plainSignInRefused, .tlsRequired, .untrustedCertificate, .invalidDomain:
+            return false
+        // The session's `.disconnected(.setupFailed)` event decides whether it is retried.
+        case .sessionSetupFailed:
             return false
         case .notConnected, .alreadyConnected, .connectionFailed, .sendFailed, .tlsNegotiationFailed, .bindingFailed, .sessionFailed,
              .unexpectedStreamState, .timeout, .streamManagementBusy:
             return true
+        }
+    }
+
+    /// Whether a session whose setup failed with `error` can set up later as a fresh one: the connection failed or timed
+    /// out, or the server asked to wait. A refusal that would repeat is not.
+    nonisolated static func isTransient(_ error: any Error) -> Bool {
+        if let stanzaError = error as? XMPPStanzaError {
+            return stanzaError.errorType == .wait
+        }
+        guard let clientError = error as? XMPPClientError else { return false }
+        switch clientError {
+        case .timeout, .connectionFailed, .sendFailed, .notConnected:
+            return true
+        case .alreadyConnected, .tlsRequired, .tlsNegotiationFailed, .untrustedCertificate, .authenticationFailed, .plainSignInRefused,
+             .bindingFailed, .sessionFailed, .unexpectedStreamState, .sessionSetupFailed, .streamManagementBusy, .invalidDomain:
+            return false
         }
     }
 

@@ -19,7 +19,8 @@ struct NIOTransportTests {
                     try await exerciseNIOExchange(mode: scenario == "ip-starttls" ? "starttls" : "direct", port: peer.port, connection: connection, reader: reader, serverName: serverName)
                     #expect(!rejected)
                 } catch {
-                    guard rejected, case XMPPClientError.tlsNegotiationFailed = error else { throw error }
+                    guard rejected, case let XMPPClientError.untrustedCertificate(reason) = error else { throw error }
+                    #expect(reason == (scenario == "ip-untrusted" ? .notTrusted : .nameMismatch))
                     #expect(await connection.tlsInfo == nil)
                     #expect(await connection.channelBindingData == nil)
                 }
@@ -50,7 +51,7 @@ struct NIOTransportTests {
                 let error = await #expect(throws: XMPPClientError.self) {
                     try await connection.connectWithTLS(host: "127.0.0.1", port: rejected.port, serverName: "wrong.invalid")
                 }
-                guard case .tlsNegotiationFailed = error else {
+                guard case .untrustedCertificate(.nameMismatch) = error else {
                     throw XMPPClientError.unexpectedStreamState("The first peer did not fail TLS verification")
                 }
                 try await rejected.expectSuccess()
@@ -210,9 +211,8 @@ private func expectNIOFailure(_ error: any Error, mode: String) {
         } else { Issue.record("Expected handshake timeout, got \(error)") }
     }
     if mode == "untrusted" {
-        if case let XMPPClientError.tlsNegotiationFailed(reason) = error {
-            #expect(!reason.isEmpty)
-            #expect(!reason.contains("NWError"))
+        if case let XMPPClientError.untrustedCertificate(reason) = error {
+            #expect(reason == .notTrusted)
         } else { Issue.record("Expected certificate rejection, got \(error)") }
     }
     if mode == "contaminated" {

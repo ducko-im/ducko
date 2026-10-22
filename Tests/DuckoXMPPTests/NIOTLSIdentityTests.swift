@@ -10,6 +10,17 @@ struct NIOTLSIdentityTests {
         #expect(readableDistinguishedName(attributes) == "R11, Let's Encrypt, US")
     }
 
+    @Test(arguments: [
+        (errSecHostNameMismatch, CertificateTrustFailure.nameMismatch),
+        (errSecCertificateExpired, .outsideValidityPeriod),
+        (errSecCertificateNotValidYet, .outsideValidityPeriod),
+        (errSecCreateChainFailed, .notTrusted),
+        (errSecNotTrusted, .notTrusted)
+    ])
+    func `a rejected certificate's status names why it was not trusted`(status: OSStatus, reason: CertificateTrustFailure) {
+        #expect(certificateTrustFailure(forStatus: Int(status)) == reason)
+    }
+
     @Test(arguments: ["direct", "wronghost"])
     func `server identity and displayed certificate match the requested XMPP host`(mode: String) async throws {
         let peer = try TransportTestPeer(mode: mode)
@@ -31,11 +42,10 @@ struct NIOTLSIdentityTests {
                     _ = try #require(await iterator.next())
                 } catch {
                     if mode == "wronghost" {
-                        guard case let XMPPClientError.tlsNegotiationFailed(reason) = error else {
+                        guard case XMPPClientError.untrustedCertificate(.nameMismatch) = error else {
                             await transport.disconnect()
                             throw error
                         }
-                        #expect(!reason.contains("in time"))
                         #expect(await transport.tlsInfo == nil)
                         #expect(await transport.channelBindingData() == nil)
                     } else {

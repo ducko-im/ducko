@@ -26,8 +26,8 @@ enum SASLAuthError: Error, Equatable {
     /// Sign-in requires SCRAM, and the server offers only PLAIN, which sends the password itself.
     case plainRefused
 
-    /// A `.serverFailure` prefers the server's non-blank `text`, then a phrase for a known condition, then the raw
-    /// condition name.
+    /// A `.serverFailure` prefers the server's non-blank `text`, then a phrase for a known condition, then a general
+    /// refusal.
     var displayText: String {
         switch self {
         case .noSupportedMechanism: "The server offers no supported authentication mechanism"
@@ -36,7 +36,7 @@ enum SASLAuthError: Error, Equatable {
         case .invalidServerNonce: "The server sent an invalid nonce"
         case .serverSignatureMismatch: "The server could not prove it knows the password"
         case let .serverFailure(condition, text):
-            if let text, !text.allSatisfy(\.isWhitespace) { text } else { Condition(rawValue: condition)?.displayText ?? condition }
+            if let text, !text.allSatisfy(\.isWhitespace) { text } else { Condition(rawValue: condition)?.displayText ?? "The server refused the sign-in" }
         case let .invalidState(reason): "Unexpected authentication state: \(reason)"
         case let .iterationCountTooLow(count): "The server's password hashing is too weak (\(count) iterations)"
         case .channelBindingDowngrade: "The server's authentication options contradict each other, which can mean the connection is being tampered with"

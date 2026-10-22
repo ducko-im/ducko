@@ -177,7 +177,7 @@ struct JSONFormatter: CLIFormatter {
         case let .connected(jid): encode(["type": "connected", "jid": jid.description, "account": account])
         case let .streamResumed(jid): encode(["type": "stream_resumed", "jid": jid.description, "account": account])
         case let .disconnected(reason): formatDisconnect(reason, account: account)
-        case let .authenticationFailed(message): encode(["type": "authentication_failed", "message": message, "account": account])
+        case let .authenticationFailed(failure): formatAuthenticationFailure(failure, account: account)
         case .plainSignInRefused: encode(["type": "sign_in_refused", "reason": "plain_after_scram", "message": XMPPClientError.plainSignInRefused.localizedDescription, "account": account])
         case let .messageReceived(message): formatIncomingMessage(message, account: account)
         case let .messageCarbonReceived(forwarded): formatCarbonEvent(forwarded, isOutgoing: false, account: account)
@@ -221,6 +221,17 @@ struct JSONFormatter: CLIFormatter {
         case let .omemoRecipientsPartial(conversation, dropped): formatOMEMORecipientsPartial(conversation: conversation, dropped: dropped, account: account)
         case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
         }
+    }
+
+    private func formatAuthenticationFailure(_ failure: AuthenticationFailure, account: String) -> String {
+        let kind = switch failure.kind {
+        case .credentialsRejected: "credentials_rejected"
+        case .temporary: "temporary"
+        case .other: "other"
+        }
+        var dict = ["type": "authentication_failed", "kind": kind, "message": failure.message, "account": account]
+        if let condition = failure.serverCondition { dict["condition"] = condition }
+        return encode(dict)
     }
 
     private func formatMessageError(from: JID, error: XMPPStanzaError, account: String) -> String {
@@ -331,6 +342,9 @@ struct JSONFormatter: CLIFormatter {
             dict["reason"] = "redirect"
             dict["host"] = host
             if let port { dict["port"] = "\(port)" }
+        case let .setupFailed(error):
+            dict["reason"] = "setup_failed"
+            dict["message"] = error.localizedDescription
         }
         return encode(dict)
     }

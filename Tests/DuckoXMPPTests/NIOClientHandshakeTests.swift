@@ -61,7 +61,9 @@ private func exerciseTLSClient(mode: String, useDefault: Bool) async throws {
                 try expectClientMetadata(info, peer: peer, plaintext: mode == "client-plain")
             } catch {
                 if mode == "client-refused", case XMPPClientError.tlsRequired = error {
-                } else if ["client-contaminated", "client-untrusted"].contains(mode), case XMPPClientError.tlsNegotiationFailed = error {
+                } else if mode == "client-contaminated", case XMPPClientError.tlsNegotiationFailed = error {
+                    #expect(client.tlsInfo == nil)
+                } else if mode == "client-untrusted", case XMPPClientError.untrustedCertificate(.notTrusted) = error {
                     #expect(client.tlsInfo == nil)
                 } else {
                     events.cancel()

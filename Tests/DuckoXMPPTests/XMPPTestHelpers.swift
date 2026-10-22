@@ -131,7 +131,8 @@ func makeStubModuleContext(
     sendElement: @Sendable @escaping (XMLElement) async throws -> Void = { _ in },
     serverStreamFeatures: @Sendable @escaping () -> XMLElement? = { nil },
     connectedJID: FullJID? = FullJID.parse("user@example.com/res"),
-    dispatchDecryptedMessage: @Sendable @escaping (XMPPMessage) -> Void = { _ in }
+    dispatchDecryptedMessage: @Sendable @escaping (XMPPMessage) -> Void = { _ in },
+    reportConnectionLost: @Sendable @escaping (String) -> Void = { _ in }
 ) -> ModuleContext {
     ModuleContext(
         sendStanza: sendStanza,
@@ -142,7 +143,8 @@ func makeStubModuleContext(
         domain: "example.com",
         sendElement: sendElement,
         serverStreamFeatures: serverStreamFeatures,
-        dispatchDecryptedMessage: dispatchDecryptedMessage
+        dispatchDecryptedMessage: dispatchDecryptedMessage,
+        reportConnectionLost: reportConnectionLost
     )
 }
 

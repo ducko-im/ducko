@@ -906,7 +906,7 @@ vm gui '/bin/rm -rf "$HOME/Library/Application Support/Ducko-Dev-update-check"'
 
 ### Reconnect (app disconnected)
 
-If the app is running but disconnected (e.g. network drop), restart it to trigger auto-connect:
+The app retries a lost or failed connection by itself with growing backoff, and holds the retries while there is no network route. To connect at once instead of waiting out the backoff, restart it to trigger auto-connect:
 
 ```bash
 vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }

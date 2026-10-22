@@ -301,4 +301,43 @@ enum ChatServiceSendErrorTests {
             await accountService.disconnect(accountID: accountID)
         }
     }
+
+    struct SendHeldForSetup {
+        @Test(arguments: [false, true])
+        @MainActor
+        func `a message sent during setup shows at once, then goes out once setup completes or is rolled back when it fails`(
+            setupFails: Bool
+        ) async throws {
+            let store = makeStore()
+            let transcripts = makeTranscripts()
+            let transport = MockTransport()
+            let release = AsyncSemaphore()
+            let hold = SetupHold(release: release, failure: setupFails ? XMPPClientError.timeout : nil)
+            let factory = MockXMPPClientFactory(transport: transport, modules: [ChatModule(), hold])
+            let accountService = makeAccountService(store: store, clientFactory: factory)
+            let chatService = makeChatService(store: store, transcripts: transcripts)
+            chatService.setAccountService(accountService)
+            let accountID = try await accountService.createAccount(jidString: testJIDString, host: "example.com", port: 5222, requireTLS: false)
+            let connection = Task { try await accountService.connect(accountID: accountID, password: "secret") }
+            await simulateNoTLSConnect(transport)
+            try await eventually { accountService.connectedClient(for: accountID) != nil }
+
+            let send = Task { try await chatService.sendMessage(to: contactJID, body: "held", accountID: accountID) }
+            try await eventually { await transcripts.messages.contains { $0.body == "held" } }
+            let sentHeld = { await transport.sentBytes.contains { String(decoding: $0, as: UTF8.self).contains("held") } }
+            #expect(await !sentHeld())
+
+            await release.signal()
+            if setupFails {
+                await #expect(throws: XMPPClientError.self) { try await send.value }
+                #expect(await transcripts.amendments.contains { $0.amendment.action == .retract })
+                #expect(await !sentHeld())
+            } else {
+                try await send.value
+                #expect(await sentHeld())
+            }
+            await accountService.disconnect(accountID: accountID)
+            _ = await connection.result
+        }
+    }
 }

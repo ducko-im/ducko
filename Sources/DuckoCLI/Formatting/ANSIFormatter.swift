@@ -120,7 +120,7 @@ struct ANSIFormatter: CLIFormatter {
         case let .connected(jid): "\(Color.green)connected as \(jid)\(Color.reset)"
         case let .streamResumed(jid): "\(Color.green)stream resumed as \(jid)\(Color.reset)"
         case let .disconnected(reason): formatDisconnect(reason)
-        case let .authenticationFailed(message): "\(Color.red)authentication failed: \(message)\(Color.reset)"
+        case let .authenticationFailed(failure): "\(Color.red)authentication failed: \(failure.message)\(Color.reset)"
         case .plainSignInRefused: "\(Color.red)\(plainSignInRefusedLine)\(Color.reset)"
         case let .messageReceived(message): formatIncomingMessage(message)
         case let .messageCarbonReceived(forwarded): formatCarbonEvent(forwarded, isOutgoing: false)
@@ -362,6 +362,8 @@ struct ANSIFormatter: CLIFormatter {
         case let .redirect(host, port):
             let target = port.map { "\(host):\($0)" } ?? host
             return "\(Color.yellow)redirected to \(target)\(Color.reset)"
+        case let .setupFailed(error):
+            return "\(Color.red)disconnected: \(error.localizedDescription)\(Color.reset)"
         }
     }
 
