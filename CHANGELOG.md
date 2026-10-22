@@ -18,11 +18,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Notice a lost network within seconds, and a server that stopped answering within 30 seconds of a keepalive ping, instead of only at the next five-minute ping
 - Say why a server's certificate is not trusted, such as that it was issued for a different server or has expired, and stop retrying a connection whose certificate was rejected
 - Ask for an imported account's password again only when the server rejects it, and list the account as failed with its own reason for any other sign-in failure
+- Show a warning instead of "Import Complete" when none of the accounts imported at first launch could connect
 - End a session whose setup fails after connecting and start a fresh one when the failure can clear by itself, instead of leaving the account half connected
 - Give up on a sign-in the server stops answering after a minute and try again, instead of waiting indefinitely
 - Keep the wait a server asks for between channel searches when the app and the CLI search at the same time, and honor a wait given in fractions of a second
 - Keep other apps' data in a bookmark as they wrote it when Ducko saves the bookmark again
 - Name the occupant in the REPL's room typing and topic lines, and print no topic line when joining a room that has none
+- Report a room topic set from the REPL only once the room accepts it, instead of confirming a change the room then refuses
 
 ## [0.10.0] - 2026-10-21
 

@@ -42,12 +42,10 @@ enum JingleTransportDeadlineTests {
         func `An IBB fallback the peer never accepts times the send out`() async throws {
             let harness = JingleInitiatorHarness(timing: JingleTiming(transportReadyWait: .milliseconds(300)))
             let sid = try await harness.initiate()
+            let wait = Task { try await harness.module.awaitTransportReady(sid: sid) }
             try harness.receive(action: JingleAction.sessionAccept.rawValue, sid: sid)
             try harness.receive(action: JingleAction.transportInfo.rawValue, sid: sid, payload: [candidateError])
             #expect(try await harness.sentJingle(action: JingleAction.transportReplace.rawValue) != nil)
-
-            let wait = Task { try await harness.module.awaitTransportReady(sid: sid) }
-            try await Task.sleep(for: .milliseconds(50))
 
             try await expectTimedOut(harness, wait: wait)
         }
@@ -55,7 +53,9 @@ enum JingleTransportDeadlineTests {
         /// The deadline only applies while nothing is ready, so a transfer under way is left to its own limits.
         @Test
         func `A send whose transport became ready is not timed out`() async throws {
-            let harness = JingleInitiatorHarness(timing: JingleTiming(transportReadyWait: .milliseconds(300)))
+            // Long enough for the setup below to finish under parallel test load, which a short deadline can outlast.
+            let deadline = Duration.seconds(1)
+            let harness = JingleInitiatorHarness(timing: JingleTiming(transportReadyWait: deadline))
             let sid = try await harness.initiate()
             try harness.receive(action: JingleAction.sessionAccept.rawValue, sid: sid)
             try harness.receive(action: JingleAction.transportInfo.rawValue, sid: sid, payload: [candidateError])
@@ -63,7 +63,7 @@ enum JingleTransportDeadlineTests {
             try harness.receive(action: JingleAction.transportAccept.rawValue, sid: sid, payload: [JingleInitiatorHarness.ibbContent()])
             try await harness.module.awaitTransportReady(sid: sid)
 
-            #expect(try await harness.event(timeout: .milliseconds(600), matching: JingleInitiatorHarness.isFailure) == nil)
+            #expect(try await harness.event(timeout: deadline + .milliseconds(500), matching: JingleInitiatorHarness.isFailure) == nil)
         }
     }
 

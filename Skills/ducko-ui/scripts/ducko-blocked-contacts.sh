@@ -6,8 +6,8 @@
 #   add JID:     block JID (a full JID blocks one device of the contact) and wait for its row
 #   remove JID:  press the row's Unblock button and wait for the row to go
 #
-# `open` is best-effort: synthetic clicks cannot reliably select the account row, and the Actions pull-down
-# appears only once the account is connected. The other actions need the sheet already open.
+# `open` needs the account connected, since the Actions pull-down appears only then. The other actions need
+# the sheet already open.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

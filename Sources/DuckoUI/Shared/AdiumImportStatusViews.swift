@@ -19,7 +19,8 @@ struct AdiumImportProgressView: View {
     }
 }
 
-/// Shared completion view for Adium import. Shows checkmark, stats, and optional account results.
+/// Shared completion view for Adium import. Shows checkmark (or a warning when every account it tried failed to
+/// connect), stats, and optional account results.
 /// Does NOT include action buttons — parents add their own "Done" button.
 struct AdiumImportCompletionView: View {
     struct AccountResult: Identifiable {
@@ -34,19 +35,26 @@ struct AdiumImportCompletionView: View {
 
     private static let visibleErrorLimit = 5
 
+    private var succeededCount: Int {
+        accountResults.filter(\.success).count
+    }
+
+    private var noAccountConnected: Bool {
+        !accountResults.isEmpty && succeededCount == 0
+    }
+
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
+            Image(systemName: noAccountConnected ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                 .font(.largeTitle)
-                .foregroundStyle(.green)
+                .foregroundStyle(noAccountConnected ? .orange : .green)
 
-            Text("Import Complete")
+            Text(noAccountConnected ? "No Accounts Connected" : "Import Complete")
                 .font(.headline)
 
             VStack(alignment: .leading, spacing: 4) {
                 if !accountResults.isEmpty {
-                    let succeeded = accountResults.filter(\.success).count
-                    Text("Accounts connected: \(succeeded)/\(accountResults.count)")
+                    Text("Accounts connected: \(succeededCount)/\(accountResults.count)")
                 }
                 if let result {
                     Text("Messages imported: \(result.importedMessages)")

@@ -46,9 +46,6 @@ on run argv
             end if
             -- Start Chat has .defaultAction keyboard shortcut
             keystroke return
-            -- The tab id of a direct chat is account-qualified as "{jid}|{account-jid}" when the JID is in the roster
-            -- of more than one account.
-            set tabId to "chat-tab-" & jid
             set deadline to (current date) + 15
             repeat until (current date) > deadline
                 delay 0.5
@@ -57,12 +54,7 @@ on run argv
                 if not sheetOpen then
                     set tabBar to my findByAttr(chatWin, "AXIdentifier", "chat-tab-bar", 0, 30)
                     if tabBar is not missing value then
-                        repeat with elem in (UI elements of tabBar)
-                            try
-                                set elemId to value of attribute "AXIdentifier" of elem
-                                if elemId is tabId or elemId starts with (tabId & "|") then return "ok"
-                            end try
-                        end repeat
+                        if my findChatTab(tabBar, jid) is not missing value then return "ok"
                     end if
                 end if
             end repeat

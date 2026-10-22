@@ -2,10 +2,9 @@
 # Open the Connection Info sheet from Preferences > Accounts tab.
 # Uses script composition to ensure the Accounts tab is active first.
 #
-# Best-effort: selecting the account row drives a SwiftUI `List(selection:)`,
-# which synthetic clicks cannot reliably trigger. The Actions pull-down holding
-# "Connection Info…" only appears once the account is connected. It is located
-# via findByAttr rather than `entire contents`, which collapses on macOS 26.
+# The Actions pull-down holding "Connection Info…" only appears once the account
+# is connected. The pull-down is located via findByAttr rather than
+# `entire contents`, which collapses on macOS 26.
 # Usage: ducko-connection-info.sh [open|close]
 # Closing targets DUCKO_PID when set, else the single running DuckoUITest.
 set -euo pipefail

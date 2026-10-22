@@ -56,7 +56,6 @@ func handleTopicREPLCommand(_ arguments: String, context: REPLContext, currentRo
     }
     do {
         try await context.environment.chatService.setRoomSubject(jidString: roomJID, subject: subject, accountID: context.accountID)
-        print("Topic set for \(roomJID).")
     } catch {
         print(context.formatter.formatError(error))
     }

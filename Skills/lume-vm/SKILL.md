@@ -35,7 +35,7 @@ Python in the VM is 3.9: keep scripts meant to run there free of `match` and of 
 |---|---|
 | `start` | Boot headless and wait for the GUI session. Shares the repo **read-only** and `.build/vm-exchange` read-write |
 | `stop` | Shut the guest down, then end the VM process |
-| `status`, `view` | Show the lume state; open a viewer window to watch (the user can run it with `!`) |
+| `status`, `view` | Show the lume state; open a viewer window to watch (the user can run it with `!`). The window stays open as long as the VM runs, and only `stop` closes it |
 | `sh '<cmd>'` | Run in an SSH shell, in a Background session |
 | `gui '<cmd>'` | Run in the GUI session as `lume`, in a login `zsh` started in the home folder |
 | `sync` | Copy the working tree into `/Users/lume/work/ducko`, the VM's build folder, keeping its `.build` folders. Refuses when the VM was started from another checkout |

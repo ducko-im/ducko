@@ -49,6 +49,23 @@ on findInSheets(win, identifierWanted)
     return missing value
 end findInSheets
 
+-- A chat tab chip is a direct child of chat-tab-bar. Its id is "chat-tab-{jid}", account-qualified as
+-- "chat-tab-{jid}|{account-jid}" when the JID is open under more than one account, so a bare JID matches the first.
+on findChatTab(tabBar, jid)
+    tell application "System Events"
+        set tabId to "chat-tab-" & jid
+        try
+            repeat with c in (UI elements of tabBar)
+                try
+                    set elemId to value of attribute "AXIdentifier" of c
+                    if elemId is tabId or elemId starts with (tabId & "|") then return contents of c
+                end try
+            end repeat
+        end try
+    end tell
+    return missing value
+end findChatTab
+
 on findByRoleAndName(el, roleWanted, nameWanted, depth, maxDepth)
     tell application "System Events"
         if depth > maxDepth then return missing value
@@ -353,8 +370,6 @@ EOF
 # Select the first account in Preferences > Accounts and click an item of its
 # Actions pull-down, which only appears once the account is connected. Emit it
 # inside `tell application "System Events"`, not inside `tell process`.
-# Best-effort: selecting the account row drives a SwiftUI `List(selection:)`,
-# which synthetic clicks cannot reliably trigger.
 # Sets the AppleScript variable prefsWin to the Preferences window.
 # Args: menu_item_name [error_msg]
 ducko_as_click_account_action() {
@@ -366,13 +381,11 @@ ducko_as_click_account_action() {
                 set acctRow to my findAccountRow(win, 0, 30)
                 if acctRow is not missing value then
                     set prefsWin to contents of win
-                    try
-                        click acctRow
-                    end try
                     exit repeat
                 end if
             end repeat
             if prefsWin is missing value then return "ERROR: account row not found"
+$(ducko_as_select_table_row acctRow "could not select the account row")
             delay 0.4
 
             -- A SwiftUI Menu bridges as a menu/pop-up button, not AXButton, so match by identifier alone.

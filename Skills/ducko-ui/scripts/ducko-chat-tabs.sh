@@ -3,23 +3,22 @@
 # Usage: ducko-chat-tabs.sh <list|select|close|next|previous|close-all> [JID]
 #   list:        print the identity of all open tabs (one per line)
 #   select JID:  click the tab for JID to make it active
-#   close JID:   click the tab's close button (revealed on hover over the tab)
+#   close JID:   close the tab through its "Close Tab" accessibility action
 #   next:        Window > Select Next Tab (⌃⇥), wrapping at the end
 #   previous:    Window > Select Previous Tab (⌃⇧⇥), wrapping at the start
 #   close-all:   File > Close All Chats (⌥⌘W), closing every tab and the chat window
 #
 # Tab identity is the bare JID when unique. When the same peer JID is open under
 # more than one account, each tab is account-qualified as "{jid}|{account-jid}"
-# so the two are individually addressable. `list` prints whatever form is in use;
-# pass that exact string to `select`/`close`.
+# so the two are individually addressable. `list` prints whatever form is in use.
+# `select`/`close` take that string or a bare JID. A bare JID picks the first tab
+# for that JID.
 #
 # The tab bar is an accessibility container (`.accessibilityElement(children:
-# .contain)`), so each `chat-tab-{jid}` chip is exposed as its own element —
-# `list` and `select` resolve it under osascript. `close` is
-# best-effort: its `chat-tab-close-{jid}` button is revealed only on hover and is
-# merged into the chip's own combined element, so the identifier may not resolve.
-# The integration suite (UIContactInfoTests) drives this control via Swift
-# AXUIElement and is authoritative.
+# .contain)`), so each `chat-tab-{jid}` chip is one of its direct children.
+# `list`, `select` and `close` read those children, because `entire contents` does
+# not reach the chips on macOS 27. The chip's `chat-tab-close-{jid}` button exists
+# only while the pointer is over the tab, so `close` uses the chip's named action.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -48,25 +47,36 @@ on run argv
         set frontmost of process "DuckoUITest" to true
         delay 0.3
         tell process "DuckoUITest"
-            $(ducko_as_find_window_by_id "chat-tab-bar" "chat window with tab bar not found" "chatWin")
-            if tabAction is "list" then
-                set tabList to ""
-                set allElems to entire contents of chatWin
-                repeat with elem in allElems
-                    try
-                        set elemId to value of attribute "AXIdentifier" of elem
-                        if elemId starts with "chat-tab-" and elemId does not start with "chat-tab-close-" and elemId is not "chat-tab-bar" and elemId is not "chat-tab-new" then
-                            set tabList to tabList & (text 10 thru -1 of elemId) & linefeed
-                        end if
-                    end try
+            $(ducko_as_find_scene_window "chat" "chatWin")
+            if chatWin is missing value then return "ERROR: chat window not found"
+            if tabAction is "list" or tabAction is "select" or tabAction is "close" then
+                $(ducko_as_find_element_by_id '"chat-tab-bar"' 'chatWin' 'chat tab bar not found' 'tabBar')
+                if tabAction is "list" then
+                    set tabList to ""
+                    repeat with elem in (UI elements of tabBar)
+                        try
+                            set elemId to value of attribute "AXIdentifier" of elem
+                            if elemId starts with "chat-tab-" and elemId is not "chat-tab-overflow" then
+                                set tabList to tabList & (text 10 thru -1 of elemId) & linefeed
+                            end if
+                        end try
+                    end repeat
+                    return "LIST:" & tabList
+                end if
+                set tabChip to my findChatTab(tabBar, tabJID)
+                if tabChip is missing value then return "ERROR: tab not found"
+                if tabAction is "select" then
+                    click tabChip
+                    return "ok"
+                end if
+                -- System Events names a SwiftUI named action "Name:<name>" followed by its target and selector.
+                repeat with chipAction in (actions of tabChip)
+                    if (name of chipAction) starts with "Name:Close Tab" then
+                        perform chipAction
+                        return "ok"
+                    end if
                 end repeat
-                return "LIST:" & tabList
-            else if tabAction is "select" then
-                $(ducko_as_click_element_by_id '"chat-tab-" & tabJID' 'chatWin' 'tab not found')
-                return "ok"
-            else if tabAction is "close" then
-                $(ducko_as_click_element_by_id '"chat-tab-close-" & tabJID' 'chatWin' 'tab close button not found')
-                return "ok"
+                return "ERROR: the tab offers no Close Tab action"
             else if tabAction is "next" or tabAction is "previous" then
                 -- Tab cycling acts on the focused chat window.
                 perform action "AXRaise" of chatWin

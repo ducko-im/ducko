@@ -3,10 +3,9 @@
 # Opens Preferences on the Accounts tab, selects the account, opens the
 # Change Password sheet from the Actions pull-down, fills the fields, and submits.
 #
-# Best-effort: selecting the account row drives a SwiftUI `List(selection:)`,
-# which synthetic clicks cannot reliably trigger. Fields and buttons are located
-# via findByAttr / findByRoleAndName rather than `entire contents`, which
-# collapses on macOS 26.
+# The Actions pull-down only appears once the account is connected. Fields and
+# buttons are located via findByAttr / findByRoleAndName rather than
+# `entire contents`, which collapses on macOS 26.
 # Usage: ducko-change-password.sh NEW_PASSWORD
 #   NEW_PASSWORD: The new password to set
 set -euo pipefail

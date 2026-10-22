@@ -175,7 +175,7 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `retracted-message` | Retracted message tombstone | Chat |
 | `undecryptable-message` | Stand-in bubble for an encrypted message that could not be decrypted. Its text says why, in the words the `/ducko-cli` skill's Plain output lists | Chat |
 | `setup-mode-picker` | Import/Login/Register segmented control | Account Setup |
-| `import-button` | Import & Connect / Import Logs button (Import mode) | Account Setup |
+| `import-button` | Import from Adium button (Import mode) | Account Setup |
 | `import-done-button` | Done button after import completes | Account Setup |
 | `choose-adium-folder-button` | Browse for Adium folder (shown when no data found) | Account Setup |
 | `account-toggle-{id}` | Toggle checkbox for each discovered Adium account | Account Setup |
@@ -330,12 +330,12 @@ Right-click a participant in the chat window sidebar:
 | `ducko-private-message.sh` | Send a MUC private message via the participant sidebar context menu | `NICKNAME` |
 | `ducko-room-topic.sh` | View or set the room topic | `[TEXT]` (optional; no args prints current topic) |
 | `ducko-channel-search.sh` | Search for channels in the Join Room dialog | `QUERY` |
-| `ducko-connection-info.sh` | Open Connection Info from Preferences > Accounts (best-effort), or close it with the shared PID-targeted Swift AX helper | `[open\|close]`; close targets `DUCKO_PID` when set, else the running `DuckoUITest` |
+| `ducko-connection-info.sh` | Open Connection Info from Preferences > Accounts (needs a connected account), or close it with the shared PID-targeted Swift AX helper | `[open\|close]`; close targets `DUCKO_PID` when set, else the running `DuckoUITest` |
 | `ducko-sign-in-security.sh` | Answer the Sign-In Refused alert on Contacts: `keep` presses Keep Refusing, `reset` presses Reset Sign-In Security… and then Reset and Sign In. Succeeds once Contacts shows no dialog. A reset that fails leaves the Sign-In Security Reset Failed alert, with the reason and an OK button, so the script reports that a dialog is still shown. To stage the alert, point the account at the `/ducko-cli` stub server, which offers only PLAIN, and set the requirement in the profile's store as that skill's `account reset-security` section shows | `<keep\|reset>` |
 | `ducko-register.sh` | Register a new account via in-band registration and wait for the outcome: registered and signed in, the server's own form shown because it asks for more (it then names `ducko-register-fields.sh`), or the window's error | `SERVER USERNAME PASSWORD [EMAIL]` |
 | `ducko-register-fields.sh` | Use after `ducko-register.sh` reported the server's form. `fill` types each value into the field of that name (`registration-{name}-field`, else `data-form-field-{name}`), presses Register and waits for the account or the window's error. `redirect` prints the address of the page the server sends the user to | `fill [NAME VALUE]...` or `redirect` |
-| `ducko-blocked-contacts.sh` | `open` opens the Blocked Contacts sheet from the first account's Actions pull-down in Preferences > Accounts and waits for its list (best-effort, like `ducko-connection-info.sh`). On the open sheet, `list` prints its entries, `add` blocks an address and waits for its row, and `remove` presses the entry's Unblock and waits for the row to go. A failed change reports the sheet's error | `<open\|list\|add\|remove> [JID]` (`JID` only, and required, for `add` and `remove`) |
-| `ducko-change-password.sh` | Change account password via Preferences > Accounts (best-effort; needs a connected account and a `List(selection:)` that synthetic clicks may not trigger) | `NEW_PASSWORD` |
+| `ducko-blocked-contacts.sh` | `open` opens the Blocked Contacts sheet from the first account's Actions pull-down in Preferences > Accounts and waits for its list (needs a connected account). On the open sheet, `list` prints its entries, `add` blocks an address and waits for its row, and `remove` presses the entry's Unblock and waits for the row to go. A failed change reports the sheet's error | `<open\|list\|add\|remove> [JID]` (`JID` only, and required, for `add` and `remove`) |
+| `ducko-change-password.sh` | Change account password via Preferences > Accounts (needs a connected account) | `NEW_PASSWORD` |
 | `ducko-toggle-preference.sh` | Toggle any preference checkbox by identifier | `IDENTIFIER` (e.g., chatStatesToggle, encryptByDefaultToggle, tofuToggle, contacts-compact-toggle) |
 | `ducko-menu-bar.sh` | Toggle menu bar icon visibility in General preferences | none |
 | `ducko-edit-profile.sh` | Edit profile fields and optionally save | `[--fullname NAME] [--nickname NICK] [--email EMAIL] [--save]` |
@@ -344,12 +344,12 @@ Right-click a participant in the chat window sidebar:
 | `ducko-contact-menu.sh` | Select a contact row, then run a Contact menu-bar command on it (`remove` confirms) | `JID <get-info\|history\|send-file\|remove>` |
 | `ducko-toggle-contacts.sh` | Toggle the Contacts window via Window ▸ Hide/Show Contact List (⌘/) | none |
 | `ducko-contact-info.sh` | Open the Contact Info window via context menu, optionally block/remove (`remove` confirms) | `JID [block\|remove]` |
-| `ducko-chat-tabs.sh` | List, select, close, or cycle bottom chat tabs, or close all chats (close is best-effort; the hover-revealed close button is merged into the chip's combined element). On macOS 27 `list` finds no tabs, because `entire contents` does not reach the chips | `<list\|select\|close\|next\|previous\|close-all> [JID]` |
+| `ducko-chat-tabs.sh` | List, select, close, or cycle bottom chat tabs, or close all chats. `select` and `close` take a tab identity as `list` prints it. A bare JID picks the first tab for that JID | `<list\|select\|close\|next\|previous\|close-all> [JID]` |
 | `ducko-chat-header.sh` | Click a chat-header toolbar button (Profile info / History) | `<info\|history>` |
 | `ducko-message-list.sh` | Press the jump button (`jump-to-newest`) in the active chat's message list. Fails while the list is at the newest message, where the button is absent | `jump` |
 | `ducko-invite-user.sh` | Invite a user to a room via context menu | `ROOM_JID INVITEE_JID` |
 | `ducko-destroy-room.sh` | Destroy a room via Room Settings sheet | `ROOM_JID` |
-| `ducko-room-config-save.sh` | Save room config in Room Settings sheet (best-effort; System Events cannot read the Save button's label on macOS 27) | `ROOM_JID` |
+| `ducko-room-config-save.sh` | Save room config in Room Settings sheet (best-effort; System Events cannot read the Save button's label on macOS 27, and `UIMUCTests` covers the Save authoritatively) | `ROOM_JID` |
 | `ducko-room-settings-tab.sh` | Switch to a tab in the Room Settings sheet | `<General\|Members>` |
 | `ducko-add-affiliation.sh` | Add a JID to a room's affiliation list | `ROOM_JID JID` |
 | `ducko-stop.sh` | End the `DuckoUITest` copy this checkout launched with a signal, forcing it after 10 seconds, and fail when it survives. Leaves every other Ducko running, including a `/preview` instance and the integration suites' bundle | none |
@@ -942,7 +942,7 @@ To allow these scripts in `settings.local.json` without prompts:
 - Keep apostrophes out of osascript heredoc bodies. `/bin/bash` 3.2, which the scripts' shebang selects, rejects a `$(… << EOF …)` body with an odd apostrophe count, while Homebrew bash 5 accepts it, so check with `/bin/bash -n` rather than a bare `bash -n`.
 - Limit `ducko-helpers.sh` and the wrapper scripts to bash builtins and the commands DuckoScriptTests stubs. Its capture fixture runs them with a PATH holding only stubs plus `cat` and `dirname`, and rejects absolute command paths.
 - Idle auto-away switches the status to Away after about five minutes without mouse movement or key presses, so an unattended run can observe Away unexpectedly. AX actions and clicks without movement don't count as input. Set the status explicitly (e.g. `ducko-status-menu.sh available`), which cancels auto-away, before asserting on it.
-- The scripts marked best-effort in the Script Reference table (`ducko-chat-tabs.sh`, `ducko-connection-info.sh`, `ducko-blocked-contacts.sh`, `ducko-change-password.sh`, `ducko-room-config-save.sh`) hit osascript limitations covered authoritatively by the integration suite instead; each table row names the specific control. `UIPreferencesTests` covers `ducko-connection-info.sh`, the opening of the Blocked Contacts sheet and `ducko-change-password.sh`, and `UIMUCTests` covers the Room Settings Save.
+- Select a table row, such as a SwiftUI `List(selection:)` row in Preferences ▸ Accounts or a contact-list row, with `ducko_as_select_table_row`, which sets `AXSelected` on the enclosing `AXRow`. A synthetic click does not change the selection.
 - The contact list and chat windows are both singletons (`Window`). The chat window holds all open conversations as bottom tabs (`chat-tab-bar`); `ducko-send.sh` targets the active tab in the frontmost chat window. Contact Info is a `WindowGroup` keyed by `ContactInfoRef`.
 - Pass runtime values as arguments to `osascript -` and read them with `on run argv`. Keep them out of the generated AppleScript source.
 - Credentials are arguments, never hardcoded.
@@ -957,6 +957,12 @@ To allow these scripts in `settings.local.json` without prompts:
   4. Launch again with `DUCKO_PROFILE=<profile> vm.sh ui ducko-launch.sh`. A chat opens once a message is pushed through the stub, as that skill's Step 4.3 does.
 
   The "Changing the Content" section of that skill covers a room row, a room invitation (`room-invite-banner`), a file offer, a code block, reply quotes and file cards. Afterwards stop the copy, kill the stub by the PID listening on its port, and remove `Ducko-Dev-<profile>`, the `im.ducko.dev.<profile>` defaults and the work folder.
+- Stage the Welcome screen's Import mode only in the VM, under a fresh `DUCKO_PROFILE`, since Welcome shows only for a profile with no account. Its discovery reads `Accounts.plist` and `AccountPrefs.plist` from `~/Library/Application Support/Adium 2.0/Users/Default` and fills in passwords from the keychain entries saved with those accounts, so on the Mac it lists the user's real accounts.
+  - Seed the folder before launching, because the Welcome window keeps the result of its first discovery. An account is an `Accounts` array entry with `ObjectID`, `Service` `Jabber` and `UID` in `Accounts.plist`, plus an entry under that `ObjectID` in `AccountPrefs.plist`. Write `Connect Port` as an integer, since a string is ignored.
+  - With no keychain entry, as in the VM, the account starts unticked with an empty password, and Import stays disabled. Tick `account-toggle-<ObjectID>` and type any password into `account-password-<ObjectID>` first.
+  - A rejected password returns to the account list instead of the completion step. To reach the completion step with a failed account, give it a `Jabber:Connect Server` of `127.0.0.1` and a closed `Connect Port`.
+  - An account that imports successfully needs a real server: the import always requires TLS, and the `/demo-screenshots` stub offers only a plaintext stream.
+  - Afterwards remove the seeded `Adium 2.0` folder, the profile folder and its `im.ducko.dev.<profile>` defaults.
 - A throwaway profile folder (`~/Library/Application Support/Ducko-Dev-<profile>/`) holds file-based credentials and OMEMO keys. `rm` may be aliased to `trash` in the shell profile, so remove the folder with `/bin/rm -rf` to keep it out of the Trash.
 - A packaged bundle's app menu is "Ducko" (Ducko ▸ Quit Ducko); a bare debug binary's is "DuckoApp" (DuckoApp ▸ Quit DuckoApp). A script that quits or opens app-menu items by title must use the title matching how the instance was launched.
 - A leftover Open or Save panel, or a context menu left open, blocks the instance: AX walks and AppleScript calls then hang. Check for a leftover panel in the window list, which needs no AX: `Skills/demo-screenshots/scripts/windows.swift <pid>` lists every window of the instance. Cancel any panel it shows. Close a context menu as soon as its items are read, with `AXCancel` on the menu or Escape posted to the PID. Run probes and scripts under a timeout (for example `perl -e 'alarm 30; exec @ARGV' <command>`) so a stuck step fails fast.
