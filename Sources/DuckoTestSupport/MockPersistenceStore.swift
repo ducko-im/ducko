@@ -5,9 +5,14 @@ public actor MockPersistenceStore: PersistenceStore {
     public var accounts: [Account] = []
     public var channelSearchLimits: [UUID: [String: ChannelSearchLimit]] = [:]
     private var fetchAccountsError: Error?
+    private var fetchChannelSearchLimitsError: Error?
 
     public func setFetchAccountsError(_ error: Error?) {
         fetchAccountsError = error
+    }
+
+    public func setFetchChannelSearchLimitsError(_ error: Error?) {
+        fetchChannelSearchLimitsError = error
     }
 
     public var contacts: [Contact] = []
@@ -128,11 +133,14 @@ public actor MockPersistenceStore: PersistenceStore {
     }
 
     public func fetchChannelSearchLimits(accountID: UUID) async throws -> [String: ChannelSearchLimit] {
-        channelSearchLimits[accountID] ?? [:]
+        if let fetchChannelSearchLimitsError { throw fetchChannelSearchLimitsError }
+        return channelSearchLimits[accountID] ?? [:]
     }
 
-    public func setChannelSearchLimits(_ limits: [String: ChannelSearchLimit], accountID: UUID) async throws {
+    public func updateChannelSearchLimits(accountID: UUID, _ change: @Sendable (inout [String: ChannelSearchLimit]) -> Void) async throws {
         guard accounts.contains(where: { $0.id == accountID }) else { return }
+        var limits = channelSearchLimits[accountID] ?? [:]
+        change(&limits)
         channelSearchLimits[accountID] = limits.isEmpty ? nil : limits
     }
 

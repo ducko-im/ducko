@@ -41,6 +41,8 @@ final class RoomService {
     private let didUpdateConversation: (Conversation) -> Void
     private var pendingTasks: [UUID: Task<Void, Never>] = [:]
     private let channelSearchNow: @Sendable () -> Date
+    /// The channel search limits recorded in this process, so a store that fails to read them back cannot lift them.
+    private var channelSearchLimits: [UUID: [String: ChannelSearchLimit]] = [:]
 
     init(
         store: any PersistenceStore,
@@ -344,8 +346,11 @@ final class RoomService {
         guard let service = try await searchModule.discoverSearchService() else {
             throw ChannelSearchModule.ChannelSearchError.noSearchServiceFound
         }
-        var gate = await ChannelSearchGate(limits: (try? store.fetchChannelSearchLimits(accountID: accountID)) ?? [:])
-        if let wait = gate.remainingWait(service: service, at: channelSearchNow()) {
+        let stored = await (try? store.fetchChannelSearchLimits(accountID: accountID)) ?? [:]
+        let limits = stored.merging(channelSearchLimits[accountID] ?? [:], uniquingKeysWith: ChannelSearchLimit.later)
+        var gate = ChannelSearchGate(limits: limits)
+        let startedAt = channelSearchNow()
+        if let wait = gate.remainingWait(service: service, at: startedAt) {
             throw ChannelSearchRateLimit(retryAfter: wait)
         }
 
@@ -355,11 +360,14 @@ final class RoomService {
             result = try await searchModule.search(query)
         } catch let ChannelSearchModule.ChannelSearchError.rateLimited(retryAfter) {
             let wait = gate.recordRateLimit(retryAfter: retryAfter.map { .seconds($0) }, service: service, at: channelSearchNow())
-            try? await store.setChannelSearchLimits(gate.limits, accountID: accountID)
+            if let limit = gate.limits[service] {
+                // Another search may have recorded a longer wait since this one read the limits.
+                await updateChannelSearchLimits(accountID: accountID) { $0[service] = $0[service].map { .later($0, limit) } ?? limit }
+            }
             throw ChannelSearchRateLimit(retryAfter: wait)
         }
-        if gate.recordSearch(service: service) {
-            try? await store.setChannelSearchLimits(gate.limits, accountID: accountID)
+        if gate.limits[service] != nil {
+            await updateChannelSearchLimits(accountID: accountID) { ChannelSearchGate.liftLimit(of: service, searchedAt: startedAt, in: &$0) }
         }
 
         let channels = result.items.map {
@@ -374,6 +382,12 @@ final class RoomService {
 
         let hasMore = !result.items.isEmpty && result.lastID != nil
         return ChannelSearchResult(channels: channels, hasMore: hasMore, lastCursor: result.lastID)
+    }
+
+    /// Applies `change` to the limits kept in memory and to the stored ones, each as it stands now.
+    private func updateChannelSearchLimits(accountID: UUID, _ change: @Sendable (inout [String: ChannelSearchLimit]) -> Void) async {
+        change(&channelSearchLimits[accountID, default: [:]])
+        try? await store.updateChannelSearchLimits(accountID: accountID, change)
     }
 
     func setRoomSubject(jidString: String, subject: String, accountID: UUID) async throws {

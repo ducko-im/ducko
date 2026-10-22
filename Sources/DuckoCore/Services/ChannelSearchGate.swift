@@ -28,6 +28,11 @@ public struct ChannelSearchLimit: Sendable, Codable, Equatable {
         self.notBefore = notBefore
         self.consecutiveCount = consecutiveCount
     }
+
+    /// Of two limits on one service, the one that holds searches back longer.
+    static func later(_ first: ChannelSearchLimit, _ second: ChannelSearchLimit) -> ChannelSearchLimit {
+        first.notBefore >= second.notBefore ? first : second
+    }
 }
 
 /// When an account may search each channel search service again after the service rate-limited it. The limits are
@@ -55,8 +60,10 @@ struct ChannelSearchGate {
         return wait
     }
 
-    /// Lifts the service's limit after a search it answered. Returns whether there was one.
-    mutating func recordSearch(service: String) -> Bool {
-        limits.removeValue(forKey: service) != nil
+    /// Lifts the service's limit after a search it answered, unless it runs past the time this search started, which only
+    /// a limit another search recorded since can.
+    static func liftLimit(of service: String, searchedAt start: Date, in limits: inout [String: ChannelSearchLimit]) {
+        guard let limit = limits[service], limit.notBefore <= start else { return }
+        limits[service] = nil
     }
 }

@@ -29,7 +29,7 @@ private struct EmptyPersistenceStore: PersistenceStore {
         [:]
     }
 
-    func setChannelSearchLimits(_: [String: ChannelSearchLimit], accountID _: UUID) async throws {}
+    func updateChannelSearchLimits(accountID _: UUID, _: @Sendable (inout [String: ChannelSearchLimit]) -> Void) async throws {}
     func fetchContacts(for _: UUID) async throws -> [Contact] {
         []
     }

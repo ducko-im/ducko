@@ -192,7 +192,13 @@ public final class ChannelSearchModule: XMPPModule, Sendable {
         guard error.condition == .resourceConstraint,
               let rateLimit = error.applicationCondition,
               rateLimit.name == "rate-limit", rateLimit.namespace == XMPPNamespaces.channelSearchError else { return nil }
-        return .rateLimited(retryAfter: rateLimit.attribute("retry-after").flatMap { UInt($0) }.flatMap { Int(exactly: $0) })
+        return .rateLimited(retryAfter: retryAfterSeconds(rateLimit.attribute("retry-after")))
+    }
+
+    /// The `retry-after` seconds, rounded up so a fractional wait is never cut short.
+    private static func retryAfterSeconds(_ value: String?) -> Int? {
+        guard let seconds = value.flatMap(Double.init), seconds.isFinite, seconds >= 0 else { return nil }
+        return seconds >= Double(Int.max) ? Int.max : Int(seconds.rounded(.up))
     }
 
     private func findSearchService(items: [String], context: ModuleContext) async -> String? {

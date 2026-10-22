@@ -62,6 +62,8 @@ struct ChannelSearchModuleTests {
 
     @Test(arguments: [
         (#"<rate-limit xmlns="urn:xmpp:channel-search:0:error" retry-after="30"/>"#, 30 as Int?),
+        (#"<rate-limit xmlns="urn:xmpp:channel-search:0:error" retry-after="1.5"/>"#, 2),
+        (#"<rate-limit xmlns="urn:xmpp:channel-search:0:error" retry-after="-5"/>"#, nil),
         (#"<rate-limit xmlns="urn:xmpp:channel-search:0:error"/>"#, nil),
         (#"<rate-limit xmlns="urn:xmpp:channel-search:0:error" retry-after="soon"/>"#, nil)
     ])

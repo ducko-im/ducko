@@ -54,14 +54,22 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
     }
 
     public func fetchChannelSearchLimits(accountID: UUID) throws -> [String: ChannelSearchLimit] {
-        guard let data = try accountRecord(id: accountID)?.channelSearchLimits else { return [:] }
-        return try JSONDecoder().decode([String: ChannelSearchLimit].self, from: data)
+        try accountRecord(id: accountID).map(Self.channelSearchLimits(of:)) ?? [:]
     }
 
-    public func setChannelSearchLimits(_ limits: [String: ChannelSearchLimit], accountID: UUID) throws {
+    public func updateChannelSearchLimits(accountID: UUID, _ change: @Sendable (inout [String: ChannelSearchLimit]) -> Void) throws {
         guard let record = try accountRecord(id: accountID) else { return }
+        let stored = try Self.channelSearchLimits(of: record)
+        var limits = stored
+        change(&limits)
+        guard limits != stored else { return }
         record.channelSearchLimits = limits.isEmpty ? nil : try JSONEncoder().encode(limits)
         try modelContext.save()
+    }
+
+    private static func channelSearchLimits(of record: AccountRecord) throws -> [String: ChannelSearchLimit] {
+        guard let data = record.channelSearchLimits else { return [:] }
+        return try JSONDecoder().decode([String: ChannelSearchLimit].self, from: data)
     }
 
     private func accountRecord(id: UUID) throws -> AccountRecord? {

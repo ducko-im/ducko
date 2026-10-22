@@ -136,7 +136,7 @@ struct SwiftDataPersistenceStoreTests {
             try await store.saveAccount(account)
             let limits = ["search.example.com": ChannelSearchLimit(notBefore: Date(timeIntervalSince1970: 1000), consecutiveCount: 2)]
 
-            try await store.setChannelSearchLimits(limits, accountID: account.id)
+            try await store.updateChannelSearchLimits(accountID: account.id) { $0 = limits }
             account.displayName = "Alice"
             try await store.saveAccount(account)
             #expect(try await store.fetchChannelSearchLimits(accountID: account.id) == limits)

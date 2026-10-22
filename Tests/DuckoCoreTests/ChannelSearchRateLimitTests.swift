@@ -7,7 +7,7 @@ import Testing
 
 @MainActor
 struct ChannelSearchRateLimitTests {
-    private static let found = "<result xmlns='urn:xmpp:channel-search:0:search'><item address='ducks@muc.example.com'/></result>"
+    private nonisolated static let found = "<result xmlns='urn:xmpp:channel-search:0:search'><item address='ducks@muc.example.com'/></result>"
 
     @Test
     func `A search inside the service's retry-after sends nothing, also after a reconnect or a relaunch, and one after it does`() async throws {
@@ -76,6 +76,72 @@ struct ChannelSearchRateLimitTests {
         await accounts.disconnect(accountID: accountID)
     }
 
+    /// A search that started before another one was rate-limited, then ended either way.
+    @Test(arguments: [
+        "<iq type=\"result\" id=\"ID\" from=\"search.example.com\">\(ChannelSearchRateLimitTests.found)</iq>",
+        "<iq type=\"error\" id=\"ID\" from=\"search.example.com\">\(ChannelSearchRateLimitTests.rateLimited(retryAfter: "10"))</iq>"
+    ])
+    func `A search that started before another one was rate-limited keeps the other one's longer wait`(answer: String) async throws {
+        let now = Date()
+        let store = MockPersistenceStore()
+        // Two sessions of one account, such as the app's and the CLI's, share the stored limits.
+        let answeredLater = MockTransport(), limited = MockTransport()
+        await Self.answerChannelSearch(on: answeredLater, type: "result", with: nil)
+        await Self.answerChannelSearch(on: limited, type: "error", with: Self.rateLimited(retryAfter: "30"))
+        let firstAccounts = AccountService(
+            store: store, credentialStore: MockCredentialStore(), clientFactory: MockXMPPClientFactory(transport: answeredLater, modules: [ChannelSearchModule()])
+        )
+        let secondAccounts = AccountService(
+            store: store, credentialStore: MockCredentialStore(), clientFactory: MockXMPPClientFactory(transport: limited, modules: [ChannelSearchModule()])
+        )
+        let accountID = try await firstAccounts.createAccount(jidString: "alice@example.com")
+        try await secondAccounts.loadAccounts()
+        // An expired limit is what a successful search lifts, so the first search finds one to lift.
+        try await store.updateChannelSearchLimits(accountID: accountID) {
+            $0["search.example.com"] = ChannelSearchLimit(notBefore: now - 5, consecutiveCount: 1)
+        }
+        let (_, firstConnect) = try await driveMockConnect(firstAccounts, accountID: accountID, transport: answeredLater)
+        let (_, secondConnect) = try await driveMockConnect(secondAccounts, accountID: accountID, transport: limited)
+        let firstRooms = Self.makeRoomService(store: store, accounts: firstAccounts, now: { now })
+        let secondRooms = Self.makeRoomService(store: store, accounts: secondAccounts, now: { now })
+
+        let firstSearch = Task { try await firstRooms.searchChannels(keyword: "ducks", accountID: accountID) }
+        let search = try await sentStanza(on: answeredLater, containing: "<search")
+        let searchID = try #require(extractIQID(from: search))
+        await #expect(throws: ChannelSearchRateLimit.self) { try await secondRooms.searchChannels(keyword: "ducks", accountID: accountID) }
+        await answeredLater.simulateReceive(answer.replacingOccurrences(of: "ID", with: searchID))
+        _ = await firstSearch.result
+
+        #expect(await store.channelSearchLimits[accountID]?["search.example.com"]?.notBefore == now + 30)
+        firstConnect.cancel()
+        secondConnect.cancel()
+        await firstAccounts.disconnect(accountID: accountID)
+        await secondAccounts.disconnect(accountID: accountID)
+    }
+
+    @Test
+    func `A limit recorded in this session holds when the stored limits cannot be read`() async throws {
+        let transport = MockTransport()
+        await Self.answerChannelSearch(on: transport, type: "error", with: Self.rateLimited(retryAfter: "30"))
+        let store = MockPersistenceStore()
+        let accounts = AccountService(
+            store: store, credentialStore: MockCredentialStore(), clientFactory: MockXMPPClientFactory(transport: transport, modules: [ChannelSearchModule()])
+        )
+        let now = Date()
+        let rooms = Self.makeRoomService(store: store, accounts: accounts, now: { now })
+        let accountID = try await accounts.createAccount(jidString: "alice@example.com")
+        let (_, connect) = try await driveMockConnect(accounts, accountID: accountID, transport: transport)
+        await #expect(throws: ChannelSearchRateLimit.self) { try await rooms.searchChannels(keyword: "ducks", accountID: accountID) }
+
+        await store.setFetchChannelSearchLimitsError(CocoaError(.fileReadUnknown))
+        let held = await #expect(throws: ChannelSearchRateLimit.self) { try await rooms.searchChannels(keyword: "ducks", accountID: accountID) }
+
+        #expect(held?.retryAfterSeconds == 30)
+        #expect(await Self.searchCount(on: transport) == 1)
+        connect.cancel()
+        await accounts.disconnect(accountID: accountID)
+    }
+
     @Test
     func `A stored wait too long for a Duration saturates`() {
         let now = Date()
@@ -101,7 +167,7 @@ struct ChannelSearchRateLimitTests {
         #expect(waits == [10, 20, 40, 80, 160, 320, 640, 640].map { .seconds($0) })
     }
 
-    private static func rateLimited(retryAfter: String) -> String {
+    private nonisolated static func rateLimited(retryAfter: String) -> String {
         """
         <error type="wait"><resource-constraint xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>\
         <rate-limit xmlns="urn:xmpp:channel-search:0:error" retry-after="\(retryAfter)"/></error>
@@ -117,8 +183,8 @@ struct ChannelSearchRateLimitTests {
     }
 
     /// Lists `search.example.com` as the server's channel search service on `transport` and answers each search with
-    /// an IQ of `type` holding `payload`.
-    private static func answerChannelSearch(on transport: MockTransport, type: String, with payload: String) async {
+    /// an IQ of `type` holding `payload`, or leaves it unanswered when `payload` is nil.
+    private static func answerChannelSearch(on transport: MockTransport, type: String, with payload: String?) async {
         await transport.autoReply { stanza in
             guard let id = extractIQID(from: stanza) else { return nil }
             if stanza.contains(XMPPNamespaces.discoItems) {
@@ -133,7 +199,7 @@ struct ChannelSearchRateLimitTests {
                 <feature var="\(XMPPNamespaces.channelSearch)"/></query></iq>
                 """
             }
-            guard stanza.contains("<search") else { return nil }
+            guard stanza.contains("<search"), let payload else { return nil }
             return "<iq type=\"\(type)\" id=\"\(id)\" from=\"search.example.com\">\(payload)</iq>"
         }
     }

@@ -10,8 +10,9 @@ public protocol PersistenceStore: Sendable {
     func setRequiresSCRAM(_ requiresSCRAM: Bool, accountID: UUID) async throws
     /// The channel search services' rate limits the account waits out, by service address.
     func fetchChannelSearchLimits(accountID: UUID) async throws -> [String: ChannelSearchLimit]
-    /// Writes only the account's channel search rate limits, which `saveAccount` leaves as stored.
-    func setChannelSearchLimits(_ limits: [String: ChannelSearchLimit], accountID: UUID) async throws
+    /// Changes only the account's channel search rate limits, which `saveAccount` leaves as stored. `change` gets them as
+    /// stored at the write, so it keeps a limit another search recorded since the caller read them.
+    func updateChannelSearchLimits(accountID: UUID, _ change: @Sendable (inout [String: ChannelSearchLimit]) -> Void) async throws
 
     // MARK: - Contacts
 

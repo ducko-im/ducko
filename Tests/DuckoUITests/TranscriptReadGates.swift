@@ -191,8 +191,8 @@ struct GatedTranscriptPersistenceStore: PersistenceStore {
         try await mock.fetchChannelSearchLimits(accountID: accountID)
     }
 
-    func setChannelSearchLimits(_ limits: [String: ChannelSearchLimit], accountID: UUID) async throws {
-        try await mock.setChannelSearchLimits(limits, accountID: accountID)
+    func updateChannelSearchLimits(accountID: UUID, _ change: @Sendable (inout [String: ChannelSearchLimit]) -> Void) async throws {
+        try await mock.updateChannelSearchLimits(accountID: accountID, change)
     }
 
     func fetchContacts(for accountID: UUID) async throws -> [Contact] {
