@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Keep reconnecting after a lost connection until the server is reachable again, instead of staying offline after one failed attempt, and stop reconnecting when the server ends the session for a reason that won't clear by itself, such as another session taking it over
 - Keep the wait a server asks for between channel searches when the app and the CLI search at the same time, and honor a wait given in fractions of a second
+- Keep other apps' data in a bookmark as they wrote it when Ducko saves the bookmark again
 
 ## [0.10.0] - 2026-10-21
 

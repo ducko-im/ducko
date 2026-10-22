@@ -1,6 +1,7 @@
 /// Lightweight XML element type for XMPP stanza representation.
 public struct XMLElement: Hashable, Sendable {
     public var name: String
+    /// Nil inherits the parent's namespace, or for a stanza the stream's. An empty string is no namespace at all.
     public var namespace: String?
     public var attributes: [String: String]
     public var children: [Node]

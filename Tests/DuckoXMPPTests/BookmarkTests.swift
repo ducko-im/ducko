@@ -209,6 +209,27 @@ enum BookmarkTests {
             #expect(parsed?.extensions?.child(named: "pinned", namespace: "urn:example:other-client") != nil)
         }
 
+        /// XEP-0402 §3.4: another client's elements in `<extensions/>` are published again as they came.
+        @Test
+        func `Extension elements in the client namespace or in none keep it when published again`() throws {
+            let event = try stanza("""
+            <message from='alice@example.com'><event xmlns='http://jabber.org/protocol/pubsub#event'>\
+            <items node='\(XMPPNamespaces.bookmarks2)'><item id='room@muc.example.com'>\
+            <conference xmlns='\(XMPPNamespaces.bookmarks2)'><extensions>\
+            <note xmlns='jabber:client'>kept</note><plain xmlns=''/><pinned xmlns='urn:example:other-client'/>\
+            </extensions></conference></item></items></event></message>
+            """)
+            let conference = try #require(event.child(named: "event")?.child(named: "items")?.child(named: "item")?.child(named: "conference"))
+            let bookmark = try #require(Bookmark.parse(itemID: "room@muc.example.com", payload: conference))
+
+            let republished = try stanza("<message>\(bookmark.toXMLElement().xmlString)</message>")
+
+            let extensions = try #require(republished.child(named: "conference")?.child(named: "extensions"))
+            #expect(extensions.children(named: "note").map(\.namespace) == [XMPPNamespaces.client])
+            #expect(extensions.children(named: "plain").map(\.namespace) == [""])
+            #expect(extensions.children(named: "pinned").map(\.namespace) == ["urn:example:other-client"])
+        }
+
         @Test
         func `Round-trip preserves minimal bookmark`() {
             let original = makeBookmark()

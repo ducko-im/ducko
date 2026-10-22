@@ -10,7 +10,8 @@ import CLibxml2
 final class XMPPStreamParser {
     private var parserCtxt: xmlParserCtxtPtr?
     private var depth = 0
-    private var elementStack: [XMLElement] = []
+    /// The open elements below the stream, each with the namespace libxml2 resolved for it.
+    private var elementStack: [(element: XMLElement, namespaceURI: String?)] = []
     private var contentNamespace: String?
     private var hasError = false
     private var isClosing = false
@@ -87,10 +88,20 @@ final class XMPPStreamParser {
             }
             pendingEvents.append(.streamOpened(attributes: allAttrs))
         } else {
-            let ns = (namespaceURI != nil && namespaceURI != contentNamespace) ? namespaceURI : nil
-            let element = XMLElement(name: localname, namespace: ns, attributes: attributes)
-            elementStack.append(element)
+            let element = XMLElement(name: localname, namespace: storedNamespace(of: namespaceURI), attributes: attributes)
+            elementStack.append((element, namespaceURI))
         }
+    }
+
+    /// The content namespace is left implicit, so stanzas and their children read as unqualified. Below an element in
+    /// another namespace, an element back in the content namespace or in none keeps that namespace explicitly (`""` for
+    /// none), so writing it out again does not put it in its parent's namespace.
+    private func storedNamespace(of namespaceURI: String?) -> String? {
+        let isContentOrNone = namespaceURI == nil || namespaceURI == contentNamespace
+        if isContentOrNone, let parent = elementStack.last, parent.namespaceURI != namespaceURI {
+            return namespaceURI ?? ""
+        }
+        return namespaceURI == contentNamespace ? nil : namespaceURI
     }
 
     fileprivate func handleEndElement() {
@@ -98,12 +109,12 @@ final class XMPPStreamParser {
         case 1:
             pendingEvents.append(.streamClosed)
         case 2:
-            if let stanza = elementStack.popLast() {
+            if let stanza = elementStack.popLast()?.element {
                 pendingEvents.append(.stanzaReceived(stanza))
             }
         default:
-            if let child = elementStack.popLast() {
-                elementStack[elementStack.count - 1].addChild(child)
+            if let child = elementStack.popLast()?.element {
+                elementStack[elementStack.count - 1].element.addChild(child)
             }
         }
         depth -= 1
@@ -111,7 +122,7 @@ final class XMPPStreamParser {
 
     fileprivate func handleCharacters(_ text: String) {
         guard depth >= 2, !elementStack.isEmpty else { return }
-        elementStack[elementStack.count - 1].addText(text)
+        elementStack[elementStack.count - 1].element.addText(text)
     }
 
     fileprivate func handleError(_ message: String) {

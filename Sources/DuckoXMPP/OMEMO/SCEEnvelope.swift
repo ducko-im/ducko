@@ -45,8 +45,12 @@ struct SCEEnvelope {
               case .streamClosed = events[2], envelope.name == "envelope", envelope.namespace == XMPPNamespaces.sce,
               let content = envelope.child(named: "content", namespace: XMPPNamespaces.sce)
         else { throw OMEMOModuleError.invalidPayload }
+        // A content element in the client namespace is a stanza child, so it reads like one: unqualified.
         self.content = content.children.compactMap { node in
-            guard case let .element(element) = node else { return nil }
+            guard case var .element(element) = node else { return nil }
+            if element.namespace == XMPPNamespaces.client {
+                element.namespace = nil
+            }
             return element
         }
         self.time = envelope.child(named: "time", namespace: XMPPNamespaces.sce)?.attribute("stamp")

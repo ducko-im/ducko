@@ -352,8 +352,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0402.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Inside a bookmark's &lt;extensions>, an element in the jabber:client namespace or in no namespace is saved back in the urn:xmpp:bookmarks:1 namespace</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
