@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-23
+
 ### Added
 
 - Add a `nickname` field to the CLI's JSON typing and room subject records when a room occupant is typing or set the subject
@@ -27,6 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Give up on a sign-in the server stops answering after a minute and try again, instead of waiting indefinitely
 - Keep the wait a server asks for between channel searches when the app and the CLI search at the same time, and honor a wait given in fractions of a second
 - Keep other apps' data in a bookmark as they wrote it when Ducko saves the bookmark again
+- Stop assuming a contact still supports what its client advertised earlier once it switches to a client whose capabilities Ducko cannot check
+- Accept incoming file transfers from clients that need the accepting side to state who sends the file
 - Name the occupant in the REPL's room typing and topic lines, and print no topic line when joining a room that has none
 - Report a room topic set from the REPL only once the room accepts it, instead of confirming a change the room then refuses
 - Find a contact's OMEMO devices with the CLI's `omemo devices`, `omemo trust` and `omemo untrust` whatever case the address is typed in
@@ -458,7 +462,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release.
 
-[Unreleased]: https://github.com/ducko-im/ducko/compare/0.10.0...HEAD
+[Unreleased]: https://github.com/ducko-im/ducko/compare/0.11.0...HEAD
+[0.11.0]: https://github.com/ducko-im/ducko/compare/0.10.0...0.11.0
 [0.10.0]: https://github.com/ducko-im/ducko/compare/0.9.0...0.10.0
 [0.9.0]: https://github.com/ducko-im/ducko/compare/0.8.0...0.9.0
 [0.8.0]: https://github.com/ducko-im/ducko/compare/0.7.0...0.8.0
