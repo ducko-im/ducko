@@ -1,4 +1,4 @@
---minversion 0.64.0
+--minversion 0.64.1
 --exclude .build,DerivedData,Skills,Sources/CLibxml2,Sources/CDnssd,IntegrationTests/.build,Sources/DuckoXMPP/Stanzas/Normalization/UnicodeTables.generated.swift
 
 # Format options
