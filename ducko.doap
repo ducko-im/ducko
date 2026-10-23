@@ -308,7 +308,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0384.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">No session reset or opt-out handling, and encrypted messages fetched from the archive are not decrypted. This device is not re-added when removed from its own device list, room members' device lists are not fetched before sending, and devices that left a list still receive keys. Existing nodes with other settings are not reconfigured, and a new device id is not checked for collisions. A key exchange with a new identity key replaces the session without a trust decision</xmpp:note>
+                <xmpp:note xml:lang="en">No session reset or opt-out handling, and encrypted messages fetched from the archive are not decrypted. This device is not re-added when removed from its own device list, room members' device lists are not fetched before sending, and devices that left a list still receive keys. Existing nodes with other settings are not reconfigured, and a new device id is not checked for collisions. A key exchange with an identity key other than the one already known for its device is refused, and the new key cannot be accepted</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>

@@ -5,10 +5,6 @@ import Logging
 
 private let log = Logger(label: "im.ducko.core.omemo")
 
-private func omemoFingerprint(from identityKey: some Sequence<UInt8>) -> String {
-    identityKey.map { String(format: "%02x", $0) }.joined()
-}
-
 @MainActor @Observable
 public final class OMEMOService {
     private let omemoStore: any OMEMOStore
@@ -38,6 +34,9 @@ public final class OMEMOService {
     private var preKeyMaintenanceRunning: Set<UUID> = []
     /// The used pre-key ids waiting for each account's next upkeep run.
     private var preKeyMaintenanceQueue: [UUID: Set<UInt32>] = [:]
+    /// Each account's trust guard, kept for the life of the process so a used pre-key or a pinned key outlives the
+    /// connection's module. Keyed by account JID, so a re-added account keeps its record.
+    private var trustGuardsByAccountJID: [String: OMEMOTrustGuard] = [:]
 
     /// UI-supplied confirmation closure before the emergency-retract path publishes a singleton devicelist.
     /// Default `nil` preserves the pre-feature bail behavior. `@Sendable`; callers hop to `MainActor` inside.
@@ -86,7 +85,8 @@ public final class OMEMOService {
         let module = OMEMOModule(pepModule: pepModule, mucModule: mucModule)
         let jidString = accountJID.description
 
-        wireIdentityKeyValidator(on: module, accountJID: jidString)
+        let trustGuard = trustGuard(forAccountJID: jidString)
+        module.configureTrustGuard(trustGuard)
         // Wire pruneStaleBundles' service-side dependencies. See `seenDeviceCacheByAccount` for the reconnect-survival rationale.
         let accountIDKey = accountID.uuidString
         accountJIDsByAccountID[accountIDKey] = jidString
@@ -100,6 +100,8 @@ public final class OMEMOService {
         // Keys that cannot be read must never be replaced by a new device, so a failed load leaves encryption off for
         // this connection and the next connect tries again.
         do {
+            let stamp = trustGuard.currentStamp()
+            try await mergeStoredTrust(omemoStore.loadAllTrust(for: jidString), accountJID: jidString, loadedAfter: stamp)
             guard let identityData = try await loadStoredIdentity(accountJID: jidString) else { return module }
             let sessions = try await omemoStore.loadSessions(for: jidString)
             module.configureIdentity(identityData)
@@ -119,11 +121,13 @@ public final class OMEMOService {
         return module
     }
 
-    /// The stored identity with its unused pre-keys and its signed pre-key, or nil for a new installation. A signed
-    /// pre-key that is missing is replaced for the same device, and stored before anything publishes it.
+    /// The stored identity with its unused pre-keys and its signed pre-key, or nil for a new installation. A pre-key
+    /// counts as used when the store or the trust guard records it so. A signed pre-key that is missing is replaced for
+    /// the same device, and stored before anything publishes it.
     private func loadStoredIdentity(accountJID: String) async throws -> OMEMOModule.OMEMOIdentityData? {
         guard let stored = try await omemoStore.loadIdentity(for: accountJID) else { return nil }
         let preKeys = try await omemoStore.loadPreKeys(for: accountJID)
+        let consumed = trustGuard(forAccountJID: accountJID).consumedPreKeyIDs(ownDeviceID: stored.deviceID)
         let signedPreKey = if let loaded = try await omemoStore.loadSignedPreKey(for: accountJID) {
             loaded
         } else {
@@ -135,7 +139,7 @@ public final class OMEMOService {
             signedPreKeyID: signedPreKey.keyID,
             signedPreKeyRaw: Array(signedPreKey.keyData),
             signedPreKeySignature: Array(signedPreKey.signature),
-            preKeys: preKeys.filter { !$0.isUsed }.map {
+            preKeys: preKeys.filter { !$0.isUsed && !consumed.contains($0.keyID) }.map {
                 OMEMOModule.OMEMOIdentityData.PreKeyData(keyID: $0.keyID, keyRaw: Array($0.keyData))
             }
         )
@@ -226,7 +230,7 @@ public final class OMEMOService {
         guard let accountJID = accountJIDString(for: accountID) else {
             return .noLocalDevicesForPeer
         }
-        let allDevices = await (try? omemoStore.loadAllDevices(for: jid.description, accountJID: accountJID)) ?? []
+        let allDevices = await loadAllDevicesMergingTrust(for: jid.description, accountJID: accountJID)
         if allDevices.isEmpty {
             return .noLocalDevicesForPeer
         }
@@ -268,7 +272,7 @@ public final class OMEMOService {
 
     private func trustedDeviceIDs(for jid: BareJID, accountID: UUID) async -> [UInt32] {
         guard let accountJID = accountJIDString(for: accountID) else { return [] }
-        let allDevices = await (try? omemoStore.loadAllDevices(for: jid.description, accountJID: accountJID)) ?? []
+        let allDevices = await loadAllDevicesMergingTrust(for: jid.description, accountJID: accountJID)
         let tofu = OMEMOPreferences.shared.trustOnFirstUse
         return allDevices.filter { $0.trustLevel.isTrustedForEncryption(trustOnFirstUse: tofu) }.map(\.deviceID)
     }
@@ -277,8 +281,33 @@ public final class OMEMOService {
         guard let ownJID = accountService?.accounts.first(where: { $0.id == accountID })?.jid, let accountJID = accountJIDString(for: accountID) else { return [] }
         // Own devices always use TOFU semantics — refusing to encrypt to your
         // own undecided devices breaks multi-device message sync.
-        let allDevices = await (try? omemoStore.loadAllDevices(for: ownJID.description, accountJID: accountJID)) ?? []
+        let allDevices = await loadAllDevicesMergingTrust(for: ownJID.description, accountJID: accountJID)
         return allDevices.filter { $0.trustLevel.isTrustedForEncryption(trustOnFirstUse: true) }.map(\.deviceID)
+    }
+
+    /// The peer's stored trust rows, which the account's guard takes in, so a decision made in another process over the
+    /// same store reaches the next send. A read that fails yields no rows.
+    private func loadAllDevicesMergingTrust(for peerJID: String, accountJID: String) async -> [OMEMOTrust] {
+        let stamp = trustGuard(forAccountJID: accountJID).currentStamp()
+        let rows = await (try? omemoStore.loadAllDevices(for: peerJID, accountJID: accountJID)) ?? []
+        mergeStoredTrust(rows, accountJID: accountJID, loadedAfter: stamp)
+        return rows
+    }
+
+    private func mergeStoredTrust(_ rows: [OMEMOTrust], accountJID: String, loadedAfter stamp: UInt64) {
+        let stored = rows.compactMap { row in
+            BareJID.parse(row.peerJID).map {
+                OMEMOTrustGuard.StoredTrust(peer: $0, deviceID: row.deviceID, fingerprint: row.fingerprint, decision: row.trustLevel.storedDecision)
+            }
+        }
+        trustGuard(forAccountJID: accountJID).merge(stored, loadedAfter: stamp)
+    }
+
+    func trustGuard(forAccountJID accountJID: String) -> OMEMOTrustGuard {
+        if let existing = trustGuardsByAccountJID[accountJID] { return existing }
+        let created = OMEMOTrustGuard()
+        trustGuardsByAccountJID[accountJID] = created
+        return created
     }
 
     // MARK: - Trust Management
@@ -287,12 +316,22 @@ public final class OMEMOService {
         try await setTrustLevel(.trusted, accountID: accountID, peerJID: peerJID, deviceID: deviceID, fingerprint: fingerprint)
     }
 
+    /// Refuses the device at once, before the store is written, so a failed save still keeps it refused until the user
+    /// trusts it again.
     public func untrustDevice(accountID: UUID, peerJID: String, deviceID: UInt32) async throws {
-        guard let accountJID = accountJIDString(for: accountID), let existing = try await omemoStore.loadTrust(accountJID: accountJID, peerJID: peerJID, deviceID: deviceID) else { return }
-        try await setTrustLevel(.untrusted, accountID: accountID, peerJID: peerJID, deviceID: deviceID, fingerprint: existing.fingerprint)
+        guard let accountJID = accountJIDString(for: accountID), let peer = BareJID.parse(peerJID) else { return }
+        let trustGuard = trustGuard(forAccountJID: accountJID)
+        let decision = trustGuard.applyDistrust(peer: peer, deviceID: deviceID)
+        try await omemoStore.markTrust(
+            .untrusted, accountJID: accountJID, peerJID: peer.description, deviceID: deviceID,
+            fallbackFingerprint: trustGuard.heldFingerprint(peer: peer, deviceID: deviceID)
+        )
+        trustGuard.distrustSaved(peer: peer, deviceID: deviceID, decision: decision)
     }
 
+    /// Throws `noFingerprintToVerify` for an empty `fingerprint`, since a key the user never saw cannot have been compared.
     public func verifyDevice(accountID: UUID, peerJID: String, deviceID: UInt32, fingerprint: String) async throws {
+        guard !fingerprint.isEmpty else { throw OMEMOServiceError.noFingerprintToVerify }
         try await setTrustLevel(.verified, accountID: accountID, peerJID: peerJID, deviceID: deviceID, fingerprint: fingerprint)
     }
 
@@ -302,8 +341,8 @@ public final class OMEMOService {
 
     /// Returns device info for all known devices of a peer, suitable for UI display.
     public func deviceInfoList(for peerJID: String, accountID: UUID) async -> [OMEMODeviceInfo] {
-        guard let accountJID = accountJIDString(for: accountID) else { return [] }
-        let devices = await (try? omemoStore.loadAllDevices(for: peerJID, accountJID: accountJID)) ?? []
+        guard let accountJID = accountJIDString(for: accountID), let peer = BareJID.parse(peerJID) else { return [] }
+        let devices = await (try? omemoStore.loadAllDevices(for: peer.description, accountJID: accountJID)) ?? []
         return devices.map {
             OMEMODeviceInfo(
                 peerJID: $0.peerJID, deviceID: $0.deviceID,
@@ -317,7 +356,7 @@ public final class OMEMOService {
         guard let accountJID = accountJIDString(for: accountID), let identity = try? await omemoStore.loadIdentity(for: accountJID), let privateKey = try? Curve25519.Signing.PrivateKey(rawRepresentation: identity.identityKeyData) else {
             return nil
         }
-        let fingerprint = omemoFingerprint(from: privateKey.publicKey.rawRepresentation)
+        let fingerprint = omemoFingerprint(of: privateKey.publicKey.rawRepresentation)
         return OMEMODeviceInfo(
             peerJID: accountJID, deviceID: identity.deviceID,
             fingerprint: fingerprint, trustLevel: .verified
@@ -380,14 +419,12 @@ public final class OMEMOService {
 
     private func handleDeviceListReceived(jid: BareJID, devices: [UInt32], accountID: UUID) async {
         guard let accountJID = accountJIDString(for: accountID) else { return }
-        let existing = await (try? omemoStore.loadAllDevices(for: jid.description, accountJID: accountJID)) ?? []
-        let knownDeviceIDs = Set(existing.map(\.deviceID))
-        for deviceID in devices where !knownDeviceIDs.contains(deviceID) {
+        for deviceID in devices {
             let trust = OMEMOTrust(
                 accountJID: accountJID, peerJID: jid.description,
                 deviceID: deviceID, fingerprint: "", trustLevel: .undecided
             )
-            try? await omemoStore.saveTrust(trust)
+            try? await omemoStore.insertTrustIfAbsent(trust)
         }
     }
 
@@ -406,29 +443,13 @@ public final class OMEMOService {
         )
         try? await omemoStore.saveSession(session)
 
-        let fingerprint = omemoFingerprint(from: identityKey)
-        let existing = try? await omemoStore.loadTrust(
-            accountJID: accountJID, peerJID: jid.description, deviceID: deviceID
+        // Another process over the same store can have pinned another key for the device.
+        let stored = try? await omemoStore.fillTrustFingerprint(
+            accountJID: accountJID, peerJID: jid.description, deviceID: deviceID, fingerprint: omemoFingerprint(of: identityKey)
         )
-        if let existing, existing.fingerprint.isEmpty {
-            // Fill placeholder fingerprint
-            let updated = OMEMOTrust(
-                accountJID: accountJID, peerJID: jid.description,
-                deviceID: deviceID, fingerprint: fingerprint,
-                trustLevel: existing.trustLevel
-            )
-            try? await omemoStore.saveTrust(updated)
-        } else if let existing, !existing.fingerprint.isEmpty, existing.fingerprint != fingerprint {
+        if stored != nil {
             log.warning("Identity key changed for device \(deviceID)")
             log.debug("The changed identity key belongs to \(jid)")
-        } else if existing == nil {
-            // New device — create undecided trust record with fingerprint
-            let trust = OMEMOTrust(
-                accountJID: accountJID, peerJID: jid.description,
-                deviceID: deviceID, fingerprint: fingerprint,
-                trustLevel: .undecided
-            )
-            try? await omemoStore.saveTrust(trust)
         }
     }
 
@@ -567,9 +588,11 @@ public final class OMEMOService {
     ) async {
         // A brand-new device is left to first-time persistence until its identity is stored, or both would save its
         // pre-keys.
+        let storedIdentity: OMEMOStoredIdentity
         let stored: [OMEMOStoredPreKey]
         do {
-            guard try await omemoStore.loadIdentity(for: accountJID) != nil else { return }
+            guard let identity = try await omemoStore.loadIdentity(for: accountJID) else { return }
+            storedIdentity = identity
             stored = try await omemoStore.loadPreKeys(for: accountJID)
         } catch {
             log.warning("Could not read the OMEMO pre-keys for upkeep")
@@ -577,10 +600,11 @@ public final class OMEMOService {
             return
         }
 
-        // The event's ids are recorded even when the module that used them is gone, since a new module starts without
-        // them.
+        // The event's ids and the guard's are recorded even when the module that used them is gone, since a new module
+        // starts without them. An id whose save failed stays unused in the store, so the next run tries it again.
+        let guardedIDs = trustGuard(forAccountJID: accountJID).consumedPreKeyIDs(ownDeviceID: storedIdentity.deviceID)
         var unusedIDs = Set(stored.filter { !$0.isUsed }.map(\.keyID))
-        let consumed = eventPreKeyIDs.union(module?.consumedPreKeyIDs() ?? [])
+        let consumed = eventPreKeyIDs.union(module?.consumedPreKeyIDs() ?? []).union(guardedIDs)
         for keyID in consumed where unusedIDs.contains(keyID) {
             do {
                 try await omemoStore.consumePreKey(id: keyID, accountJID: accountJID)
@@ -593,7 +617,7 @@ public final class OMEMOService {
 
         guard let module, let identityData = module.ownIdentityData else { return }
         // A module built while an earlier connection's run was still recording a key holds that key as unused.
-        module.retirePreKeys(Set(stored.filter(\.isUsed).map(\.keyID)).union(eventPreKeyIDs))
+        module.retirePreKeys(Set(stored.filter(\.isUsed).map(\.keyID)).union(eventPreKeyIDs).union(guardedIDs))
         if unusedIDs.count < OMEMOPreKeyManager.minimumPreKeyCount {
             // Past every id the store or the module has used, so no new key can take the id of an older one.
             let highestID = max(stored.map(\.keyID).max() ?? 0, identityData.preKeys.map(\.keyID).max() ?? 0)
@@ -636,39 +660,35 @@ public final class OMEMOService {
         }
     }
 
-    private func wireIdentityKeyValidator(on module: OMEMOModule, accountJID: String) {
-        let store = omemoStore
-        module.setIdentityKeyValidator { peerJID, deviceID, identityKey in
-            let existing = try await store.loadTrust(
-                accountJID: accountJID, peerJID: peerJID.description,
-                deviceID: deviceID
-            )
-            if let existing {
-                if existing.trustLevel == .untrusted {
-                    throw OMEMOServiceError.identityKeyUntrusted
-                }
-                if !existing.fingerprint.isEmpty {
-                    let fingerprint = omemoFingerprint(from: identityKey)
-                    if existing.fingerprint != fingerprint {
-                        throw OMEMOServiceError.identityKeyMismatch
-                    }
-                }
-            }
-            // No trust record or empty fingerprint — allow (TOFU);
-            // fingerprint stored on session-established event
-        }
-    }
-
+    /// Saves a Trust or Verify of the key the user compared, `fingerprint`. Throws `identityKeyMismatch` without saving
+    /// when another key is held. A Trust without a fingerprint authorizes the device's first key rather than certifying
+    /// one, so it keeps a fingerprint another process stored and otherwise stores the held one. It throws
+    /// `conflictingFingerprints` without saving when the device's rows would then name different keys. The guard lifts
+    /// a refusal only once the save succeeds.
     private func setTrustLevel(
         _ level: OMEMOTrustLevel, accountID: UUID,
         peerJID: String, deviceID: UInt32, fingerprint: String
     ) async throws {
-        guard let accountJID = accountJIDString(for: accountID) else { return }
-        let trust = OMEMOTrust(
-            accountJID: accountJID, peerJID: peerJID,
-            deviceID: deviceID, fingerprint: fingerprint, trustLevel: level
-        )
-        try await omemoStore.saveTrust(trust)
+        guard let accountJID = accountJIDString(for: accountID), let peer = BareJID.parse(peerJID) else { return }
+        let trustGuard = trustGuard(forAccountJID: accountJID)
+        guard let grant = trustGuard.prepareGrant(peer: peer, deviceID: deviceID, fingerprint: fingerprint) else {
+            throw OMEMOServiceError.identityKeyMismatch
+        }
+        if fingerprint.isEmpty {
+            do {
+                try await omemoStore.markTrust(
+                    level, accountJID: accountJID, peerJID: peer.description, deviceID: deviceID, fallbackFingerprint: grant.fingerprint
+                )
+            } catch OMEMOStoreError.conflictingFingerprints {
+                throw OMEMOServiceError.conflictingFingerprints
+            }
+        } else {
+            try await omemoStore.saveTrust(OMEMOTrust(
+                accountJID: accountJID, peerJID: peer.description,
+                deviceID: deviceID, fingerprint: grant.fingerprint, trustLevel: level
+            ))
+        }
+        trustGuard.applyGrant(peer: peer, deviceID: deviceID, decision: grant.decision)
     }
 
     private func accountJIDString(for accountID: UUID) -> String? {
@@ -841,15 +861,28 @@ enum OMEMOServiceError: Error, LocalizedError {
     case omemoNotAvailable
     case noTrustedRecipients
     case identityKeyMismatch
-    case identityKeyUntrusted
+    case conflictingFingerprints
+    case noFingerprintToVerify
 
     var errorDescription: String? {
         switch self {
         case .notConnected: notConnectedDescription
         case .omemoNotAvailable: "OMEMO module not available"
         case .noTrustedRecipients: "No trusted OMEMO recipients"
-        case .identityKeyMismatch: "OMEMO identity key mismatch"
-        case .identityKeyUntrusted: "OMEMO identity key not trusted"
+        case .identityKeyMismatch: "The fingerprint does not match the key in use for this device"
+        case .conflictingFingerprints: "This device has more than one fingerprint, so it cannot be trusted"
+        case .noFingerprintToVerify: "The device's fingerprint is not known yet, so it cannot be verified"
+        }
+    }
+}
+
+private extension OMEMOTrustLevel {
+    /// An undecided row is no decision, so the guard never lets one lift a refusal.
+    var storedDecision: OMEMOTrustGuard.StoredTrust.Decision {
+        switch self {
+        case .undecided: .undecided
+        case .trusted, .verified: .granted
+        case .untrusted: .untrusted
         }
     }
 }

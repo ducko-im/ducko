@@ -122,6 +122,8 @@ struct XMPPErrorDescriptionTests {
         (OMEMOModuleError.notForThisDevice, "The message was not encrypted for this device"),
         (OMEMOModuleError.unknownPreKey, "The encrypted message uses a key this device no longer has"),
         (OMEMOModuleError.replayedKeyExchange, "The encrypted message repeats one already received"),
+        (OMEMOModuleError.untrustedDevice, "A device is marked as untrusted"),
+        (OMEMOModuleError.changedIdentityKey, "A device's key does not match the one stored for it"),
         (OMEMOModuleError.invalidKeyData, "The encrypted message contains invalid key data"),
         (OMEMOModuleError.invalidHeader, "The encrypted message has an invalid header"),
         (OMEMOModuleError.invalidPayload, "The encrypted message has an invalid payload"),

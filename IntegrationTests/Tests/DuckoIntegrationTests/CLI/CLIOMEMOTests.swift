@@ -88,10 +88,9 @@ extension DuckoIntegrationTests.CLILayer {
                 try await cli.seedAccount(TestCredentials.alice)
                 let bob = TestCredentials.bob.jid
 
-                // Coverage caveat: `OMEMOService.untrustDevice` early-returns without mutating when no
-                // local trust row exists, and `Untrust.run` prints its success line unconditionally. For
-                // the sentinel this asserts only that the command wiring runs and prints — no trust
-                // state actually changes.
+                // Coverage caveat: `OMEMOService.untrustDevice` stores an untrusted row for a device it has
+                // no row for, and `Untrust.run` prints its success line unconditionally. For the sentinel
+                // this asserts only that the command wiring runs and prints.
                 let output = try await cli.run(["omemo", "untrust", bob, "\(Self.sentinelDeviceID)"])
                 #expect(output.exitCode == 0)
                 #expect(output.stdout.contains("Untrusted device \(Self.sentinelDeviceID) for \(bob)."))

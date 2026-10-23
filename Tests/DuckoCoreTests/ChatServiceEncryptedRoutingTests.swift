@@ -261,6 +261,22 @@ struct ChatServiceEncryptedRoutingTests {
         #expect(stored.undecryptableReason == expected)
     }
 
+    /// The GUI and the CLI both show `undecryptableNotice`.
+    @Test(arguments: [
+        (OMEMOUndecryptableReason.untrustedDevice, UndecryptableReason.untrustedDevice,
+         "This message could not be trusted, because it claims to come from a device marked as untrusted"),
+        (.changedIdentityKey, .changedIdentityKey, "This message could not be trusted, because its device key does not match the stored fingerprint")
+    ])
+    func `a refused key exchange shows a notice saying why`(reason: OMEMOUndecryptableReason, stored: UndecryptableReason, notice: String) async throws {
+        let stanza = encryptedStanza(from: "\(contact)/desktop", to: testJIDString, id: "r1")
+
+        await omemoService.handleEvent(encryptedMessageEvent(stanza, body: nil, reason: reason), accountID: accountID)
+
+        let message = try #require(try await messages(in: chat).first)
+        #expect(message.undecryptableReason == stored)
+        #expect(message.undecryptableNotice == notice)
+    }
+
     @Test func `a headline encrypted with another method shows its notice in the chat with its sender`() async throws {
         var stanza = XMPPMessage(type: .headline, to: .bare(contact), id: "h1")
         stanza.from = try .full(#require(FullJID.parse("\(contact)/desktop")))

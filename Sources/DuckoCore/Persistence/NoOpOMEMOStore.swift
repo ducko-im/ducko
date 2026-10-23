@@ -24,11 +24,17 @@ struct NoOpOMEMOStore: OMEMOStore {
 
     func saveSession(_: OMEMOStoredSession) async throws {}
     func saveTrust(_: OMEMOTrust) async throws {}
-    func loadTrust(accountJID _: String, peerJID _: String, deviceID _: UInt32) async throws -> OMEMOTrust? {
+    func insertTrustIfAbsent(_: OMEMOTrust) async throws {}
+    func markTrust(_: OMEMOTrustLevel, accountJID _: String, peerJID _: String, deviceID _: UInt32, fallbackFingerprint _: String) async throws {}
+    func fillTrustFingerprint(accountJID _: String, peerJID _: String, deviceID _: UInt32, fingerprint _: String) async throws -> String? {
         nil
     }
 
     func loadAllDevices(for _: String, accountJID _: String) async throws -> [OMEMOTrust] {
+        []
+    }
+
+    func loadAllTrust(for _: String) async throws -> [OMEMOTrust] {
         []
     }
 

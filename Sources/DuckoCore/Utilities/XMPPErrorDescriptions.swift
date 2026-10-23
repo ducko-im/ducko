@@ -116,6 +116,8 @@ extension OMEMOModuleError: LocalizedError {
         case .notForThisDevice: "The message was not encrypted for this device"
         case .unknownPreKey: "The encrypted message uses a key this device no longer has"
         case .replayedKeyExchange: "The encrypted message repeats one already received"
+        case .untrustedDevice: "A device is marked as untrusted"
+        case .changedIdentityKey: "A device's key does not match the one stored for it"
         case .invalidKeyData: "The encrypted message contains invalid key data"
         case .invalidHeader: "The encrypted message has an invalid header"
         case .invalidPayload: "The encrypted message has an invalid payload"

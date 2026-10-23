@@ -177,19 +177,157 @@ extension OMEMOModuleTests {
         }
 
         @Test func `A new key exchange naming a used pre-key replaces the session`() async throws {
-            let first = try await makeKEXMessage(to: recipient, plaintext: "old")
-            let restarted = try await makeKEXMessage(to: recipient, plaintext: "new")
-            let module = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
-            let firstEncrypted = try #require(first.child(named: "encrypted", namespace: XMPPNamespaces.omemo))
-            _ = try module.decryptIncomingMessage(firstEncrypted, from: .full(peerJID))
-            let oldSession = try #require(module.allSessionEntries().first).sessionData
             // The same device starting over from a bundle that still lists the pre-key it used before.
-            let restartedEncrypted = try #require(restarted.child(named: "encrypted", namespace: XMPPNamespaces.omemo))
-            let sameDevice = try replacingSenderDevice(with: senderDeviceID(of: firstEncrypted), in: restartedEncrypted)
+            let sender = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+            let first = try await kexEncrypted(from: sender, plaintext: "old")
+            let restarted = try await kexEncrypted(from: sender, plaintext: "new")
+            let module = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
+            _ = try module.decryptIncomingMessage(first, from: .full(peerJID))
+            let oldSession = try #require(module.allSessionEntries().first).sessionData
 
-            #expect(try module.decryptIncomingMessage(sameDevice, from: .full(peerJID)).body == "new")
+            #expect(try module.decryptIncomingMessage(restarted, from: .full(peerJID)).body == "new")
             #expect(module.allSessionEntries().map(\.sessionData) != [oldSession])
             #expect(module.allSessionEntries().count == 1)
+        }
+
+        /// The `<encrypted>` element of a key exchange from `sender`'s device, which uses the recipient's pre-key 7.
+        private func kexEncrypted(from sender: TestOMEMOIdentity, plaintext: String) async throws -> XMLElement {
+            let message = try await makeKEXMessage(to: recipient, plaintext: plaintext, from: sender)
+            return try #require(message.child(named: "encrypted", namespace: XMPPNamespaces.omemo))
+        }
+
+        /// A session with the device holds its key even when the guard holds none, so a key exchange signed with
+        /// another key cannot replace it.
+        @Test(arguments: [true, false])
+        func `A key exchange with another key than an existing session's is refused, and one with the session's key replaces it`(
+            sessionWasSent: Bool
+        ) async throws {
+            let sender = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+            let impostor = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+            let restored = try await sessionEntries(with: sender, sessionWasSent: sessionWasSent)
+            let trustGuard = OMEMOTrustGuard()
+            let module = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer(), trustGuard: trustGuard)
+            module.restoreSessions(restored)
+
+            let forged = try await kexEncrypted(from: impostor, plaintext: "forged")
+            #expect(throws: OMEMOModuleError.changedIdentityKey) {
+                _ = try module.decryptIncomingMessage(forged, from: .full(peerJID))
+            }
+            #expect(module.allSessionEntries().map(\.sessionData) == restored.map(\.sessionData))
+            #expect(module.consumedPreKeyIDs().isEmpty)
+            #expect(trustGuard.heldFingerprint(peer: peerJID.bareJID, deviceID: 100).isEmpty)
+            #expect(trustGuard.consumedPreKeyIDs(ownDeviceID: 200).isEmpty)
+
+            let genuine = try await kexEncrypted(from: sender, plaintext: "genuine")
+            #expect(try module.decryptIncomingMessage(genuine, from: .full(peerJID)).body == "genuine")
+            #expect(module.allSessionEntries().map(\.sessionData) != restored.map(\.sessionData))
+        }
+
+        /// The sessions another module of this device holds with `sender`'s device: one `sender` started with a key
+        /// exchange, or, when `sessionWasSent`, one this device started from `sender`'s bundle.
+        private func sessionEntries(with sender: TestOMEMOIdentity, sessionWasSent: Bool) async throws -> [OMEMOModule.StoredSessionEntry] {
+            let other = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer { _ in bundleItems(for: sender) })
+            if sessionWasSent {
+                _ = try await other.encryptMessage(plaintext: "hi", to: peerJID.bareJID, recipientDeviceIDs: [100], ownDeviceIDs: [])
+            } else {
+                _ = try await other.decryptIncomingMessage(kexEncrypted(from: sender, plaintext: "hi"), from: .full(peerJID))
+            }
+            return other.allSessionEntries()
+        }
+
+        /// A started session whose associated data is corrupt shows no key to compare with.
+        @Test func `A key exchange cannot replace a session whose key cannot be read`() async throws {
+            let sender = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+            let restored = try await sessionEntries(with: sender, sessionWasSent: true)
+            let module = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
+            module.restoreSessions(restored.map {
+                OMEMOModule.StoredSessionEntry(
+                    jid: $0.jid, deviceID: $0.deviceID, sessionData: $0.sessionData, associatedData: Array($0.associatedData.dropLast())
+                )
+            })
+
+            let genuine = try await kexEncrypted(from: sender, plaintext: "genuine")
+            #expect(throws: OMEMOModuleError.changedIdentityKey) {
+                _ = try module.decryptIncomingMessage(genuine, from: .full(peerJID))
+            }
+        }
+
+        @Test(arguments: [true, false])
+        func `A key exchange from a device marked untrusted, or with another key than the one held, builds nothing`(isUntrusted: Bool) async throws {
+            let sender = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+            let trustGuard = OMEMOTrustGuard()
+            let stored = isUntrusted ? "" : unrelatedFingerprint()
+            trustGuard.mergeRow(peer: peerJID.bareJID, deviceID: 100, fingerprint: stored, decision: isUntrusted ? .untrusted : .undecided)
+            let module = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer(), trustGuard: trustGuard)
+            let encrypted = try await kexEncrypted(from: sender, plaintext: "secret")
+
+            #expect(throws: isUntrusted ? OMEMOModuleError.untrustedDevice : .changedIdentityKey) {
+                _ = try module.decryptIncomingMessage(encrypted, from: .full(peerJID))
+            }
+
+            #expect(module.allSessionEntries().isEmpty)
+            #expect(module.consumedPreKeyIDs().isEmpty)
+            #expect(trustGuard.consumedPreKeyIDs(ownDeviceID: 200).isEmpty)
+            #expect(trustGuard.heldFingerprint(peer: peerJID.bareJID, deviceID: 100) == stored)
+        }
+
+        @Test func `A first key exchange holds its key, so a second with another key for the device is refused`() async throws {
+            let sender = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+            let impostor = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+            let trustGuard = OMEMOTrustGuard()
+            let module = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer(), trustGuard: trustGuard)
+            _ = try await module.decryptIncomingMessage(kexEncrypted(from: sender, plaintext: "first"), from: .full(peerJID))
+
+            #expect(trustGuard.heldFingerprint(peer: peerJID.bareJID, deviceID: 100) == omemoFingerprint(of: sender.identityKeyPair.publicKeyBytes))
+            #expect(trustGuard.consumedPreKeyIDs(ownDeviceID: 200) == [7])
+            let forged = try await kexEncrypted(from: impostor, plaintext: "forged")
+            #expect(throws: OMEMOModuleError.changedIdentityKey) {
+                _ = try module.decryptIncomingMessage(forged, from: .full(peerJID))
+            }
+        }
+
+        @Test func `A module the account's guard was never wired into still holds a device's first key`() async throws {
+            let sender = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+            let impostor = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+            let module = makeInstalledOMEMOModule(identity: recipient.data, context: StubPEPPeer().context)
+            _ = try await module.decryptIncomingMessage(kexEncrypted(from: sender, plaintext: "first"), from: .full(peerJID))
+
+            let forged = try await kexEncrypted(from: impostor, plaintext: "forged")
+            #expect(throws: OMEMOModuleError.changedIdentityKey) {
+                _ = try module.decryptIncomingMessage(forged, from: .full(peerJID))
+            }
+        }
+
+        @Test func `A repeated key exchange is not read through a session whose key contradicts the one held`() async throws {
+            let messages = try await makeRepeatingKEXMessages(to: recipient, plaintexts: ["one", "two"])
+            let earlier = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
+            _ = try earlier.decryptIncomingMessage(messages[0], from: .full(peerJID))
+            let restored = earlier.allSessionEntries()
+            let trustGuard = OMEMOTrustGuard()
+            try trustGuard.mergeRow(
+                peer: peerJID.bareJID, deviceID: #require(restored.first).deviceID, fingerprint: unrelatedFingerprint(), decision: .undecided
+            )
+            let module = makeInstalledModule(identity: recipient.data.withPreKeys([]), peer: StubPEPPeer(), trustGuard: trustGuard)
+            module.restoreSessions(restored)
+
+            #expect(throws: OMEMOModuleError.changedIdentityKey) {
+                _ = try module.decryptIncomingMessage(messages[1], from: .full(peerJID))
+            }
+        }
+
+        /// The next connection loads the pre-key as unused when saving it as used failed or never ran.
+        @Test func `A key exchange taken up by an earlier module is refused when replayed to a later one`() async throws {
+            let trustGuard = OMEMOTrustGuard()
+            let message = try await makeKEXMessage(to: recipient, plaintext: "secret")
+            let encrypted = try #require(message.child(named: "encrypted", namespace: XMPPNamespaces.omemo))
+            let earlier = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer(), trustGuard: trustGuard)
+            _ = try earlier.decryptIncomingMessage(encrypted, from: .full(peerJID))
+            let module = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer(), trustGuard: trustGuard)
+
+            #expect(throws: OMEMOModuleError.unknownPreKey) {
+                _ = try module.decryptIncomingMessage(encrypted, from: .full(peerJID))
+            }
+            #expect(module.allSessionEntries().isEmpty)
         }
 
         @Test func `A pre-key retired as used elsewhere cannot be taken up`() async throws {
@@ -271,6 +409,72 @@ extension OMEMOModuleTests {
             try module.handleMessage(XMPPMessage(element: message))
 
             #expect(peer.undecryptableMessageIDs == (kind == "keyOnly" ? [] : ["m1"]))
+        }
+    }
+
+    /// A send checks each device's session against the trust guard before encrypting for it.
+    struct SendTrustTests {
+        private let sender: TestOMEMOIdentity
+        private let recipient: TestOMEMOIdentity
+
+        init() throws {
+            self.sender = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+            self.recipient = try makeTestOMEMOIdentity(deviceID: 200, preKeyIDs: [7])
+        }
+
+        private func send(_ plaintext: String, from module: OMEMOModule) async throws {
+            _ = try await module.encryptMessage(plaintext: plaintext, to: recipientJID, recipientDeviceIDs: [200], ownDeviceIDs: [])
+        }
+
+        @Test func `A device marked untrusted after its session started gets nothing encrypted`() async throws {
+            let recipient = recipient
+            let trustGuard = OMEMOTrustGuard()
+            let module = makeInstalledModule(identity: sender.data, peer: StubPEPPeer { _ in bundleItems(for: recipient) }, trustGuard: trustGuard)
+            try await send("one", from: module)
+
+            _ = trustGuard.applyDistrust(peer: recipientJID, deviceID: 200)
+
+            await #expect(throws: OMEMOModuleError.untrustedDevice) { try await send("two", from: module) }
+        }
+
+        /// The session exists, so the check is the send's own, not the one a new session gets.
+        @Test(arguments: [true, false])
+        func `A restored session whose key is not the one held, or cannot be read, gets nothing encrypted`(isReadable: Bool) async throws {
+            let recipient = recipient
+            let earlier = makeInstalledModule(identity: sender.data, peer: StubPEPPeer { _ in bundleItems(for: recipient) })
+            try await send("one", from: earlier)
+            let trustGuard = OMEMOTrustGuard()
+            if isReadable {
+                trustGuard.mergeRow(peer: recipientJID, deviceID: 200, fingerprint: unrelatedFingerprint(), decision: .undecided)
+            }
+            let peer = StubPEPPeer()
+            let module = makeInstalledModule(identity: sender.data, peer: peer, trustGuard: trustGuard)
+            module.restoreSessions(earlier.allSessionEntries().map { entry in
+                OMEMOModule.StoredSessionEntry(
+                    jid: entry.jid, deviceID: entry.deviceID, sessionData: entry.sessionData,
+                    associatedData: isReadable ? entry.associatedData : Array(entry.associatedData.dropLast())
+                )
+            })
+
+            await #expect(throws: OMEMOModuleError.changedIdentityKey) { try await send("two", from: module) }
+            #expect(peer.iqs.isEmpty)
+        }
+
+        /// The bundle's key is checked before its session is installed, so a refused one is never stored or reported.
+        @Test(arguments: [true, false])
+        func `A send to a device without a session installs nothing when the bundle's key is refused`(isUntrusted: Bool) async throws {
+            let recipient = recipient
+            let trustGuard = OMEMOTrustGuard()
+            trustGuard.mergeRow(
+                peer: recipientJID, deviceID: 200, fingerprint: isUntrusted ? "" : unrelatedFingerprint(), decision: isUntrusted ? .untrusted : .undecided
+            )
+            let peer = StubPEPPeer { _ in bundleItems(for: recipient) }
+            let module = makeInstalledModule(identity: sender.data, peer: peer, trustGuard: trustGuard)
+
+            await #expect(throws: isUntrusted ? OMEMOModuleError.untrustedDevice : .changedIdentityKey) { try await send("hi", from: module) }
+
+            #expect(module.allSessionEntries().isEmpty)
+            #expect(peer.sessionEstablishedPreKeyIDs.isEmpty)
         }
     }
 
@@ -501,9 +705,14 @@ private final class StubPEPPeer: Sendable {
     }
 }
 
-/// A module with `identity` installed, as an established session installs it, talking to `peer`.
-private func makeInstalledModule(identity: OMEMOModule.OMEMOIdentityData, peer: StubPEPPeer) -> OMEMOModule {
-    makeInstalledOMEMOModule(identity: identity, context: peer.context)
+/// A module with `identity` installed, as an established session installs it, talking to `peer` and checking sessions
+/// against `trustGuard`.
+private func makeInstalledModule(
+    identity: OMEMOModule.OMEMOIdentityData, peer: StubPEPPeer, trustGuard: OMEMOTrustGuard = OMEMOTrustGuard()
+) -> OMEMOModule {
+    let module = makeInstalledOMEMOModule(identity: identity, context: peer.context)
+    module.configureTrustGuard(trustGuard)
+    return module
 }
 
 /// The `<pubsub>` answer to a bundle fetch, carrying `identity`'s bundle.
@@ -573,10 +782,6 @@ private func marking(_ encrypted: XMLElement, kex value: String) throws -> XMLEl
 /// `encrypted` as if sent by the device `deviceID`.
 private func replacingSenderDevice(with deviceID: UInt32, in encrypted: XMLElement) throws -> XMLElement {
     try mappingKeys(in: encrypted, senderDeviceID: deviceID) { $0 }
-}
-
-private func senderDeviceID(of encrypted: XMLElement) throws -> UInt32 {
-    try #require(encrypted.child(named: "header")?.attribute("sid").flatMap(UInt32.init))
 }
 
 /// `encrypted` with each `<key>` replaced by `transform`'s result, and the sender device replaced when one is given.

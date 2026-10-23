@@ -198,81 +198,108 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
 
     // MARK: - Trust
 
+    // A device can have duplicate rows, which another process created at the same time, so each write changes every one.
+
     public func saveTrust(_ trust: OMEMOTrust) throws {
         try write {
-            let accountJID = trust.accountJID
-            let peerJID = trust.peerJID
-            let deviceID = Int64(trust.deviceID)
-            var descriptor = FetchDescriptor<OMEMOTrustRecord>(
-                predicate: #Predicate {
-                    $0.accountJID == accountJID && $0.peerJID == peerJID && $0.deviceID == deviceID
-                }
-            )
-            descriptor.fetchLimit = 1
-
-            if let existing = try modelContext.fetch(descriptor).first {
-                existing.fingerprint = trust.fingerprint
-                existing.trustLevel = trust.trustLevel.rawValue
-            } else {
-                let record = OMEMOTrustRecord(
-                    id: UUID(),
-                    accountJID: trust.accountJID,
-                    peerJID: trust.peerJID,
-                    deviceID: deviceID,
-                    fingerprint: trust.fingerprint,
-                    trustLevel: trust.trustLevel.rawValue
-                )
-                modelContext.insert(record)
+            let existing = try trustRecords(accountJID: trust.accountJID, peerJID: trust.peerJID, deviceID: trust.deviceID)
+            guard !existing.isEmpty else { return insertTrustRecord(trust) }
+            for record in existing {
+                record.fingerprint = trust.fingerprint
+                record.trustLevel = trust.trustLevel.rawValue
             }
         }
     }
 
-    public func loadTrust(accountJID: String, peerJID: String, deviceID: UInt32) throws -> OMEMOTrust? {
-        let deviceIDInt = Int64(deviceID)
-        var descriptor = FetchDescriptor<OMEMOTrustRecord>(
-            predicate: #Predicate {
-                $0.accountJID == accountJID && $0.peerJID == peerJID && $0.deviceID == deviceIDInt
+    public func insertTrustIfAbsent(_ trust: OMEMOTrust) throws {
+        try write {
+            guard try trustRecords(accountJID: trust.accountJID, peerJID: trust.peerJID, deviceID: trust.deviceID).isEmpty else { return }
+            insertTrustRecord(trust)
+        }
+    }
+
+    public func markTrust(_ level: OMEMOTrustLevel, accountJID: String, peerJID: String, deviceID: UInt32, fallbackFingerprint: String) throws {
+        try write {
+            let existing = try trustRecords(accountJID: accountJID, peerJID: peerJID, deviceID: deviceID)
+            guard !existing.isEmpty else {
+                return insertTrustRecord(OMEMOTrust(
+                    accountJID: accountJID, peerJID: peerJID, deviceID: deviceID, fingerprint: fallbackFingerprint, trustLevel: level
+                ))
             }
-        )
-        descriptor.fetchLimit = 1
-        guard let record = try modelContext.fetch(descriptor).first else { return nil }
-        return OMEMOTrust(
-            accountJID: record.accountJID,
-            peerJID: record.peerJID,
-            deviceID: UInt32(record.deviceID),
-            fingerprint: record.fingerprint,
-            trustLevel: OMEMOTrustLevel(rawValue: record.trustLevel) ?? .undecided
-        )
+            let written = existing.map { $0.fingerprint.isEmpty ? fallbackFingerprint : $0.fingerprint }
+            guard level == .untrusted || !OMEMOTrust.fingerprintsConflict(written) else {
+                throw OMEMOStoreError.conflictingFingerprints
+            }
+            for record in existing {
+                record.trustLevel = level.rawValue
+                if record.fingerprint.isEmpty {
+                    record.fingerprint = fallbackFingerprint
+                }
+            }
+        }
+    }
+
+    public func fillTrustFingerprint(accountJID: String, peerJID: String, deviceID: UInt32, fingerprint: String) throws -> String? {
+        var differing: String?
+        try write {
+            let existing = try trustRecords(accountJID: accountJID, peerJID: peerJID, deviceID: deviceID)
+            guard !existing.isEmpty else {
+                return insertTrustRecord(OMEMOTrust(
+                    accountJID: accountJID, peerJID: peerJID, deviceID: deviceID, fingerprint: fingerprint, trustLevel: .undecided
+                ))
+            }
+            for record in existing {
+                if record.fingerprint.isEmpty {
+                    record.fingerprint = fingerprint
+                } else if record.fingerprint != fingerprint {
+                    differing = record.fingerprint
+                }
+            }
+        }
+        return differing
     }
 
     public func loadAllDevices(for peerJID: String, accountJID: String) throws -> [OMEMOTrust] {
         let descriptor = FetchDescriptor<OMEMOTrustRecord>(
             predicate: #Predicate { $0.accountJID == accountJID && $0.peerJID == peerJID }
         )
-        return try modelContext.fetch(descriptor).map {
-            OMEMOTrust(
-                accountJID: $0.accountJID,
-                peerJID: $0.peerJID,
-                deviceID: UInt32($0.deviceID),
-                fingerprint: $0.fingerprint,
-                trustLevel: OMEMOTrustLevel(rawValue: $0.trustLevel) ?? .undecided
-            )
-        }
+        return try modelContext.fetch(descriptor).map(OMEMOTrust.init).collapsingDuplicateDevices()
+    }
+
+    public func loadAllTrust(for accountJID: String) throws -> [OMEMOTrust] {
+        let descriptor = FetchDescriptor<OMEMOTrustRecord>(
+            predicate: #Predicate { $0.accountJID == accountJID }
+        )
+        return try modelContext.fetch(descriptor).map(OMEMOTrust.init).collapsingDuplicateDevices()
     }
 
     public func deleteTrust(accountJID: String, peerJID: String, deviceID: UInt32) throws {
         try write {
-            let deviceIDInt = Int64(deviceID)
-            var descriptor = FetchDescriptor<OMEMOTrustRecord>(
-                predicate: #Predicate {
-                    $0.accountJID == accountJID && $0.peerJID == peerJID && $0.deviceID == deviceIDInt
-                }
-            )
-            descriptor.fetchLimit = 1
-            if let record = try modelContext.fetch(descriptor).first {
+            for record in try trustRecords(accountJID: accountJID, peerJID: peerJID, deviceID: deviceID) {
                 modelContext.delete(record)
             }
         }
+    }
+
+    private func trustRecords(accountJID: String, peerJID: String, deviceID: UInt32) throws -> [OMEMOTrustRecord] {
+        let deviceIDInt = Int64(deviceID)
+        let descriptor = FetchDescriptor<OMEMOTrustRecord>(
+            predicate: #Predicate {
+                $0.accountJID == accountJID && $0.peerJID == peerJID && $0.deviceID == deviceIDInt
+            }
+        )
+        return try modelContext.fetch(descriptor)
+    }
+
+    private func insertTrustRecord(_ trust: OMEMOTrust) {
+        modelContext.insert(OMEMOTrustRecord(
+            id: UUID(),
+            accountJID: trust.accountJID,
+            peerJID: trust.peerJID,
+            deviceID: Int64(trust.deviceID),
+            fingerprint: trust.fingerprint,
+            trustLevel: trust.trustLevel.rawValue
+        ))
     }
 
     // MARK: - Seen Devices
@@ -365,5 +392,17 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
                 modelContext.delete(record)
             }
         }
+    }
+}
+
+private extension OMEMOTrust {
+    init(_ record: OMEMOTrustRecord) {
+        self.init(
+            accountJID: record.accountJID,
+            peerJID: record.peerJID,
+            deviceID: UInt32(record.deviceID),
+            fingerprint: record.fingerprint,
+            trustLevel: OMEMOTrustLevel(rawValue: record.trustLevel) ?? .undecided
+        )
     }
 }

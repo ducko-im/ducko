@@ -53,6 +53,24 @@ func makeInstalledOMEMOModule(
     return module
 }
 
+extension OMEMOTrustGuard {
+    /// Takes in one stored row for `peer`'s device, read now unless `stamp` says when, as the service merges the rows
+    /// it loads.
+    func mergeRow(
+        peer: BareJID, deviceID: UInt32, fingerprint: String, decision: StoredTrust.Decision, loadedAfter stamp: UInt64? = nil
+    ) {
+        merge(
+            [StoredTrust(peer: peer, deviceID: deviceID, fingerprint: fingerprint, decision: decision)],
+            loadedAfter: stamp ?? currentStamp()
+        )
+    }
+}
+
+/// The fingerprint of a newly generated identity key, which no test identity has.
+func unrelatedFingerprint() -> String {
+    omemoFingerprint(of: OMEMOIdentityKeyPair().publicKeyBytes)
+}
+
 extension OMEMO2Fixtures.Device {
     /// The device's keys, as Ducko stores them.
     var identityData: OMEMOModule.OMEMOIdentityData {

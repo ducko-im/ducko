@@ -48,6 +48,7 @@ Configure `FetchDescriptor<T>` with:
 - `unsupportedPredicate` or `unsupportedSortDescriptor`: simplify predicate/sort to supported expressions.
 - Inconsistent UI between views: shared predicate was not reused.
 - Slow list rendering: missing indexes for frequently used sort/filter attributes.
+- A test of logic that must not depend on row order (merging or deduplicating fetched rows) passes on some runs only: a `FetchDescriptor` without `sortBy` returns rows in an unspecified order, so an order dependence in the logic surfaces only on some fetches. Test the logic as a pure function over every ordering of its input, and keep only the wiring in the store test.
 
 ## Primary Documentation
 

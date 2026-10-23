@@ -1566,12 +1566,16 @@ func makeBundleResultIQ(
     )
 }
 
-/// A KEX `<message>` to `recipient`'s device from a separately connected initiator with a generated identity. The
-/// initiator fetches the recipient's real bundle, so a module configured with `recipient` can decrypt it.
-func makeKEXMessage(to recipient: TestOMEMOIdentity, plaintext: String) async throws -> XMLElement {
+/// A KEX `<message>` to `recipient`'s device from a separately connected initiator with `sender`'s identity, else a
+/// generated one. The initiator fetches the recipient's real bundle, so a module configured with `recipient` can
+/// decrypt it.
+func makeKEXMessage(to recipient: TestOMEMOIdentity, plaintext: String, from sender: TestOMEMOIdentity? = nil) async throws -> XMLElement {
     let mock = MockTransport()
     let pepModule = PEPModule()
     let omemoModule = OMEMOModule(pepModule: pepModule)
+    if let sender {
+        omemoModule.configureIdentity(sender.data)
+    }
     let (client, _) = try await makeConnectedClient(mock: mock, omemoModule: omemoModule, pepModule: pepModule)
 
     // The recipient's own JID on the wire is `user@example.com` (the connect helpers' credentials).

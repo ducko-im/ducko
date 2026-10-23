@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Add a `nickname` field to the CLI's JSON typing and room subject records when a room occupant is typing or set the subject
 - Add `kind` and `condition` fields to the CLI's JSON `authentication_failed` record, telling a rejected password apart from a temporary server failure, and a `setup_failed` disconnect reason
 
+### Changed
+
+- Offer Verify in Device Fingerprints only once a device's fingerprint is known, since there is nothing to compare before then
+
 ### Fixed
 
 - Keep reconnecting after a lost connection until the server is reachable again, instead of staying offline after one failed attempt, and stop reconnecting when the server ends the session for a reason that won't clear by itself, such as another session taking it over
@@ -25,6 +29,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Keep other apps' data in a bookmark as they wrote it when Ducko saves the bookmark again
 - Name the occupant in the REPL's room typing and topic lines, and print no topic line when joining a room that has none
 - Report a room topic set from the REPL only once the room accepts it, instead of confirming a change the room then refuses
+- Find a contact's OMEMO devices with the CLI's `omemo devices`, `omemo trust` and `omemo untrust` whatever case the address is typed in
+
+### Security
+
+- Refuse an encrypted message that starts a new session from a device marked untrusted, or with an identity key other than the one already known for that device, and say why in place of the message, instead of silently replacing the session
+- Refuse a message that arrives through a session whose identity key does not match the device's known fingerprint, and say why in place of the message
+- Keep refusing a one-time pre-key once a message has used it, across reconnects and even when recording its use failed, so a recorded message cannot be replayed to start a new session while Ducko runs
+- Refuse to trust a device whose stored fingerprints disagree, saying "This device has more than one fingerprint, so it cannot be trusted"
 
 ## [0.10.0] - 2026-10-21
 

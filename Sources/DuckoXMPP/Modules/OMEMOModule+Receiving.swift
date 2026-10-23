@@ -61,19 +61,13 @@ extension OMEMOModule {
         let result: DecryptionResult
         do {
             result = try decryptIncomingMessage(encrypted, from: .bare(sender))
-        } catch OMEMOModuleError.notForThisDevice {
-            return hasPayload ? .undecryptable(.notForThisDevice) : nil
         } catch OMEMOModuleError.replayedKeyExchange {
             // XEP-0384: a copy of a message already read is ignored, so it shows no undecryptable row either.
             log.warning("OMEMO key exchange ignored: it repeats one already taken up")
             return nil
         } catch {
-            if case OMEMOModuleError.unknownPreKey = error {
-                log.warning("OMEMO key exchange rejected: it names a pre-key this device does not have")
-            } else {
-                log.warning("OMEMO decryption failed: \(error)")
-            }
-            return hasPayload ? .undecryptable(.decryptionFailed) : nil
+            let reason = undecryptableReason(for: error, from: sender)
+            return hasPayload ? .undecryptable(reason) : nil
         }
         if result.needsEmptyReply {
             sendEmptyMessage(to: SessionKey(jid: sender, deviceID: result.senderDeviceID))
@@ -93,6 +87,29 @@ extension OMEMOModule {
             return .undecryptable(.mismatchedEnvelope)
         }
         return .decrypted(OMEMODecryptedMessage(message: rebuiltMessage(message, content: envelope.content), sentTime: envelope.time))
+    }
+
+    /// Why a message from `sender` that failed to decrypt shows a notice. Logs every failure but one not encrypted for
+    /// this device.
+    private func undecryptableReason(for error: any Error, from sender: BareJID) -> OMEMOUndecryptableReason {
+        switch error {
+        case OMEMOModuleError.notForThisDevice:
+            return .notForThisDevice
+        case OMEMOModuleError.untrustedDevice:
+            log.warning("OMEMO key exchange refused: its device is marked as untrusted")
+            log.debug("The refused key exchange came from \(sender)")
+            return .untrustedDevice
+        case OMEMOModuleError.changedIdentityKey:
+            log.warning("OMEMO message refused: its device's identity key is not the one held for it")
+            log.debug("The refused message came from \(sender)")
+            return .changedIdentityKey
+        case OMEMOModuleError.unknownPreKey:
+            log.warning("OMEMO key exchange rejected: it names a pre-key this device does not have")
+            return .decryptionFailed
+        default:
+            log.warning("OMEMO decryption failed: \(error)")
+            return .decryptionFailed
+        }
     }
 
     /// Whose session decrypts `message`: for a room message or a room's private message the occupant's real address,

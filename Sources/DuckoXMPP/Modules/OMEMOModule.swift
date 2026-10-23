@@ -29,7 +29,8 @@ public final class OMEMOModule: XMPPModule, Sendable {
         var publishedPreKeyIDs: Set<UInt32>?
         /// The latest bundle publish. Each publish waits for the one before it.
         var bundlePublish: Task<Void, any Error>?
-        var identityKeyValidator: (@Sendable (BareJID, UInt32, [UInt8]) async throws -> Void)?
+        /// Replaced by the account's guard, which outlives this module, before the module connects.
+        var trustGuard = OMEMOTrustGuard()
         /// See `OMEMOService.seenDeviceCacheByAccount` for the cache-survival rationale and the opaque-`accountID` contract.
         var seenDeviceClassificationProvider: (any SeenDeviceClassificationProviding)?
         var seenDeviceClassificationAccountID: String?
@@ -127,7 +128,6 @@ public final class OMEMOModule: XMPPModule, Sendable {
             $0.acceptedKeyExchanges.removeAll()
             $0.heartbeatChains.removeAll()
             $0.publishedPreKeyIDs = nil
-            $0.identityKeyValidator = nil
             $0.seenDeviceClassificationProvider = nil
             $0.seenDeviceClassificationAccountID = nil
             $0.emergencyRetractGuard = nil
@@ -171,14 +171,6 @@ public final class OMEMOModule: XMPPModule, Sendable {
             $0.identityUnavailable = true
             $0.pendingIdentity = nil
         }
-    }
-
-    /// Verifies the peer's identity key during session establishment (before X3DH key agreement).
-    /// Receives `(peerJID, deviceID, identityKey)`; throw to reject.
-    public func setIdentityKeyValidator(
-        _ validator: (@Sendable (BareJID, UInt32, [UInt8]) async throws -> Void)?
-    ) {
-        state.withLock { $0.identityKeyValidator = validator }
     }
 
     /// Wires the seen-device classification provider for `pruneStaleBundles`. See `SeenDeviceClassificationProviding` for the cache contract.
@@ -814,8 +806,8 @@ public final class OMEMOModule: XMPPModule, Sendable {
         let keyMaterial = try session.decrypt(kex.message)
         let context = try installKeyExchangeSession(
             session,
-            exchange: Self.keyExchangeFingerprint(sharedSecret: x3dhResult.sharedSecret, associatedData: x3dhResult.associatedData),
-            preKeyID: preKey.keyID, sessionKey: sessionKey
+            exchangeFingerprint: Self.keyExchangeFingerprint(sharedSecret: x3dhResult.sharedSecret, associatedData: x3dhResult.associatedData),
+            keyExchange: kex.header, sessionKey: sessionKey, ownDeviceID: identity.deviceID.value
         )
         context?.emitEvent(.omemoSessionEstablished(
             jid: sessionKey.jid, deviceID: sessionKey.deviceID,
@@ -825,17 +817,25 @@ public final class OMEMOModule: XMPPModule, Sendable {
         return KeyTransport(keyMaterial: keyMaterial, needsEmptyReply: true)
     }
 
-    /// Installs a session a key exchange built, replacing any earlier one with that device (XEP-0384 §5.6). A key
-    /// exchange taken up once comes again only as a replay, whichever device or contact it claims.
+    /// Installs a session `keyExchange` built, replacing any earlier one with that device (XEP-0384 §5.6), once the trust
+    /// guard admits it. A key exchange taken up once comes again only as a replay, whichever device or contact it
+    /// claims.
     private func installKeyExchangeSession(
-        _ session: OMEMOSession, exchange: [UInt8], preKeyID: UInt32, sessionKey: SessionKey
+        _ session: OMEMOSession, exchangeFingerprint: [UInt8], keyExchange: OMEMOKeyExchangeHeader, sessionKey: SessionKey, ownDeviceID: UInt32
     ) throws -> ModuleContext? {
         try state.withLock { state in
-            guard state.acceptedKeyExchanges.insert(exchange).inserted else {
+            guard !state.acceptedKeyExchanges.contains(exchangeFingerprint) else {
                 throw OMEMOModuleError.replayedKeyExchange
             }
+            let preKey = OMEMOTrustGuard.PreKeyUse(
+                id: keyExchange.preKeyID, ownDeviceID: ownDeviceID, isUsedByThisModule: state.usedPreKeyIDs.contains(keyExchange.preKeyID)
+            )
+            try state.trustGuard.admitKeyExchange(
+                from: sessionKey, offeredKey: keyExchange.identityKey, replacing: Self.existingSession(state.sessions[sessionKey]), preKey: preKey
+            ).check()
+            state.acceptedKeyExchanges.insert(exchangeFingerprint)
             state.sessions[sessionKey] = session
-            state.usedPreKeyIDs.insert(preKeyID)
+            state.usedPreKeyIDs.insert(keyExchange.preKeyID)
             if let knownDevices = state.deviceLists[sessionKey.jid],
                !knownDevices.contains(sessionKey.deviceID) {
                 log.warning("KEX from unannounced device \(sessionKey.deviceID)")
@@ -857,13 +857,17 @@ public final class OMEMOModule: XMPPModule, Sendable {
     }
 
     /// The session advances only when the message decrypts, under one lock, so a message or key exchange handled
-    /// meanwhile is not undone. A message numbered `heartbeatThreshold` or higher on the sender's current ratchet key
+    /// meanwhile is not undone. A session whose key contradicts the one held for the device, or cannot be read while one
+    /// is held, decrypts nothing. A message numbered `heartbeatThreshold` or higher on the sender's current ratchet key
     /// asks for a heartbeat, once per key (XEP-0384).
     private func decrypt(_ ratchetMessage: OMEMOAuthenticatedMessage, through sessionKey: SessionKey) throws -> KeyTransport {
         let message = ratchetMessage.message
         return try state.withLock { state in
             guard var session = state.sessions[sessionKey] else {
                 throw OMEMOModuleError.noSession
+            }
+            guard state.trustGuard.admitsDecryption(from: sessionKey, identityKey: session.peerIdentityKey) else {
+                throw OMEMOModuleError.changedIdentityKey
             }
             let keyMaterial = try session.decrypt(ratchetMessage)
             state.sessions[sessionKey] = session
@@ -886,6 +890,7 @@ public final class OMEMOModule: XMPPModule, Sendable {
         // Encrypts with the stored session under one lock, so what a message or key exchange changed in it meanwhile stays.
         let built = try state.withLock { state in
             var session = state.sessions[sessionKey] ?? established
+            try state.trustGuard.admitSession(with: sessionKey, identityKey: session.peerIdentityKey).check()
             let built = try session.encryptKey(keyMaterial)
             state.sessions[sessionKey] = session
             return built
@@ -914,12 +919,6 @@ public final class OMEMOModule: XMPPModule, Sendable {
         let bundle = try await fetchBundle(
             from: sessionKey.jid, deviceID: sessionKey.deviceID
         )
-        let validator = state.withLock { $0.identityKeyValidator }
-        if let validator {
-            try await validator(
-                sessionKey.jid, sessionKey.deviceID, bundle.identityKey
-            )
-        }
         // XEP-0384 rejects a key exchange without a pre-key, so a bundle that lists none is as good as missing.
         guard let selectedPreKey = bundle.preKeys.randomElement() else {
             throw OMEMOModuleError.bundleNotFound
@@ -949,9 +948,10 @@ public final class OMEMOModule: XMPPModule, Sendable {
             start: .sent(keyExchange, isConfirmed: false)
         )
         // A key exchange from the device can have started a session while the bundle was fetched. That session wins,
-        // since the device already uses it.
-        let (kept, context) = state.withLock { state -> (OMEMOSession?, ModuleContext?) in
+        // since the device already uses it, and the discarded bundle's key is never held.
+        let (kept, context) = try state.withLock { state -> (OMEMOSession?, ModuleContext?) in
             if let kept = state.sessions[sessionKey] { return (kept, nil) }
+            try state.trustGuard.admitSession(with: sessionKey, identityKey: bundle.identityKey).check()
             state.sessions[sessionKey] = session
             return (nil, state.context)
         }
@@ -1161,6 +1161,10 @@ public enum OMEMOModuleError: Error, Equatable {
     case unknownPreKey
     /// A key exchange this connection already took up arrived again.
     case replayedKeyExchange
+    /// The device is marked untrusted, so no key exchange from it is taken up and nothing is encrypted for it.
+    case untrustedDevice
+    /// The device's identity key is not the one held for it, or cannot be read.
+    case changedIdentityKey
     case invalidKeyData
     case invalidHeader
     case invalidPayload

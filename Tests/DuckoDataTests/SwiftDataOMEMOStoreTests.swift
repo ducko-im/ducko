@@ -19,8 +19,8 @@ struct SwiftDataOMEMOStoreTests {
     /// Every writer that changes a stored row, each run against a store that cannot save: a second container opens the
     /// store read-only, so its saves fail and leave their changes pending.
     enum Writer: String, CaseIterable, Sendable {
-        case identity, signedPreKey, preKeys, consumePreKey, session, deleteSession, trust, deleteTrust, seenDevices, replaceSeenDevices,
-             purgeSeenDevices
+        case identity, signedPreKey, preKeys, consumePreKey, session, deleteSession, trust, insertTrust, markUntrusted, fillFingerprint, deleteTrust,
+             seenDevices, replaceSeenDevices, purgeSeenDevices
     }
 
     @Test(arguments: Writer.allCases)
@@ -56,6 +56,14 @@ struct SwiftDataOMEMOStoreTests {
                 case .session: try await readOnly.saveSession(Self.session(account, data: 2))
                 case .deleteSession: try await readOnly.deleteSession(accountJID: account, peerJID: "bob@example.com", peerDeviceID: 7)
                 case .trust: try await readOnly.saveTrust(Self.trust(account, level: .untrusted))
+                case .insertTrust:
+                    try await readOnly.insertTrustIfAbsent(OMEMOTrust(
+                        accountJID: account, peerJID: "bob@example.com", deviceID: 8, fingerprint: "cd", trustLevel: .undecided
+                    ))
+                case .markUntrusted:
+                    try await readOnly.markTrust(.untrusted, accountJID: account, peerJID: "bob@example.com", deviceID: 7, fallbackFingerprint: "")
+                case .fillFingerprint:
+                    _ = try await readOnly.fillTrustFingerprint(accountJID: account, peerJID: "bob@example.com", deviceID: 8, fingerprint: "cd")
                 case .deleteTrust: try await readOnly.deleteTrust(accountJID: account, peerJID: "bob@example.com", deviceID: 7)
                 case .seenDevices: try await readOnly.upsertSeenDevices([Self.seenDevice(account, streak: 3)], for: account)
                 case .replaceSeenDevices: try await readOnly.replaceSeenDevices([], for: account)
@@ -197,6 +205,164 @@ struct SwiftDataOMEMOStoreTests {
         #expect(consumed.allSatisfy { $0.isUsed && $0.keyData.isEmpty })
         #expect(reloaded.filter { $0.keyID == 2 }.map(\.keyData) == [keyData])
         #expect(reloaded.filter { $0.keyID == 2 }.allSatisfy { !$0.isUsed })
+    }
+
+    @Test func `loadAllTrust returns every peer's rows of the account and none of another account`() async throws {
+        let store = try makeStore()
+        for (account, peer) in [("alice@example.com", "bob@example.com"), ("alice@example.com", "carol@example.com"), ("dave@example.com", "bob@example.com")] {
+            try await store.saveTrust(OMEMOTrust(accountJID: account, peerJID: peer, deviceID: 1, fingerprint: "f1", trustLevel: .trusted))
+        }
+
+        let rows = try await store.loadAllTrust(for: "alice@example.com")
+
+        #expect(Set(rows.map(\.peerJID)) == ["bob@example.com", "carol@example.com"])
+        #expect(rows.allSatisfy { $0.accountJID == "alice@example.com" })
+    }
+
+    @Test func `insertTrustIfAbsent leaves an existing row as it is and creates a missing one`() async throws {
+        let store = try makeStore()
+        try await store.saveTrust(OMEMOTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: "f1", trustLevel: .verified))
+
+        for deviceID: UInt32 in [1, 2] {
+            try await store.insertTrustIfAbsent(OMEMOTrust(
+                accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: deviceID, fingerprint: "", trustLevel: .undecided
+            ))
+        }
+
+        let rows = try await store.loadAllDevices(for: "bob@example.com", accountJID: "alice@example.com").sorted { $0.deviceID < $1.deviceID }
+        #expect(rows.map(\.fingerprint) == ["f1", ""])
+        #expect(rows.map(\.trustLevel) == [.verified, .undecided])
+    }
+
+    @Test(arguments: [OMEMOTrustLevel.untrusted, .trusted, .verified])
+    func `markTrust sets the level, keeps a stored fingerprint, fills an empty one and creates a missing row with the fallback`(
+        level: OMEMOTrustLevel
+    ) async throws {
+        let store = try makeStore()
+        for (deviceID, fingerprint) in [(UInt32(1), "f1"), (2, "")] {
+            try await store.saveTrust(OMEMOTrust(
+                accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: deviceID, fingerprint: fingerprint, trustLevel: .trusted
+            ))
+        }
+
+        for (deviceID, fallback) in [(UInt32(1), "other"), (2, "f2"), (3, "f3")] {
+            try await store.markTrust(level, accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: deviceID, fallbackFingerprint: fallback)
+        }
+
+        let rows = try await store.loadAllDevices(for: "bob@example.com", accountJID: "alice@example.com").sorted { $0.deviceID < $1.deviceID }
+        #expect(rows.map(\.fingerprint) == ["f1", "f2", "f3"])
+        #expect(rows.map(\.trustLevel) == [level, level, level])
+    }
+
+    /// Duplicates come from two processes each creating the device's row, which one store's own writes cannot do.
+    private static func insertDuplicates(_ rows: [(String, OMEMOTrustLevel)], into store: SwiftDataOMEMOStore) throws {
+        let context = ModelContext(store.modelContainer)
+        for (fingerprint, level) in rows {
+            context.insert(OMEMOTrustRecord(
+                id: UUID(), accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: fingerprint,
+                trustLevel: level.rawValue
+            ))
+        }
+        try context.save()
+    }
+
+    @Test(arguments: [
+        ([("", OMEMOTrustLevel.verified), ("f1", .trusted)], "f1", OMEMOTrustLevel.verified),
+        ([("f1", .trusted), ("", .untrusted)], "f1", .untrusted),
+        ([("f1", .verified), ("f2", .trusted)], "", .untrusted),
+        ([("", .undecided), ("", .trusted)], "", .trusted),
+        ([("f1", .trusted), ("f2", .trusted), ("f1", .trusted)], "", .untrusted)
+    ])
+    func `Duplicate rows of a device read as one, untrusted when any is or when their fingerprints differ`(
+        rows: [(String, OMEMOTrustLevel)], fingerprint: String, level: OMEMOTrustLevel
+    ) async throws {
+        let store = try makeStore()
+        try Self.insertDuplicates(rows, into: store)
+
+        let devices = try await store.loadAllDevices(for: "bob@example.com", accountJID: "alice@example.com")
+        let all = try await store.loadAllTrust(for: "alice@example.com")
+
+        for read in [devices, all] {
+            #expect(read.map(\.fingerprint) == [fingerprint])
+            #expect(read.map(\.trustLevel) == [level])
+        }
+    }
+
+    @Test func `A grant over duplicate rows that disagree is refused, and a distrust still applies`() async throws {
+        let store = try makeStore()
+        try Self.insertDuplicates([("f1", .undecided), ("f2", .undecided)], into: store)
+
+        await #expect(throws: OMEMOStoreError.self) {
+            try await store.markTrust(.trusted, accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fallbackFingerprint: "")
+        }
+        let afterGrant = try ModelContext(store.modelContainer).fetch(FetchDescriptor<OMEMOTrustRecord>()).map(\.trustLevel)
+        try await store.markTrust(.untrusted, accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fallbackFingerprint: "")
+
+        #expect(afterGrant == ["undecided", "undecided"])
+        #expect(try ModelContext(store.modelContainer).fetch(FetchDescriptor<OMEMOTrustRecord>()).map(\.trustLevel) == ["untrusted", "untrusted"])
+    }
+
+    /// The empty row is filled with the fallback, so a fallback other than the stored fingerprint would leave the rows
+    /// disagreeing.
+    @Test(arguments: [
+        ("", false, ["trusted ", "trusted f1"]),
+        ("f1", false, ["trusted f1", "trusted f1"]),
+        ("f2", true, ["undecided ", "undecided f1"])
+    ])
+    func `A grant over duplicate rows fills the empty one, refused when that would make them disagree`(
+        fallback: String, isRefused: Bool, rows: [String]
+    ) async throws {
+        let store = try makeStore()
+        try Self.insertDuplicates([("f1", .undecided), ("", .undecided)], into: store)
+
+        var refused = false
+        do {
+            try await store.markTrust(.trusted, accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fallbackFingerprint: fallback)
+        } catch OMEMOStoreError.conflictingFingerprints {
+            refused = true
+        }
+
+        #expect(refused == isRefused)
+        #expect(try ModelContext(store.modelContainer).fetch(FetchDescriptor<OMEMOTrustRecord>()).map { "\($0.trustLevel) \($0.fingerprint)" }.sorted() == rows)
+    }
+
+    @Test func `saveTrust changes every duplicate row of the device`() async throws {
+        let store = try makeStore()
+        try Self.insertDuplicates([("f1", .untrusted), ("", .untrusted)], into: store)
+
+        try await store.saveTrust(OMEMOTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: "f1", trustLevel: .trusted))
+
+        let rows = try ModelContext(store.modelContainer).fetch(FetchDescriptor<OMEMOTrustRecord>()).map { "\($0.trustLevel) \($0.fingerprint)" }
+        #expect(rows == ["trusted f1", "trusted f1"])
+    }
+
+    @Test func `A trust write changes every duplicate row of the device`() async throws {
+        let store = try makeStore()
+        try Self.insertDuplicates([("f1", .trusted), ("", .verified)], into: store)
+
+        try await store.markTrust(.untrusted, accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fallbackFingerprint: "f1")
+        let untrusted = try ModelContext(store.modelContainer).fetch(FetchDescriptor<OMEMOTrustRecord>()).map { "\($0.trustLevel) \($0.fingerprint)" }
+        try await store.deleteTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1)
+
+        #expect(untrusted == ["untrusted f1", "untrusted f1"])
+        #expect(try ModelContext(store.modelContainer).fetch(FetchDescriptor<OMEMOTrustRecord>()).isEmpty)
+    }
+
+    @Test func `fillTrustFingerprint fills an empty fingerprint keeping the level, creates a missing row, and reports a differing one`() async throws {
+        let store = try makeStore()
+        try await store.saveTrust(OMEMOTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: "", trustLevel: .untrusted))
+        try await store.saveTrust(OMEMOTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 3, fingerprint: "f3", trustLevel: .trusted))
+
+        let filled = try await store.fillTrustFingerprint(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: "f1")
+        let created = try await store.fillTrustFingerprint(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 2, fingerprint: "f2")
+        let differing = try await store.fillTrustFingerprint(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 3, fingerprint: "new")
+
+        #expect(filled == nil)
+        #expect(created == nil)
+        #expect(differing == "f3")
+        let rows = try await store.loadAllDevices(for: "bob@example.com", accountJID: "alice@example.com").sorted { $0.deviceID < $1.deviceID }
+        #expect(rows.map(\.fingerprint) == ["f1", "f2", "f3"])
+        #expect(rows.map(\.trustLevel) == [.untrusted, .undecided, .trusted])
     }
 
     @Test

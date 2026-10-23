@@ -275,12 +275,11 @@ struct JSONFormatter: CLIFormatter {
     }
 
     private func formatOMEMOSession(jid: BareJID, deviceID: UInt32, identityKey: [UInt8], account: String) -> String {
-        let fingerprint = identityKey.map { String(format: "%02x", $0) }.joined()
-        return encode([
+        encode([
             "type": "omemo_session_established",
             "jid": jid.description,
             "deviceID": "\(deviceID)",
-            "fingerprint": fingerprint,
+            "fingerprint": omemoFingerprint(of: identityKey),
             "account": account
         ])
     }

@@ -25,6 +25,11 @@ public enum OMEMOUndecryptableReason: Sendable, Equatable {
     case notForThisDevice
     /// The envelope names other parties than the stanza does (XEP-0420).
     case mismatchedEnvelope
+    /// A key exchange from a device marked untrusted, which built no session.
+    case untrustedDevice
+    /// The identity key of a key exchange, or of the session a message came through, is not the one held for its device.
+    /// A refused key exchange builds no session.
+    case changedIdentityKey
     /// A room message from an occupant whose address the room does not reveal, so no session with them can be found.
     case senderHidden
 }

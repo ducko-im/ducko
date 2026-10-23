@@ -125,6 +125,79 @@ public enum OMEMOTrustLevel: String, Sendable, Codable {
     }
 }
 
+/// Why a store refused a trust write.
+public enum OMEMOStoreError: Error {
+    /// The device's duplicate rows would name different fingerprints, so a grant would certify a key nobody compared.
+    case conflictingFingerprints
+}
+
+public extension OMEMOTrust {
+    /// Whether one device's rows name different keys. An empty fingerprint names no key.
+    static func fingerprintsConflict(_ fingerprints: some Sequence<String>) -> Bool {
+        Set(fingerprints.filter { !$0.isEmpty }).count > 1
+    }
+}
+
+public extension [OMEMOTrust] {
+    /// One row per device. The app and the CLI each write the store through their own container, so two can each create
+    /// a row for one device. Duplicates combine so that no decision weakens: untrusted when any row is, or when rows
+    /// name different fingerprints, else the strongest grant with the one fingerprint any of them holds.
+    func collapsingDuplicateDevices() -> [OMEMOTrust] {
+        var order: [OMEMOTrust.Device] = []
+        var rowsByDevice: [OMEMOTrust.Device: [OMEMOTrust]] = [:]
+        for row in self {
+            if rowsByDevice[row.device] == nil {
+                order.append(row.device)
+            }
+            rowsByDevice[row.device, default: []].append(row)
+        }
+        return order.compactMap { rowsByDevice[$0].map(OMEMOTrust.init(collapsing:)) }
+    }
+}
+
+private extension OMEMOTrust {
+    struct Device: Hashable {
+        let accountJID: String
+        let peerJID: String
+        let deviceID: UInt32
+
+        /// Spelled out so Periphery sees the fields read; it misses reads by the synthesized conformance.
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(accountJID)
+            hasher.combine(peerJID)
+            hasher.combine(deviceID)
+        }
+    }
+
+    var device: Device {
+        Device(accountJID: accountJID, peerJID: peerJID, deviceID: deviceID)
+    }
+
+    /// `rows` are one device's, at least one.
+    init(collapsing rows: [OMEMOTrust]) {
+        let isConflicting = OMEMOTrust.fingerprintsConflict(rows.map(\.fingerprint))
+        let level: OMEMOTrustLevel = if isConflicting || rows.contains(where: { $0.trustLevel == .untrusted }) {
+            .untrusted
+        } else {
+            rows.map(\.trustLevel).max { $0.grantRank < $1.grantRank } ?? .undecided
+        }
+        self.init(
+            accountJID: rows[0].accountJID, peerJID: rows[0].peerJID, deviceID: rows[0].deviceID,
+            fingerprint: isConflicting ? "" : rows.first { !$0.fingerprint.isEmpty }?.fingerprint ?? "", trustLevel: level
+        )
+    }
+}
+
+private extension OMEMOTrustLevel {
+    var grantRank: Int {
+        switch self {
+        case .untrusted, .undecided: 0
+        case .trusted: 1
+        case .verified: 2
+        }
+    }
+}
+
 // MARK: - Protocol
 
 public protocol OMEMOStore: Sendable {
@@ -154,10 +227,20 @@ public protocol OMEMOStore: Sendable {
     // MARK: - Trust
 
     func saveTrust(_ trust: OMEMOTrust) async throws
-    func loadTrust(accountJID: String, peerJID: String, deviceID: UInt32) async throws -> OMEMOTrust?
+    func insertTrustIfAbsent(_ trust: OMEMOTrust) async throws
+    /// Sets the device's trust level, keeping the fingerprint a row holds. An empty or missing fingerprint becomes
+    /// `fallbackFingerprint`, and a missing row is created. Any level but untrusted throws `conflictingFingerprints`,
+    /// writing nothing, when the device's rows would then hold different fingerprints.
+    func markTrust(_ level: OMEMOTrustLevel, accountJID: String, peerJID: String, deviceID: UInt32, fallbackFingerprint: String) async throws
+    /// Fills the fingerprint of a row that has none, keeping its trust level, or creates an undecided row. Returns the
+    /// stored fingerprint when it differs from `fingerprint`, which stays as it was.
+    func fillTrustFingerprint(accountJID: String, peerJID: String, deviceID: UInt32, fingerprint: String) async throws -> String?
+    /// Collapses duplicate rows of a device (`collapsingDuplicateDevices`).
     func loadAllDevices(for peerJID: String, accountJID: String) async throws -> [OMEMOTrust]
-    /// Deletes a specific trust row. Used by the emergency-retract orphan
-    /// cleanup path; idempotent (no-op when the row is already absent).
+    /// Every trust row of the account, whichever peer it names, with duplicate rows of a device collapsed.
+    func loadAllTrust(for accountJID: String) async throws -> [OMEMOTrust]
+    /// Deletes every trust row of the device. Used by the emergency-retract orphan
+    /// cleanup path; idempotent (no-op when none exists).
     func deleteTrust(accountJID: String, peerJID: String, deviceID: UInt32) async throws
 
     // MARK: - Seen Devices

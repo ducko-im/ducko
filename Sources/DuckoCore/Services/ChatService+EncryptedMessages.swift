@@ -20,6 +20,8 @@ enum EncryptedContent {
             case .decryptionFailed: .undecryptable(.decryptionFailed)
             case .notForThisDevice: .undecryptable(.notForThisDevice)
             case .mismatchedEnvelope: .undecryptable(.mismatchedEnvelope)
+            case .untrustedDevice: .undecryptable(.untrustedDevice)
+            case .changedIdentityKey: .undecryptable(.changedIdentityKey)
             case .senderHidden: .undecryptable(.senderHidden)
             }
         }

@@ -52,6 +52,20 @@ struct OMEMOSession {
         return header
     }
 
+    /// The device's identity key: the one its key exchange carried, or, for a session this device started, the
+    /// responder's half of the associated data. Nil when the associated data does not pair this device's key with
+    /// another.
+    var peerIdentityKey: [UInt8]? {
+        switch start {
+        case let .received(header):
+            return header.identityKey
+        case let .sent(header, _):
+            let keyLength = OMEMOCrypto.keyLength
+            guard associatedData.count == 2 * keyLength, Array(associatedData.prefix(keyLength)) == header.identityKey else { return nil }
+            return Array(associatedData.suffix(keyLength))
+        }
+    }
+
     /// Whether `keyExchange` is the device's key exchange that started this session, so it builds nothing new.
     func isStarted(by keyExchange: OMEMOKeyExchangeHeader) -> Bool {
         start == .received(keyExchange)

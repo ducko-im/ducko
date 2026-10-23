@@ -217,6 +217,97 @@ struct OMEMOReceivingTests {
         #expect(parties.aliceRecorder.decryptedEvents.map(\.message.body) == ["hi"])
     }
 
+    /// When a key exchange overtakes a send's bundle fetch, the send encrypts with the key exchange's session. The key
+    /// the answering bundle carries is never held.
+    @Test func `a key exchange that overtakes a send's bundle fetch has its key held, not the bundle's`() async throws {
+        let reached = AsyncSemaphore()
+        let release = AsyncSemaphore()
+        let otherIdentity = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+        let recipient = try Recorder(account: #require(FullJID.parse("bob@example.com/laptop"))) { _ in
+            await reached.signal()
+            await release.wait()
+            return bundleItems(for: otherIdentity)
+        }
+        let bob = recipient.installedModule(identity: parties.bobIdentity.data)
+        let trustGuard = OMEMOTrustGuard()
+        bob.configureTrustGuard(trustGuard)
+        let aliceJID = parties.aliceJID
+        let sending = Task {
+            try await bob.encryptMessage(content: [bodyElement("hi")], time: testEnvelopeTime, to: aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: [])
+        }
+        await reached.wait()
+        try await bob.handleMessage(parties.aliceSends([bodyElement("one")], id: "m1"))
+        await release.signal()
+
+        _ = try await sending.value
+
+        #expect(trustGuard.heldFingerprint(peer: aliceJID, deviceID: 100) == omemoFingerprint(of: parties.aliceIdentity.identityKeyPair.publicKeyBytes))
+    }
+
+    /// The refused key exchange builds no session, so no empty message confirms one.
+    @Test(arguments: [true, false])
+    func `a key exchange from a device marked untrusted, or with another key than the one held, shows why and is not answered`(
+        isUntrusted: Bool
+    ) async throws {
+        let trustGuard = OMEMOTrustGuard()
+        trustGuard.mergeRow(
+            peer: parties.aliceJID, deviceID: 100, fingerprint: isUntrusted ? "" : unrelatedFingerprint(), decision: isUntrusted ? .untrusted : .undecided
+        )
+        parties.bob.configureTrustGuard(trustGuard)
+
+        try await parties.bob.handleMessage(parties.aliceSends([bodyElement("hi")], id: "m1"))
+
+        #expect(parties.bobRecorder.outcomes.map(\.reason) == [isUntrusted ? .untrustedDevice : .changedIdentityKey])
+        #expect(parties.bobRecorder.sessionAdvances == 0)
+        #expect(parties.bobRecorder.sentMessages.isEmpty)
+    }
+
+    /// A sender repeats its key exchange until it hears back, so each of its messages is refused on its own rather than
+    /// taken for a replay. Once the device is trusted again, the next one decrypts.
+    @Test func `every message from a refused device shows why, and a later trust lets the next one through`() async throws {
+        let trustGuard = OMEMOTrustGuard()
+        trustGuard.mergeRow(peer: parties.aliceJID, deviceID: 100, fingerprint: "", decision: .untrusted)
+        parties.bob.configureTrustGuard(trustGuard)
+        for id in ["m1", "m2"] {
+            try await parties.bob.handleMessage(parties.aliceSends([bodyElement(id)], id: id))
+        }
+
+        trustGuard.mergeRow(peer: parties.aliceJID, deviceID: 100, fingerprint: "", decision: .granted)
+        try await parties.bob.handleMessage(parties.aliceSends([bodyElement("m3")], id: "m3"))
+
+        #expect(parties.bobRecorder.outcomes.map(\.reason) == [.untrustedDevice, .untrustedDevice, nil])
+        #expect(parties.bobRecorder.decryptedEvents.map(\.message.body) == ["m3"])
+    }
+
+    /// XEP-0384 §8 lets the session of a device marked untrusted decrypt. A session whose key contradicts the one held for
+    /// the device does not.
+    @Test(arguments: [true, false])
+    func `a message through a session that contradicts the held key shows why, and one from a device marked untrusted decrypts`(
+        contradicts: Bool
+    ) async throws {
+        try await parties.bob.handleMessage(parties.aliceSends([bodyElement("one")], id: "m1"))
+        let recorder = parties.bobRecorder
+        try await eventually { !recorder.sentMessages.isEmpty }
+        var reply = try #require(recorder.sentMessages.first)
+        reply.attributes["from"] = "bob@example.com/laptop"
+        try parties.alice.handleMessage(XMPPMessage(element: reply))
+        let trustGuard = OMEMOTrustGuard()
+        let aliceFingerprint = omemoFingerprint(of: parties.aliceIdentity.identityKeyPair.publicKeyBytes)
+        trustGuard.mergeRow(
+            peer: parties.aliceJID, deviceID: 100, fingerprint: contradicts ? unrelatedFingerprint() : aliceFingerprint,
+            decision: contradicts ? .undecided : .untrusted
+        )
+        parties.bob.configureTrustGuard(trustGuard)
+        let second = try await parties.aliceSends([bodyElement("two")], id: "m2")
+        let secondEncrypted = try #require(second.element.child(named: "encrypted"))
+        try #require(!isKeyExchange(secondEncrypted))
+
+        try parties.bob.handleMessage(second)
+
+        #expect(recorder.outcomes.last?.reason == (contradicts ? .changedIdentityKey : nil))
+        #expect(recorder.decryptedEvents.map(\.message.body) == (contradicts ? ["one"] : ["one", "two"]))
+    }
+
     @Test func `the sender gets a heartbeat once a message numbered 53 arrives in its run on one ratchet key, and only once`() async throws {
         let recorder = parties.bobRecorder
         for index in 0 ... 53 {

@@ -203,7 +203,7 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `device-row-{deviceID}` | Individual device row | Device Fingerprints |
 | `trust-button-{deviceID}` | Trust device button | Device Fingerprints |
 | `untrust-button-{deviceID}` | Untrust device button | Device Fingerprints |
-| `verify-button-{deviceID}` | Verify device button | Device Fingerprints |
+| `verify-button-{deviceID}` | Verify device button, shown for a trusted device once its fingerprint is known | Device Fingerprints |
 | `encryptByDefaultToggle` | Encrypt by default preference toggle | Preferences (Chat) |
 | `tofuToggle` | Trust on first use preference toggle | Preferences (Chat) |
 | `file-transfer-banner` | Incoming file offer banner, one row per offer | Chat |
@@ -323,7 +323,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-reveal.sh` | Reveal a message's saved files in Finder via context menu | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
 | `ducko-copy-code-block.sh` | Copy a code block through its "Copy Code" accessibility action and print what the clipboard then holds. Fails when the clipboard does not change. Targets `DUCKO_PID` when set, else the running `DuckoUITest` | `[TEXT]` (optional, matches the first code block whose code contains TEXT; default: last code block) |
 | `ducko-encrypt.sh` | Open encryption menu, optionally toggle or open fingerprints | `[on\|off\|fingerprints]` (optional) |
-| `ducko-device-trust.sh` | Trust/untrust/verify an OMEMO device | `DEVICE_ID ACTION` (`ACTION`: trust\|untrust\|verify) |
+| `ducko-device-trust.sh` | Trust/untrust/verify an OMEMO device. On macOS 27 it fails with "button not found", because the device row's identifier (`device-row-{deviceID}`) masks its buttons'. Trust or untrust with the copy's CLI instead: `vm gui 'DUCKO_PROFILE=<profile> /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko omemo trust CONTACT_JID DEVICE_ID'` (or `omemo untrust`), with the profile `uitest` unless the run set one. The CLI has no verify, so press the row's "Verify" button with a scratch AX helper scoped to `device-row-{deviceID}` | `DEVICE_ID ACTION` (`ACTION`: trust\|untrust\|verify) |
 | `ducko-attach.sh` | Attach a file via the attachment button in chat. `ducko-file-panel.swift` fills the Open panel by posting key events to the panel's service process. The script succeeds only once the panel has closed. A panel still open after the wait is cancelled, and the script fails | `FILE_PATH` |
 | `ducko-send-method.sh` | Print or choose how the queued files are sent | `[upload\|direct]` (optional) |
 | `ducko-change-nickname.sh` | Change MUC nickname via participant sidebar context menu. Succeeds once the sidebar lists the new nickname | `NICKNAME` |
@@ -745,7 +745,10 @@ vm() { zsh Skills/lume-vm/scripts/vm.sh "$@"; }
 vm ui ducko-launch.sh
 vm ui ducko-new-chat.sh "CHAT_PARTNER_JID"
 
-# 2. Enable encryption
+# 2. Enable encryption. A new chat starts unencrypted unless `encryptByDefaultToggle` was turned on (it is off by
+#    default), so turn it on before sending anything meant to be encrypted, or the message goes out as plaintext. A
+#    reopened chat, or one a contact's encrypted message switched on, is already encrypted, and `on` then finds no
+#    Enable Encryption item.
 vm ui ducko-encrypt.sh on
 vm ui ducko-screenshot.sh "encryption-enabled.png"
 
@@ -754,9 +757,12 @@ vm ui ducko-encrypt.sh fingerprints
 vm ui ducko-screenshot.sh "device-fingerprints.png"
 
 # 4. Verify a device (replace DEVICE_ID with actual ID from screenshot). With Trust On First Use on, the
-#    default, a new device already shows as Trusted with Verify and Untrust. Trust appears only after Untrust,
-#    or with `tofuToggle` off.
+#    default, a new device already shows as Trusted with Untrust. Verify appears once its fingerprint is known,
+#    after a session with it. Trust appears only after Untrust, or with `tofuToggle` off. On macOS 27
+#    ducko-device-trust.sh fails (see its row): trust or untrust through the copy's CLI, and press Verify with a
+#    scratch AX helper scoped to the device's row.
 # vm ui ducko-device-trust.sh 12345 verify
+# vm gui 'DUCKO_PROFILE=uitest /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko omemo trust CHAT_PARTNER_JID 12345'
 # vm ui ducko-screenshot.sh "device-verified.png"
 
 # 5. Cleanup

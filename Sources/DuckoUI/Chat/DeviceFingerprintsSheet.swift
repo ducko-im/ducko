@@ -140,10 +140,13 @@ struct DeviceFingerprintsSheet: View {
                 }
                 .accessibilityIdentifier("trust-button-\(device.deviceID)")
             case .trusted:
-                Button("Verify") {
-                    Task { await verify(device) }
+                // Verifying compares a fingerprint, so it waits until one is known.
+                if !device.fingerprint.isEmpty {
+                    Button("Verify") {
+                        Task { await verify(device) }
+                    }
+                    .accessibilityIdentifier("verify-button-\(device.deviceID)")
                 }
-                .accessibilityIdentifier("verify-button-\(device.deviceID)")
                 Button("Untrust") {
                     Task { await untrust(device) }
                 }

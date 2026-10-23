@@ -428,6 +428,8 @@ ducko omemo untrust alice@example.com 12345
 
 Print recent entries from `~/Library/Application Support/<app-dir>/Logs/ducko.log`. Default: 50 lines.
 
+Every Ducko process on one `DUCKO_PROFILE` (the app, an `interactive` session, a one-shot command) writes to the same `ducko.log`, each at its own file offset rather than appending. Their lines overwrite each other, so they appear out of time order and can be lost or cut short. To attribute an event to one process, such as the app's own `Connected via` line, take it from a moment when only that process was running.
+
 ```
 ducko logs show
 ducko logs show --lines 200
@@ -465,7 +467,15 @@ ducko import adium --path ~/Library/Application\ Support/Adium\ 2.0/Users/Defaul
 [2026-02-27T10:00:15.000Z] <- alice@example.com: Secret message [encrypted]
 ```
 
-`<-` = incoming, `->` = outgoing. Markers: `[delivered]` for delivery receipts, `[read]` instead once the contact has read the message, `[edited]` for corrected messages, `[encrypted]` for OMEMO-encrypted messages, `[error: ...]` for errors. An encrypted message that could not be decrypted reads `<jid>: error: <notice>` in place of its body, and is also marked `[encrypted]`. The notice says why: `This message could not be decrypted`, `This message was not encrypted for this device`, `This message could not be trusted, because its encryption names another sender, recipient or time`, `This message could not be decrypted, because the room does not reveal who sent it`, or `This message is encrypted with <method>, which Ducko cannot decrypt` for a message encrypted with something other than OMEMO, such as OpenPGP.
+`<-` = incoming, `->` = outgoing. Markers: `[delivered]` for delivery receipts, `[read]` instead once the contact has read the message, `[edited]` for corrected messages, `[encrypted]` for OMEMO-encrypted messages, `[error: ...]` for errors. An encrypted message that could not be decrypted reads `<jid>: error: <notice>` in place of its body, and is also marked `[encrypted]`. The notice says why:
+
+- `This message could not be decrypted`
+- `This message was not encrypted for this device`
+- `This message could not be trusted, because its encryption names another sender, recipient or time`
+- `This message could not be trusted, because it claims to come from a device marked as untrusted`
+- `This message could not be trusted, because its device key does not match the stored fingerprint`
+- `This message could not be decrypted, because the room does not reveal who sent it`
+- `This message is encrypted with <method>, which Ducko cannot decrypt`, for a message encrypted with something other than OMEMO, such as OpenPGP
 
 `interactive` prints an encrypted room message as it prints a plaintext one, `<room>/<nick>: <body>`, followed by `[encrypted]`. One in a room's private chat gets the `[PM]` prefix as well.
 

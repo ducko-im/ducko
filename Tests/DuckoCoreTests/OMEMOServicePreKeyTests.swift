@@ -125,6 +125,20 @@ extension OMEMOServiceTests {
             #expect(module.publishAttempts == 1)
         }
 
+        /// An earlier module can take up a pre-key after this module was built, recording it only in the trust guard.
+        @Test func `Pre-keys the trust guard recorded as used are retired from the module`() async throws {
+            await seedStoredIdentity(preKeyIDs: Array(1 ... 30))
+            _ = try service.trustGuard(forAccountJID: accountJID.description).admitKeyExchange(
+                from: SessionKey(jid: #require(BareJID(localPart: "peer", domainPart: "example.com")), deviceID: 1), offeredKey: Array(repeating: 0xAB, count: 32),
+                replacing: .none, preKey: OMEMOTrustGuard.PreKeyUse(id: 7, ownDeviceID: makeIdentityData().deviceID, isUsedByThisModule: false)
+            )
+            let module = StubPreKeyModule(identity: makeIdentityData(preKeyIDs: Array(1 ... 30)))
+
+            await service.maintainPreKeys(accountJID: accountJID.description, module: module)
+
+            #expect(module.retired.contains(7))
+        }
+
         @Test func `Pre-keys that could not be stored are not handed out, and the next run tops up again`() async throws {
             await seedStoredIdentity(preKeyIDs: [1])
             let module = StubPreKeyModule(identity: makeIdentityData(preKeyIDs: [1]))
@@ -160,7 +174,7 @@ extension OMEMOServiceTests {
             return module
         }
 
-        @Test(arguments: [MockOMEMOStore.FailingCall.loadIdentity, .loadPreKeys, .loadSignedPreKey, .loadSessions])
+        @Test(arguments: [MockOMEMOStore.FailingCall.loadIdentity, .loadPreKeys, .loadSignedPreKey, .loadSessions, .loadAllTrust])
         func `Keys that cannot be read never make a new device`(failing: MockOMEMOStore.FailingCall) async throws {
             await store.seedFromIdentityData(makeIdentityData(preKeyIDs: [1]), accountJID: accountJID.description)
             await store.setFailing(failing)
@@ -171,6 +185,41 @@ extension OMEMOServiceTests {
 
             #expect(module.ownIdentityData == nil)
             #expect(recorder.iqs.isEmpty)
+        }
+
+        @Test func `Stored trust rows reach the account's guard`() async throws {
+            let peer = try #require(BareJID.parse("peer@example.com"))
+            let pinned = Array(repeating: UInt8(0xAB), count: 32)
+            for (deviceID, fingerprint, level) in [(UInt32(1), "", OMEMOTrustLevel.untrusted), (2, omemoFingerprint(of: pinned), .undecided)] {
+                try await store.saveTrust(OMEMOTrust(
+                    accountJID: accountJID.description, peerJID: peer.description, deviceID: deviceID, fingerprint: fingerprint, trustLevel: level
+                ))
+            }
+
+            _ = await buildInstalledModule(recorder: IQRecorder())
+
+            let trustGuard = service.trustGuard(forAccountJID: accountJID.description)
+            #expect(trustGuard.admitSession(with: SessionKey(jid: peer, deviceID: 1), identityKey: pinned) == .untrusted)
+            #expect(trustGuard.heldFingerprint(peer: peer, deviceID: 2) == omemoFingerprint(of: pinned))
+        }
+
+        @Test func `A pre-key a key exchange used in this process is left out of the built module`() async throws {
+            await store.seedFromIdentityData(makeIdentityData(preKeyIDs: [1, 2]), accountJID: accountJID.description)
+            let peer = try #require(BareJID(localPart: "peer", domainPart: "example.com"))
+            _ = service.trustGuard(forAccountJID: accountJID.description).admitKeyExchange(
+                from: SessionKey(jid: peer, deviceID: 1), offeredKey: Array(repeating: 0xAB, count: 32), replacing: .none,
+                preKey: OMEMOTrustGuard.PreKeyUse(id: 2, ownDeviceID: makeIdentityData().deviceID, isUsedByThisModule: false)
+            )
+
+            let module = await buildInstalledModule(recorder: IQRecorder())
+
+            #expect(module.ownIdentityData?.preKeys.map(\.keyID) == [1])
+        }
+
+        @Test func `A new installation's module is guarded too`() async {
+            let module = await buildInstalledModule(recorder: IQRecorder())
+
+            #expect(module.state.withLock { $0.trustGuard } === service.trustGuard(forAccountJID: accountJID.description))
         }
 
         @Test func `A missing signed pre-key is replaced for the stored device and stored before it is published`() async throws {
@@ -270,8 +319,9 @@ extension OMEMOServiceTests {
     @MainActor
     struct SavesWhileConnecting {
         /// The client stays in its handshake, so the account counts as connecting, as it does while the server replays
-        /// stanzas after a resume.
-        @Test func `A session and its trust row are saved while the account is still connecting`() async throws {
+        /// stanzas after a resume. A row the user decided on keeps its level, and only its missing fingerprint is filled.
+        @Test(arguments: [nil, OMEMOTrustLevel.untrusted, .trusted])
+        func `A session and its trust row are saved while the account is still connecting`(storedLevel: OMEMOTrustLevel?) async throws {
             let store = MockPersistenceStore()
             let omemoStore = MockOMEMOStore()
             let transport = MockTransport()
@@ -286,6 +336,11 @@ extension OMEMOServiceTests {
             let service = OMEMOService(omemoStore: omemoStore)
             service.setAccountService(accounts)
             let accountID = try await accounts.createAccount(jidString: testJIDString, requireTLS: false)
+            if let storedLevel {
+                try await omemoStore.saveTrust(OMEMOTrust(
+                    accountJID: testJIDString, peerJID: peer.description, deviceID: 7, fingerprint: "", trustLevel: storedLevel
+                ))
+            }
             let connection = Task { try await accounts.connect(accountID: accountID, password: "secret") }
             try await eventually { accounts.client(for: accountID) != nil }
             try #require(accounts.connectedClient(for: accountID) == nil)
@@ -296,8 +351,9 @@ extension OMEMOServiceTests {
             )
 
             #expect(try await omemoStore.loadSessions(for: testJIDString).map(\.peerDeviceID) == [7])
-            let trust = try await omemoStore.loadTrust(accountJID: testJIDString, peerJID: peer.description, deviceID: 7)
-            #expect(trust?.fingerprint == String(repeating: "ab", count: 32))
+            let trust = try await omemoStore.loadAllDevices(for: peer.description, accountJID: testJIDString)
+            #expect(trust.map(\.fingerprint) == [String(repeating: "ab", count: 32)])
+            #expect(trust.map(\.trustLevel) == [storedLevel ?? .undecided])
             await accounts.disconnect(accountID: accountID)
             _ = await connection.result
         }
