@@ -45,7 +45,7 @@ jobs:
         # The release binary bundles its own libIndexStore and has no rpath to a system copy. Drop the
         # bundled one and link the selected Xcode's, where the tap formula links the Command Line Tools copy.
         env:
-          PERIPHERY_VERSION: 1.0.0.beta.6
+          PERIPHERY_VERSION: 1.0.0.beta.11
         run: |
           curl -fsSL -o "$RUNNER_TEMP/periphery.zip" \
             "https://github.com/periphery-pro/cli-releases/releases/download/${PERIPHERY_VERSION}/periphery-cli_${PERIPHERY_VERSION}_macos_$(uname -m).zip"

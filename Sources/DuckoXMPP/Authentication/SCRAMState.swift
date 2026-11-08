@@ -16,7 +16,6 @@ enum ChannelBindingMode {
 /// Used by ``SCRAM`` (SASL1 wrapper) and directly by ``SASL2Authenticator``.
 struct SCRAMState<H: HashFunction> where H.Digest: Sendable {
     private var phase: Phase = .initial
-    private var authcid = ""
     private var password = ""
     private var clientNonce = ""
     private var clientFirstMessageBare = ""
@@ -41,7 +40,6 @@ struct SCRAMState<H: HashFunction> where H.Digest: Sendable {
 
     /// Produces the `client-first-message` and transitions to `.waitingForServerFirst`.
     mutating func clientFirstMessage(authcid: String, password: String) -> String {
-        self.authcid = authcid
         self.password = password
         clientNonce = nonceGenerator()
 
