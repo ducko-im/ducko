@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Distribute Ducko under the GNU GPL v3 alone, without the additional permission to link with BoringSSL, since the bundled BoringSSL is now licensed under the Apache License 2.0
+
 ## [0.11.0] - 2026-10-23
 
 ### Added

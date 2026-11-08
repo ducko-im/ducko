@@ -16,7 +16,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-log", from: "1.11.0"),
         .package(url: "https://github.com/apple/swift-nio", from: "2.103.0"),
-        .package(url: "https://github.com/apple/swift-nio-ssl", from: "2.37.5")
+        .package(url: "https://github.com/apple/swift-nio-ssl", from: "2.37.6")
     ],
     targets: [
         .systemLibrary(name: "CLibxml2", path: "Sources/CLibxml2", pkgConfig: "libxml-2.0"),

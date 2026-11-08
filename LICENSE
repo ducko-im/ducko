@@ -672,7 +672,3 @@ may consider it more useful to permit linking proprietary applications with
 the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <http://www.gnu.org/philosophy/why-not-lgpl.html>.
-
---- Ducko additional permission ---
-
-Additional permission under GNU GPL version 3 section 7: The copyright holders of Ducko grant permission to link or combine Ducko with BoringSSL, including the version bundled with SwiftNIO SSL and modified versions, containing code under the OpenSSL and SSLeay licences, and to convey the resulting work. Corresponding Source for the combined work must include the source of the BoringSSL parts used as well as Ducko's covered source. All other GPLv3 requirements remain in effect. This permission does not grant rights over independently copyrighted third-party code.

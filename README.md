@@ -102,4 +102,4 @@ DuckoCLI  →  depends on DuckoCore, DuckoData, DuckoXMPP  (+ swift-argument-par
 
 ## License
 
-Distributed under the GNU General Public License v3.0 with an additional permission to link with BoringSSL. See the [LICENSE](LICENSE) file for details. Bundled dependency licences are in [Resources/ThirdPartyLicenses](Resources/ThirdPartyLicenses).
+Distributed under the GNU General Public License v3.0. See the [LICENSE](LICENSE) file for details. Bundled dependency licences are in [Resources/ThirdPartyLicenses](Resources/ThirdPartyLicenses).
