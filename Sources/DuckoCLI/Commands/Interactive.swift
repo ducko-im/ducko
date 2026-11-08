@@ -20,7 +20,7 @@ extension DuckoCLI {
             let selectedAccount = prepared.account
             let password = prepared.password
 
-            try await env.accountService.connect(accountID: selectedAccount.id, password: password)
+            try await connectStored(env, accountID: selectedAccount.id, password: password)
             try await waitForConnected(accountID: selectedAccount.id, environment: env)
 
             print("Connected. Type 'help' for commands, 'quit' to exit.")

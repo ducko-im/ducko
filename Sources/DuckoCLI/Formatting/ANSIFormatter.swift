@@ -72,7 +72,7 @@ struct ANSIFormatter: CLIFormatter {
     }
 
     func formatAccount(_ account: Account) -> String {
-        "\(Color.bold)\(account.jid)\(Color.reset) \(Color.dim)(\(account.id))\(Color.reset)"
+        "\(Color.bold)\(account.jid)\(Color.reset) \(Color.dim)(\(account.id)) \(accountSecurityText(account))\(Color.reset)"
     }
 
     func formatContactWithPresence(_ contact: Contact, presence: PresenceService.PresenceStatus?) -> String {

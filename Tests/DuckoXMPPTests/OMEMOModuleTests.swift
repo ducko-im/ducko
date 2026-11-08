@@ -425,7 +425,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(pepModule)
             await client.register(omemoModule)
@@ -803,7 +803,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(pepModule)
             await client.register(omemoModule)
@@ -882,7 +882,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(pepModule)
             await client.register(omemoModule)
@@ -1454,7 +1454,7 @@ func makeConnectedClient(
     let client = XMPPClient(
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
-        transport: mock, requireTLS: false
+        transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(pepModule)
     await client.register(omemoModule)
@@ -1657,7 +1657,7 @@ private func makeConnectedClientWithDeviceList(
     let client = XMPPClient(
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
-        transport: mock, requireTLS: false
+        transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(pepModule)
     await client.register(omemoModule)
@@ -1868,7 +1868,7 @@ private func makeConnectedClientWithOwnDeviceListed(
     let client = XMPPClient(
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
-        transport: mock, requireTLS: false
+        transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(pepModule)
     await client.register(omemoModule)

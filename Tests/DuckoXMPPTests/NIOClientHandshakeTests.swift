@@ -38,7 +38,7 @@ private func exerciseTLSClient(mode: String, useDefault: Bool) async throws {
             let transport: (any XMPPTransport)? = useDefault ? nil : NIOTransport(
                 handshakeTimeout: .seconds(3), group: group, trustRoots: mode == "client-untrusted" ? [] : [Array(peer.anchor)]
             )
-            let client = XMPPClient(domain: "localhost", credentials: .init(username: "alice", password: "local-fixture"), transport: transport, requireTLS: mode != "client-plain")
+            let client = XMPPClient(domain: "localhost", credentials: .init(username: "alice", password: "local-fixture"), transport: transport, requireTLS: mode != "client-plain", allowsPLAIN: true)
             let connected = group.next().makePromise(of: TLSInfo?.self)
             let events = Task {
                 defer { connected.fail(CancellationError()) }

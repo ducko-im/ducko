@@ -190,6 +190,7 @@ private struct AccountDetailView: View {
                 LabeledContent("Enabled", value: account.isEnabled ? "Yes" : "No")
                 LabeledContent("Connect on Launch", value: account.connectOnLaunch ? "Yes" : "No")
                 LabeledContent("Require TLS", value: account.requireTLS ? "Yes" : "No")
+                LabeledContent("Allow Sending Password", value: account.allowsPLAIN ? "Yes" : "No")
                 LabeledContent("Connection") {
                     Text(connectionLabel)
                         .foregroundStyle(isError ? Color.red : .secondary)
@@ -342,8 +343,10 @@ private struct AccountEditSheet: View {
     @State private var connectOnLaunch: Bool
     @State private var isEnabled: Bool
     @State private var requireTLS: Bool
+    @State private var allowsPLAIN: Bool
 
     private let accountID: UUID
+    private let initialAllowsPLAIN: Bool
 
     init(account: Account) {
         self.accountID = account.id
@@ -354,6 +357,8 @@ private struct AccountEditSheet: View {
         _connectOnLaunch = State(initialValue: account.connectOnLaunch)
         _isEnabled = State(initialValue: account.isEnabled)
         _requireTLS = State(initialValue: account.requireTLS)
+        _allowsPLAIN = State(initialValue: account.allowsPLAIN)
+        self.initialAllowsPLAIN = account.allowsPLAIN
     }
 
     var body: some View {
@@ -366,6 +371,11 @@ private struct AccountEditSheet: View {
                 Toggle("Connect on Launch", isOn: $connectOnLaunch)
                 Toggle("Require TLS", isOn: $requireTLS)
                     .accessibilityIdentifier("requireTLSToggle")
+                Toggle(isOn: $allowsPLAIN) {
+                    Text("Allow Sending Password (PLAIN)")
+                    Text("For a server that offers only a sign-in that sends the password. \(plainAllowanceWarning)")
+                }
+                .accessibilityIdentifier("allowPlainToggle")
                 Toggle("Enabled", isOn: $isEnabled)
             }
             .formStyle(.grouped)
@@ -397,8 +407,9 @@ private struct AccountEditSheet: View {
         account.connectOnLaunch = connectOnLaunch
         account.requireTLS = requireTLS
         account.isEnabled = isEnabled
+        let allowsPLAIN = allowsPLAIN
         Task {
-            try? await environment.accountService.updateAccount(account)
+            try? await environment.accountService.updateAccount(account, allowsPLAIN: allowsPLAIN, openedWith: initialAllowsPLAIN)
             dismiss()
         }
     }
@@ -414,6 +425,8 @@ private struct AccountAddSheet: View {
     @State private var password = ""
     @State private var errorMessage: String?
     @State private var isAdding = false
+    /// Whether the first sign-in was refused because the server offers only PLAIN.
+    @State private var isPLAINRefused = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -426,6 +439,12 @@ private struct AccountAddSheet: View {
                     Text(errorMessage)
                         .foregroundStyle(.red)
                         .font(.callout)
+                }
+
+                if isPLAINRefused, !isAdding {
+                    PlainRefusalRetry {
+                        addAccount(allowsPLAIN: true)
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -449,18 +468,20 @@ private struct AccountAddSheet: View {
         .frame(width: 400)
     }
 
-    private func addAccount() {
+    private func addAccount(allowsPLAIN: Bool = false) {
         errorMessage = nil
+        isPLAINRefused = false
         isAdding = true
         Task {
             do {
                 // `createAndConnect` already connects, persists the password, and reloads
                 // accounts; leaving it connected lets the new account's roster appear
                 // without a relaunch.
-                _ = try await environment.accountService.createAndConnect(jidString: jid, password: password)
+                _ = try await environment.accountService.createAndConnect(jidString: jid, password: password, allowsPLAIN: allowsPLAIN)
                 dismiss()
             } catch {
                 errorMessage = error.localizedDescription
+                isPLAINRefused = AccountService.isPLAINRefusal(error)
                 isAdding = false
             }
         }

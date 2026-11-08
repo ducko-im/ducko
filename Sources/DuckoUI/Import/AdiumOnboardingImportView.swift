@@ -22,6 +22,10 @@ struct AdiumOnboardingImportView: View {
     @State private var logImportSkipped = false
     @State private var succeededAccountIDs: Set<String> = []
     @State private var authErrorMessages: [String: String] = [:]
+    /// The refusal message of each account whose server offers only PLAIN, by account id.
+    @State private var plainRefusals: [String: String] = [:]
+    /// The accounts the user allowed to send their password to such a server.
+    @State private var plainAllowedAccountIDs: Set<String> = []
     @State private var totalSelectedAccountCount = 0
 
     private enum ImportStep {
@@ -156,6 +160,10 @@ struct AdiumOnboardingImportView: View {
                                 .foregroundStyle(.red)
                         }
 
+                        if let refusal = plainRefusals[account.id] {
+                            plainRefusalView(refusal, for: account)
+                        }
+
                         if let server = account.connectServer {
                             Text("Server: \(server)")
                                 .font(.caption)
@@ -164,6 +172,33 @@ struct AdiumOnboardingImportView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func plainRefusalView(_ refusal: String, for account: AdiumAccount) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(refusal)
+                .font(.caption)
+                .foregroundStyle(.red)
+            Toggle(isOn: Binding(
+                get: { plainAllowedAccountIDs.contains(account.id) },
+                set: { allowed in
+                    if allowed {
+                        plainAllowedAccountIDs.insert(account.id)
+                    } else {
+                        plainAllowedAccountIDs.remove(account.id)
+                    }
+                }
+            )) {
+                Text("Allow Sending Password")
+                    .font(.caption)
+            }
+            .toggleStyle(.checkbox)
+            .accessibilityIdentifier("import-allow-plain-\(account.id)")
+            Text(plainAllowanceWarning)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -286,6 +321,7 @@ struct AdiumOnboardingImportView: View {
         importInProgress = true
         step = .importing
         authErrorMessages = [:]
+        plainRefusals = [:]
         totalSelectedAccountCount = selectedAccountIDs.count
         accountResults = accounts.filter { succeededAccountIDs.contains($0.id) }
             .map { AccountResult(id: $0.id, jid: $0.uid, success: true, error: nil) }
@@ -302,7 +338,8 @@ struct AdiumOnboardingImportView: View {
                     resource: account.resource,
                     requireTLS: true,
                     connectOnLaunch: account.autoConnect,
-                    importedFrom: "Adium"
+                    importedFrom: "Adium",
+                    allowsPLAIN: plainAllowedAccountIDs.contains(account.id)
                 )
                 succeededAccountIDs.insert(account.id)
                 accountResults.append(AccountResult(id: account.id, jid: account.uid, success: true, error: nil))
@@ -311,14 +348,15 @@ struct AdiumOnboardingImportView: View {
                 case .credentialsRejected:
                     authErrorMessages[account.id] = "Authentication failed. Please check your password."
                     passwords[account.id] = ""
+                case .plainNotAllowed:
+                    plainRefusals[account.id] = error.localizedDescription
                 case let .failed(message):
                     accountResults.append(AccountResult(id: account.id, jid: account.uid, success: false, error: message))
                 }
             }
         }
 
-        // If any auth failures, rewind to account setup for retry
-        if !authErrorMessages.isEmpty {
+        if !authErrorMessages.isEmpty || !plainRefusals.isEmpty {
             importInProgress = !succeededAccountIDs.isEmpty
             step = .accountSetup
             return

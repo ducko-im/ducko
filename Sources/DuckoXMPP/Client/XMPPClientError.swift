@@ -9,7 +9,8 @@ public enum XMPPClientError: Error {
     /// Ducko did not trust the server's certificate, so the connection was not used.
     case untrustedCertificate(CertificateTrustFailure)
     case authenticationFailed(AuthenticationFailure)
-    /// Sign-in requires SCRAM, and the server offered only PLAIN, so the password was not sent.
+    /// The server offers only a sign-in that sends the password, which this account does not allow, so the password
+    /// was not sent.
     case plainSignInRefused
     case bindingFailed(String)
     case sessionFailed(String)

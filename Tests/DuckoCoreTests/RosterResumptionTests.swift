@@ -187,7 +187,7 @@ private actor RosterResumeFactory: XMPPClientFactory {
     func makeClient(account: Account, password: String, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
         let transport = transports[index]
         index += 1
-        let client = XMPPClient(domain: account.jid.domainPart, credentials: .init(username: account.jid.localPart ?? "", password: password), transport: transport, requireTLS: false)
+        let client = XMPPClient(domain: account.jid.domainPart, credentials: .init(username: account.jid.localPart ?? "", password: password), transport: transport, requireTLS: false, allowsPLAIN: true)
         let sm = StreamManagementModule(previousState: resuming?.streamManagement)
         current = sm
         await client.register(sm)

@@ -2,7 +2,7 @@
 # Toggle a preference checkbox by its accessibility identifier.
 # Usage: ducko-toggle-preference.sh IDENTIFIER
 #   IDENTIFIER: e.g., chatStatesToggle, displayedMarkersToggle, requireTLSToggle,
-#               encryptByDefaultToggle, tofuToggle
+#               allowPlainToggle, encryptByDefaultToggle, tofuToggle
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

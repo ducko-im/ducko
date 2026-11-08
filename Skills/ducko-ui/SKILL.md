@@ -159,6 +159,7 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `displayedMarkersToggle` | Displayed markers (read receipts) toggle | Preferences (Chat) |
 | `contacts-compact-toggle` | Compact rows toggle (contact-list rows without avatars and captions) | Preferences (Appearance) |
 | `requireTLSToggle` | Require TLS toggle | Account Edit |
+| `allowPlainToggle` | Allow Sending Password (PLAIN) toggle. A verified SCRAM sign-in turns it off, so Save writes it only when the user changed it | Account Edit |
 | `tlsVersion` | TLS Version label | Connection Info |
 | `cipherSuite` | Cipher Suite label | Connection Info |
 | `certSubject` | Certificate Subject label | Connection Info |
@@ -180,6 +181,8 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `choose-adium-folder-button` | Browse for Adium folder (shown when no data found) | Account Setup |
 | `account-toggle-{id}` | Toggle checkbox for each discovered Adium account | Account Setup |
 | `account-password-{id}` | Password field for each discovered Adium account | Account Setup |
+| `import-allow-plain-{id}` | Allow Sending Password checkbox, shown under an account whose import sign-in was refused because its server offers only PLAIN. Once it is checked, the next Import sends that account's password. No script stages it: the import signs in with TLS required, and the plaintext stub cannot get that far | Account Setup |
+| `plain-refusal-allow` | "Allow Sending Password and Sign In" under the error of the Login form or Preferences ▸ Add Account, after a first sign-in was refused because the server offers only PLAIN. It adds the account again with PLAIN allowed. No script, for the same reason as `import-allow-plain-{id}` | Account Setup, Add Account |
 | `register-server-field` | Server domain field (Register mode) | Account Setup |
 | `register-username-field` | Username field (Register mode) | Account Setup |
 | `register-password-field` | Password field (Register mode) | Account Setup |
@@ -240,9 +243,9 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `contact-info-block` | Block/Unblock button, shown only once the account's roster is loaded. A window opened while disconnected shows `Not connected to the server` in its Profile section; close and reopen it after connecting, since Get Info only raises the existing window. Choosing Offline in a running session hides the contact rows, so to reach that state open the contact's chat while online, run `ducko-status-menu.sh offline`, then `ducko-chat-header.sh info` | Contact Info |
 | `contact-info-remove` | Remove Contact button, shown under the same condition as `contact-info-block` | Contact Info |
 | `roster-notice` | Persistent contact-change notice, with a “Dismiss notice” button and Escape shortcut | Contacts |
-| `sign-in-security-keep-refusing` | "Keep Refusing" in the Sign-In Refused alert, shown when an account that has signed in with SCRAM meets a server offering only PLAIN. Hides the alert until the next refused sign-in. Find it by its label, as `ducko-sign-in-security.sh` does: the identifier is set on an alert button | Contacts |
-| `sign-in-security-reset` | "Reset Sign-In Security…" in the same alert, opening its confirmation. Find it by its label | Contacts |
-| `sign-in-security-reset-confirm` | "Reset and Sign In" in that confirmation: clears the account's requirement and signs in. Find it by its label | Contacts |
+| `sign-in-security-dont-allow` | "Don't Allow" in the Sign-In Refused alert, shown when a server offers only PLAIN to an account that does not allow it. Hides the alert until the next refused sign-in. Find it by its label, as `ducko-sign-in-security.sh` does: the identifier is set on an alert button | Contacts |
+| `sign-in-security-allow` | "Allow Sending Password…" in the same alert, opening its confirmation. Find it by its label | Contacts |
+| `sign-in-security-allow-confirm` | "Allow and Sign In" in that confirmation: allows the account to send its password and signs in. Find it by its label | Contacts |
 | `contact-info-roster-notice` | Persistent removal notice, with a “Dismiss notice” button and Escape shortcut | Contact Info |
 | `contact-context-remove` | "Remove Contact…" context-menu item (asks for confirmation) | Contacts |
 
@@ -331,12 +334,12 @@ Right-click a participant in the chat window sidebar:
 | `ducko-room-topic.sh` | View or set the room topic | `[TEXT]` (optional; no args prints current topic) |
 | `ducko-channel-search.sh` | Search for channels in the Join Room dialog | `QUERY` |
 | `ducko-connection-info.sh` | Open Connection Info from Preferences > Accounts (needs a connected account), or close it with the shared PID-targeted Swift AX helper | `[open\|close]`; close targets `DUCKO_PID` when set, else the running `DuckoUITest` |
-| `ducko-sign-in-security.sh` | Answer the Sign-In Refused alert on Contacts: `keep` presses Keep Refusing, `reset` presses Reset Sign-In Security… and then Reset and Sign In. Succeeds once Contacts shows no dialog. A reset that fails leaves the Sign-In Security Reset Failed alert, with the reason and an OK button, so the script reports that a dialog is still shown. To stage the alert, point the account at the `/ducko-cli` stub server, which offers only PLAIN, and set the requirement in the profile's store as that skill's `account reset-security` section shows | `<keep\|reset>` |
+| `ducko-sign-in-security.sh` | Answer the Sign-In Refused alert on Contacts: `dont-allow` presses Don't Allow, `allow` presses Allow Sending Password… and then Allow and Sign In. Succeeds once Contacts shows no dialog. An allowance that fails to save leaves the Could Not Allow Sending the Password alert open, with the reason and an OK button. The script then reports that a dialog is still shown. To stage the alert, add the `/ducko-cli` stub server's account as that skill's stub reference shows, but leave PLAIN off with `ducko account set <jid> --no-require-tls --no-allow-plain` | `<dont-allow\|allow>` |
 | `ducko-register.sh` | Register a new account via in-band registration and wait for the outcome: registered and signed in, the server's own form shown because it asks for more (it then names `ducko-register-fields.sh`), or the window's error | `SERVER USERNAME PASSWORD [EMAIL]` |
 | `ducko-register-fields.sh` | Use after `ducko-register.sh` reported the server's form. `fill` types each value into the field of that name (`registration-{name}-field`, else `data-form-field-{name}`), presses Register and waits for the account or the window's error. `redirect` prints the address of the page the server sends the user to | `fill [NAME VALUE]...` or `redirect` |
 | `ducko-blocked-contacts.sh` | `open` opens the Blocked Contacts sheet from the first account's Actions pull-down in Preferences > Accounts and waits for its list (needs a connected account). On the open sheet, `list` prints its entries, `add` blocks an address and waits for its row, and `remove` presses the entry's Unblock and waits for the row to go. A failed change reports the sheet's error | `<open\|list\|add\|remove> [JID]` (`JID` only, and required, for `add` and `remove`) |
 | `ducko-change-password.sh` | Change account password via Preferences > Accounts (needs a connected account) | `NEW_PASSWORD` |
-| `ducko-toggle-preference.sh` | Toggle any preference checkbox by identifier | `IDENTIFIER` (e.g., chatStatesToggle, encryptByDefaultToggle, tofuToggle, contacts-compact-toggle) |
+| `ducko-toggle-preference.sh` | Toggle any preference checkbox by identifier | `IDENTIFIER` (e.g., chatStatesToggle, encryptByDefaultToggle, tofuToggle, contacts-compact-toggle, allowPlainToggle) |
 | `ducko-menu-bar.sh` | Toggle menu bar icon visibility in General preferences | none |
 | `ducko-edit-profile.sh` | Edit profile fields and optionally save | `[--fullname NAME] [--nickname NICK] [--email EMAIL] [--save]` |
 | `ducko-dismiss-roster-notice.sh` | Dismiss a persistent roster outcome notice using the Swift AX helper; targets `DUCKO_PID` when set, else the running `DuckoUITest` | `[contacts\|info]` |
@@ -959,7 +962,7 @@ To allow these scripts in `settings.local.json` without prompts:
 - For a run that needs contacts with presence, avatars and a chat but no live account, point the `DuckoUITest` copy at the `/demo-screenshots` skill's stub, so these scripts can drive it. Give the run a `DUCKO_PROFILE`, a port and a VM work folder of its own: the `uitest` profile may hold a live account, and that skill's reference mode uses port 5299 and `/Users/lume/work`.
   1. Build the copy with `DUCKO_PROFILE=<profile> vm.sh ui ducko-launch.sh`, then stop it with `ducko-stop.sh`.
   2. In the work folder, copy `content.json`, render the avatars and start `stub.py` detached, as that skill's R2.2 does.
-  3. Add the stub's account with the copy's own CLI, `DUCKO_PROFILE=<profile> /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko account add … --host 127.0.0.1 --port <port> --no-connect`, and run R2.2's store `UPDATE`, in its quoting for `vm.sh gui`, on `Ducko-Dev-<profile>/default.store`.
+  3. Add the stub's account with the copy's own CLI, `DUCKO_PROFILE=<profile> /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko account add … --host 127.0.0.1 --port <port> --no-connect`, and run R2.2's store `UPDATE`, in its quoting for `vm.sh gui`, on `Ducko-Dev-<profile>/default.store`. That `UPDATE` also allows PLAIN, which the stub's sign-in needs.
   4. Launch again with `DUCKO_PROFILE=<profile> vm.sh ui ducko-launch.sh`. A chat opens once a message is pushed through the stub, as that skill's Step 4.3 does.
 
   The "Changing the Content" section of that skill covers a room row, a room invitation (`room-invite-banner`), a file offer, a code block, reply quotes and file cards. Afterwards stop the copy, kill the stub by the PID listening on its port, and remove `Ducko-Dev-<profile>`, the `im.ducko.dev.<profile>` defaults and the work folder.

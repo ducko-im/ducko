@@ -24,7 +24,7 @@ private struct EmptyPersistenceStore: PersistenceStore {
 
     func saveAccount(_: Account) async throws {}
     func deleteAccount(_: UUID) async throws {}
-    func setRequiresSCRAM(_: Bool, accountID _: UUID) async throws {}
+    func setAllowsPLAIN(_: Bool, accountID _: UUID) async throws {}
     func fetchChannelSearchLimits(accountID _: UUID) async throws -> [String: ChannelSearchLimit] {
         [:]
     }

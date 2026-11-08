@@ -14,6 +14,8 @@ struct AccountSetupView: View {
     @State private var adiumImportCache: AdiumImportCache?
     @State private var isConnecting = false
     @State private var errorMessage: String?
+    /// Whether the login's first sign-in was refused because the server offers only PLAIN.
+    @State private var isPLAINRefused = false
     /// A registration whose server asked for more than the username, password and email, holding its connection open.
     @State private var pendingRegistration: PendingRegistration?
     /// The server's form for `pendingRegistration`, as the user fills it in.
@@ -81,6 +83,12 @@ struct AccountSetupView: View {
                             .foregroundStyle(.red)
                             .font(.callout)
                             .accessibilityIdentifier("setup-error")
+                    }
+
+                    if mode == .login, isPLAINRefused, !isConnecting {
+                        PlainRefusalRetry {
+                            Task { await connectAccount(allowsPLAIN: true) }
+                        }
                     }
 
                     HStack {
@@ -215,15 +223,17 @@ struct AccountSetupView: View {
 
     // MARK: - Actions
 
-    private func connectAccount() async {
+    private func connectAccount(allowsPLAIN: Bool = false) async {
         isConnecting = true
         errorMessage = nil
+        isPLAINRefused = false
         defer { isConnecting = false }
 
         do {
-            _ = try await environment.accountService.createAndConnect(jidString: jidString, password: password)
+            _ = try await environment.accountService.createAndConnect(jidString: jidString, password: password, allowsPLAIN: allowsPLAIN)
         } catch {
             errorMessage = error.localizedDescription
+            isPLAINRefused = AccountService.isPLAINRefusal(error)
         }
     }
 

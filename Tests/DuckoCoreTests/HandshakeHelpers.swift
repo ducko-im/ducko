@@ -18,6 +18,17 @@ let testBindResult = """
 </iq>
 """
 
+/// Plays a SCRAM sign-in on `transport` and binds a resource, answering the bind with `bindReply`.
+func playSCRAMSession(on transport: MockTransport, bindReply: String = testBindResult) async throws {
+    var server = SCRAMTestServer(password: "secret")
+    try await server.playSASL1SignIn(on: transport)
+    await transport.waitForSent(count: 4) // post-auth stream opening
+    await transport.simulateReceive(testServerStreamOpen)
+    await transport.simulateReceive(testFeaturesBind)
+    await transport.waitForSent(count: 5) // bind IQ
+    await transport.simulateReceive(bindReply)
+}
+
 /// Simulates a connect handshake without TLS.
 func simulateNoTLSConnect(_ transport: MockTransport, postAuthFeatures: String = testFeaturesBind) async {
     await transport.waitForSent(count: 1) // stream opening sent
@@ -102,4 +113,35 @@ final class ResumeGate: XMPPModule {
     func handleResume() async throws {
         await entered.signal(); await release.wait()
     }
+}
+
+// MARK: - Registration
+
+/// Negotiates a registration's stream on `transport`: STARTTLS, then features without TLS.
+func negotiateRegistrationStream(on transport: MockTransport) async {
+    await transport.waitForSent(count: 1) // stream opening
+    await transport.simulateReceive(testServerStreamOpen)
+    await transport.simulateReceive("<stream:features><starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/></stream:features>")
+    await transport.waitForSent(count: 2) // starttls element
+    await transport.simulateReceive("<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
+    await transport.waitForSent(count: 3) // post-TLS stream opening
+    await transport.simulateReceive(testServerStreamOpen)
+    await transport.simulateReceive(testFeaturesNoTLS)
+}
+
+/// The registration form request `transport` sent, and its id.
+func registrationFormRequest(on transport: MockTransport) async throws -> (id: String, stanza: String) {
+    let get = try #require(await transport.waitForSent { $0.contains(XMPPNamespaces.register) && $0.contains("type=\"get\"") })
+    return try (#require(extractIQID(from: get)), get)
+}
+
+/// Registers over STARTTLS on `transport`: the form asks for the username and password, and the submission succeeds.
+func completeRegistration(on transport: MockTransport) async throws {
+    await negotiateRegistrationStream(on: transport)
+    let get = try await registrationFormRequest(on: transport)
+    await transport.simulateReceive(
+        "<iq type='result' id='\(get.id)'><query xmlns='\(XMPPNamespaces.register)'><username/><password/></query></iq>"
+    )
+    let submission = try #require(await transport.waitForSent { $0.contains(XMPPNamespaces.register) && $0.contains("type=\"set\"") })
+    try await transport.simulateReceive("<iq type='result' id='\(#require(extractIQID(from: submission)))'/>")
 }

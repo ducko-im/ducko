@@ -54,8 +54,8 @@ struct AccountServiceRegistrationTests {
         let registration = Task { @MainActor in
             try await service.registerAccount(domain: "example.com", username: "juliet", password: "secret")
         }
-        try await negotiateStream()
-        let get = try await formRequest()
+        await negotiateRegistrationStream(on: transport)
+        let get = try await registrationFormRequest(on: transport)
         await transport.simulateReceive("<iq type='error' id='\(get.id)'><error type='cancel'><not-allowed xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>")
 
         await #expect(throws: (any Error).self) { try await registration.value }
@@ -71,13 +71,7 @@ struct AccountServiceRegistrationTests {
         let registration = Task { @MainActor in
             try await service.registerAccount(domain: "example.com", username: "juliet", password: "secret", host: host, port: port)
         }
-        try await negotiateStream()
-        let get = try await formRequest()
-        await transport.simulateReceive(
-            "<iq type='result' id='\(get.id)'><query xmlns='\(XMPPNamespaces.register)'><username/><password/></query></iq>"
-        )
-        let submission = try #require(await transport.waitForSent { $0.contains(XMPPNamespaces.register) && $0.contains("type=\"set\"") })
-        try await transport.simulateReceive("<iq type='result' id='\(#require(extractIQID(from: submission)))'/>")
+        try await completeRegistration(on: transport)
         // The sign-in fails at its connect, which every recorded client does.
         _ = await registration.result
 
@@ -85,21 +79,5 @@ struct AccountServiceRegistrationTests {
         #expect(registered.host == host && registered.port == port)
         let signedIn = try #require(await destinations.signIn)
         #expect(signedIn.host == host && signedIn.port == accountPort)
-    }
-
-    private func negotiateStream() async throws {
-        await transport.waitForSent(count: 1) // stream opening
-        await transport.simulateReceive(testServerStreamOpen)
-        await transport.simulateReceive("<stream:features><starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/></stream:features>")
-        await transport.waitForSent(count: 2) // starttls element
-        await transport.simulateReceive("<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
-        await transport.waitForSent(count: 3) // post-TLS stream opening
-        await transport.simulateReceive(testServerStreamOpen)
-        await transport.simulateReceive(testFeaturesNoTLS)
-    }
-
-    private func formRequest() async throws -> (id: String, stanza: String) {
-        let get = try #require(await transport.waitForSent { $0.contains(XMPPNamespaces.register) && $0.contains("type=\"get\"") })
-        return try (#require(extractIQID(from: get)), get)
     }
 }

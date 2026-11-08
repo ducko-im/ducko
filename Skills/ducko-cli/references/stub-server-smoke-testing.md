@@ -60,11 +60,11 @@ python3 Skills/demo-screenshots/scripts/stub.py <port> <workdir>
 
 `<workdir>` is an existing directory that receives `stub.log`. The stub plays the account `tobias@pond.example`, accepts repeated connections, and runs until killed, so record its PID for cleanup. For other server data, copy `Skills/demo-screenshots/content.json`, edit the copy, and pass its path as a third argument.
 
-The stub speaks plaintext, so the account needs Require TLS off. The CLI has no option for it. Add the account, then set it in the throwaway profile's store. The second command must print `1`:
+The stub speaks plaintext and offers only PLAIN, so the account needs Require TLS off and PLAIN allowed. Add the account, then change both:
 
 ```bash
 DUCKO_PROFILE=<unique> .build/debug/DuckoCLI account add tobias@pond.example --password x --host 127.0.0.1 --port <port> --no-connect
-sqlite3 "$HOME/Library/Application Support/Ducko-Dev-<unique>/default.store" "UPDATE ZACCOUNTRECORD SET ZREQUIRETLS=0; SELECT changes();"
+DUCKO_PROFILE=<unique> .build/debug/DuckoCLI account set tobias@pond.example --no-require-tls --allow-plain
 ```
 
 CLI commands on that profile then connect through the stub. A GUI instance on the same profile does so once its status is set to Available.

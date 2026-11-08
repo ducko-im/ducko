@@ -6,9 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Sign in with SCRAM-SHA-512 and SCRAM-SHA3-512 when the server offers them, preferring the strongest sign-in the server supports
+- Add `ducko account set <jid>` to allow or refuse sending the password and to require an encrypted connection without connecting, `--allow-plain` on `ducko account add`, and both settings in `ducko account list`
+
 ### Changed
 
 - Distribute Ducko under the GNU GPL v3 alone, without the additional permission to link with BoringSSL, since the bundled BoringSSL is now licensed under the Apache License 2.0
+- Never send an account's password to a server that offers only a sign-in that sends it, unless you allow that for the account from the Sign-In Refused alert, the account's Edit sheet in Preferences, the add-account forms or `ducko account set --allow-plain`. A sign-in that proves the server knows the password turns it off again. Accounts created by registering on a server start with it allowed
+- Report that refusal in the CLI's JSON `sign_in_refused` record with the reason `plain_not_allowed`
+
+### Removed
+
+- Remove `ducko account reset-security`, which `ducko account set --allow-plain` replaces
+
+### Security
+
+- Stop a sign-in before the password proof goes out when the server's list of sign-in options or the connection's encryption version was changed on the way, which can mean the connection is being tampered with
 
 ## [0.11.0] - 2026-10-23
 

@@ -5,7 +5,7 @@ import Testing
 
 struct RosterReceiptTests {
     private func connected(_ transport: MockTransport) async throws -> XMPPClient {
-        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false)
+        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false, allowsPLAIN: true)
         let connection = Task { try await client.connect(host: "example.com", port: 5222) }
         await simulateNoTLSConnect(transport)
         try await connection.value

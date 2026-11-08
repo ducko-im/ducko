@@ -152,16 +152,16 @@ ducko history --limit 5 -- '-123\40chat.example.com@facebook.adium-import'
 
 ### `account list`
 
-List all configured accounts. Supports `--output` format. With `--output json` it prints one JSON object per line rather than an array, and `isEnabled` is the string `"true"` or `"false"`.
+List all configured accounts. Supports `--output` format. Plain and ANSI lines end with the sign-in settings, such as `PLAIN: refused, TLS: required`. With `--output json` it prints one JSON object per line rather than an array, and `isEnabled`, `allowsPLAIN` and `requireTLS` are the strings `"true"` or `"false"`.
 
 ```
 ducko account list
 ducko account list --output json
 ```
 
-### `account add <jid> [--password <password>] [--host <host>] [--port <port>] [--no-connect]`
+### `account add <jid> [--password <password>] [--host <host>] [--port <port>] [--no-connect] [--allow-plain]`
 
-Add a new XMPP account. By default it connects to verify credentials and saves the password. Password is prompted interactively if `--password` is omitted. `--host`/`--port` override the connection endpoint (a bare `--port` without `--host` is rejected). With `--no-connect` the account is persisted *without* connecting or verifying credentials — offline/manual setup; the password is still saved.
+Add a new XMPP account. By default it connects to verify credentials and saves the password. Password is prompted interactively if `--password` is omitted. `--host`/`--port` override the connection endpoint (a bare `--port` without `--host` is rejected). With `--no-connect` the account is persisted *without* connecting or verifying credentials — offline/manual setup; the password is still saved. `--allow-plain` lets the account send its password to a server that offers only PLAIN (see `account set`). Without it, Ducko refuses to sign in to such a server and rolls the new account back. Stderr then names the command that tries again, `ducko account add <jid> --host <host> --port <port> --allow-plain`, with only the `--host`/`--port` that were given.
 
 When authentication fails, the command exits 1 and prints `Error: Authentication failed: <reason>`, where the reason is readable text such as "Incorrect username or password".
 
@@ -181,17 +181,20 @@ Delete an XMPP account by JID. Disconnects if connected, removes the account fro
 ducko account delete alice@example.com
 ```
 
-### `account reset-security <jid>`
+### `account set <jid> [--allow-plain|--no-allow-plain] [--require-tls|--no-require-tls]`
 
-Once an account has signed in with SCRAM and the server proved it knows the password, Ducko refuses any later sign-in where the server offers only PLAIN, which sends the password itself. The app and the CLI share that requirement. A refused connect exits 1 with `Error: Sign-in refused: …`. Its event line ends with `Run 'ducko account reset-security <jid>' to send the password anyway.`, and in JSON it is `{"account":"<uuid>","message":"<text>","reason":"plain_after_scram","type":"sign_in_refused"}`. It is not an authentication failure, so the password is not to blame.
+Changes an account's sign-in settings without connecting, then prints the account as `account list` does (`--output` is supported). An omitted setting stays as it is. Passing neither, or both forms of one flag, fails with a usage error.
 
-`reset-security` clears the requirement without connecting, so the next sign-in sends the password to a server offering only PLAIN. The next SCRAM sign-in sets it again.
+By default an account refuses to sign in to a server that offers only PLAIN, the mechanism that sends the password itself. The app and the CLI share this setting. A sign-in that verifies a SCRAM server signature turns PLAIN off again.
+
+A refused connect exits 1 with `Error: Sign-in refused: …`. Its event line is the refusal text, and stderr follows it with `Run 'ducko account set <jid> --allow-plain' to send the password to this server.` in every output mode. In JSON the event is `{"account":"<uuid>","message":"<text>","reason":"plain_not_allowed","type":"sign_in_refused"}`. It is not an authentication failure, so the password is not to blame.
 
 ```
-ducko account reset-security alice@example.com
+ducko account set alice@example.com --allow-plain
+ducko account set alice@example.com --no-require-tls --allow-plain
 ```
 
-To stage a refusal against the stub server, which offers only PLAIN, set the requirement in the throwaway profile's store: `sqlite3 "$HOME/Library/Application Support/Ducko-Dev-<unique>/default.store" "UPDATE ZACCOUNTRECORD SET ZREQUIRESSCRAM=1; SELECT changes();"`.
+To stage a refusal against the stub server, which offers only PLAIN, add its account as [references/stub-server-smoke-testing.md](references/stub-server-smoke-testing.md) shows, but leave PLAIN off with `ducko account set <jid> --no-require-tls --no-allow-plain`.
 
 ### `roster list`
 
@@ -321,7 +324,7 @@ ducko avatar set photo.png
 
 ### `account register --server <domain> --username <user> --password <pw> [--email <email>] [--host <host>] [--port <port>]`
 
-Register a new account on a server via XEP-0077 In-Band Registration. Fetches the server's form first and registers on the same connection, then saves the account locally and signs in. With `--host`, and `--port` when given, both connections go through that endpoint. When the form asks for more than username, password and email, or for an email `--email` did not give, the command prints it and prompts for its fields as `/submit-registration` does, with the given values filled in. A form that only names a web page is printed, and the command exits 1.
+Register a new account on a server via XEP-0077 In-Band Registration. Fetches the server's form first and registers on the same connection, then saves the account locally and signs in. With `--host`, and `--port` when given, both connections go through that endpoint. When the form asks for more than username, password and email, or for an email `--email` did not give, the command prints it and prompts for its fields as `/submit-registration` does, with the given values filled in. A form that only names a web page is printed, and the command exits 1. The new account starts with PLAIN allowed, since the registration already gave the server the password over TLS. A sign-in that verifies a SCRAM server signature turns it off (see `account set`).
 
 ```
 ducko account register --server example.com --username alice --password secret

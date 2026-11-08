@@ -57,7 +57,7 @@ struct PlainFormatter: CLIFormatter {
     }
 
     func formatAccount(_ account: Account) -> String {
-        "\(account.jid) (\(account.id))"
+        "\(account.jid) (\(account.id)) \(accountSecurityText(account))"
     }
 
     func formatContactWithPresence(_ contact: Contact, presence: PresenceService.PresenceStatus?) -> String {

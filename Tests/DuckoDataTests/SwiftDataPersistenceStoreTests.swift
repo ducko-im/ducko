@@ -79,7 +79,7 @@ struct SwiftDataPersistenceStoreTests {
             account.requireTLS = false
             account.rosterVersion = "v1"
             account.certificateFingerprint = "AA:BB"
-            account.requiresSCRAM = true
+            account.allowsPLAIN = true
             account.importedFrom = "Adium"
             try await store.saveAccount(account)
 
@@ -102,7 +102,7 @@ struct SwiftDataPersistenceStoreTests {
             account.resource = nil
             account.rosterVersion = nil
             account.certificateFingerprint = nil
-            account.requiresSCRAM = false
+            account.allowsPLAIN = false
             account.importedFrom = nil
             try await store.saveAccount(account)
             let cleared = try #require(try await store.fetchAccounts().first)
@@ -112,21 +112,21 @@ struct SwiftDataPersistenceStoreTests {
             #expect(cleared.resource == nil)
             #expect(cleared.rosterVersion == "v1")
             #expect(cleared.certificateFingerprint == nil)
-            #expect(cleared.requiresSCRAM)
+            #expect(cleared.allowsPLAIN)
             #expect(cleared.importedFrom == nil)
         }
 
         @Test
-        func `setRequiresSCRAM sets and clears the requirement`() async throws {
+        func `setAllowsPLAIN sets and clears the permission`() async throws {
             let store = try outer.makeStore()
             let account = outer.makeAccount()
             try await store.saveAccount(account)
 
-            try await store.setRequiresSCRAM(true, accountID: account.id)
-            #expect(try await store.fetchAccounts().first?.requiresSCRAM == true)
+            try await store.setAllowsPLAIN(true, accountID: account.id)
+            #expect(try await store.fetchAccounts().first?.allowsPLAIN == true)
 
-            try await store.setRequiresSCRAM(false, accountID: account.id)
-            #expect(try await store.fetchAccounts().first?.requiresSCRAM == false)
+            try await store.setAllowsPLAIN(false, accountID: account.id)
+            #expect(try await store.fetchAccounts().first?.allowsPLAIN == false)
         }
 
         @Test
@@ -159,7 +159,7 @@ struct SwiftDataPersistenceStoreTests {
             #expect(inserted.requireTLS == false)
             #expect(inserted.rosterVersion == account.rosterVersion)
             #expect(inserted.certificateFingerprint == "AA:BB")
-            #expect(inserted.requiresSCRAM)
+            #expect(inserted.allowsPLAIN)
             #expect(inserted.importedFrom == "Adium")
         }
 

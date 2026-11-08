@@ -1,5 +1,3 @@
-import CryptoKit
-
 /// Parsed inline feature advertisement from SASL2 stream features.
 struct SASL2Features {
     let mechanisms: Set<String>
@@ -67,9 +65,7 @@ struct SASL2Authenticator {
             return nil
         }
 
-        let mechanisms = Set(
-            auth.children(named: "mechanism").compactMap { $0.textContent?.uppercased() }
-        )
+        let mechanisms = Set(advertisedSASL2Mechanisms(features).map { $0.uppercased() })
         guard !mechanisms.isEmpty else { return nil }
 
         let inline = auth.child(named: "inline")
@@ -89,8 +85,9 @@ struct SASL2Authenticator {
     // MARK: - Negotiation
 
     /// Selects the strongest mechanism and produces the `<authenticate>` element.
-    /// The `inlinePayloads` are added as children (e.g., Bind 2 request). `requiresSCRAM` refuses an offer that leaves
-    /// only PLAIN.
+    /// The `inlinePayloads` are added as children (e.g., Bind 2 request). Unless `allowsPLAIN`, an offer that leaves
+    /// only PLAIN is refused. `tlsVersion` is the negotiated TLS version's wire code, which a SCRAM server may confirm
+    /// (XEP-0515).
     mutating func begin(
         features: XMLElement,
         authcid: String,
@@ -98,7 +95,8 @@ struct SASL2Authenticator {
         inlinePayloads: [XMLElement],
         userAgent: SASL2UserAgent = SASL2UserAgent(),
         channelBindingData: [UInt8]? = nil,
-        requiresSCRAM: Bool = false
+        tlsVersion: UInt16? = nil,
+        allowsPLAIN: Bool = false
     ) throws(SASLAuthError) -> XMLElement {
         guard let sasl2Features = Self.parseFeatures(features) else {
             throw SASLAuthError.noSupportedMechanism
@@ -111,11 +109,16 @@ struct SASL2Authenticator {
             isSASL2: true
         )
         let selected = try selectSASLMechanism(
-            offered: sasl2Features.mechanisms, channelBinding: channelBinding, requiresSCRAM: requiresSCRAM
+            offered: sasl2Features.mechanisms, channelBinding: channelBinding, allowsPLAIN: allowsPLAIN
+        )
+        let downgradeContext = SCRAMDowngradeContext(
+            advertisedMechanisms: advertisedSASL2Mechanisms(features),
+            channelBindingTypes: advertisedChannelBindingTypeList(features),
+            tlsVersion: tlsVersion
         )
 
         let (mechanism, initialPayload) = startMechanism(
-            selected, authcid: authcid, password: password, channelBinding: channelBinding
+            selected, authcid: authcid, password: password, channelBinding: channelBinding, downgradeContext: downgradeContext
         )
         activeMechanism = mechanism
         mechanismName = selected
@@ -161,29 +164,29 @@ struct SASL2Authenticator {
         return response
     }
 
+    /// Whether a failure this side found in `stanza` is answered with `<abort/>`. A server's `<success>` or `<failure>`
+    /// has already ended the exchange, so only what arrives mid-exchange gets one.
+    static func answersFailureWithAbort(_ stanza: XMLElement) -> Bool {
+        stanza.name != "success" && stanza.name != "failure"
+    }
+
     // MARK: - Private: Mechanism Dispatch
 
     private func startMechanism(
         _ name: String,
         authcid: String,
         password: String,
-        channelBinding: ChannelBindingMode
+        channelBinding: ChannelBindingMode,
+        downgradeContext: SCRAMDowngradeContext
     ) -> (ActiveMechanism, String) {
-        switch name {
-        case SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha256:
-            var scram = SCRAMState<SHA256>(channelBindingMode: channelBinding)
+        if var scram = makeSCRAMSession(name, channelBinding: channelBinding, downgradeContext: downgradeContext) {
             let payload = scram.clientFirstMessage(authcid: authcid, password: password)
-            return (.scram256(scram), payload)
-        case SCRAMMechanismName.sha1Plus, SCRAMMechanismName.sha1:
-            var scram = SCRAMState<Insecure.SHA1>(channelBindingMode: channelBinding)
-            let payload = scram.clientFirstMessage(authcid: authcid, password: password)
-            return (.scram1(scram), payload)
-        case SASLPlain.mechanismName:
-            let payload = "\0\(authcid)\0\(password)"
-            return (.plain, payload)
-        default:
+            return (.scram(scram), payload)
+        }
+        guard name == SASLPlain.mechanismName else {
             preconditionFailure("Unsupported mechanism \(name) passed to startMechanism")
         }
+        return (.plain, "\0\(authcid)\0\(password)")
     }
 
     private func handleChallenge(_ stanza: XMLElement, mechanism: inout ActiveMechanism) -> Response {
@@ -193,13 +196,9 @@ struct SASL2Authenticator {
         }
 
         switch mechanism {
-        case var .scram256(scram):
+        case var .scram(scram):
             let response = scramChallengeResponse(decoded, scram: &scram)
-            mechanism = .scram256(scram)
-            return response
-        case var .scram1(scram):
-            let response = scramChallengeResponse(decoded, scram: &scram)
-            mechanism = .scram1(scram)
+            mechanism = .scram(scram)
             return response
         case .plain:
             return .failure(.invalidState("PLAIN does not expect challenges"))
@@ -209,13 +208,9 @@ struct SASL2Authenticator {
     private mutating func handleSuccess(_ stanza: XMLElement, mechanism: inout ActiveMechanism) -> Response {
         // Verify SCRAM server signature from <additional-data> (required for SCRAM mechanisms)
         switch mechanism {
-        case var .scram256(scram):
+        case var .scram(scram):
             if let error = verifyScramSignature(stanza, scram: &scram) { return error }
-            mechanism = .scram256(scram)
-            verifiedSCRAMMechanism = mechanismName
-        case var .scram1(scram):
-            if let error = verifyScramSignature(stanza, scram: &scram) { return error }
-            mechanism = .scram1(scram)
+            mechanism = .scram(scram)
             verifiedSCRAMMechanism = mechanismName
         case .plain:
             break
@@ -225,10 +220,7 @@ struct SASL2Authenticator {
     }
 
     /// Processes a SCRAM challenge and produces the response element.
-    private func scramChallengeResponse<H: HashFunction>(
-        _ decoded: String,
-        scram: inout SCRAMState<H>
-    ) -> Response where H.Digest: Sendable {
+    private func scramChallengeResponse(_ decoded: String, scram: inout any SCRAMSession) -> Response {
         switch scram.clientFinalMessage(serverFirstMessage: decoded) {
         case let .success(response):
             var element = XMLElement(name: "response", namespace: XMPPNamespaces.sasl2)
@@ -241,10 +233,7 @@ struct SASL2Authenticator {
 
     /// Verifies the SCRAM server signature from `<additional-data>`.
     /// Returns an error response if verification fails, `nil` on success.
-    private func verifyScramSignature<H: HashFunction>(
-        _ stanza: XMLElement,
-        scram: inout SCRAMState<H>
-    ) -> Response? where H.Digest: Sendable {
+    private func verifyScramSignature(_ stanza: XMLElement, scram: inout any SCRAMSession) -> Response? {
         guard let additionalData = stanza.childText(named: "additional-data"),
               let decoded = Base64.decodeString(additionalData) else {
             return .failure(.invalidState("Missing additional-data for SCRAM server verification"))
@@ -271,8 +260,7 @@ struct SASL2Authenticator {
     // MARK: - Active Mechanism
 
     private enum ActiveMechanism {
-        case scram256(SCRAMState<SHA256>)
-        case scram1(SCRAMState<Insecure.SHA1>)
+        case scram(any SCRAMSession)
         case plain
     }
 }

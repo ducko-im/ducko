@@ -7,7 +7,7 @@ struct IQCancellationTests {
     @Test
     func `expired IQ requests do not leave counted unsent stanzas`() async throws {
         let transport = MockTransport()
-        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false)
+        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false, allowsPLAIN: true)
         let connect = Task { try await client.connect(host: "example.com", port: 5222) }
         await simulateNoTLSConnect(transport)
         try await connect.value
@@ -26,7 +26,7 @@ struct IQCancellationTests {
     @Test
     func `cancellation after interception cannot drop a counted IQ before sending`() async throws {
         let transport = MockTransport()
-        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false)
+        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false, allowsPLAIN: true)
         let connect = Task { try await client.connect(host: "example.com", port: 5222) }
         await simulateNoTLSConnect(transport)
         try await connect.value

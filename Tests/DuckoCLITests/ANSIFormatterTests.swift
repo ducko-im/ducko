@@ -56,6 +56,13 @@ struct ANSIFormatterTests {
         #expect(output.contains("alice@example.com"))
     }
 
+    @Test(arguments: [(false, true, "PLAIN: refused, TLS: required"), (true, false, "PLAIN: allowed, TLS: optional")])
+    func `account shows its sign-in settings`(allowsPLAIN: Bool, requireTLS: Bool, expected: String) throws {
+        let jid = try #require(BareJID.parse("alice@example.com"))
+        let account = Account(id: UUID(), jid: jid, isEnabled: true, connectOnLaunch: false, requireTLS: requireTLS, allowsPLAIN: allowsPLAIN, createdAt: Date())
+        #expect(formatter.formatAccount(account).contains(expected))
+    }
+
     @Test func `error uses red code`() {
         let output = formatter.formatError(CLIError.connectionTimeout)
         #expect(output.contains("\u{001B}[31m"))

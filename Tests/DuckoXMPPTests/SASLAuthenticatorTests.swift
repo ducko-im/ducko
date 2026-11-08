@@ -49,7 +49,8 @@ enum SASLAuthenticatorTests {
             let element = try auth.begin(
                 features: features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil"
+                password: "pencil",
+                allowsPLAIN: true
             )
             #expect(element.attribute("mechanism") == "PLAIN")
         }
@@ -69,15 +70,22 @@ enum SASLAuthenticatorTests {
             (["SCRAM-SHA-256", "PLAIN"], "SCRAM-SHA-256"),
             (["SCRAM-SHA-1"], "SCRAM-SHA-1")
         ])
-        func `With SCRAM required, an offer that includes SCRAM signs in with it`(offered: [String], expected: String) throws {
+        func `With PLAIN not allowed, an offer that includes SCRAM signs in with it`(offered: [String], expected: String) throws {
             var auth = SASLAuthenticator()
             let element = try auth.begin(
                 features: features(mechanisms: offered),
                 authcid: "user",
-                password: "pencil",
-                requiresSCRAM: true
+                password: "pencil"
             )
             #expect(element.attribute("mechanism") == expected)
+        }
+
+        @Test
+        func `By default, an offer of only PLAIN is refused`() {
+            var auth = SASLAuthenticator()
+            #expect(throws: SASLAuthError.plainRefused) {
+                try auth.begin(features: features(mechanisms: ["PLAIN"]), authcid: "user", password: "pencil")
+            }
         }
 
         @Test
@@ -109,7 +117,8 @@ enum SASLAuthenticatorTests {
             let element = try auth.begin(
                 features: features(mechanisms: ["SCRAM-SHA-256-PLUS", "PLAIN"]),
                 authcid: "user",
-                password: "pencil"
+                password: "pencil",
+                allowsPLAIN: true
             )
             // Without CB data, PLUS is not in preference list, so falls through to PLAIN
             #expect(element.attribute("mechanism") == "PLAIN")
@@ -146,7 +155,8 @@ enum SASLAuthenticatorTests {
             let authElement = try auth.begin(
                 features: features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil"
+                password: "pencil",
+                allowsPLAIN: true
             )
 
             #expect(authElement.name == "auth")
@@ -168,7 +178,8 @@ enum SASLAuthenticatorTests {
             _ = try auth.begin(
                 features: features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil"
+                password: "pencil",
+                allowsPLAIN: true
             )
 
             var failure = XMLElement(name: "failure", namespace: saslNamespace)
@@ -192,7 +203,8 @@ enum SASLAuthenticatorTests {
             _ = try auth.begin(
                 features: features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil"
+                password: "pencil",
+                allowsPLAIN: true
             )
 
             var failure = XMLElement(name: "failure", namespace: saslNamespace)
@@ -233,7 +245,8 @@ enum SASLAuthenticatorTests {
             _ = try auth.begin(
                 features: features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil"
+                password: "pencil",
+                allowsPLAIN: true
             )
 
             let response = auth.receive(XMLElement(name: "unknown"))
@@ -248,11 +261,11 @@ enum SASLAuthenticatorTests {
         @Test
         func `Full SCRAM-SHA-256 flow through authenticator`() {
             let clientNonce = "rOprNGfwEbeRWgbNEkqO"
-            var mech = SCRAM<SHA256>(
-                mechanismName: SCRAMMechanismName.sha256, nonceGenerator: { clientNonce }
+            var mech = SCRAM(
+                mechanismName: SCRAMMechanismName.sha256, session: SCRAMState<SHA256>(nonceGenerator: { clientNonce })
             )
             let authElement = mech.start(authcid: "user", password: "pencil")
-            var auth = SASLAuthenticator(mechanism: .scram256(mech))
+            var auth = SASLAuthenticator(mechanism: .scram(mech))
 
             #expect(authElement.name == "auth")
 

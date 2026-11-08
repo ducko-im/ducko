@@ -4,10 +4,10 @@ import Testing
 
 // MARK: - Helpers
 
-private func makeClient(mock: MockTransport, requiresSCRAM: Bool = false) -> XMPPClient {
+private func makeClient(mock: MockTransport, allowsPLAIN: Bool = false) -> XMPPClient {
     XMPPClient(
         domain: "example.com", credentials: .init(username: "user", password: "pencil"), transport: mock,
-        requireTLS: false, requiresSCRAM: requiresSCRAM
+        requireTLS: false, allowsPLAIN: allowsPLAIN
     )
 }
 
@@ -29,9 +29,9 @@ private func isPlainSignInRefused(_ event: XMPPEvent) -> Bool {
 enum XMPPClientSignInSecurityTests {
     struct Refusal {
         @Test
-        func `With SCRAM required, a SASL1 offer of only PLAIN is refused before any auth is sent`() async throws {
+        func `By default, a SASL1 offer of only PLAIN is refused before any auth is sent`() async throws {
             let mock = MockTransport()
-            let client = makeClient(mock: mock, requiresSCRAM: true)
+            let client = makeClient(mock: mock)
             let events = Task { try await collectEvents(from: client, until: isPlainSignInRefused) }
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -51,9 +51,9 @@ enum XMPPClientSignInSecurityTests {
         }
 
         @Test
-        func `With SCRAM required, a SASL2 offer of only PLAIN is refused before any authenticate is sent`() async throws {
+        func `By default, a SASL2 offer of only PLAIN is refused before any authenticate is sent`() async throws {
             let mock = MockTransport()
-            let client = makeClient(mock: mock, requiresSCRAM: true)
+            let client = makeClient(mock: mock)
 
             let connectTask = Task { try await client.connectWithTLS(host: "example.com", port: 5223) }
             await mock.waitForSent(count: 1) // stream opening
@@ -106,7 +106,7 @@ enum XMPPClientSignInSecurityTests {
         @Test
         func `A PLAIN sign-in records nothing`() async throws {
             let mock = MockTransport()
-            let client = makeClient(mock: mock)
+            let client = makeClient(mock: mock, allowsPLAIN: true)
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             await simulateNoTLSConnect(mock)

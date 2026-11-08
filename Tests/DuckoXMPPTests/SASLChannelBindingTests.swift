@@ -132,10 +132,9 @@ enum SCRAMPLUSTests {
 
         @Test
         func `Start produces correct auth element`() throws {
-            var mechanism = SCRAM<SHA256>(
+            var mechanism = SCRAM(
                 mechanismName: SCRAMMechanismName.sha256Plus,
-                channelBindingMode: .bound(type: tlsServerEndPointCBType, data: Self.mockCBData),
-                nonceGenerator: { Self.clientNonce }
+                session: SCRAMState<SHA256>(channelBindingMode: .bound(type: tlsServerEndPointCBType, data: Self.mockCBData), nonceGenerator: { Self.clientNonce })
             )
             let auth = mechanism.start(authcid: "user", password: "pencil")
 
@@ -156,10 +155,9 @@ enum SCRAMPLUSTests {
 
         @Test
         func `Start produces correct auth element`() throws {
-            var mechanism = SCRAM<Insecure.SHA1>(
+            var mechanism = SCRAM(
                 mechanismName: SCRAMMechanismName.sha1Plus,
-                channelBindingMode: .bound(type: tlsServerEndPointCBType, data: Self.mockCBData),
-                nonceGenerator: { Self.clientNonce }
+                session: SCRAMState<Insecure.SHA1>(channelBindingMode: .bound(type: tlsServerEndPointCBType, data: Self.mockCBData), nonceGenerator: { Self.clientNonce })
             )
             let auth = mechanism.start(authcid: "user", password: "pencil")
 
@@ -184,6 +182,7 @@ struct ChannelBindingChoiceTests {
         /// `header` is the GS2 header, which PLAIN doesn't have.
         case mechanism(String, header: String?)
         case abort
+        case plainRefused
     }
 
     struct Offer: Sendable, CustomTestStringConvertible {
@@ -194,6 +193,7 @@ struct ChannelBindingChoiceTests {
         let sasl1: Outcome
         let sasl2: Outcome
         var hasBindingData = true
+        var allowsPLAIN = false
     }
 
     private static let bound = Outcome.mechanism(SCRAMMechanismName.sha256Plus, header: "p=tls-server-end-point,,")
@@ -224,7 +224,12 @@ struct ChannelBindingChoiceTests {
         ),
         Offer(
             testDescription: "types with only PLAIN signs in with PLAIN", mechanisms: ["PLAIN"],
-            types: ["tls-exporter"], sasl1: .mechanism("PLAIN", header: nil), sasl2: .mechanism("PLAIN", header: nil)
+            types: ["tls-exporter"], sasl1: .mechanism("PLAIN", header: nil), sasl2: .mechanism("PLAIN", header: nil),
+            allowsPLAIN: true
+        ),
+        Offer(
+            testDescription: "types with only PLAIN are refused by default", mechanisms: ["PLAIN"],
+            types: ["tls-exporter"], sasl1: .plainRefused, sasl2: .plainRefused
         ),
         Offer(
             testDescription: "PLUS with an empty type list", mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"],
@@ -235,12 +240,12 @@ struct ChannelBindingChoiceTests {
             types: nil, sasl1: .mechanism("SCRAM-SHA-1", header: "n,,"), sasl2: .abort
         ),
         Offer(
-            testDescription: "an unimplemented PLUS without types", mechanisms: ["SCRAM-SHA-512-PLUS", "SCRAM-SHA-256"],
+            testDescription: "an unimplemented PLUS without types", mechanisms: ["SCRAM-SHA-384-PLUS", "SCRAM-SHA-256"],
             types: nil, sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .abort
         ),
         Offer(
             testDescription: "a listed type with only an unimplemented PLUS signs in unbound",
-            mechanisms: ["SCRAM-SHA-512-PLUS", "SCRAM-SHA-256"], types: ["tls-server-end-point"],
+            mechanisms: ["SCRAM-SHA-384-PLUS", "SCRAM-SHA-256"], types: ["tls-server-end-point"],
             sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "n,,")
         ),
         Offer(
@@ -264,14 +269,17 @@ struct ChannelBindingChoiceTests {
 
         var sasl1 = SASLAuthenticator()
         let sasl1Outcome = Self.outcome(Result { () throws(SASLAuthError) -> XMLElement in
-            try sasl1.begin(features: features, authcid: "user", password: "pencil", channelBindingData: bindingData)
+            try sasl1.begin(
+                features: features, authcid: "user", password: "pencil", channelBindingData: bindingData, allowsPLAIN: offer.allowsPLAIN
+            )
         }, initialResponse: \.textContent)
         #expect(sasl1Outcome == offer.sasl1)
 
         var sasl2 = SASL2Authenticator()
         let sasl2Outcome = Self.outcome(Result { () throws(SASLAuthError) -> XMLElement in
             try sasl2.begin(
-                features: features, authcid: "user", password: "pencil", inlinePayloads: [], channelBindingData: bindingData
+                features: features, authcid: "user", password: "pencil", inlinePayloads: [], channelBindingData: bindingData,
+                allowsPLAIN: offer.allowsPLAIN
             )
         }, initialResponse: { $0.childText(named: "initial-response") })
         #expect(sasl2Outcome == offer.sasl2)
@@ -310,6 +318,8 @@ struct ChannelBindingChoiceTests {
             return .mechanism(mechanism, header: decoded.firstRange(of: ",,").map { String(decoded[..<$0.upperBound]) })
         case .failure(.channelBindingDowngrade):
             return .abort
+        case .failure(.plainRefused):
+            return .plainRefused
         case .failure:
             return nil
         }

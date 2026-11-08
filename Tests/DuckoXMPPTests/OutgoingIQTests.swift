@@ -80,7 +80,7 @@ struct OutgoingIQTests {
 
     @Test func `responder failure disconnects and drains the pending operation`() async throws {
         let mock = MockTransport()
-        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false)
+        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false, allowsPLAIN: true)
         let connect = Task { try await client.connect(host: "example.com", port: 5222) }
         await simulateNoTLSConnect(mock)
         try await connect.value

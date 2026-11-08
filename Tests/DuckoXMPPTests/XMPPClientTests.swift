@@ -65,7 +65,8 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock
+                transport: mock,
+                allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -84,7 +85,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -103,7 +104,8 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock
+                transport: mock,
+                allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -122,7 +124,8 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock
+                transport: mock,
+                allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -152,7 +155,8 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock
+                transport: mock,
+                allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -175,7 +179,8 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock
+                transport: mock,
+                allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -199,7 +204,8 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock
+                transport: mock,
+                allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -220,7 +226,8 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock
+                transport: mock,
+                allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -243,7 +250,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -259,7 +266,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let eventsTask = Task {
@@ -299,7 +306,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "wrong"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let eventsTask = Task {
@@ -345,7 +352,8 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock
+                transport: mock,
+                allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connectWithTLS(host: "example.com", port: 5223) }
@@ -376,7 +384,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -407,7 +415,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -441,7 +449,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let iq = XMPPIQ(type: .get, id: "test-iq-pre-connect")
@@ -468,7 +476,8 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock
+                transport: mock,
+                allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -499,7 +508,8 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock
+                transport: mock,
+                allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -524,7 +534,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -556,7 +566,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(chatModule)
 
@@ -591,7 +601,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let eventsTask = Task {
@@ -624,7 +634,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let eventsTask = Task {
@@ -660,7 +670,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -692,7 +702,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -729,7 +739,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -750,7 +760,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             await disconnectFast(client)
@@ -773,7 +783,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -812,7 +822,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -841,7 +851,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -869,7 +879,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -912,7 +922,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -950,7 +960,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -988,7 +998,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -1044,7 +1054,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false,
+                transport: mock, requireTLS: false, allowsPLAIN: true,
                 preferredResource: "myphone"
             )
 
@@ -1066,7 +1076,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false,
+                transport: mock, requireTLS: false, allowsPLAIN: true,
                 preferredResource: "my\u{00A0}phone" // NO-BREAK SPACE → U+0020
             )
 
@@ -1088,7 +1098,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false,
+                transport: mock, requireTLS: false, allowsPLAIN: true,
                 preferredResource: "bad\u{0007}resource" // control character → OpaqueString rejects
             )
 
@@ -1110,7 +1120,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "xn--bcher-kva.example",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connectWithTLS(host: "host.example", port: 5223) }
@@ -1131,7 +1141,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "bad domain.example", // space is not LDH; no A-label can be derived
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await #expect(throws: XMPPClientError.self) {
                 try await client.connect(host: "host.example", port: 5222)
@@ -1144,7 +1154,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "bücher.example",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connectWithTLS(host: "host.example", port: 5223) }
@@ -1166,7 +1176,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -1208,7 +1218,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -1244,7 +1254,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.addInterceptor(interceptor)
 
@@ -1285,7 +1295,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.addInterceptor(interceptor)
 
@@ -1360,7 +1370,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(module)
 
@@ -1380,7 +1390,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(module)
 
@@ -1411,7 +1421,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(module)
 
@@ -1445,7 +1455,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(module)
 
@@ -1476,7 +1486,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             module.attach(client)
             await client.register(module)

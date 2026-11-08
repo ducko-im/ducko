@@ -119,7 +119,7 @@ func `Direct TLS connect skips STARTTLS`() async throws {
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
         transport: mock,
-        requireTLS: false
+        requireTLS: false, allowsPLAIN: true
     )
 
     let connectTask = Task { try await client.connectWithTLS(host: "example.com", port: 5223) }

@@ -14,7 +14,7 @@ struct FormatterEventContractTests {
         let occupant = try #require(FullJID.parse("room@conference.example.com/alice"))
         let account = accountID.uuidString
         let reset = "\u{001B}[0m"
-        let refusal = "Sign-in refused: the server offers only a sign-in that sends the password, and this account has signed in without sending it before"
+        let refusal = "Sign-in refused: the server offers only a sign-in that sends the password, which this account does not allow"
         let cases: [EventExpectation] = [
             .init(.streamResumed(full), "stream resumed as alice@example.com/laptop", "\u{001B}[32mstream resumed as alice@example.com/laptop\(reset)",
                   ["type": "stream_resumed", "jid": full.description, "account": account]),
@@ -29,9 +29,8 @@ struct FormatterEventContractTests {
             .init(.disconnected(.setupFailed(XMPPClientError.timeout)),
                   "disconnected: The server did not respond in time", "\u{001B}[31mdisconnected: The server did not respond in time\(reset)",
                   ["type": "disconnected", "reason": "setup_failed", "message": "The server did not respond in time", "account": account]),
-            .init(.plainSignInRefused, "\(refusal). Run 'ducko account reset-security <jid>' to send the password anyway.",
-                  "\u{001B}[31m\(refusal). Run 'ducko account reset-security <jid>' to send the password anyway.\(reset)",
-                  ["type": "sign_in_refused", "reason": "plain_after_scram", "message": refusal, "account": account]),
+            .init(.plainSignInRefused, refusal, "\u{001B}[31m\(refusal)\(reset)",
+                  ["type": "sign_in_refused", "reason": "plain_not_allowed", "message": refusal, "account": account]),
             .init(.presenceSubscriptionApproved(from: peer), "Subscription approved by alice@example.com", "\u{001B}[32m✓ Subscription approved by alice@example.com\(reset)",
                   ["type": "subscription_approved", "from": peer.description]),
             .init(.presenceSubscriptionRevoked(from: peer), "Subscription revoked by alice@example.com", "\u{001B}[33m✗ Subscription revoked by alice@example.com\(reset)",

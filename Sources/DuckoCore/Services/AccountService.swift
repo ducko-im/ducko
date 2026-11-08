@@ -8,8 +8,11 @@ public final class AccountService {
     public private(set) var accounts: [Account] = []
     public internal(set) var connectionStates: [UUID: ConnectionState] = [:]
     public private(set) var certificateWarnings: [UUID: CertificateWarning] = [:]
-    /// Published on every connect attempt refused because the server offered only PLAIN after a SCRAM sign-in.
+    /// Published on every connect attempt refused because the server offered only PLAIN to an account that does not
+    /// allow it.
     public internal(set) var signInSecurityWarnings: [UUID: SignInSecurityWarning] = [:]
+    /// Accounts `createAndConnect` is signing in to for the first time.
+    var accountsInFirstSignIn: Set<UUID> = []
 
     public struct CertificateWarning: Sendable {
         public let accountJID: String
@@ -222,7 +225,8 @@ public final class AccountService {
         resource: String? = nil,
         requireTLS: Bool = true,
         connectOnLaunch: Bool = true,
-        importedFrom: String? = nil
+        importedFrom: String? = nil,
+        allowsPLAIN: Bool = false
     ) async throws -> UUID {
         guard let jid = BareJID.parse(jidString) else {
             throw AccountServiceError.invalidJID(jidString)
@@ -241,6 +245,7 @@ public final class AccountService {
             port: port,
             resource: resource,
             requireTLS: requireTLS,
+            allowsPLAIN: allowsPLAIN,
             importedFrom: importedFrom,
             createdAt: Date()
         )
@@ -346,6 +351,7 @@ public final class AccountService {
         requireTLS: Bool = true,
         connectOnLaunch: Bool = true,
         importedFrom: String? = nil,
+        allowsPLAIN: Bool = false,
         afterConnect: ((UUID) async throws -> Void)? = nil
     ) async throws -> UUID {
         let accountID = try await createAccount(
@@ -355,8 +361,11 @@ public final class AccountService {
             resource: resource,
             requireTLS: requireTLS,
             connectOnLaunch: connectOnLaunch,
-            importedFrom: importedFrom
+            importedFrom: importedFrom,
+            allowsPLAIN: allowsPLAIN
         )
+        accountsInFirstSignIn.insert(accountID)
+        defer { accountsInFirstSignIn.remove(accountID) }
         do {
             try await connect(accountID: accountID, password: password)
             try await afterConnect?(accountID)
@@ -381,7 +390,8 @@ public final class AccountService {
     /// Registers a new account on a server via XEP-0077 pre-auth registration. The server's form is fetched first, on
     /// the connection the registration goes out on. When it asks for nothing beyond the username, password and email,
     /// and each was typed, they are submitted and the account is created and signed in to. Otherwise the form comes
-    /// back to be completed.
+    /// back to be completed. The account is created allowing PLAIN, because the registration already gave this server the
+    /// password over TLS, so PLAIN reveals nothing more. Its first verified SCRAM sign-in turns that off.
     public func registerAccount(
         domain: String,
         username: String,
@@ -407,6 +417,7 @@ public final class AccountService {
                 password: password,
                 host: host,
                 port: host == nil ? nil : Int(port),
+                allowsPLAIN: true,
                 afterConnect: afterConnect
             )
         }
@@ -578,7 +589,7 @@ public final class AccountService {
         startEventConsumption(for: accountID, client: client)
 
         do {
-            try await signIn(with: client, account: account) {
+            try await signIn(with: client, accountID: accountID) {
                 try await connect(client, account: account, resumeState: resuming?.streamManagement)
             }
         } catch {
@@ -803,8 +814,8 @@ public final class AccountService {
                     throw AccountServiceError.accountNotFound(accountID)
                 }
                 if let verifiedSCRAMMechanism {
-                    await requireSCRAM(for: account, verifiedWith: verifiedSCRAMMechanism)
-                    account.requiresSCRAM = true
+                    await forbidPLAIN(for: accountID, verifiedWith: verifiedSCRAMMechanism)
+                    account.allowsPLAIN = false
                 }
                 await onSessionStarting?(accountID)
                 // Force TLS for redirects to prevent plaintext credential exposure via see-other-host injection.
@@ -819,7 +830,7 @@ public final class AccountService {
                 connectionResources[accountID]?.muc = muc
                 onRosterSessionStarted?(accountID, attemptID, client)
                 startEventConsumption(for: accountID, client: client)
-                try await signIn(with: client, account: account) {
+                try await signIn(with: client, accountID: accountID) {
                     try await client.connect(host: host, port: port ?? 5222)
                 }
                 guard connectionResources[accountID]?.attemptID == attemptID else { return }

@@ -7,7 +7,7 @@ extension DuckoCLI {
     struct Account: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Manage XMPP accounts",
-            subcommands: [List.self, Add.self, Delete.self, ResetSecurity.self, Unregister.self, Register.self, CheckRegistration.self],
+            subcommands: [List.self, Add.self, Set.self, Delete.self, Unregister.self, Register.self, CheckRegistration.self],
             defaultSubcommand: List.self
         )
 
@@ -56,6 +56,9 @@ extension DuckoCLI {
             @Flag(name: .long, help: "Add the account without connecting to validate (offline setup)")
             var noConnect = false
 
+            @Flag(name: .long, help: "Send the password to a server that offers only PLAIN")
+            var allowPlain = false
+
             func run() async throws {
                 guard BareJID.parse(jid) != nil else {
                     throw CLIError.invalidJID(jid)
@@ -73,22 +76,80 @@ extension DuckoCLI {
 
                 if noConnect {
                     let accountID = try await env.accountService.createAccount(
-                        jidString: jid, host: endpoint.host, port: effectivePort, connectOnLaunch: false
+                        jidString: jid, host: endpoint.host, port: effectivePort, connectOnLaunch: false, allowsPLAIN: allowPlain
                     )
                     await env.accountService.savePassword(accountID: accountID, password: resolvedPassword)
                 } else {
-                    let accountID = try await env.accountService.createAndConnect(
-                        jidString: jid,
-                        password: resolvedPassword,
-                        host: endpoint.host,
-                        port: effectivePort
-                    ) { accountID in
-                        try await waitForConnected(accountID: accountID, environment: env)
+                    let accountID: UUID
+                    do {
+                        accountID = try await env.accountService.createAndConnect(
+                            jidString: jid,
+                            password: resolvedPassword,
+                            host: endpoint.host,
+                            port: effectivePort,
+                            allowsPLAIN: allowPlain
+                        ) { accountID in
+                            try await waitForConnected(accountID: accountID, environment: env)
+                        }
+                    } catch {
+                        if AccountService.isPLAINRefusal(error) {
+                            printToStandardError(plainRefusalHint(.accountAdd(host: endpoint.host, port: endpoint.port), jid: jid))
+                        }
+                        throw error
                     }
                     await env.accountService.disconnect(accountID: accountID)
                 }
 
                 print("Account added: \(jid)")
+            }
+        }
+
+        struct Set: AsyncParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Change an account's sign-in settings without connecting"
+            )
+
+            @OptionGroup var global: GlobalOptions
+
+            @Argument(help: "The bare JID of the account")
+            var jid: String
+
+            @Flag(
+                inversion: .prefixedNo, exclusivity: .exclusive,
+                help: "Whether a server that offers only PLAIN gets the password. A sign-in that doesn't send it turns this off again."
+            )
+            var allowPlain: Bool?
+
+            @Flag(inversion: .prefixedNo, exclusivity: .exclusive, help: "Whether the connection must be encrypted")
+            var requireTLS: Bool?
+
+            func validate() throws {
+                if allowPlain == nil, requireTLS == nil {
+                    throw ValidationError("Specify --allow-plain/--no-allow-plain or --require-tls/--no-require-tls.")
+                }
+            }
+
+            func run() async throws {
+                let formatter = global.formatter
+                let context = try await MainActor.run {
+                    try CLIBootstrap.setUp(formatter: formatter)
+                }
+                let env = context.environment
+
+                var account = try await resolveAccount(byJID: jid, environment: env)
+                if let requireTLS {
+                    account.requireTLS = requireTLS
+                    try await env.accountService.updateAccount(account)
+                }
+                if let allowPlain {
+                    try await env.accountService.setAllowsPLAIN(allowPlain, for: account.id)
+                }
+
+                let saved = try await resolveAccount(byJID: jid, environment: env)
+                print(formatter.formatAccount(saved))
+                if allowPlain == true {
+                    printToStandardError("A sign-in that doesn't send the password turns PLAIN off again.")
+                }
             }
         }
 
@@ -116,28 +177,6 @@ extension DuckoCLI {
                 if includeHistory {
                     print("Chat history deleted.")
                 }
-            }
-        }
-
-        struct ResetSecurity: AsyncParsableCommand {
-            static let configuration = CommandConfiguration(
-                commandName: "reset-security",
-                abstract: "Let an account that signed in with SCRAM send its password to a server offering only PLAIN"
-            )
-
-            @Argument(help: "The bare JID of the account")
-            var jid: String
-
-            func run() async throws {
-                let context = try await MainActor.run {
-                    try CLIBootstrap.setUp(formatter: PlainFormatter())
-                }
-                let env = context.environment
-
-                let account = try await resolveAccount(byJID: jid, environment: env)
-
-                try await env.accountService.resetSignInSecurity(for: account.id)
-                print("Sign-in security reset for \(jid). A server offering only PLAIN gets the password again, until a sign-in that does not send it.")
             }
         }
 

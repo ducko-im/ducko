@@ -11,10 +11,7 @@ enum ChannelBindingMode {
 }
 
 /// Generic SCRAM state machine per RFC 5802.
-///
-/// Parameterized over a hash function (`SHA256`, `Insecure.SHA1`).
-/// Used by ``SCRAM`` (SASL1 wrapper) and directly by ``SASL2Authenticator``.
-struct SCRAMState<H: HashFunction> where H.Digest: Sendable {
+struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
     private var phase: Phase = .initial
     private var password = ""
     private var clientNonce = ""
@@ -22,6 +19,7 @@ struct SCRAMState<H: HashFunction> where H.Digest: Sendable {
     private var serverSignature: [UInt8] = []
     private let nonceGenerator: @Sendable () -> String
     private let channelBindingMode: ChannelBindingMode
+    private let downgradeContext: SCRAMDowngradeContext
 
     /// Minimum PBKDF2 iteration count per RFC 5802 §5.1.
     static var minimumIterationCount: Int {
@@ -30,9 +28,11 @@ struct SCRAMState<H: HashFunction> where H.Digest: Sendable {
 
     init(
         channelBindingMode: ChannelBindingMode = .none,
+        downgradeContext: SCRAMDowngradeContext = .empty,
         nonceGenerator: @Sendable @escaping () -> String = randomNonce
     ) {
         self.channelBindingMode = channelBindingMode
+        self.downgradeContext = downgradeContext
         self.nonceGenerator = nonceGenerator
     }
 
@@ -75,6 +75,10 @@ struct SCRAMState<H: HashFunction> where H.Digest: Sendable {
         // Server nonce must start with our client nonce
         guard combinedNonce.hasPrefix(clientNonce) else {
             return .failure(.invalidServerNonce)
+        }
+
+        if let error = downgradeError(in: attrs) {
+            return .failure(error)
         }
 
         guard iterations >= Self.minimumIterationCount else {
@@ -142,6 +146,18 @@ struct SCRAMState<H: HashFunction> where H.Digest: Sendable {
 
         phase = .completed
         return .success(())
+    }
+
+    /// Checks the server's view of the offer (XEP-0474 `h`) and of the TLS version (XEP-0515 `t`) against what this
+    /// side received and negotiated, so a mismatch in either fails before the proof goes out.
+    private func downgradeError(in attrs: [String: String]) -> SASLAuthError? {
+        if let hash = attrs["h"], hash != Base64.encode(Array(H.hash(data: xep0474HashInput(downgradeContext)))) {
+            return .mechanismListTampered
+        }
+        if let version = attrs["t"], version != downgradeContext.tlsVersion.map(xep0515VersionAttribute) {
+            return .tlsVersionTampered
+        }
+        return nil
     }
 
     private enum Phase {

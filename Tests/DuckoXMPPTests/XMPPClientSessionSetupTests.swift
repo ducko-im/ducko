@@ -7,7 +7,7 @@ import Testing
 /// A client with stream management and a roster, whose setup sends the roster request after the session connects.
 private func makeSetupClient(mock: MockTransport, signInTimeout: Duration = .seconds(60)) async -> (XMPPClient, StreamManagementModule) {
     let client = XMPPClient(
-        domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false,
+        domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false, allowsPLAIN: true,
         signInTimeout: signInTimeout
     )
     let sm = StreamManagementModule()
@@ -92,7 +92,7 @@ struct XMPPClientSessionSetupTests {
     @Test
     func `A message sent during setup goes out once setup completes, while a request goes out at once`() async throws {
         let mock = MockTransport()
-        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false)
+        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false, allowsPLAIN: true)
         let release = AsyncSemaphore()
         await client.register(SetupHold(release: release))
         let connected = Task { try await collectEvents(from: client) { if case .connected = $0 { true } else { false } } }
@@ -118,7 +118,7 @@ struct XMPPClientSessionSetupTests {
     @Test
     func `A message held for setup fails when setup fails`() async throws {
         let mock = MockTransport()
-        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false)
+        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false, allowsPLAIN: true)
         let release = AsyncSemaphore()
         await client.register(SetupHold(release: release, failure: XMPPClientError.timeout))
         let connected = Task { try await collectEvents(from: client) { if case .connected = $0 { true } else { false } } }
@@ -158,7 +158,7 @@ struct XMPPClientSessionSetupTests {
     func `A session whose setup completes outlives the deadline`() async throws {
         let mock = MockTransport()
         let client = XMPPClient(
-            domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false,
+            domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false, allowsPLAIN: true,
             signInTimeout: .milliseconds(300)
         )
 

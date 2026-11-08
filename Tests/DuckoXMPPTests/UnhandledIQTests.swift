@@ -8,7 +8,7 @@ private func makeConnectedClient(mock: MockTransport) async throws -> XMPPClient
     let client = XMPPClient(
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
-        transport: mock, requireTLS: false
+        transport: mock, requireTLS: false, allowsPLAIN: true
     )
 
     let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }

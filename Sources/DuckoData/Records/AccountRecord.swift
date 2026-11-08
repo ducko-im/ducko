@@ -14,7 +14,7 @@ final class AccountRecord {
     var requireTLS: Bool = true
     var rosterVersion: String?
     var certificateFingerprint: String?
-    var requiresSCRAM = false
+    var allowsPLAIN = false
     /// The account's `[String: ChannelSearchLimit]`, JSON-encoded.
     var channelSearchLimits: Data?
     var importedFrom: String?
@@ -36,7 +36,7 @@ final class AccountRecord {
         requireTLS: Bool = true,
         rosterVersion: String? = nil,
         certificateFingerprint: String? = nil,
-        requiresSCRAM: Bool = false,
+        allowsPLAIN: Bool = false,
         importedFrom: String? = nil,
         contacts: [ContactRecord] = [],
         conversations: [ConversationRecord] = [],
@@ -53,7 +53,7 @@ final class AccountRecord {
         self.requireTLS = requireTLS
         self.rosterVersion = rosterVersion
         self.certificateFingerprint = certificateFingerprint
-        self.requiresSCRAM = requiresSCRAM
+        self.allowsPLAIN = allowsPLAIN
         self.importedFrom = importedFrom
         self.contacts = contacts
         self.conversations = conversations

@@ -15,7 +15,7 @@ extension OMEMOModuleTests {
         }
 
         private func startConnect() async -> (XMPPClient, Task<Void, any Error>) {
-            let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false)
+            let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false, allowsPLAIN: true)
             await client.register(pepModule)
             await client.register(omemoModule)
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }

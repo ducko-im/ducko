@@ -6,7 +6,7 @@ struct IQSendCompletionTests {
     @Test(arguments: [false, true])
     func `a reply does not cancel an accepted write whose completion is pending`(errorReply: Bool) async throws {
         let transport = DelayedWriteCompletionTransport()
-        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false)
+        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false, allowsPLAIN: true)
         let connect = Task { try await client.connect(host: "example.com", port: 5222) }
         await simulateNoTLSConnect(transport.mock)
         try await connect.value

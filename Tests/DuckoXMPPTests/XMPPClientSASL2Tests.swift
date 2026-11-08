@@ -10,7 +10,7 @@ private func makeClient(
     let client = XMPPClient(
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
-        transport: mock, requireTLS: false,
+        transport: mock, requireTLS: false, allowsPLAIN: true,
         preferredResource: preferredResource
     )
     let sm = StreamManagementModule(previousState: previousState)
@@ -90,7 +90,7 @@ enum XMPPClientSASL2Tests {
             let mock = MockTransport()
             let client = XMPPClient(
                 domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock,
-                requireTLS: false, userAgent: SASL2UserAgent(software: "TestClient", device: "Test Mac")
+                requireTLS: false, allowsPLAIN: true, userAgent: SASL2UserAgent(software: "TestClient", device: "Test Mac")
             )
 
             let connectTask = Task { try await client.connectWithTLS(host: "example.com", port: 5223) }
@@ -130,7 +130,7 @@ enum XMPPClientSASL2Tests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
@@ -249,7 +249,7 @@ enum XMPPClientSASL2Tests {
         func `A client without stream management requests no inline enable`() async throws {
             let mock = MockTransport()
             let client = XMPPClient(
-                domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false
+                domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false, allowsPLAIN: true
             )
 
             let connectTask = Task { try await client.connectWithTLS(host: "example.com", port: 5223) }
@@ -498,6 +498,7 @@ enum XMPPClientSASL2Tests {
             #expect(thrown.kind == kind)
             #expect(thrown.serverCondition == condition)
             #expect(emitted == thrown)
+            #expect(await !(sentElements(on: mock).contains { $0.name == "abort" }))
         }
     }
 

@@ -18,7 +18,7 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
             password: password
         )
         builder.withRequireTLS(requireTLSOverride ?? account.requireTLS)
-        builder.withRequiresSCRAM(account.requiresSCRAM)
+        builder.withAllowsPLAIN(account.allowsPLAIN)
         builder.withPreferredResource(account.resource)
         builder.withUserAgent(SASL2UserAgent(device: SCDynamicStoreCopyComputerName(nil, nil) as String?))
         let rosterModule = RosterModule()

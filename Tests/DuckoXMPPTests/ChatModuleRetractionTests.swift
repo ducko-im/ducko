@@ -8,7 +8,7 @@ private func makeConnectedClient(mock: MockTransport) async throws -> XMPPClient
     let client = XMPPClient(
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
-        transport: mock, requireTLS: false
+        transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(ChatModule())
 
@@ -23,7 +23,7 @@ private func makeConnectedClientWithMUC(mock: MockTransport) async throws -> XMP
     let client = XMPPClient(
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
-        transport: mock, requireTLS: false
+        transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(ChatModule())
     await client.register(MUCModule())

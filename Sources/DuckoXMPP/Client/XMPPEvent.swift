@@ -4,7 +4,8 @@ public enum XMPPEvent: Sendable {
     case streamResumed(FullJID)
     case disconnected(DisconnectReason)
     case authenticationFailed(AuthenticationFailure)
-    /// The sign-in was refused before the password went out, as ``XMPPClientError/plainSignInRefused`` describes.
+    /// The server offered only PLAIN to an account that does not allow it, so the sign-in was refused before the password
+    /// went out.
     case plainSignInRefused
     case messageReceived(XMPPMessage)
     case presenceReceived(XMPPPresence)

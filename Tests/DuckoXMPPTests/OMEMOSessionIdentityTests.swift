@@ -25,7 +25,7 @@ extension OMEMOModuleTests {
             omemo.configureIdentity(recipient.data)
             let client = XMPPClient(
                 domain: "example.com", credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(sm)
             await client.addInterceptor(sm)
@@ -58,7 +58,7 @@ extension OMEMOModuleTests {
             omemo.configureIdentity(recipient.data)
             let client = XMPPClient(
                 domain: "example.com", credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(sm)
             await client.addInterceptor(sm)
@@ -88,7 +88,7 @@ extension OMEMOModuleTests {
             omemo.configureIdentity(recipient.data)
             let client = XMPPClient(
                 domain: "example.com", credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             let capsModule = CapsModule()
             await client.register(PresenceModule(capsModule: capsModule))

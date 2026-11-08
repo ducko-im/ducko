@@ -88,8 +88,9 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     }
 
     private let requireTLS: Bool
-    /// Refuses a sign-in whose only usable mechanism is PLAIN, before the password goes out.
-    private let requiresSCRAM: Bool
+    /// Whether a sign-in whose only usable mechanism is PLAIN sends the password. Otherwise it is refused before the
+    /// password goes out.
+    private let allowsPLAIN: Bool
     private let preferredResource: String?
     private let userAgent: SASL2UserAgent
 
@@ -98,7 +99,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         credentials: Credentials,
         transport: (any XMPPTransport)? = nil,
         requireTLS: Bool = true,
-        requiresSCRAM: Bool = false,
+        allowsPLAIN: Bool = false,
         preferredResource: String? = nil,
         userAgent: SASL2UserAgent = SASL2UserAgent(),
         signInTimeout: Duration = .seconds(60)
@@ -113,7 +114,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         self.credentials = credentials
         self.connection = XMPPConnection(transport: transport ?? makeDefaultXMPPTransport())
         self.requireTLS = requireTLS
-        self.requiresSCRAM = requiresSCRAM
+        self.allowsPLAIN = allowsPLAIN
         self.preferredResource = preferredResource
         self.userAgent = userAgent
         self.signInTimeout = signInTimeout
@@ -744,11 +745,12 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     private func authenticate(features: XMLElement, reader: EventReader) async throws {
         var authenticator = SASLAuthenticator()
         let cbData = await connection.channelBindingData
+        let tlsVersion = await connection.tlsInfo?.wireVersion
         let authElement: XMLElement
         do {
             authElement = try authenticator.begin(
                 features: features, authcid: credentials.username, password: credentials.password,
-                channelBindingData: cbData, requiresSCRAM: requiresSCRAM
+                channelBindingData: cbData, tlsVersion: tlsVersion, allowsPLAIN: allowsPLAIN
             )
         } catch {
             throw authenticationFailure(error)
@@ -792,6 +794,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         inlinePayloads.append(buildBind2Request(tag: userAgent.software, enableSM: requestsSM, enableCarbons: requestsCarbons))
 
         let cbData = await connection.channelBindingData
+        let tlsVersion = await connection.tlsInfo?.wireVersion
         let authElement: XMLElement
         do {
             authElement = try authenticator.begin(
@@ -801,7 +804,8 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
                 inlinePayloads: inlinePayloads,
                 userAgent: userAgent,
                 channelBindingData: cbData,
-                requiresSCRAM: requiresSCRAM
+                tlsVersion: tlsVersion,
+                allowsPLAIN: allowsPLAIN
             )
         } catch {
             throw authenticationFailure(error)
@@ -820,11 +824,12 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
                 try await connection.send(XMPPStreamWriter.stanza(reply))
             case let .success(result):
                 return result
-            case .failure(.unsupportedSignInStep):
-                // XEP-0388 §2.4: only `<response/>` or `<abort/>` may answer mid-exchange.
-                try await connection.send(XMPPStreamWriter.stanza(XMLElement(name: "abort", namespace: XMPPNamespaces.sasl2)))
-                throw authenticationFailure(.unsupportedSignInStep)
             case let .failure(error):
+                if SASL2Authenticator.answersFailureWithAbort(element) {
+                    // XEP-0388 §2.4: only `<response/>` or `<abort/>` may answer mid-exchange. A failed write must not
+                    // hide the failure found here.
+                    try? await connection.send(XMPPStreamWriter.stanza(XMLElement(name: "abort", namespace: XMPPNamespaces.sasl2)))
+                }
                 throw authenticationFailure(error)
             }
         }

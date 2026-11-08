@@ -5,7 +5,7 @@ import Testing
 
 struct IQReplyDispatchTests {
     private func connected(_ transport: MockTransport) async throws -> XMPPClient {
-        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false)
+        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false, allowsPLAIN: true)
         let connection = Task { try await client.connect(host: "example.com", port: 5222) }
         await simulateNoTLSConnect(transport)
         try await connection.value
@@ -112,7 +112,7 @@ extension IQReplyDispatchTests {
 
     @Test
     func `a request on an unconnected client ends once`() async {
-        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: MockTransport(), requireTLS: false)
+        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: MockTransport(), requireTLS: false, allowsPLAIN: true)
         let (count, handler) = terminalCounter()
         await #expect(throws: XMPPClientError.self) { try await client.sendIQ(XMPPIQ(type: .get, id: "offline"), onTerminal: handler) }
         #expect(count.withLock { $0 } == 1)
@@ -123,7 +123,7 @@ extension IQReplyDispatchTests {
         let module = ContextCapturingModule()
         weak var weakClient: XMPPClient?
         do {
-            let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: MockTransport(), requireTLS: false)
+            let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: MockTransport(), requireTLS: false, allowsPLAIN: true)
             await client.register(module)
             weakClient = client
         }

@@ -279,7 +279,7 @@ enum Caps2HashTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             let capsModule = CapsModule()
             await client.register(PresenceModule(capsModule: capsModule))

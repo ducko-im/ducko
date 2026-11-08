@@ -7,7 +7,7 @@ import Testing
 /// A client connected over `mock` that has joined `room@conference.example.com` as `me`.
 private func makeJoinedClient(mock: MockTransport) async throws -> XMPPClient {
     let client = XMPPClient(
-        domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false
+        domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(ChatModule())
     await client.register(MUCModule())

@@ -134,7 +134,7 @@ extension ThrowawayProfile {
     /// Saves an account that signs in to a `LoopbackXMPPServer` on `port`.
     func addLoopbackAccount(port: UInt16) async throws {
         let store = try makeStore()
-        let account = try Account(id: UUID(), jid: #require(BareJID.parse("alice@example.com")), isEnabled: true, connectOnLaunch: false, host: "127.0.0.1", port: Int(port), requireTLS: false, createdAt: Date())
+        let account = try Account(id: UUID(), jid: #require(BareJID.parse("alice@example.com")), isEnabled: true, connectOnLaunch: false, host: "127.0.0.1", port: Int(port), requireTLS: false, allowsPLAIN: true, createdAt: Date())
         try await store.saveAccount(account)
         FileCredentialStore(fileURL: directory.appending(path: "credentials.json")).savePassword("local-fixture", for: account.jid.description)
     }

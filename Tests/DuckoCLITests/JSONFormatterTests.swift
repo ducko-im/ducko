@@ -83,6 +83,8 @@ struct JSONFormatterTests {
         #expect(json["jid"] == "alice@example.com")
         #expect(json["id"] == accountID.uuidString)
         #expect(json["isEnabled"] == "true")
+        #expect(json["allowsPLAIN"] == "false")
+        #expect(json["requireTLS"] == "true")
     }
 
     // MARK: - formatContactWithPresence

@@ -183,43 +183,38 @@ struct AccountConnectionResourceTests {
     }
 
     @Test
-    func `a redirect after a verified SCRAM sign-in builds its client requiring SCRAM`() async throws {
+    func `a redirect after a verified SCRAM sign-in builds its client with PLAIN turned off`() async throws {
         let original = MockTransport()
         let redirected = MockTransport()
         // The first session's sign-in is still running when the redirect comes, so it has not recorded the SCRAM success.
         let hold = AsyncSemaphore()
-        let factory = AccountConnectionFactoryProbe(transports: [original, redirected], connectHold: hold)
+        let factory = AccountConnectionFactoryProbe(transports: [original, redirected], connectHold: hold, allowsPLAIN: nil)
         let store = MockPersistenceStore()
         let service = AccountService(store: store, credentialStore: MockCredentialStore(), clientFactory: factory)
-        let id = try await service.createAccount(jidString: "alice@example.com", requireTLS: false)
+        let id = try await service.createAccount(jidString: "alice@example.com", requireTLS: false, allowsPLAIN: true)
         let connection = Task { try await service.connect(accountID: id, password: "secret") }
-        var server = SCRAMTestServer(password: "secret")
-        try await server.playSASL1SignIn(on: original)
-        await original.waitForSent(count: 4) // post-auth stream opening
-        await original.simulateReceive(testServerStreamOpen + testFeaturesBind)
-        await original.waitForSent(count: 5) // bind IQ
-        await original.simulateReceive(testBindResult)
-        #expect(try await factory.nextRequest().requiresSCRAM == false)
+        try await playSCRAMSession(on: original)
+        #expect(try await factory.nextRequest().allowsPLAIN == true)
         try await eventually { service.connectedClient(for: id) != nil }
 
         await original.simulateReceive("<error><see-other-host xmlns='urn:ietf:params:xml:ns:xmpp-streams'>redirect.example.com:5223</see-other-host></error>")
         let request = try await factory.nextRequest()
 
-        #expect(request.requiresSCRAM)
-        #expect(try await store.fetchAccounts().first?.requiresSCRAM == true)
+        #expect(request.allowsPLAIN == false)
+        #expect(try await store.fetchAccounts().first?.allowsPLAIN == false)
         await service.disconnect(accountID: id)
         await hold.signal()
         _ = await connection.result
     }
 
     @Test
-    func `a redirected session starts like any other and learns SCRAM from its own sign-in`() async throws {
+    func `a redirected session starts like any other and turns PLAIN off after its own SCRAM sign-in`() async throws {
         let original = MockTransport()
         let redirected = MockTransport()
-        let factory = AccountConnectionFactoryProbe(transports: [original, redirected])
+        let factory = AccountConnectionFactoryProbe(transports: [original, redirected], allowsPLAIN: nil)
         let store = MockPersistenceStore()
         let service = AccountService(store: store, credentialStore: MockCredentialStore(), clientFactory: factory)
-        let id = try await service.createAccount(jidString: "alice@example.com", requireTLS: false)
+        let id = try await service.createAccount(jidString: "alice@example.com", requireTLS: false, allowsPLAIN: true)
         var starts: [UUID] = []
         service.onSessionStarting = { starts.append($0) }
         let (first, connection) = try await driveMockConnect(service, accountID: id, transport: original)
@@ -228,16 +223,11 @@ struct AccountConnectionResourceTests {
         await original.simulateReceive("<error><see-other-host xmlns='urn:ietf:params:xml:ns:xmpp-streams'>redirect.example.com:5223</see-other-host></error>")
         try await exchange(redirected, matching: "<stream:stream", response: testServerStreamOpen + testFeaturesNoTLS)
         try await exchange(redirected, matching: "<starttls", response: "<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
-        var server = SCRAMTestServer(password: "secret")
-        try await server.playSASL1SignIn(on: redirected)
-        await redirected.waitForSent(count: 4) // post-auth stream opening
-        await redirected.simulateReceive(testServerStreamOpen + testFeaturesBind)
-        await redirected.waitForSent(count: 5) // bind IQ
-        await redirected.simulateReceive(testBindResult)
+        try await playSCRAMSession(on: redirected)
         try await eventually { service.connectedClient(for: id).map { $0 !== first } ?? false }
 
         #expect(starts == [id, id])
-        try await eventually { try await store.fetchAccounts().first?.requiresSCRAM == true }
+        try await eventually { try await store.fetchAccounts().first?.allowsPLAIN == false }
         await service.disconnect(accountID: id)
         _ = await connection.result
     }

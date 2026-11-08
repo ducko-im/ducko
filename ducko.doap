@@ -397,12 +397,24 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0440.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Only tls-server-end-point is supported, not tls-exporter. Against rules 5 and 6, sign-in proceeds unbound with the GS2 flag "n" when the server lists channel-binding types but offers no -PLUS mechanism, or lists only types Ducko cannot compute. It does the same when -PLUS is offered over SASL1 without types. An attacker holding a trusted certificate for the server can therefore switch binding off. Separately, after a verified SCRAM sign-in an account refuses a later offer of only PLAIN until the user resets this</xmpp:note>
+                <xmpp:note xml:lang="en">Only tls-server-end-point is supported, not tls-exporter. When the server's SCRAM reply carries a XEP-0474 hash, a mismatch aborts the sign-in and a match accepts the offer. Without one, against rules 5 and 6, sign-in proceeds unbound with the GS2 flag "n" when the server lists channel-binding types but offers no -PLUS mechanism, or lists only types Ducko cannot compute. It does the same when -PLUS is offered over SASL1 without types. An attacker holding a trusted certificate for the server can therefore switch binding off on servers that send no hash</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0461.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0474.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0515.html"/>
                 <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>

@@ -1,5 +1,3 @@
-import CryptoKit
-
 /// Negotiation coordinator for SASL authentication.
 ///
 /// Picks the strongest mechanism from the server's offered list,
@@ -17,13 +15,15 @@ struct SASLAuthenticator {
     // MARK: - Negotiation
 
     /// Parses `<mechanisms>` from stream features, selects the strongest available,
-    /// and produces the initial `<auth>` element. `requiresSCRAM` refuses an offer that leaves only PLAIN.
+    /// and produces the initial `<auth>` element. Unless `allowsPLAIN`, an offer that leaves only PLAIN is refused.
+    /// `tlsVersion` is the negotiated TLS version's wire code, which a SCRAM server may confirm (XEP-0515).
     mutating func begin(
         features: XMLElement,
         authcid: String,
         password: String,
         channelBindingData: [UInt8]? = nil,
-        requiresSCRAM: Bool = false
+        tlsVersion: UInt16? = nil,
+        allowsPLAIN: Bool = false
     ) throws(SASLAuthError) -> XMLElement {
         let offeredNames = parseMechanisms(features)
         let channelBinding = try chooseChannelBinding(
@@ -33,10 +33,15 @@ struct SASLAuthenticator {
             isSASL2: false
         )
         let selected = try selectSASLMechanism(
-            offered: offeredNames, channelBinding: channelBinding, requiresSCRAM: requiresSCRAM
+            offered: offeredNames, channelBinding: channelBinding, allowsPLAIN: allowsPLAIN
+        )
+        let downgradeContext = SCRAMDowngradeContext(
+            advertisedMechanisms: advertisedSASL1Mechanisms(features),
+            channelBindingTypes: advertisedChannelBindingTypeList(features),
+            tlsVersion: tlsVersion
         )
 
-        var mechanism = createMechanism(selected, channelBinding: channelBinding)
+        var mechanism = createMechanism(selected, channelBinding: channelBinding, downgradeContext: downgradeContext)
         let auth = mechanism.start(authcid: authcid, password: password)
         activeMechanism = mechanism
         return auth
@@ -68,54 +73,43 @@ struct SASLAuthenticator {
 
     private func createMechanism(
         _ name: String,
-        channelBinding: ChannelBindingMode
+        channelBinding: ChannelBindingMode,
+        downgradeContext: SCRAMDowngradeContext
     ) -> ActiveMechanism {
-        switch name {
-        case SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha256:
-            return .scram256(SCRAM<SHA256>(mechanismName: name, channelBindingMode: channelBinding))
-        case SCRAMMechanismName.sha1Plus, SCRAMMechanismName.sha1:
-            return .scram1(SCRAM<Insecure.SHA1>(mechanismName: name, channelBindingMode: channelBinding))
-        case SASLPlain.mechanismName:
-            return .plain(SASLPlain())
-        default:
+        if let session = makeSCRAMSession(name, channelBinding: channelBinding, downgradeContext: downgradeContext) {
+            return .scram(SCRAM(mechanismName: name, session: session))
+        }
+        guard name == SASLPlain.mechanismName else {
             preconditionFailure("Unsupported mechanism \(name) passed to createMechanism")
         }
+        return .plain(SASLPlain())
     }
 
     /// Extracts `<mechanism>NAME</mechanism>` children from `<mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl">`. Names uppercased per RFC 4422 §3.1.
     private func parseMechanisms(_ features: XMLElement) -> Set<String> {
-        guard let mechanisms = features.child(named: "mechanisms", namespace: saslNamespace) else {
-            return []
-        }
-        return Set(mechanisms.children(named: "mechanism").compactMap { $0.textContent?.uppercased() })
+        Set(advertisedSASL1Mechanisms(features).map { $0.uppercased() })
     }
 
     // MARK: - Active Mechanism
 
     /// Enum-based dispatch for SASL mechanism types.
     enum ActiveMechanism {
-        case scram256(SCRAM<SHA256>)
-        case scram1(SCRAM<Insecure.SHA1>)
+        case scram(SCRAM)
         case plain(SASLPlain)
 
         /// Its name when it is SCRAM, whose success carries the server's proof of knowing the password.
         var scramMechanismName: String? {
             switch self {
-            case let .scram256(m): m.mechanismName
-            case let .scram1(m): m.mechanismName
+            case let .scram(m): m.mechanismName
             case .plain: nil
             }
         }
 
         mutating func start(authcid: String, password: String) -> XMLElement {
             switch self {
-            case var .scram256(m):
+            case var .scram(m):
                 let result = m.start(authcid: authcid, password: password)
-                self = .scram256(m)
-                return result
-            case var .scram1(m):
-                let result = m.start(authcid: authcid, password: password)
-                self = .scram1(m)
+                self = .scram(m)
                 return result
             case var .plain(m):
                 let result = m.start(authcid: authcid, password: password)
@@ -126,13 +120,9 @@ struct SASLAuthenticator {
 
         mutating func handleChallenge(_ challenge: XMLElement) -> SASLAuthResponse {
             switch self {
-            case var .scram256(m):
+            case var .scram(m):
                 let result = m.handleChallenge(challenge)
-                self = .scram256(m)
-                return result
-            case var .scram1(m):
-                let result = m.handleChallenge(challenge)
-                self = .scram1(m)
+                self = .scram(m)
                 return result
             case var .plain(m):
                 let result = m.handleChallenge(challenge)
@@ -143,13 +133,9 @@ struct SASLAuthenticator {
 
         mutating func handleSuccess(_ success: XMLElement) -> SASLAuthResponse {
             switch self {
-            case var .scram256(m):
+            case var .scram(m):
                 let result = m.handleSuccess(success)
-                self = .scram256(m)
-                return result
-            case var .scram1(m):
-                let result = m.handleSuccess(success)
-                self = .scram1(m)
+                self = .scram(m)
                 return result
             case var .plain(m):
                 let result = m.handleSuccess(success)

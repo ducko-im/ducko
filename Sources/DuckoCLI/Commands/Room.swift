@@ -70,7 +70,7 @@ extension DuckoCLI {
                 let selectedAccount = prepared.account
                 let password = prepared.password
 
-                try await env.accountService.connect(accountID: selectedAccount.id, password: password)
+                try await connectStored(env, accountID: selectedAccount.id, password: password)
                 try await waitForConnected(accountID: selectedAccount.id, environment: env)
 
                 let nick = nickname ?? defaultNickname(for: selectedAccount)

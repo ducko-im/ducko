@@ -80,7 +80,7 @@ struct ScriptValidationTests {
         #expect(captured.invocations == ["osascript"])
     }
 
-    @Test(arguments: [[], ["allow"]])
+    @Test(arguments: [[], ["keep"]])
     func `ducko-sign-in-security rejects a missing or unknown action`(_ arguments: [String]) throws {
         let result = try ScriptRunner.run("ducko-sign-in-security.sh", arguments: arguments)
         #expect(result.exitCode == 1)
@@ -310,8 +310,8 @@ private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-room-settings-tab.sh", arguments: ["Members"], appleScriptArguments: ["-", "Members"]),
     HandlerScriptCase(script: "ducko-room-topic.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-select-mode.sh", arguments: ["Register"], appleScriptArguments: ["-", "Register"]),
-    HandlerScriptCase(script: "ducko-sign-in-security.sh", arguments: ["keep"], appleScriptArguments: ["-", "keep"]),
-    HandlerScriptCase(script: "ducko-sign-in-security.sh", arguments: ["reset"], appleScriptArguments: ["-", "reset"], invocations: ["pgrep", "osascript"]),
+    HandlerScriptCase(script: "ducko-sign-in-security.sh", arguments: ["dont-allow"], appleScriptArguments: ["-", "dont-allow"]),
+    HandlerScriptCase(script: "ducko-sign-in-security.sh", arguments: ["allow"], appleScriptArguments: ["-", "allow"], invocations: ["pgrep", "osascript"]),
     HandlerScriptCase(script: "ducko-status.sh", arguments: ["away", scriptSpecialArgument], appleScriptArguments: ["-", "away", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-reply.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-connection-info.sh", arguments: [], appleScriptArguments: [], invocations: ["ducko-preferences.sh", "ducko-preferences-tab.sh", "osascript"])

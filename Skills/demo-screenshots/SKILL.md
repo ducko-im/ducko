@@ -81,12 +81,12 @@ Continue once it prints `signed-ok`.
    ```
 
    It serves the account, contacts and rooms of `content.json`. It logs every byte sent and received to `$WORK/stub.log`.
-3. Add the account, then allow plaintext to the stub and turn on Connect on Launch. The CLI has no option for either, so set them in the profile's store. The JID, password and display name are `account.jid`, `account.password` and `account.name` of the content file in use. The last line must print `1`:
+3. Add the account, then set it up in the profile's store. The stub speaks plaintext and offers only PLAIN, so Require TLS goes off and PLAIN is allowed. Connect on Launch goes on and the display name is set, since the CLI has no option for either. The JID, password and display name are `account.jid`, `account.password` and `account.name` of the content file in use. The last line must print `1`:
 
    ```bash
    BIN=$(swift build --show-bin-path)
    DUCKO_PROFILE=$PROFILE "$BIN/DuckoCLI" account add tobias@pond.example --password demo --host 127.0.0.1 --port $PORT --no-connect
-   sqlite3 "$STORE/default.store" "UPDATE ZACCOUNTRECORD SET ZREQUIRETLS=0, ZCONNECTONLAUNCH=1, ZDISPLAYNAME='Tobias'; SELECT changes();"
+   sqlite3 "$STORE/default.store" "UPDATE ZACCOUNTRECORD SET ZREQUIRETLS=0, ZALLOWSPLAIN=1, ZCONNECTONLAUNCH=1, ZDISPLAYNAME='Tobias'; SELECT changes();"
    ```
 
 4. Prove the stub before any window appears:
@@ -262,7 +262,7 @@ In a work folder kept from an earlier round, run `zsh Skills/lume-vm/scripts/vm.
    nohup python3 "$S/scripts/stub.py" 5299 /Users/lume/work /Users/lume/work/content.json >stub.out 2>&1 &
    sleep 1; STORE="$HOME/Library/Application Support/Ducko-Dev-demo-screenshots"; CLI=DuckoDemo.app/Contents/Resources/ducko
    DUCKO_PROFILE=demo-screenshots $CLI account add tobias@pond.example --password demo --host 127.0.0.1 --port 5299 --no-connect
-   sqlite3 "$STORE/default.store" "UPDATE ZACCOUNTRECORD SET ZREQUIRETLS=0, ZCONNECTONLAUNCH=1, ZDISPLAYNAME='"'"'Tobias'"'"';"
+   sqlite3 "$STORE/default.store" "UPDATE ZACCOUNTRECORD SET ZREQUIRETLS=0, ZALLOWSPLAIN=1, ZCONNECTONLAUNCH=1, ZDISPLAYNAME='"'"'Tobias'"'"';"
    DUCKO_PROFILE=demo-screenshots $CLI roster list | head -1'
    ```
 

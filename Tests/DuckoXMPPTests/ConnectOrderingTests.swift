@@ -14,7 +14,7 @@ enum ConnectOrderingTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             let capsModule = CapsModule()
             await client.register(PresenceModule(capsModule: capsModule))
@@ -60,7 +60,7 @@ enum ConnectOrderingTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             let capsModule = CapsModule()
             await client.register(PresenceModule(capsModule: capsModule))
@@ -84,7 +84,7 @@ enum ConnectOrderingTests {
             let client1 = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock1, requireTLS: false
+                transport: mock1, requireTLS: false, allowsPLAIN: true
             )
             await client1.register(sm1)
             await client1.addInterceptor(sm1)
@@ -104,7 +104,7 @@ enum ConnectOrderingTests {
             let client2 = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock2, requireTLS: false
+                transport: mock2, requireTLS: false, allowsPLAIN: true
             )
             await client2.register(sm2)
             await client2.addInterceptor(sm2)
@@ -132,7 +132,7 @@ enum ConnectOrderingTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(PresenceModule())
 
@@ -159,7 +159,7 @@ enum ConnectOrderingTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(PresenceModule())
 
@@ -175,7 +175,7 @@ enum ConnectOrderingTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(PresenceModule())
 
@@ -217,7 +217,7 @@ enum ConnectOrderingTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             let capsModule = CapsModule()
             await client.register(PresenceModule(capsModule: capsModule))
@@ -258,7 +258,7 @@ enum ConnectOrderingTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             let capsModule = CapsModule()
             await client.register(PresenceModule(capsModule: capsModule))
@@ -305,7 +305,7 @@ enum ConnectOrderingTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             let capsModule = CapsModule()
             await client.register(PresenceModule(capsModule: capsModule))
@@ -381,7 +381,7 @@ extension ConnectOrderingTests {
     @Test
     static func `teardown during SM enable cannot publish a late connected event`() async throws {
         let transport = MockTransport()
-        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false)
+        let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false, allowsPLAIN: true)
         let sm = StreamManagementModule()
         await client.register(sm)
         await client.addInterceptor(sm)

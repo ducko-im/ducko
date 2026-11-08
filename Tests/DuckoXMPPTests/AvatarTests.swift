@@ -9,7 +9,7 @@ private func makePresenceClient(mock: MockTransport) async throws -> (XMPPClient
     let client = XMPPClient(
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
-        transport: mock, requireTLS: false
+        transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(presenceModule)
 
@@ -206,7 +206,7 @@ enum AvatarTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(presenceModule)
 
@@ -238,7 +238,7 @@ enum AvatarTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(pepModule)
 
@@ -291,7 +291,7 @@ enum AvatarTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(pepModule)
 

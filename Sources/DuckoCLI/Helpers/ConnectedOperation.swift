@@ -38,7 +38,7 @@ enum ConnectedOperation {
         operation: @MainActor () async throws -> Result
     ) async throws -> Result {
         try await run(
-            connect: { try await environment.accountService.connect(accountID: account.id, password: password) },
+            connect: { try await connectStored(environment, accountID: account.id, password: password) },
             ready: { try await waitForConnected(accountID: account.id, environment: environment) },
             operation: operation,
             teardown: { await environment.accountService.disconnect(accountID: account.id) }

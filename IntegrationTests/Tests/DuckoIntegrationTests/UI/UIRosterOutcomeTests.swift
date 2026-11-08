@@ -119,7 +119,7 @@ extension DuckoIntegrationTests.UILayer {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let container = try ModelContainer(for: ModelContainerFactory.schema, configurations: [ModelConfiguration(url: directory.appending(path: "default.store"))])
             let store = SwiftDataPersistenceStore(modelContainer: container)
-            let account = try Account(id: UUID(), jid: #require(BareJID.parse("alice@example.com")), isEnabled: true, connectOnLaunch: true, host: "127.0.0.1", port: Int(port), requireTLS: false, createdAt: Date())
+            let account = try Account(id: UUID(), jid: #require(BareJID.parse("alice@example.com")), isEnabled: true, connectOnLaunch: true, host: "127.0.0.1", port: Int(port), requireTLS: false, allowsPLAIN: true, createdAt: Date())
             try await store.saveAccount(account)
             FileCredentialStore(fileURL: directory.appending(path: "credentials.json")).savePassword("local-fixture", for: account.jid.description)
         }

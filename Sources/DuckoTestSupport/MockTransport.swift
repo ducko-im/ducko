@@ -20,6 +20,7 @@ public actor MockTransport: XMPPTransport {
     public private(set) var tlsServerName: String?
 
     private var channelBinding: [UInt8]?
+    private var storedTLSInfo: TLSInfo?
     private var disconnectGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private let connectError: (any Error)?
     private var nextConnectError: (any Error)?
@@ -164,10 +165,19 @@ public actor MockTransport: XMPPTransport {
         channelBinding
     }
 
+    /// What `setTLSInfo(_:)` stored, as TLS would supply it.
+    public var tlsInfo: TLSInfo? {
+        storedTLSInfo
+    }
+
     // MARK: - Test Helpers
 
     public func setChannelBindingData(_ data: [UInt8]?) {
         channelBinding = data
+    }
+
+    public func setTLSInfo(_ info: TLSInfo?) {
+        storedTLSInfo = info
     }
 
     /// Makes the next `connect`/`connectWithTLS` throw `error`; the following attempt succeeds. Lets a test drive

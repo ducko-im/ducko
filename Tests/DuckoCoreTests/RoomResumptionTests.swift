@@ -619,6 +619,7 @@ private actor RoomResumeFactory: XMPPClientFactory {
         var builder = XMPPClientBuilder(domain: account.jid.domainPart, username: account.jid.localPart ?? "", password: password)
         builder.withTransport(transport)
         builder.withRequireTLS(false)
+        builder.withAllowsPLAIN(true)
         let sm = StreamManagementModule(previousState: resuming?.streamManagement)
         builder.withModule(sm)
         builder.withInterceptor(sm)

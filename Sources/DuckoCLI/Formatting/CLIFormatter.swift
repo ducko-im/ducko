@@ -67,9 +67,14 @@ enum CLIEmptyResult {
     }
 }
 
-/// What the human-readable formatters print when a sign-in is refused because the server offered only PLAIN.
-let plainSignInRefusedLine =
-    "\(XMPPClientError.plainSignInRefused.localizedDescription). Run 'ducko account reset-security <jid>' to send the password anyway."
+/// What the human-readable formatters print when a sign-in is refused because the server offered only PLAIN. A command
+/// whose own connect is refused follows it with a hint on standard error.
+let plainSignInRefusedLine = XMPPClientError.plainSignInRefused.localizedDescription
+
+/// An account's sign-in settings as the human-readable formatters list them.
+func accountSecurityText(_ account: Account) -> String {
+    "PLAIN: \(account.allowsPLAIN ? "allowed" : "refused"), TLS: \(account.requireTLS ? "required" : "optional")"
+}
 
 /// `message` with its sender written as a room line names them: `room/nick` in a room, after `[PM]` in a room's private
 /// chat. A 1:1 message stays as it is.

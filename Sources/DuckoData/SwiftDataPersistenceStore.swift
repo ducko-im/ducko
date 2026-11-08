@@ -34,7 +34,7 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
             )
             record.update(from: account)
             record.rosterVersion = account.rosterVersion
-            record.requiresSCRAM = account.requiresSCRAM
+            record.allowsPLAIN = account.allowsPLAIN
             modelContext.insert(record)
         }
         try modelContext.save()
@@ -47,9 +47,9 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
         }
     }
 
-    public func setRequiresSCRAM(_ requiresSCRAM: Bool, accountID: UUID) throws {
+    public func setAllowsPLAIN(_ allowsPLAIN: Bool, accountID: UUID) throws {
         guard let record = try accountRecord(id: accountID) else { return }
-        record.requiresSCRAM = requiresSCRAM
+        record.allowsPLAIN = allowsPLAIN
         try modelContext.save()
     }
 

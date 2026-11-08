@@ -116,7 +116,7 @@ public actor MockPersistenceStore: PersistenceStore {
             let stored = accounts[index]
             accounts[index] = account
             accounts[index].rosterVersion = stored.rosterVersion
-            accounts[index].requiresSCRAM = stored.requiresSCRAM
+            accounts[index].allowsPLAIN = stored.allowsPLAIN
         } else {
             accounts.append(account)
         }
@@ -127,9 +127,9 @@ public actor MockPersistenceStore: PersistenceStore {
         channelSearchLimits[id] = nil
     }
 
-    public func setRequiresSCRAM(_ requiresSCRAM: Bool, accountID: UUID) async throws {
+    public func setAllowsPLAIN(_ allowsPLAIN: Bool, accountID: UUID) async throws {
         guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
-        accounts[index].requiresSCRAM = requiresSCRAM
+        accounts[index].allowsPLAIN = allowsPLAIN
     }
 
     public func fetchChannelSearchLimits(accountID: UUID) async throws -> [String: ChannelSearchLimit] {

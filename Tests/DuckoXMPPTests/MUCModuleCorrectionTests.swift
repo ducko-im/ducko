@@ -8,7 +8,7 @@ private func makeConnectedClient(mock: MockTransport) async throws -> XMPPClient
     let client = XMPPClient(
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
-        transport: mock, requireTLS: false
+        transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(MUCModule())
 
@@ -103,7 +103,7 @@ enum MUCModuleCorrectionTests {
         func `An occupant's private correction or retraction is not a private message`(amendment: String) async throws {
             let mock = MockTransport()
             let client = XMPPClient(
-                domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false
+                domain: "example.com", credentials: .init(username: "user", password: "pass"), transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(ChatModule())
             await client.register(MUCModule())

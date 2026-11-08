@@ -183,8 +183,8 @@ struct GatedTranscriptPersistenceStore: PersistenceStore {
         try await mock.deleteAccount(id)
     }
 
-    func setRequiresSCRAM(_ requiresSCRAM: Bool, accountID: UUID) async throws {
-        try await mock.setRequiresSCRAM(requiresSCRAM, accountID: accountID)
+    func setAllowsPLAIN(_ allowsPLAIN: Bool, accountID: UUID) async throws {
+        try await mock.setAllowsPLAIN(allowsPLAIN, accountID: accountID)
     }
 
     func fetchChannelSearchLimits(accountID: UUID) async throws -> [String: ChannelSearchLimit] {

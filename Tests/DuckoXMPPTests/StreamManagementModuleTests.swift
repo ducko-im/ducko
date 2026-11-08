@@ -9,7 +9,7 @@ private func makeConnectedClient(mock: MockTransport) async throws -> (XMPPClien
     let client = XMPPClient(
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
-        transport: mock, requireTLS: false
+        transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(sm)
     await client.addInterceptor(sm)
@@ -55,7 +55,7 @@ enum StreamManagementModuleTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(sm)
             await client.addInterceptor(sm)
@@ -80,7 +80,7 @@ enum StreamManagementModuleTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(sm)
             await client.addInterceptor(sm)
@@ -108,7 +108,7 @@ enum StreamManagementModuleTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(sm)
             await client.addInterceptor(sm)
@@ -305,7 +305,7 @@ enum StreamManagementModuleTests {
             let client2 = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock2, requireTLS: false
+                transport: mock2, requireTLS: false, allowsPLAIN: true
             )
             await client2.register(sm2)
             await client2.addInterceptor(sm2)
@@ -360,7 +360,7 @@ enum StreamManagementModuleTests {
             let client2 = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock2, requireTLS: false
+                transport: mock2, requireTLS: false, allowsPLAIN: true
             )
             await client2.register(sm2)
             await client2.addInterceptor(sm2)
@@ -415,7 +415,7 @@ enum StreamManagementModuleTests {
             let client2 = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock2, requireTLS: false
+                transport: mock2, requireTLS: false, allowsPLAIN: true
             )
             await client2.register(sm2)
             await client2.addInterceptor(sm2)
@@ -613,7 +613,7 @@ enum StreamManagementModuleTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(sm)
             await client.addInterceptor(sm)
@@ -732,7 +732,7 @@ enum StreamManagementModuleTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             await client.register(sm)
             await client.addInterceptor(sm)

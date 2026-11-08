@@ -34,7 +34,7 @@ enum PresenceDecorationTests {
         let client = XMPPClient(
             domain: "example.com",
             credentials: .init(username: "user", password: "pass"),
-            transport: mock, requireTLS: false
+            transport: mock, requireTLS: false, allowsPLAIN: true
         )
         for module in modules {
             await client.register(module)

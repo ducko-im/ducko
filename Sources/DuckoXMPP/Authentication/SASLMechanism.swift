@@ -22,8 +22,12 @@ enum SASLAuthError: Error, Equatable {
     case invalidState(String)
     case iterationCountTooLow(Int)
     case channelBindingDowngrade
+    /// The server's XEP-0474 hash of the offer does not match the offer as it arrived.
+    case mechanismListTampered
+    /// The server's XEP-0515 TLS version does not match the one negotiated.
+    case tlsVersionTampered
     case unsupportedSignInStep
-    /// Sign-in requires SCRAM, and the server offers only PLAIN, which sends the password itself.
+    /// The server offers only PLAIN, which sends the password itself, to an account that does not allow it.
     case plainRefused
 
     /// A `.serverFailure` prefers the server's non-blank `text`, then a phrase for a known condition, then a general
@@ -40,8 +44,10 @@ enum SASLAuthError: Error, Equatable {
         case let .invalidState(reason): "Unexpected authentication state: \(reason)"
         case let .iterationCountTooLow(count): "The server's password hashing is too weak (\(count) iterations)"
         case .channelBindingDowngrade: "The server's authentication options contradict each other, which can mean the connection is being tampered with"
+        case .mechanismListTampered: "The server's sign-in options were changed on the way, which can mean the connection is being tampered with"
+        case .tlsVersionTampered: "The connection's encryption version was changed on the way, which can mean the connection is being tampered with"
         case .unsupportedSignInStep: "The server asked for an extra authentication step that is not supported"
-        case .plainRefused: "The server offers only a sign-in that sends the password, and this account has signed in without sending it before"
+        case .plainRefused: "The server offers only a sign-in that sends the password, which this account does not allow"
         }
     }
 
@@ -93,19 +99,24 @@ enum SASLAuthError: Error, Equatable {
 /// The channel-binding types the server lists in `<sasl-channel-binding>` directly under the stream features
 /// (XEP-0440 §2). An absent element and an empty one both list none.
 func parseChannelBindingTypes(_ features: XMLElement) -> Set<String> {
-    Set(
-        features.child(named: "sasl-channel-binding", namespace: XMPPNamespaces.saslChannelBinding)?
-            .children(named: "channel-binding")
-            .compactMap { $0.attribute("type") } ?? []
-    )
+    Set(advertisedChannelBindingTypeList(features) ?? [])
 }
+
+/// The `-PLUS` mechanisms this client can bind with, strongest first.
+private let scramPlusPreferenceOrder = [
+    SCRAMMechanismName.sha3_512Plus, SCRAMMechanismName.sha512Plus, SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha1Plus
+]
+
+private let implementedPlusMechanisms = Set(scramPlusPreferenceOrder)
 
 /// Chooses how SCRAM binds to the TLS channel, per XEP-0440 §3, or throws when the offer looks downgraded.
 ///
 /// "`-PLUS` offered" means any offered name ending in `-PLUS`, implemented or not, because a server offering any
 /// `-PLUS` mechanism rejects `y,,` as a downgrade.
 ///
-/// Three cases deliberately sign in unbound rather than abort, against rules 5 and 6 and RFC 5802 §6:
+/// Three cases sign in unbound rather than abort. The server-first message's XEP-0474 hash then checks that choice: a
+/// match proves the offer genuine (XEP-0474 §7), and a mismatch fails the sign-in before the proof goes out. Without a
+/// hash the choice goes against rules 5 and 6 and RFC 5802 §6.
 /// - Types listed without any `-PLUS`. Prosody does this with PLAIN-only auth backends, and it rejects `y,,`
 ///   whenever it lists types.
 /// - Only types this client can't compute.
@@ -119,7 +130,7 @@ func chooseChannelBinding(
     guard let bindingData else { return .none }
     let plusOffered = offeredMechanisms.contains { $0.hasSuffix("-PLUS") }
     if isSASL2, plusOffered, advertisedTypes.isEmpty { throw .channelBindingDowngrade }
-    let implementedPlusOffered = !offeredMechanisms.isDisjoint(with: [SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha1Plus])
+    let implementedPlusOffered = !offeredMechanisms.isDisjoint(with: implementedPlusMechanisms)
     if advertisedTypes.contains(tlsServerEndPointCBType), implementedPlusOffered {
         return .bound(type: tlsServerEndPointCBType, data: bindingData)
     }
@@ -128,27 +139,28 @@ func chooseChannelBinding(
 }
 
 /// Builds SASL mechanism preference order for the chosen channel binding: only `-PLUS` mechanisms when bound, so a
-/// stronger unbound mechanism never wins over binding, and none of them otherwise. `requiresSCRAM` leaves PLAIN out.
+/// stronger unbound mechanism never wins over binding, and none of them otherwise. PLAIN is in it only when allowed.
 ///
 /// Shared between ``SASLAuthenticator`` (SASL1) and ``SASL2Authenticator`` (SASL2).
-func buildSASLPreferenceOrder(channelBinding: ChannelBindingMode, requiresSCRAM: Bool) -> [String] {
+func buildSASLPreferenceOrder(channelBinding: ChannelBindingMode, allowsPLAIN: Bool) -> [String] {
     switch channelBinding {
     case .bound:
-        [SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha1Plus]
+        scramPlusPreferenceOrder
     case .none, .clientSupportsButNotUsed:
-        [SCRAMMechanismName.sha256, SCRAMMechanismName.sha1] + (requiresSCRAM ? [] : [SASLPlain.mechanismName])
+        [SCRAMMechanismName.sha3_512, SCRAMMechanismName.sha512, SCRAMMechanismName.sha256, SCRAMMechanismName.sha1]
+            + (allowsPLAIN ? [SASLPlain.mechanismName] : [])
     }
 }
 
-/// The first offered mechanism in preference order. With `requiresSCRAM`, an offer whose only usable mechanism is PLAIN
-/// is refused, so the password never goes out.
+/// The first offered mechanism in preference order. Unless PLAIN is allowed, an offer whose only usable mechanism is
+/// PLAIN is refused, so the password never goes out.
 func selectSASLMechanism(
     offered: Set<String>,
     channelBinding: ChannelBindingMode,
-    requiresSCRAM: Bool
+    allowsPLAIN: Bool
 ) throws(SASLAuthError) -> String {
-    let preferenceOrder = buildSASLPreferenceOrder(channelBinding: channelBinding, requiresSCRAM: requiresSCRAM)
+    let preferenceOrder = buildSASLPreferenceOrder(channelBinding: channelBinding, allowsPLAIN: allowsPLAIN)
     if let selected = preferenceOrder.first(where: { offered.contains($0) }) { return selected }
-    if requiresSCRAM, offered.contains(SASLPlain.mechanismName) { throw .plainRefused }
+    if !allowsPLAIN, offered.contains(SASLPlain.mechanismName) { throw .plainRefused }
     throw .noSupportedMechanism
 }

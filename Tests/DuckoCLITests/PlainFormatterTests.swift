@@ -80,6 +80,13 @@ struct PlainFormatterTests {
         #expect(output.contains(accountID.uuidString))
     }
 
+    @Test(arguments: [(false, true, "PLAIN: refused, TLS: required"), (true, false, "PLAIN: allowed, TLS: optional")])
+    func `format account shows its sign-in settings`(allowsPLAIN: Bool, requireTLS: Bool, expected: String) throws {
+        let jid = try #require(BareJID.parse("alice@example.com"))
+        let account = Account(id: UUID(), jid: jid, isEnabled: true, connectOnLaunch: false, requireTLS: requireTLS, allowsPLAIN: allowsPLAIN, createdAt: Date())
+        #expect(formatter.formatAccount(account).hasSuffix(expected))
+    }
+
     // MARK: - formatContactWithPresence
 
     @Test func `format contact with presence available`() throws {

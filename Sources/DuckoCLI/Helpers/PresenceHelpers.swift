@@ -14,7 +14,7 @@ func applyPresence(
         message: message,
         accountID: accountID
     ) { id in
-        try await environment.accountService.connect(accountID: id)
+        try await connectStored(environment, accountID: id)
     } disconnect: { id in
         await environment.accountService.disconnect(accountID: id)
     }

@@ -73,7 +73,8 @@ private func plainResponse(to success: XMLElement) throws -> SASL2Authenticator.
         features: sasl2Features(mechanisms: ["PLAIN"]),
         authcid: "user",
         password: "pencil",
-        inlinePayloads: []
+        inlinePayloads: [],
+        allowsPLAIN: true
     )
     return auth.receive(success)
 }
@@ -143,22 +144,30 @@ enum SASL2AuthenticatorTests {
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
                 password: "pencil",
-                inlinePayloads: []
+                inlinePayloads: [],
+                allowsPLAIN: true
             )
             #expect(element.attribute("mechanism") == "PLAIN")
         }
 
         @Test
-        func `With SCRAM required, an offer that includes SCRAM signs in with it`() throws {
+        func `With PLAIN not allowed, an offer that includes SCRAM signs in with it`() throws {
             var auth = SASL2Authenticator()
             let element = try auth.begin(
                 features: sasl2Features(mechanisms: ["SCRAM-SHA-256", "PLAIN"]),
                 authcid: "user",
                 password: "pencil",
-                inlinePayloads: [],
-                requiresSCRAM: true
+                inlinePayloads: []
             )
             #expect(element.attribute("mechanism") == "SCRAM-SHA-256")
+        }
+
+        @Test
+        func `By default, an offer of only PLAIN is refused`() {
+            var auth = SASL2Authenticator()
+            #expect(throws: SASLAuthError.plainRefused) {
+                try auth.begin(features: sasl2Features(mechanisms: ["PLAIN"]), authcid: "user", password: "pencil", inlinePayloads: [])
+            }
         }
 
         @Test
@@ -183,7 +192,8 @@ enum SASL2AuthenticatorTests {
                 features: sasl2Features(mechanisms: ["SCRAM-SHA-256-PLUS", "PLAIN"]),
                 authcid: "user",
                 password: "pencil",
-                inlinePayloads: []
+                inlinePayloads: [],
+                allowsPLAIN: true
             )
             #expect(element.attribute("mechanism") == "PLAIN")
         }
@@ -209,7 +219,8 @@ enum SASL2AuthenticatorTests {
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
                 password: "pencil",
-                inlinePayloads: []
+                inlinePayloads: [],
+                allowsPLAIN: true
             )
 
             #expect(authElement.name == "authenticate")
@@ -234,7 +245,8 @@ enum SASL2AuthenticatorTests {
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
                 password: "pencil",
-                inlinePayloads: []
+                inlinePayloads: [],
+                allowsPLAIN: true
             )
 
             let success = sasl2Success(jid: "user@example.com/ducko-abc")
@@ -291,7 +303,8 @@ enum SASL2AuthenticatorTests {
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
                 password: "pencil",
-                inlinePayloads: []
+                inlinePayloads: [],
+                allowsPLAIN: true
             )
 
             let bound = XMLElement(name: "bound", namespace: XMPPNamespaces.bind2)
@@ -311,7 +324,8 @@ enum SASL2AuthenticatorTests {
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
                 password: "pencil",
-                inlinePayloads: []
+                inlinePayloads: [],
+                allowsPLAIN: true
             )
 
             let success = sasl2Success(jid: "user@example.com/res")
@@ -332,7 +346,8 @@ enum SASL2AuthenticatorTests {
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
                 password: "pencil",
-                inlinePayloads: []
+                inlinePayloads: [],
+                allowsPLAIN: true
             )
 
             var failure = XMLElement(name: "failure", namespace: XMPPNamespaces.sasl2)
@@ -376,7 +391,8 @@ enum SASL2AuthenticatorTests {
                 features: sasl2Features(mechanisms: ["PLAIN"], supportsBind2: true, supportsSM: true),
                 authcid: "user",
                 password: "pencil",
-                inlinePayloads: [bind]
+                inlinePayloads: [bind],
+                allowsPLAIN: true
             )
 
             let bindChild = element.child(named: "bind", namespace: XMPPNamespaces.bind2)
@@ -394,7 +410,8 @@ enum SASL2AuthenticatorTests {
                 authcid: "user",
                 password: "pencil",
                 inlinePayloads: [],
-                userAgent: SASL2UserAgent(software: "Ducko", device: device)
+                userAgent: SASL2UserAgent(software: "Ducko", device: device),
+                allowsPLAIN: true
             )
 
             let userAgent = try #require(element.child(named: "user-agent"))

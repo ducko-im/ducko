@@ -19,6 +19,7 @@ struct NIOProtocolVersionTests {
                     #expect(mode != "tls11")
                     let info = try #require(await connection.tlsInfo)
                     #expect(info.protocolVersion == (mode == "tls12" ? "TLS 1.2" : "TLS 1.3"))
+                    #expect(info.wireVersion == (mode == "tls12" ? 0x0303 : 0x0304))
                     try await connection.send(XMPPStreamWriter.streamOpening(to: "localhost"))
                     _ = try await reader.awaitFeatures()
                     try await connection.send(Array("secure-probe".utf8))
@@ -34,6 +35,7 @@ struct NIOProtocolVersionTests {
                     }
                 }
                 await connection.disconnect()
+                #expect(await connection.tlsInfo == nil)
             }
             try await peer.expectSuccess()
         } catch {

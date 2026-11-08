@@ -116,8 +116,8 @@ struct SCRAMSHA1Tests {
 
     @Test
     func `Full SCRAM-SHA-1 exchange with RFC 5802 test vector`() throws {
-        var mechanism = SCRAM<Insecure.SHA1>(
-            mechanismName: SCRAMMechanismName.sha1, nonceGenerator: { Self.clientNonce }
+        var mechanism = SCRAM(
+            mechanismName: SCRAMMechanismName.sha1, session: SCRAMState<Insecure.SHA1>(nonceGenerator: { Self.clientNonce })
         )
         let auth = mechanism.start(authcid: "user", password: "pencil")
 
@@ -232,8 +232,8 @@ struct SCRAMSHA256Tests {
 
     @Test
     func `Full SCRAM-SHA-256 exchange with RFC 7677 test vector`() throws {
-        var mechanism = SCRAM<SHA256>(
-            mechanismName: SCRAMMechanismName.sha256, nonceGenerator: { Self.clientNonce }
+        var mechanism = SCRAM(
+            mechanismName: SCRAMMechanismName.sha256, session: SCRAMState<SHA256>(nonceGenerator: { Self.clientNonce })
         )
         let auth = mechanism.start(authcid: "user", password: "pencil")
 
@@ -282,8 +282,8 @@ struct SCRAMSHA256Tests {
 
     @Test
     func `Invalid base64 in challenge rejected`() {
-        var mechanism = SCRAM<SHA256>(
-            mechanismName: SCRAMMechanismName.sha256, nonceGenerator: { Self.clientNonce }
+        var mechanism = SCRAM(
+            mechanismName: SCRAMMechanismName.sha256, session: SCRAMState<SHA256>(nonceGenerator: { Self.clientNonce })
         )
         _ = mechanism.start(authcid: "user", password: "pencil")
 

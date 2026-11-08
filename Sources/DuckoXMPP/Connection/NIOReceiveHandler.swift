@@ -83,6 +83,7 @@ final class NIOReceiveHandler: ChannelInboundHandler {
                 }
                 let result = NIOHandshakeResult(info: TLSInfo(
                     protocolVersion: version == .tlsv13 ? "TLS 1.3" : "TLS 1.2",
+                    wireVersion: tlsWireVersion(version),
                     cipherSuite: nil,
                     certificateSubject: details.subject, certificateIssuer: details.issuer,
                     certificateExpiry: details.expiry, certificateSHA256: details.sha256
@@ -111,5 +112,15 @@ final class NIOReceiveHandler: ChannelInboundHandler {
         failHandshake(XMPPClientError.notConnected)
         stop()
         context.fireChannelInactive()
+    }
+}
+
+/// The code `version` has on the wire, which XEP-0515's `t` attribute names.
+func tlsWireVersion(_ version: TLSVersion) -> UInt16 {
+    switch version {
+    case .tlsv1: 0x0301
+    case .tlsv11: 0x0302
+    case .tlsv12: 0x0303
+    case .tlsv13: 0x0304
     }
 }

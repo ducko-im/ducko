@@ -171,7 +171,7 @@ enum CapsModuleTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             let capsModule = CapsModule()
             await client.register(PresenceModule(capsModule: capsModule))
@@ -200,7 +200,7 @@ enum CapsModuleTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             let capsModule = CapsModule()
             await client.register(capsModule)
@@ -253,7 +253,7 @@ enum CapsModuleTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             let capsModule = CapsModule()
             await client.register(capsModule)
@@ -298,7 +298,7 @@ enum CapsModuleTests {
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),
-                transport: mock, requireTLS: false
+                transport: mock, requireTLS: false, allowsPLAIN: true
             )
             let capsModule = CapsModule()
             await client.register(capsModule)
@@ -527,7 +527,7 @@ enum CapsModuleTests {
             let identity = ServiceDiscoveryModule.Identity(category: "client", type: "pc", lang: "de", name: "Peer")
             let value = Base64.encode(Caps2HashAlgorithm.sha256.hash(Caps2Hash.generateHashInput(identities: [identity], features: ["urn:xmpp:ping"])))
             let transport = MockTransport()
-            let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false)
+            let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false, allowsPLAIN: true)
             let caps = CapsModule()
             await client.register(caps)
             let connection = Task { try await client.connect(host: "example.com", port: 5222) }

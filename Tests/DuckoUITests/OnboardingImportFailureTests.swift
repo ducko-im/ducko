@@ -9,6 +9,11 @@ struct OnboardingImportFailureTests {
         #expect(OnboardingImportFailure.classify(rejected) == .credentialsRejected)
     }
 
+    @Test
+    func `a refusal to send the password asks whether to allow it`() {
+        #expect(OnboardingImportFailure.classify(XMPPClientError.plainSignInRefused) == .plainNotAllowed)
+    }
+
     @Test(arguments: [
         XMPPClientError.authenticationFailed(AuthenticationFailure(kind: .other, message: "The account is disabled")),
         .authenticationFailed(AuthenticationFailure(kind: .temporary, message: "Temporary server failure, try again later")),

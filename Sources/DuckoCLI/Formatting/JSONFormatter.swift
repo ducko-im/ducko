@@ -113,7 +113,9 @@ struct JSONFormatter: CLIFormatter {
             "type": "account",
             "id": account.id.uuidString,
             "jid": account.jid.description,
-            "isEnabled": account.isEnabled ? "true" : "false"
+            "isEnabled": account.isEnabled ? "true" : "false",
+            "allowsPLAIN": account.allowsPLAIN ? "true" : "false",
+            "requireTLS": account.requireTLS ? "true" : "false"
         ])
     }
 
@@ -178,7 +180,7 @@ struct JSONFormatter: CLIFormatter {
         case let .streamResumed(jid): encode(["type": "stream_resumed", "jid": jid.description, "account": account])
         case let .disconnected(reason): formatDisconnect(reason, account: account)
         case let .authenticationFailed(failure): formatAuthenticationFailure(failure, account: account)
-        case .plainSignInRefused: encode(["type": "sign_in_refused", "reason": "plain_after_scram", "message": XMPPClientError.plainSignInRefused.localizedDescription, "account": account])
+        case .plainSignInRefused: encode(["type": "sign_in_refused", "reason": "plain_not_allowed", "message": XMPPClientError.plainSignInRefused.localizedDescription, "account": account])
         case let .messageReceived(message): formatIncomingMessage(message, account: account)
         case let .messageCarbonReceived(forwarded): formatCarbonEvent(forwarded, isOutgoing: false, account: account)
         case let .messageCarbonSent(forwarded): formatCarbonEvent(forwarded, isOutgoing: true, account: account)

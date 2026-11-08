@@ -10,7 +10,7 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
         let password: String
         let resume: StreamResumeContext?
         let requireTLS: Bool?
-        let requiresSCRAM: Bool
+        let allowsPLAIN: Bool
         let disconnections: AsyncStream<Void>
     }
 
@@ -21,15 +21,17 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
     private let connectHold: AsyncSemaphore?
     private let setupFailure: (any Error)?
     private let pings: Bool
+    private let allowsPLAIN: Bool?
     private let requests = AsyncStream.makeStream(of: Request.self)
     private(set) var requestCount = 0
 
     /// With `connectHold`, the first client's sign-in stops once it is connected, until `connectHold` is signaled. With
     /// `setupFailure`, every client's setup fails with it once connected. With `pings`, every client has a `PingModule`,
-    /// so a network change checks its liveness.
+    /// so a network change checks its liveness. `allowsPLAIN` overrides every account's permission, by default so
+    /// clients send the password to the PLAIN-only handshake fixtures. `nil` leaves it to the account.
     init(
         transports: [MockTransport], initialResume: SMResumeState? = nil, firstRelease: AsyncSemaphore? = nil, laterRelease: AsyncSemaphore? = nil,
-        connectHold: AsyncSemaphore? = nil, setupFailure: (any Error)? = nil, pings: Bool = false
+        connectHold: AsyncSemaphore? = nil, setupFailure: (any Error)? = nil, pings: Bool = false, allowsPLAIN: Bool? = true
     ) {
         self.transports = transports
         self.initialResume = initialResume
@@ -38,6 +40,7 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
         self.connectHold = connectHold
         self.setupFailure = setupFailure
         self.pings = pings
+        self.allowsPLAIN = allowsPLAIN
     }
 
     func makeClient(account: Account, password: String, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
@@ -49,7 +52,7 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
         let observed = AccountConnectionTransport(mock: transport)
         builder.withTransport(observed)
         builder.withRequireTLS(requireTLSOverride ?? false)
-        builder.withRequiresSCRAM(account.requiresSCRAM)
+        builder.withAllowsPLAIN(allowsPLAIN ?? account.allowsPLAIN)
         builder.withModule(sm)
         builder.withInterceptor(sm)
         builder.withModule(MUCModule(resuming: resuming?.rooms))
@@ -66,7 +69,7 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
         await transport.ackSyncRequests(from: sm)
         let client = await builder.build()
         requests.continuation.yield(Request(
-            password: password, resume: resuming, requireTLS: requireTLSOverride, requiresSCRAM: account.requiresSCRAM,
+            password: password, resume: resuming, requireTLS: requireTLSOverride, allowsPLAIN: allowsPLAIN ?? account.allowsPLAIN,
             disconnections: observed.disconnections
         ))
         if index == 0 { await firstRelease?.wait() } else { await laterRelease?.wait() }

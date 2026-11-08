@@ -16,7 +16,7 @@ extension AccountRecord {
             requireTLS: requireTLS,
             rosterVersion: rosterVersion,
             certificateFingerprint: certificateFingerprint,
-            requiresSCRAM: requiresSCRAM,
+            allowsPLAIN: allowsPLAIN,
             importedFrom: importedFrom,
             createdAt: createdAt
         )

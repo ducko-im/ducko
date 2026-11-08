@@ -16,7 +16,7 @@ struct RosterReopenedCacheTests {
         do {
             let port = try await server.start()
             let store = try SwiftDataPersistenceStore(modelContainer: ModelContainerFactory.makeContainer(at: directory))
-            let account = try Account(id: UUID(), jid: #require(BareJID.parse("alice@example.com")), isEnabled: true, connectOnLaunch: false, host: "127.0.0.1", port: Int(port), requireTLS: false, rosterVersion: "consistent", createdAt: Date())
+            let account = try Account(id: UUID(), jid: #require(BareJID.parse("alice@example.com")), isEnabled: true, connectOnLaunch: false, host: "127.0.0.1", port: Int(port), requireTLS: false, rosterVersion: "consistent", allowsPLAIN: true, createdAt: Date())
             try await store.saveAccount(account)
             await store.setBeforeRosterSaveForTesting { throw Failure.beforeSave }
             await #expect(throws: Failure.beforeSave) {

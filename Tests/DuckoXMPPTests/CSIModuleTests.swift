@@ -16,7 +16,7 @@ private func makeConnectedClient(mock: MockTransport, withCSI: Bool = true) asyn
     let client = XMPPClient(
         domain: "example.com",
         credentials: .init(username: "user", password: "pass"),
-        transport: mock, requireTLS: false
+        transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(CSIModule())
 

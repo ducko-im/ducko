@@ -177,7 +177,7 @@ private func performHoldWork(
 ) async throws {
     let env = context.environment
     let accountID = context.account.id
-    try await env.accountService.connect(accountID: accountID, password: context.password)
+    try await connectStored(env, accountID: accountID, password: context.password)
     try await waitForConnected(accountID: accountID, environment: env)
     await applyPresence(status, message: message, environment: env, accountID: accountID)
     print(context.formatter.formatPresence(jid: context.account.jid, status: status.rawValue, message: message))
