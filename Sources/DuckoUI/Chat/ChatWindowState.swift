@@ -416,6 +416,9 @@ public final class ChatWindowState {
             scroller.performWhenAtRest { [weak self] in
                 self?.insert(older, fetchedNotes: fetchedNotes)
             }
+        } catch ChatService.ChatServiceError.archiveNotReady {
+            // The next scroll to the top asks again.
+            isLoadingOlder = false
         } catch {
             log.warning("Failed to load older messages: \(error)")
             lastLoadHistoryError = error.localizedDescription

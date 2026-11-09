@@ -251,14 +251,13 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0308.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">In group chats and their private chats, a correction is accepted from whoever now holds the author's nickname, even after the author left, since occupant ids are not checked</xmpp:note>
+                <xmpp:note xml:lang="en">In group chats and their private chats, the user's own corrections are accepted across a nickname change by authenticated identity rather than by the original full JID</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0313.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Ids the server stamps on messages are treated as archive ids without checking that it announces urn:xmpp:mam:2</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -370,9 +369,15 @@
         </implements>
         <implements>
             <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0421.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0424.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">In group chats and their private chats, a retraction is accepted from whoever now holds the author's nickname, even after the author left, since occupant ids are not checked</xmpp:note>
+                <xmpp:note xml:lang="en">In non-anonymous group chats, the user's own retractions are accepted across a nickname change by authenticated identity rather than by the original full JID</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>

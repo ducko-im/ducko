@@ -53,6 +53,9 @@ private struct RejoinHarness {
 private func makeRejoinHarness() async throws -> RejoinHarness {
     let store = MockPersistenceStore()
     let transport = MockTransport()
+    for room in [roomJID, bookmarkedRoomJID, leftRoomJID] {
+        await transport.answerDiscoInfo(of: room.description)
+    }
     let factory = MockXMPPClientFactory(transport: transport, modules: [MUCModule(), PEPModule()])
     let accountService = makeAccountService(store: store, clientFactory: factory)
     let chatService = makeChatService(store: store)

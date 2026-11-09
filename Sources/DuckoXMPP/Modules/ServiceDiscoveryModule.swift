@@ -56,7 +56,12 @@ public final class ServiceDiscoveryModule: XMPPModule, Sendable {
 
     private struct State {
         var context: ModuleContext?
+        var accountInfo: InfoResult?
+        var accountInfoQuery: Task<InfoResult?, Never>?
     }
+
+    /// How long sign-in waits for the account's disco#info before it sends initial presence.
+    private static let accountInfoTimeout: Duration = .seconds(5)
 
     private let state: OSAllocatedUnfairLock<State>
     private let identity: Identity
@@ -65,13 +70,87 @@ public final class ServiceDiscoveryModule: XMPPModule, Sendable {
         [XMPPNamespaces.discoInfo, XMPPNamespaces.discoItems]
     }
 
-    public init(identity: Identity = .ducko) {
+    /// `resuming` is the account's disco#info as the module whose stream this one resumes learned it.
+    public init(identity: Identity = .ducko, resuming accountInfo: InfoResult? = nil) {
         self.identity = identity
-        self.state = OSAllocatedUnfairLock(initialState: State())
+        self.state = OSAllocatedUnfairLock(initialState: State(accountInfo: accountInfo))
     }
 
     public func setUp(_ context: ModuleContext) {
         state.withLock { $0.context = context }
+    }
+
+    // MARK: - Lifecycle
+
+    public func handleSessionEstablished(resumed: Bool) {
+        // A fresh session asks the account again, so what was carried for a resume no longer applies.
+        guard !resumed else { return }
+        state.withLock { $0.accountInfo = nil }
+    }
+
+    /// Asks the account's bare JID for its disco#info when the resumed stream carried none, such as one whose earlier
+    /// query failed. The resume does not wait for the answer.
+    public func handleResume() async throws {
+        guard knownAccountInfo == nil else { return }
+        _ = accountInfoQuery()
+    }
+
+    /// Asks the account's bare JID for its disco#info, so the answer is stored before offline messages arrive. Sign-in
+    /// waits for it at most `accountInfoTimeout`, and the query keeps running past that for `accountInfo()` callers.
+    public func handleConnect() async throws {
+        guard let query = accountInfoQuery() else { return }
+        await Self.waitForAnswer(of: query, timeout: Self.accountInfoTimeout)
+    }
+
+    // MARK: - Account Info
+
+    /// The account's disco#info, once its answer is stored.
+    public var knownAccountInfo: InfoResult? {
+        state.withLock { $0.accountInfo }
+    }
+
+    /// The account's disco#info, awaiting the query when it has not answered yet and starting it when none has started.
+    /// Nil when the query failed or the module is not connected, which means the account's features are unknown.
+    public func accountInfo() async -> InfoResult? {
+        if let known = knownAccountInfo { return known }
+        return await accountInfoQuery()?.value
+    }
+
+    /// The session's one account query, started on first use.
+    private func accountInfoQuery() -> Task<InfoResult?, Never>? {
+        state.withLock { state in
+            if let query = state.accountInfoQuery { return query }
+            guard let context = state.context, let account = context.connectedJID()?.bareJID else { return nil }
+            let query = Task { [weak self] () -> InfoResult? in
+                guard let self else { return nil }
+                do {
+                    let info = try await queryInfo(for: .bare(account))
+                    self.state.withLock { $0.accountInfo = info }
+                    return info
+                } catch {
+                    log.warning("The account's service discovery failed: \(error)")
+                    return nil
+                }
+            }
+            state.accountInfoQuery = query
+            return query
+        }
+    }
+
+    /// Returns once `query` ends or `timeout` passes, whichever comes first, without cancelling `query`. A task group
+    /// would wait for the query even after giving up on it.
+    private static func waitForAnswer(of query: Task<InfoResult?, Never>, timeout: Duration) async {
+        let (ended, continuation) = AsyncStream.makeStream(of: Never.self)
+        Task {
+            _ = await query.value
+            continuation.finish()
+        }
+        let timer = Task {
+            try? await Task.sleep(for: timeout)
+            continuation.finish()
+        }
+        for await _ in ended {}
+        timer.cancel()
     }
 
     // MARK: - IQ Handling
@@ -152,7 +231,11 @@ public final class ServiceDiscoveryModule: XMPPModule, Sendable {
         guard let context = state.withLock({ $0.context }) else {
             throw XMPPClientError.notConnected
         }
+        return try await Self.queryInfo(for: jid, node: node, context: context)
+    }
 
+    /// Queries a remote entity for its disco#info over `context`, for a module that asks on its own.
+    static func queryInfo(for jid: JID, node: String? = nil, context: ModuleContext) async throws -> InfoResult {
         var iq = XMPPIQ(type: .get, to: jid, id: context.generateID())
         var query = XMLElement(name: "query", namespace: XMPPNamespaces.discoInfo)
         if let node { query.setAttribute("node", value: node) }
@@ -161,8 +244,12 @@ public final class ServiceDiscoveryModule: XMPPModule, Sendable {
         guard let result = try await context.sendIQ(iq) else {
             return InfoResult(identities: [], features: [])
         }
+        return Self.parseInfo(result)
+    }
 
-        let identities = result.children(named: "identity").map { element in
+    /// Parses the `<query/>` of a disco#info result.
+    public static func parseInfo(_ query: XMLElement) -> InfoResult {
+        let identities = query.children(named: "identity").map { element in
             Identity(
                 category: element.attribute("category") ?? "",
                 type: element.attribute("type") ?? "",
@@ -172,13 +259,13 @@ public final class ServiceDiscoveryModule: XMPPModule, Sendable {
         }
 
         var features = Set<String>()
-        for element in result.children(named: "feature") {
+        for element in query.children(named: "feature") {
             if let featureVar = element.attribute("var") {
                 features.insert(featureVar)
             }
         }
 
-        let forms = result.children(named: "x")
+        let forms = query.children(named: "x")
             .filter { $0.namespace == XMPPNamespaces.dataForms }
             .map { parseDataForm($0).fields }
 

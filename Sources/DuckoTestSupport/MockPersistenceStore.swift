@@ -30,6 +30,7 @@ public actor MockPersistenceStore: PersistenceStore {
     private var conversationWriteGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var markConversationReadGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var fetchAccountsGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
+    private var fetchConversationGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var contactCaptureGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var contactWriteGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var rosterApplyGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
@@ -59,6 +60,12 @@ public actor MockPersistenceStore: PersistenceStore {
     /// Holds the next `fetchAccounts` until `release` is signaled, signaling `entered` once it is held.
     public func installFetchAccountsGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
         fetchAccountsGate = (entered, release)
+    }
+
+    /// Holds the next `fetchConversation(jid:type:accountID:importSourceJID:)` until `release` is signaled, signaling
+    /// `entered` once it is held.
+    public func installFetchConversationGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
+        fetchConversationGate = (entered, release)
     }
 
     public func installConversationWriteGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
@@ -234,7 +241,12 @@ public actor MockPersistenceStore: PersistenceStore {
     }
 
     public func fetchConversation(jid: String, type: Conversation.ConversationType, accountID: UUID?, importSourceJID: String?) async throws -> Conversation? {
-        conversations.first { $0.jid.description == jid && $0.type == type && $0.accountID == accountID && $0.importSourceJID == importSourceJID }
+        if let gate = fetchConversationGate {
+            fetchConversationGate = nil
+            await gate.entered.signal()
+            await gate.release.wait()
+        }
+        return conversations.first { $0.jid.description == jid && $0.type == type && $0.accountID == accountID && $0.importSourceJID == importSourceJID }
     }
 
     public func upsertConversation(_ conversation: Conversation) async throws {

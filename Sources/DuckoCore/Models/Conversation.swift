@@ -15,6 +15,8 @@ public struct Conversation: Sendable, Identifiable {
     public var unreadCount: Int
     public var roomSubject: String?
     public var roomNickname: String?
+    /// The occupant id the room gave the user's own presence when it last confirmed a join (XEP-0421).
+    public var roomOccupantID: String?
     /// The user is in this room, so it is joined again on connect until they leave or are removed.
     public var rejoinsOnConnect: Bool
     public var encryptionEnabled: Bool
@@ -42,6 +44,7 @@ public struct Conversation: Sendable, Identifiable {
         unreadCount: Int,
         roomSubject: String? = nil,
         roomNickname: String? = nil,
+        roomOccupantID: String? = nil,
         rejoinsOnConnect: Bool = false,
         encryptionEnabled: Bool = false,
         encryptionOptedOut: Bool = false,
@@ -62,6 +65,7 @@ public struct Conversation: Sendable, Identifiable {
         self.unreadCount = unreadCount
         self.roomSubject = roomSubject
         self.roomNickname = roomNickname
+        self.roomOccupantID = roomOccupantID
         self.rejoinsOnConnect = rejoinsOnConnect
         self.encryptionEnabled = encryptionEnabled
         self.encryptionOptedOut = encryptionOptedOut

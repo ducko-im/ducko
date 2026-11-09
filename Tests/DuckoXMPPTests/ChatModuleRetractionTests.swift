@@ -27,6 +27,7 @@ private func makeConnectedClientWithMUC(mock: MockTransport) async throws -> XMP
     )
     await client.register(ChatModule())
     await client.register(MUCModule())
+    await mock.answerDiscoInfo(of: "room@conference.example.com")
 
     let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
     await simulateNoTLSConnect(mock)
@@ -60,7 +61,7 @@ enum ChatModuleRetractionTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .messageRetracted(originalID, from, messageType) = events.last else {
+            guard case let .messageRetracted(originalID, from, messageType, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected messageRetracted")
             }
             #expect(originalID == "orig-msg-1")
@@ -139,7 +140,7 @@ enum ChatModuleRetractionTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .messageRetracted(originalID, from, messageType) = events.last else {
+            guard case let .messageRetracted(originalID, from, messageType, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected messageRetracted")
             }
             #expect(originalID == "orig-gc-1")

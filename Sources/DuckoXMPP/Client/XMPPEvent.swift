@@ -23,10 +23,15 @@ public enum XMPPEvent: Sendable {
     case deliveryReceiptReceived(messageID: String, from: JID)
     case chatMarkerReceived(messageID: String, type: ChatMarkerType, from: JID)
     /// `messageType` tells a room's correction (`groupchat`) from one in a 1:1 or a room's private chat.
-    /// `replyFallbackRange` is the part of `newBody` that quotes the message a corrected reply answers.
-    case messageCorrected(originalID: String, newBody: String, replyFallbackRange: Range<Int>?, from: JID, messageType: XMPPMessage.MessageType)
+    /// `replyFallbackRange` is the part of `newBody` that quotes the message a corrected reply answers. `roomAuthor` is
+    /// who sent a room's or a room private chat's correction, as the stanza showed it.
+    case messageCorrected(
+        originalID: String, newBody: String, replyFallbackRange: Range<Int>?, from: JID, messageType: XMPPMessage.MessageType,
+        roomAuthor: RoomAuthorIdentity? = nil
+    )
     /// `originalID` is the room's stanza-id of the message for a `groupchat` retraction, else the message's own id.
-    case messageRetracted(originalID: String, from: JID, messageType: XMPPMessage.MessageType)
+    /// `roomAuthor` is who sent a room's or a room private chat's retraction, as the stanza showed it.
+    case messageRetracted(originalID: String, from: JID, messageType: XMPPMessage.MessageType, roomAuthor: RoomAuthorIdentity? = nil)
     case messageModerated(originalID: String, moderator: String, room: BareJID, reason: String?)
     case messageError(messageID: String?, from: JID, error: XMPPStanzaError)
 
@@ -39,8 +44,8 @@ public enum XMPPEvent: Sendable {
     case roomOccupantNickChanged(room: BareJID, oldNickname: String, occupant: RoomOccupant, isSelf: Bool)
     case roomSubjectChanged(room: BareJID, subject: String?, setter: JID?)
     case roomInviteReceived(RoomInvite)
-    case roomMessageReceived(XMPPMessage)
-    case mucPrivateMessageReceived(XMPPMessage)
+    case roomMessageReceived(XMPPMessage, author: RoomAuthorIdentity? = nil)
+    case mucPrivateMessageReceived(XMPPMessage, author: RoomAuthorIdentity? = nil)
     case roomDestroyed(room: BareJID, reason: String?, alternateVenue: BareJID?)
     case mucSelfPingFailed(room: BareJID, reason: MUCSelfPingFailure)
 
@@ -68,8 +73,8 @@ public enum XMPPEvent: Sendable {
 
     case omemoDeviceListReceived(jid: BareJID, devices: [UInt32])
     /// `message` is the stanza as received. A message that carries only key material, or one this device read before,
-    /// is not reported.
-    case omemoEncryptedMessageReceived(message: XMPPMessage, outcome: OMEMOReceiveOutcome)
+    /// is not reported. `roomAuthor` is who sent a room's or a room private chat's message, as its outer stanza showed it.
+    case omemoEncryptedMessageReceived(message: XMPPMessage, outcome: OMEMOReceiveOutcome, roomAuthor: RoomAuthorIdentity? = nil)
     /// `consumedPreKeyID` names the one-time pre-key of this device that a contact's key exchange used up, or nil when
     /// this device started the session.
     case omemoSessionEstablished(jid: BareJID, deviceID: UInt32, identityKey: [UInt8], consumedPreKeyID: UInt32?)

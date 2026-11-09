@@ -6,6 +6,9 @@ public struct ChatMessage: Sendable, Identifiable, Equatable {
     public var stanzaID: String?
     public var serverID: String?
     public var fromJID: String
+    /// Who sent a room's message or a room's private message, beyond the nickname `fromJID` names. Nil for a 1:1
+    /// message and for one this device sent.
+    public var roomSender: RoomSenderIdentity?
     public var body: String
     public var htmlBody: String?
     public var timestamp: Date
@@ -37,6 +40,7 @@ public struct ChatMessage: Sendable, Identifiable, Equatable {
         stanzaID: String? = nil,
         serverID: String? = nil,
         fromJID: String,
+        roomSender: RoomSenderIdentity? = nil,
         body: String,
         htmlBody: String? = nil,
         timestamp: Date,
@@ -62,6 +66,7 @@ public struct ChatMessage: Sendable, Identifiable, Equatable {
         self.stanzaID = stanzaID
         self.serverID = serverID
         self.fromJID = fromJID
+        self.roomSender = roomSender
         self.body = body
         self.htmlBody = htmlBody
         self.timestamp = timestamp
@@ -108,6 +113,15 @@ public struct ChatMessage: Sendable, Identifiable, Equatable {
         guard !isRetracted else { return false }
         return SearchableText(body).contains(query)
             || attachments.contains { SearchableText($0.displayFileName).contains(query) }
+    }
+
+    /// Whether this message was received from the same sender as a message received from `fromJID` as `roomSender`.
+    /// Both must share the nickname or address, and the occupant id where both carry one, since another of a room's
+    /// occupants can take the nickname and reuse a message id.
+    public func isReceived(from fromJID: String, as roomSender: RoomSenderIdentity?) -> Bool {
+        guard !isOutgoing, self.fromJID == fromJID else { return false }
+        guard let occupantID = self.roomSender?.occupantID, let otherOccupantID = roomSender?.occupantID else { return true }
+        return occupantID == otherOccupantID
     }
 
     /// Creates a display-only message for CLI output formatting.

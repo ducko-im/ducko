@@ -220,7 +220,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 // Bob sees the correction.
                 _ = try await bob.waitForEvent { event in
-                    if case let .messageCorrected(origID, correctedBody, _, from: _, messageType: _) = event,
+                    if case let .messageCorrected(origID, correctedBody, _, from: _, messageType: _, roomAuthor: _) = event,
                        origID == originalID, correctedBody == newBody {
                         return true
                     }
@@ -259,7 +259,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 // Bob sees the retraction.
                 _ = try await bob.waitForEvent { event in
-                    if case let .messageRetracted(origID, from: _, messageType: _) = event, origID == stanzaID {
+                    if case let .messageRetracted(origID, from: _, messageType: _, roomAuthor: _) = event, origID == stanzaID {
                         return true
                     }
                     return false
@@ -335,7 +335,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 // Bob sees the correction.
                 _ = try await bob.waitForEvent { event in
-                    if case let .messageCorrected(origID, newBody, _, from: _, messageType: _) = event,
+                    if case let .messageCorrected(origID, newBody, _, from: _, messageType: _, roomAuthor: _) = event,
                        origID == capturedID, newBody == updatedBody {
                         return true
                     }
@@ -389,7 +389,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 // Bob sees the retraction.
                 _ = try await bob.waitForEvent { event in
-                    if case let .messageRetracted(origID, from: _, messageType: _) = event, origID == capturedID {
+                    if case let .messageRetracted(origID, from: _, messageType: _, roomAuthor: _) = event, origID == capturedID {
                         return true
                     }
                     return false

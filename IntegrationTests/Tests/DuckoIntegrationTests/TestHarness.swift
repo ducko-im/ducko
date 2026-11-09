@@ -464,6 +464,48 @@ final class TestHarness {
         try #require(BareJID.parse(credential.jid))
     }
 
+    // MARK: - Stored Chat State
+
+    /// Polls until `ChatService` has stored the room `roomJID` for the account
+    /// registered under `label`, matching `predicate`, and returns it. A join
+    /// through ``joinRoom`` stores the room only once the service has handled
+    /// `.roomJoined`, after the event reached the test.
+    func storedRoom(
+        _ roomJID: BareJID,
+        for label: String,
+        timeout: Duration = TestTimeout.event,
+        where predicate: @escaping (Conversation) -> Bool = { _ in true }
+    ) async throws -> Conversation {
+        let account = try #require(accounts[label])
+        let chatService = environment.chatService
+        let accountID = account.accountID
+        let isMatch = { (conversation: Conversation) in
+            conversation.jid == roomJID && conversation.accountID == accountID && conversation.type == .groupchat && predicate(conversation)
+        }
+        try await account.waitForCondition({
+            try? await chatService.loadConversations(for: accountID)
+            return chatService.openConversations.contains(where: isMatch)
+        }, timeout: timeout)
+        return try #require(chatService.openConversations.first(where: isMatch))
+    }
+
+    /// Polls until the account registered under `label` has stored a message
+    /// matching `predicate` in `conversationID`, and returns it. A received
+    /// message is stored after its event reached the test.
+    func storedMessage(
+        in conversationID: UUID,
+        for label: String,
+        timeout: Duration = TestTimeout.event,
+        where predicate: @escaping (ChatMessage) -> Bool
+    ) async throws -> ChatMessage {
+        let account = try #require(accounts[label])
+        let chatService = environment.chatService
+        try await account.waitForCondition({
+            await chatService.loadMessages(for: conversationID).contains(where: predicate)
+        }, timeout: timeout)
+        return try #require(await chatService.loadMessages(for: conversationID).first(where: predicate))
+    }
+
     // MARK: - OMEMO Fixtures
 
     /// Seeds the harness's in-memory OMEMO store from a previously-captured

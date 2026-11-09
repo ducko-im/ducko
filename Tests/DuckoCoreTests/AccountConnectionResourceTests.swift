@@ -176,7 +176,7 @@ struct AccountConnectionResourceTests {
         try await eventually { service.connectedClient(for: id).map { $0 !== first } ?? false }
 
         let client = try #require(service.connectedClient(for: id))
-        let roomModule = try #require(service.roomModule(for: id))
+        let roomModule = try #require(service.connectedRoomModule(for: id))
         #expect(await client.module(ofType: MUCModule.self) === roomModule)
         await service.disconnect(accountID: id)
         _ = await connection.result

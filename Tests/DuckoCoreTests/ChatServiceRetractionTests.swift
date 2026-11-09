@@ -18,7 +18,9 @@ private func makeTranscripts() -> MockTranscriptStore {
 
 @MainActor
 private func makeChatService(store: MockPersistenceStore, transcripts: MockTranscriptStore) -> ChatService {
-    ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+    let chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+    chatService.featureSource = FixedFeatureSource.archiving()
+    return chatService
 }
 
 // MARK: - Tests

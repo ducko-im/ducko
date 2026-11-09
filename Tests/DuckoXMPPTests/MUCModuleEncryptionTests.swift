@@ -11,6 +11,7 @@ private func makeJoinedClient(mock: MockTransport) async throws -> XMPPClient {
     )
     await client.register(ChatModule())
     await client.register(MUCModule())
+    await mock.answerDiscoInfo(of: "room@conference.example.com")
     let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
     await simulateNoTLSConnect(mock)
     try await connectTask.value
@@ -24,13 +25,13 @@ private func reportedMessageIDs(from client: XMPPClient, until last: String) -> 
     Task {
         let events = try await collectEvents(from: client) { event in
             switch event {
-            case let .roomMessageReceived(message), let .mucPrivateMessageReceived(message): message.id == last
+            case let .roomMessageReceived(message, _), let .mucPrivateMessageReceived(message, _): message.id == last
             default: false
             }
         }
         return events.compactMap { event in
             switch event {
-            case let .roomMessageReceived(message), let .mucPrivateMessageReceived(message): message.id
+            case let .roomMessageReceived(message, _), let .mucPrivateMessageReceived(message, _): message.id
             default: nil
             }
         }
@@ -41,15 +42,15 @@ private func reportedMessageIDs(from client: XMPPClient, until last: String) -> 
 private func reportedRoomEvents(from client: XMPPClient, until last: String) -> Task<[String], any Error> {
     Task {
         let events = try await collectEvents(from: client) { event in
-            if case let .roomMessageReceived(message) = event { message.id == last } else { false }
+            if case let .roomMessageReceived(message, _) = event { message.id == last } else { false }
         }
         return events.compactMap { event in
             switch event {
-            case let .roomMessageReceived(message): "message \(message.id ?? "")"
+            case let .roomMessageReceived(message, _): "message \(message.id ?? "")"
             case .roomSubjectChanged: "subject"
             case let .roomInviteReceived(invite): "invite \(invite.room)"
-            case let .messageCorrected(originalID, _, _, _, _): "corrected \(originalID)"
-            case let .messageRetracted(originalID, _, _): "retracted \(originalID)"
+            case let .messageCorrected(originalID, _, _, _, _, _): "corrected \(originalID)"
+            case let .messageRetracted(originalID, _, _, _): "retracted \(originalID)"
             default: nil
             }
         }

@@ -77,6 +77,9 @@ private func makePublishHarness(
         }
         return nil
     }
+    for room in [roomJIDString, "other@conference.example.com"] {
+        await transport.answerDiscoInfo(of: room)
+    }
     let store = MockPersistenceStore()
     let factory = MockXMPPClientFactory(transport: transport, modules: [ServiceDiscoveryModule(), PEPModule(), MUCModule()])
     let accountService = makeAccountService(store: store, clientFactory: factory)

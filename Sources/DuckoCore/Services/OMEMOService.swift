@@ -163,8 +163,8 @@ public final class OMEMOService {
         switch event {
         case let .omemoDeviceListReceived(jid, devices):
             await handleDeviceListReceived(jid: jid, devices: devices, accountID: accountID)
-        case let .omemoEncryptedMessageReceived(message, outcome):
-            await handleEncryptedMessageReceived(message, outcome: outcome, accountID: accountID)
+        case let .omemoEncryptedMessageReceived(message, outcome, roomAuthor):
+            await handleEncryptedMessageReceived(message, outcome: outcome, roomAuthor: roomAuthor, accountID: accountID)
         case let .omemoSessionEstablished(jid, deviceID, identityKey, consumedPreKeyID):
             await handleSessionEstablished(
                 jid: jid, deviceID: deviceID,

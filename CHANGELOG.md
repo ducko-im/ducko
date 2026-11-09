@@ -16,6 +16,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Distribute Ducko under the GNU GPL v3 alone, without the additional permission to link with BoringSSL, since the bundled BoringSSL is now licensed under the Apache License 2.0
 - Never send an account's password to a server that offers only a sign-in that sends it, unless you allow that for the account from the Sign-In Refused alert, the account's Edit sheet in Preferences, the add-account forms or `ducko account set --allow-plain`. A sign-in that proves the server knows the password turns it off again. Accounts created by registering on a server start with it allowed
 - Report that refusal in the CLI's JSON `sign_in_refused` record with the reason `plain_not_allowed`
+- Wait up to two seconds for a group chat to describe itself before joining it, so its first messages are told apart by who sent them
+- Catch up on a group chat's archive once you have rejoined it, when the group chat identifies its members by occupant id
+- Read message archives only from servers and group chats that announce one
+
+### Fixed
+
+- Stop reading the same archive range twice from adding copies of messages already shown
+- Skip archive pages the server reports as still changing and load them on a later try, instead of keeping an incomplete page
 
 ### Removed
 
@@ -23,6 +31,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
+- Prevent someone who takes a group chat member's nickname from editing or retracting that member's messages, by checking the group chat's occupant ids, or the member's real address, before applying a correction or retraction
+- Show a group chat message someone else posted under your nickname as theirs, so its images wait for a click instead of loading as yours
+- Trust a message's server-assigned id only from a server or group chat that announces such ids
 - Stop a sign-in before the password proof goes out when the server's list of sign-in options or the connection's encryption version was changed on the way, which can mean the connection is being tampered with
 
 ## [0.11.0] - 2026-10-23

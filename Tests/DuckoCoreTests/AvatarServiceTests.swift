@@ -186,7 +186,9 @@ struct PresenceModuleFixture {
 func connectWithPresenceModule() async throws -> PresenceModuleFixture {
     let store = MockPersistenceStore()
     let transport1 = MockTransport()
+    await transport1.answerDiscoInfo(of: "room@conference.example.com")
     let transport2 = MockTransport()
+    await transport2.answerDiscoInfo(of: testJIDString)
     let vendor = TransportVendor([transport1, transport2])
     let factory = MockXMPPClientFactory(
         transportForAccount: { _ in vendor.next() },
@@ -213,7 +215,10 @@ func connectWithPresenceModule() async throws -> PresenceModuleFixture {
         )
     }
     await simulateNoTLSConnect(transport1)
+    try await answerAccountDiscoInfo(on: transport1)
     let accountID = try await connectTask.value
+    // The disco module's sign-in query is answered, so the next one `answerAccountDiscoInfo` finds is the service's.
+    await transport1.clearSentBytes()
     let client1 = try #require(accountService.connectedClient(for: accountID))
 
     return PresenceModuleFixture(
@@ -257,7 +262,7 @@ private func reconnectOnto(
 /// Answers the account's own disco#info query on `transport`, listing PEP publishing when `pep` is true.
 @MainActor
 func answerAccountDiscoInfo(on transport: MockTransport, pep: Bool = true) async throws {
-    let query = try await sentStanza(on: transport, containing: XMPPNamespaces.discoInfo)
+    let query = try await sentStanza(on: transport) { $0.contains(XMPPNamespaces.discoInfo) && $0.contains("to=\"\(testJIDString)\"") }
     let id = try #require(extractIQID(from: query))
     let pepInfo = pep ? "<identity category='pubsub' type='pep'/><feature var='\(XMPPNamespaces.pubsubPublish)'/>" : ""
     await transport.simulateReceive("<iq type='result' id='\(id)'><query xmlns='\(XMPPNamespaces.discoInfo)'>\(pepInfo)</query></iq>")

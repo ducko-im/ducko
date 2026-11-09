@@ -106,12 +106,20 @@ public struct RoomOccupancy: Sendable {
     public let occupants: [RoomOccupant]
     public let subject: String?
     public let flags: Set<RoomFlag>
+    public let ownOccupantID: String?
 
-    public init(nickname: String, occupants: [RoomOccupant], subject: String?, flags: Set<RoomFlag> = []) {
+    public init(
+        nickname: String,
+        occupants: [RoomOccupant],
+        subject: String?,
+        flags: Set<RoomFlag> = [],
+        ownOccupantID: String? = nil
+    ) {
         self.nickname = nickname
         self.occupants = occupants
         self.subject = subject
         self.flags = flags
+        self.ownOccupantID = ownOccupantID
     }
 }
 

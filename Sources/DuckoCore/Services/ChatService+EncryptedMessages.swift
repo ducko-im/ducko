@@ -41,63 +41,68 @@ extension ChatService {
 
     /// Files an encrypted message: a decrypted one as its sender wrote it, an amendment on the message it names, and
     /// one that cannot be read as a notice. Elements next to the encrypted payload are outside the encryption, so only
-    /// the stanza's ids, delay and addresses are read from it.
-    func receiveEncryptedMessage(_ stanza: XMPPMessage, content: EncryptedContent, origin: EncryptedMessageOrigin, accountID: UUID) async {
+    /// the stanza's ids, delay and addresses are read from it. `roomAuthor` is who sent a live room or room private
+    /// message, as the room's module saw its stanza.
+    func receiveEncryptedMessage(
+        _ stanza: XMPPMessage, content: EncryptedContent, origin: EncryptedMessageOrigin, roomAuthor: RoomAuthorIdentity? = nil, accountID: UUID
+    ) async {
         if stanza.messageType == .groupchat {
             guard case .live = origin else { return }
-            await receiveEncryptedRoomMessage(stanza, content: content, accountID: accountID)
+            await receiveEncryptedRoomMessage(stanza, content: content, roomAuthor: roomAuthor, accountID: accountID)
         } else {
-            await receiveEncryptedChatMessage(stanza, content: content, origin: origin, accountID: accountID)
+            await receiveEncryptedChatMessage(stanza, content: content, origin: origin, roomAuthor: roomAuthor, accountID: accountID)
         }
     }
 
     /// Shows a live encrypted message without an OMEMO payload as a notice, since its body is at most the sender's
     /// fallback text (XEP-0380): a room message when `inRoom`, else a chat or private message. A headline, which is
     /// otherwise not kept, has its notice kept in the chat with its sender. Returns whether `message` was shown as a
-    /// notice.
-    func showsEncryptionNotice(for message: XMPPMessage, inRoom: Bool, accountID: UUID) async -> Bool {
+    /// notice. `roomAuthor` is who sent a room message.
+    func showsEncryptionNotice(for message: XMPPMessage, inRoom: Bool, roomAuthor: RoomAuthorIdentity? = nil, accountID: UUID) async -> Bool {
         let types: [XMPPMessage.MessageType?] = inRoom ? [.groupchat] : [.chat, .normal, .headline, nil]
         guard let reason = message.unreadableEncryption, types.contains(message.messageType) else { return false }
-        await receiveEncryptedMessage(message, content: .undecryptable(reason), origin: .live, accountID: accountID)
+        await receiveEncryptedMessage(message, content: .undecryptable(reason), origin: .live, roomAuthor: roomAuthor, accountID: accountID)
         return true
     }
 
     /// Files a live encrypted room message. The room echoes the user's own messages, and the sending device never
     /// encrypts for itself. An undecryptable echo of a row this device stored therefore only records the room's
     /// stanza-id on that row.
-    private func receiveEncryptedRoomMessage(_ stanza: XMPPMessage, content: EncryptedContent, accountID: UUID) async {
+    private func receiveEncryptedRoomMessage(_ stanza: XMPPMessage, content: EncryptedContent, roomAuthor: RoomAuthorIdentity?, accountID: UUID) async {
         guard let from = stanza.from, case let .full(occupant) = from else { return }
         let room = occupant.bareJID
         let metadata = InboundMessageMetadata(stanza)
         let (sentTime, isJoinHistory) = roomArrival(of: stanza, in: room, accountID: accountID)
-        let isOwn = await isOwnRoomMessage(nickname: occupant.resourcePart, room: room, accountID: accountID)
-        // One under the user's nickname that matches no row this device sent came from another device of theirs, and
-        // shows its notice.
+        let isOwn = await isOwnRoomEcho(stanza, ofEncrypted: true, body: "", author: roomAuthor, accountID: accountID)
+        // One from the user that matches no row this device sent came from another device of theirs, and shows its
+        // notice.
         if isOwn, case .undecryptable = content,
            let ownRow = await ownRow(echoedBy: metadata, ofEncrypted: true, body: "", in: room, accountID: accountID) {
-            if let serverID = trustedServerID(in: metadata, trustedBy: room) {
+            if let serverID = trustedServerID(in: metadata, trustedBy: roomStanzaIDAuthority(room, accountID: accountID)) {
                 try? await recordServerID(serverID, on: ownRow)
             }
             return
         }
         let content = checkingTime(of: content, sentAt: sentTime)
         if case let .decrypted(message, _) = content,
-           await applyAmendment(carriedBy: message, chatWith: from, sentAt: sentTime, isDecrypted: true, accountID: accountID) {
+           await applyAmendment(carriedBy: message, chatWith: from, sentAt: sentTime, roomAuthor: roomAuthor, isDecrypted: true, accountID: accountID) {
             return
         }
         // A message claiming to come from a room the user has no conversation with creates none.
         guard let conversation = try? await store.fetchConversation(jid: room.description, type: .groupchat, accountID: accountID, importSourceJID: nil)
         else { return }
         let arrival = EncryptedArrival(
-            stanza: stanza, content: content, sender: occupant.resourcePart, isOutgoing: isOwn, sentTime: sentTime, isReplayed: isJoinHistory
+            stanza: stanza, content: content, sender: occupant.resourcePart, roomSender: roomAuthor.map(RoomSenderIdentity.init), isOutgoing: isOwn,
+            sentTime: sentTime, isReplayed: isJoinHistory
         )
         await ingestEncryptedMessage(arrival, in: conversation, accountID: accountID)
     }
 
     /// A 1:1 message or a room's private message, live or from a carbon, filed in the chat with its peer: the recipient
-    /// of a sent carbon, else the sender.
+    /// of a sent carbon, else the sender. A live private message's sender is `roomAuthor`, and a carbon's is read from
+    /// the forwarded stanza.
     private func receiveEncryptedChatMessage(
-        _ stanza: XMPPMessage, content: EncryptedContent, origin: EncryptedMessageOrigin, accountID: UUID
+        _ stanza: XMPPMessage, content: EncryptedContent, origin: EncryptedMessageOrigin, roomAuthor liveRoomAuthor: RoomAuthorIdentity?, accountID: UUID
     ) async {
         // Captured before the first wait, so the resource lock learned below advances in arrival order.
         let lockSequence = nextLockSequence()
@@ -107,19 +112,23 @@ extension ChatService {
         case .live: sentTime(of: stanza, accountID: accountID)
         case let .carbon(_, sentTime): sentTime
         }
+        let roomAuthor = switch origin {
+        case .live: liveRoomAuthor
+        case .carbon: carbonRoomAuthor(of: stanza, chatWith: peer, accountID: accountID)
+        }
         let content = checkingTime(of: content, sentAt: sentTime)
         if case let .decrypted(message, _) = content,
-           await applyAmendment(carriedBy: message, chatWith: peer, sentAt: sentTime, isDecrypted: true, accountID: accountID) {
+           await applyAmendment(carriedBy: message, chatWith: peer, sentAt: sentTime, roomAuthor: roomAuthor, isDecrypted: true, accountID: accountID) {
             return
         }
         guard let chat = await chat(with: peer, accountID: accountID) else { return }
         let isOutgoing = switch origin {
-        case .live: await isOwnMessage(from: peer, in: chat.conversation, accountID: accountID)
+        case .live: isOwnMessage(from: peer, accountID: accountID)
         case let .carbon(isOutgoing, _): isOutgoing
         }
         let arrival = EncryptedArrival(
-            stanza: stanza, content: content, sender: chat.occupant?.resourcePart ?? peer.bareJID.description, isOutgoing: isOutgoing,
-            sentTime: sentTime
+            stanza: stanza, content: content, sender: chat.occupant?.resourcePart ?? peer.bareJID.description,
+            roomSender: chat.occupant == nil ? nil : roomAuthor.map(RoomSenderIdentity.init), isOutgoing: isOutgoing, sentTime: sentTime
         )
         let outcome = await ingestEncryptedMessage(arrival, in: chat.conversation, accountID: accountID)
         // Only a new message from the contact that this device could read says something about them. A copy already
@@ -145,15 +154,10 @@ extension ChatService {
         return content
     }
 
-    /// Whether a message from `from` is the user's own, sent from this or another of their devices.
-    func isOwnMessage(from: JID, in conversation: Conversation, accountID: UUID) async -> Bool {
-        switch conversation.type {
-        case .groupchat:
-            guard case let .full(occupant) = from else { return false }
-            return await isOwnRoomMessage(nickname: occupant.resourcePart, room: conversation.jid, accountID: accountID)
-        case .chat:
-            return from.bareJID == resolvedAccountJID(for: accountID)
-        }
+    /// Whether a chat message from `from` is the user's own, sent from this or another of their devices. A room's
+    /// messages are told apart by `isOwnRoomEcho`.
+    func isOwnMessage(from: JID, accountID: UUID) -> Bool {
+        from.bareJID == resolvedAccountJID(for: accountID)
     }
 
     /// Stores an encrypted message unless a copy of it is stored already, and gives a new one the attention a received
@@ -192,8 +196,14 @@ extension ChatService {
             id: UUID(),
             conversationID: conversation.id,
             stanzaID: metadata.stanzaID,
-            serverID: trustedServerID(in: metadata, trustedBy: conversation.type == .groupchat ? conversation.jid : resolvedAccountJID(for: accountID)),
+            serverID: trustedServerID(
+                in: metadata,
+                trustedBy: conversation.type == .groupchat
+                    ? roomStanzaIDAuthority(conversation.jid, accountID: accountID)
+                    : accountStanzaIDAuthority(accountID: accountID)
+            ),
             fromJID: arrival.sender,
+            roomSender: arrival.roomSender,
             body: "",
             timestamp: arrival.sentTime,
             isOutgoing: arrival.isOutgoing,
@@ -241,6 +251,8 @@ struct EncryptedArrival {
     /// What the row names as its sender: the contact's bare JID, or the occupant's nickname in a room or its private
     /// chat.
     let sender: String
+    /// Who sent a room's or a room's private message, beyond the nickname `sender` names.
+    var roomSender: RoomSenderIdentity?
     let isOutgoing: Bool
     let sentTime: Date
     /// Room history replayed on join, which neither counts as unread nor draws attention.

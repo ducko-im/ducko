@@ -41,6 +41,7 @@ private func makeFixture() async throws -> CarbonFixture {
     let credentials = MockCredentialStore()
     let accountService = makeAccountService(store: store, credentials: credentials)
     let chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+    chatService.featureSource = FixedFeatureSource.archiving()
     chatService.setAccountService(accountService)
     let accountID = try await accountService.createAccount(jidString: testJIDString)
     return CarbonFixture(
@@ -447,25 +448,42 @@ extension ChatServiceCarbonTests {
             }
         }
 
+        /// The room the user is in, as `me`.
+        @MainActor
+        private static func addRoom(to fx: CarbonFixture) async -> Conversation {
+            let roomChat = Conversation(
+                id: UUID(), accountID: fx.accountID, jid: room, type: .groupchat, isPinned: false, isMuted: false, unreadCount: 0,
+                roomNickname: "me", createdAt: Date()
+            )
+            await fx.store.addConversation(roomChat)
+            return roomChat
+        }
+
+        /// The carbon of a private message the user sent to the room's occupant `bob` when `isOutgoing`, else one bob sent.
+        private static func privateMessageCarbon(
+            isOutgoing: Bool, id: String = "pm-1", body text: String = "psst", children: [DuckoXMPP.XMLElement] = []
+        ) -> XMPPEvent {
+            let occupant = "\(room)/bob"
+            var element = DuckoXMPP.XMLElement(name: "message", attributes: [
+                "type": "chat", "from": isOutgoing ? "\(testJIDString)/res-A" : occupant, "to": isOutgoing ? occupant : testJIDString, "id": id
+            ])
+            var body = DuckoXMPP.XMLElement(name: "body")
+            body.addText(text)
+            element.addChild(body)
+            element.addChild(DuckoXMPP.XMLElement(name: "x", namespace: XMPPNamespaces.mucUser))
+            for child in children {
+                element.addChild(child)
+            }
+            let carbon = ForwardedMessage(message: XMPPMessage(element: element), timestamp: nil)
+            return isOutgoing ? .messageCarbonSent(carbon) : .messageCarbonReceived(carbon)
+        }
+
         @Test(arguments: [false, true])
         @MainActor
         func `a carbon of a room's private message is filed once in the private chat with the occupant`(isOutgoing: Bool) async throws {
             let fx = try await makeFixture()
-            let roomChat = Conversation(
-                id: UUID(), accountID: fx.accountID, jid: Self.room, type: .groupchat, isPinned: false, isMuted: false, unreadCount: 0,
-                roomNickname: "me", createdAt: Date()
-            )
-            await fx.store.addConversation(roomChat)
-            let occupant = "\(Self.room)/bob"
-            var element = DuckoXMPP.XMLElement(name: "message", attributes: [
-                "type": "chat", "from": isOutgoing ? "\(testJIDString)/res-A" : occupant, "to": isOutgoing ? occupant : testJIDString, "id": "pm-1"
-            ])
-            var body = DuckoXMPP.XMLElement(name: "body")
-            body.addText("psst")
-            element.addChild(body)
-            element.addChild(DuckoXMPP.XMLElement(name: "x", namespace: XMPPNamespaces.mucUser))
-            let carbon = ForwardedMessage(message: XMPPMessage(element: element), timestamp: nil)
-            let event: XMPPEvent = isOutgoing ? .messageCarbonSent(carbon) : .messageCarbonReceived(carbon)
+            let roomChat = await Self.addRoom(to: fx)
+            let event = Self.privateMessageCarbon(isOutgoing: isOutgoing)
 
             await fx.chatService.handleEvent(event, accountID: fx.accountID)
             await fx.chatService.handleEvent(event, accountID: fx.accountID)
@@ -479,6 +497,68 @@ extension ChatServiceCarbonTests {
             #expect(messages.first?.fromJID == "bob")
             #expect(messages.first?.isOutgoing == isOutgoing)
             #expect(try await fx.transcripts.fetchMessages(for: roomChat.id, before: nil, limit: 10).isEmpty)
+        }
+
+        /// The server authenticates the account's own address, so a sent copy names it. A received copy went through the
+        /// room, which stamps its occupant id.
+        @Test(arguments: [false, true])
+        @MainActor
+        func `a carbon of a room's private message keeps who sent it`(isOutgoing: Bool) async throws {
+            let fx = try await makeFixture()
+            fx.chatService.featureSource = FixedFeatureSource.archiving(roomFeatures: [XMPPNamespaces.occupantID])
+            _ = await Self.addRoom(to: fx)
+            let occupantID = DuckoXMPP.XMLElement(name: "occupant-id", namespace: XMPPNamespaces.occupantID, attributes: ["id": "occupant-bob"])
+
+            await fx.chatService.handleEvent(Self.privateMessageCarbon(isOutgoing: isOutgoing, children: [occupantID]), accountID: fx.accountID)
+
+            let message = try #require(await fx.transcripts.messages.first)
+            #expect(message.roomSender == (isOutgoing ? RoomSenderIdentity(realJID: accountBareJID.description) : RoomSenderIdentity(occupantID: "occupant-bob")))
+        }
+
+        /// A received copy's author is told apart by the occupant id the room stamped on it.
+        @Test(arguments: [false, true])
+        @MainActor
+        func `A received carbon's correction of a room's private message applies only with its author's occupant id`(isSameOccupant: Bool) async throws {
+            let fx = try await makeFixture()
+            fx.chatService.featureSource = FixedFeatureSource.archiving(roomFeatures: [XMPPNamespaces.occupantID])
+            _ = await Self.addRoom(to: fx)
+            await fx.chatService.handleEvent(Self.privateMessageCarbon(isOutgoing: false, children: [Self.occupantID("occupant-bob")]), accountID: fx.accountID)
+
+            await fx.chatService.handleEvent(
+                Self.privateMessageCarbon(
+                    isOutgoing: false, id: "pm-2", body: "fixed",
+                    children: [Self.correction(of: "pm-1"), Self.occupantID(isSameOccupant ? "occupant-bob" : "occupant-eve")]
+                ),
+                accountID: fx.accountID
+            )
+
+            let original = try #require(await fx.transcripts.messages.first)
+            #expect(try await fx.transcripts.findMessage(id: original.id, conversationID: original.conversationID)?.body == (isSameOccupant ? "fixed" : "psst"))
+        }
+
+        /// The server authenticates the account's own address, so a sent copy from another of the user's devices is the
+        /// user's, whatever the room advertises.
+        @Test
+        @MainActor
+        func `A sent carbon's correction of the user's own room private message applies`() async throws {
+            let fx = try await makeFixture()
+            _ = await Self.addRoom(to: fx)
+            await fx.chatService.handleEvent(Self.privateMessageCarbon(isOutgoing: true), accountID: fx.accountID)
+
+            await fx.chatService.handleEvent(
+                Self.privateMessageCarbon(isOutgoing: true, id: "pm-2", body: "fixed", children: [Self.correction(of: "pm-1")]), accountID: fx.accountID
+            )
+
+            let original = try #require(await fx.transcripts.messages.first)
+            #expect(try await fx.transcripts.findMessage(id: original.id, conversationID: original.conversationID)?.body == "fixed")
+        }
+
+        private static func occupantID(_ id: String) -> DuckoXMPP.XMLElement {
+            DuckoXMPP.XMLElement(name: "occupant-id", namespace: XMPPNamespaces.occupantID, attributes: ["id": id])
+        }
+
+        private static func correction(of originalID: String) -> DuckoXMPP.XMLElement {
+            DuckoXMPP.XMLElement(name: "replace", namespace: XMPPNamespaces.messageCorrect, attributes: ["id": originalID])
         }
 
         @Test(arguments: Unfiled.allCases)

@@ -53,8 +53,10 @@ public protocol TranscriptStore: Sendable {
     /// dedup inbound stanzas must scope the lookup by `fromJID`. Otherwise an
     /// old archived outgoing message from this account with a colliding
     /// `stanzaID` (e.g. CLI counter resets across processes) would mark a
-    /// fresh incoming message as duplicate and silently drop it.
-    func messageExists(stanzaID: String, fromJID: String, conversationID: UUID) async throws -> Bool
+    /// fresh incoming message as duplicate and silently drop it. A message from
+    /// a room's occupant is also scoped by `roomSender`, as
+    /// `ChatMessage.isReceived(from:as:)` matches it.
+    func messageExists(stanzaID: String, fromJID: String, as roomSender: RoomSenderIdentity?, conversationID: UUID) async throws -> Bool
 
     // MARK: - Days
 

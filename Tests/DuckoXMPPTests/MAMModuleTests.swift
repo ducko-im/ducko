@@ -221,101 +221,14 @@ enum MAMModuleTests {
         }
     }
 
-    struct ExtendedFields {
-        @Test
-        func `queryMessages includes extended form with after-id and before-id`() async throws {
-            let mock = MockTransport()
-            let client = try await makeConnectedClient(mock: mock)
-            let module = try #require(await client.module(ofType: MAMModule.self))
+    struct FinStability {
+        @Test(arguments: [(String?.none, true), ("true", true), ("false", false)])
+        func `A page is stable unless its fin marks it stable='false'`(stable: String?, isStable: Bool) throws {
+            let element = XMLElement(name: "fin", namespace: XMPPNamespaces.mam, attributes: stable.map { ["stable": $0] } ?? [:])
 
-            await mock.clearSentBytes()
+            let fin = try #require(MAMFin.parse(element))
 
-            let queryTask = Task {
-                try await module.queryMessages(MAMModule.Query(
-                    max: 20, afterID: "abc-123", beforeID: "xyz-789"
-                ))
-            }
-
-            await mock.waitForSent(count: 1)
-
-            let mam = try #require(await findMAMIQ(mock: mock))
-            #expect(mam.iq.contains("urn:xmpp:mam:2#extended"))
-            #expect(mam.iq.contains("after-id"))
-            #expect(mam.iq.contains("abc-123"))
-            #expect(mam.iq.contains("before-id"))
-            #expect(mam.iq.contains("xyz-789"))
-
-            await sendEmptyFin(mock: mock, iqID: mam.iqID)
-            let result = try await queryTask.value
-            #expect(result.fin.complete)
-
-            await disconnectFast(client)
-        }
-    }
-
-    struct FlipPage {
-        @Test
-        func `queryMessages includes flip-page in extended form`() async throws {
-            let mock = MockTransport()
-            let client = try await makeConnectedClient(mock: mock)
-            let module = try #require(await client.module(ofType: MAMModule.self))
-
-            await mock.clearSentBytes()
-
-            let queryTask = Task {
-                try await module.queryMessages(MAMModule.Query(
-                    before: .lastPage, max: 10, flipPage: true
-                ))
-            }
-
-            await mock.waitForSent(count: 1)
-
-            let mam = try #require(await findMAMIQ(mock: mock))
-            #expect(mam.iq.contains("urn:xmpp:mam:2#extended"))
-            #expect(mam.iq.contains("flip-page"))
-            #expect(mam.iq.contains("<before/>"))
-
-            await sendEmptyFin(mock: mock, iqID: mam.iqID)
-            let result = try await queryTask.value
-            #expect(result.fin.complete)
-
-            await disconnectFast(client)
-        }
-    }
-
-    struct CombinedForms {
-        @Test
-        func `queryMessages includes both base filter form and extended form`() async throws {
-            let mock = MockTransport()
-            let client = try await makeConnectedClient(mock: mock)
-            let module = try #require(await client.module(ofType: MAMModule.self))
-
-            await mock.clearSentBytes()
-
-            let jid = try #require(BareJID.parse("contact@example.com"))
-            let queryTask = Task {
-                try await module.queryMessages(MAMModule.Query(
-                    with: jid, start: "2026-01-01T00:00:00Z", afterID: "abc-123"
-                ))
-            }
-
-            await mock.waitForSent(count: 1)
-
-            let mam = try #require(await findMAMIQ(mock: mock))
-            // Base filter form
-            #expect(mam.iq.contains("urn:xmpp:mam:2</value>"))
-            #expect(mam.iq.contains("contact@example.com"))
-            #expect(mam.iq.contains("2026-01-01T00:00:00Z"))
-            // Extended form
-            #expect(mam.iq.contains("urn:xmpp:mam:2#extended"))
-            #expect(mam.iq.contains("after-id"))
-            #expect(mam.iq.contains("abc-123"))
-
-            await sendEmptyFin(mock: mock, iqID: mam.iqID)
-            let result = try await queryTask.value
-            #expect(result.fin.complete)
-
-            await disconnectFast(client)
+            #expect(fin.isStable == isStable)
         }
     }
 }

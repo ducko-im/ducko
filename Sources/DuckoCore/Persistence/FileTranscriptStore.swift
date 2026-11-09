@@ -132,7 +132,7 @@ public actor FileTranscriptStore: TranscriptStore {
         if message.serverID == nil || fromArchive, let stanzaID = message.stanzaID {
             let matches = try lookupMessage(stanzaID: stanzaID, conversationID: conversationID) { stored in
                 if fromArchive, stored.serverID != nil { return false }
-                return message.isOutgoing ? stored.isOutgoing : !stored.isOutgoing && stored.fromJID == message.fromJID
+                return message.isOutgoing ? stored.isOutgoing : stored.isReceived(from: message.fromJID, as: message.roomSender)
             }
             if matches != nil { return .duplicate }
         }
@@ -322,11 +322,11 @@ public actor FileTranscriptStore: TranscriptStore {
         try findMessage(serverID: serverID, conversationID: conversationID) != nil
     }
 
-    public func messageExists(stanzaID: String, fromJID: String, conversationID: UUID) async throws -> Bool {
+    public func messageExists(stanzaID: String, fromJID: String, as roomSender: RoomSenderIdentity?, conversationID: UUID) async throws -> Bool {
         // Inbound-only dedup: outgoing 1:1 rows persist `fromJID` as the RECIPIENT (so carbons can find them), so
-        // omitting `!isOutgoing` would let an inbound from bob alias an outgoing alice→bob row and be dropped.
+        // matching outgoing rows would let an inbound from bob alias an outgoing alice→bob row and be dropped.
         try lookupMessage(stanzaID: stanzaID, conversationID: conversationID) { msg in
-            !msg.isOutgoing && msg.fromJID == fromJID
+            msg.isReceived(from: fromJID, as: roomSender)
         } != nil
     }
 

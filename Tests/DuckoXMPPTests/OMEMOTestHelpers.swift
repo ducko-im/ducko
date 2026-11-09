@@ -31,7 +31,7 @@ func bodyElement(_ text: String) -> XMLElement {
 
 /// The decrypted message an encrypted-message event reports, or nil for one that could not be decrypted.
 func decryptedMessage(of event: XMPPEvent) -> XMPPMessage? {
-    guard case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted)) = event else { return nil }
+    guard case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted), _) = event else { return nil }
     return decrypted.message
 }
 

@@ -16,7 +16,7 @@ actor CLIEventHandler {
         case let .messageReceived(message):
             if message.hasClassifiedEvent { return }
             ringBell()
-        case let .roomMessageReceived(message), let .mucPrivateMessageReceived(message):
+        case let .roomMessageReceived(message, _), let .mucPrivateMessageReceived(message, _):
             // An encrypted one prints and rings once stored, with its text or its notice.
             if message.isEncrypted { return }
             ringBell()

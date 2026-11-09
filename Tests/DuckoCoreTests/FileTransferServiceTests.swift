@@ -302,6 +302,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             )
             await store.addAccount(account)
             let transport = MockTransport()
+            await transport.answerDiscoInfo(of: testJIDString)
             await transport.autoReply { stanza in
                 guard let id = stanza.firstMatch(of: /\sid=["']([^"']+)["']/)?.output.1,
                       let to = stanza.firstMatch(of: /\sto=["']([^"']+)["']/)?.output.1 else { return nil }

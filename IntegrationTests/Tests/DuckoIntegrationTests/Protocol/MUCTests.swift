@@ -134,10 +134,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 let body = "msg-\(UUID().uuidString.prefix(8))"
                 try await aliceMUC.sendMessage(to: roomJID, body: body)
 
-                _ = try await bob.waitForEvent { event in
-                    if case let .roomMessageReceived(m) = event, m.body == body { return true }
-                    return false
-                }
+                _ = try await bob.waitForEvent { $0.isRoomMessage(body: body) }
             }
         }
 
@@ -242,7 +239,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 try await aliceMUC.sendPrivateMessage(to: roomJID, nickname: "bob", body: body)
 
                 _ = try await bob.waitForEvent { event in
-                    if case let .mucPrivateMessageReceived(m) = event, m.body == body { return true }
+                    if case let .mucPrivateMessageReceived(m, _) = event, m.body == body { return true }
                     return false
                 }
             }
@@ -279,10 +276,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 let body = "msg-\(UUID().uuidString.prefix(8))"
                 try await harness.environment.chatService.sendGroupMessage(to: roomJID, body: body, accountID: alice.accountID)
 
-                _ = try await bob.waitForEvent { event in
-                    if case let .roomMessageReceived(m) = event, m.body == body { return true }
-                    return false
-                }
+                _ = try await bob.waitForEvent { $0.isRoomMessage(body: body) }
             }
         }
 

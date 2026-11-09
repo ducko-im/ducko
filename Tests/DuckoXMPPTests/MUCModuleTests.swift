@@ -13,6 +13,7 @@ private func makeConnectedClient(mock: MockTransport) async throws -> XMPPClient
         transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(MUCModule())
+    await mock.answerDiscoInfo(of: "room@conference.example.com")
 
     let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
     await simulateNoTLSConnect(mock)
@@ -468,7 +469,7 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             """)
 
             let events = try await eventsTask.value
-            guard case let .roomMessageReceived(message) = events.last else {
+            guard case let .roomMessageReceived(message, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected roomMessageReceived event")
             }
             #expect(message.body == "Hello group!")
@@ -597,7 +598,7 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             """)
 
             let events = try await eventsTask.value
-            guard case let .roomMessageReceived(message) = events.last else {
+            guard case let .roomMessageReceived(message, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected roomMessageReceived event")
             }
             #expect(message.body == "Hello")
@@ -953,7 +954,7 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
             """)
 
             let events = try await eventsTask.value
-            guard case let .roomMessageReceived(message) = events.last else {
+            guard case let .roomMessageReceived(message, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected roomMessageReceived event")
             }
             #expect(message.body == "My message")
@@ -1575,7 +1576,7 @@ enum MUCModuleTests { // swiftlint:disable:this type_body_length
 
             let events = try await eventsTask.value
             let pmEvent = events.last
-            guard case let .mucPrivateMessageReceived(message) = pmEvent else {
+            guard case let .mucPrivateMessageReceived(message, _) = pmEvent else {
                 throw XMPPClientError.unexpectedStreamState("Expected mucPrivateMessageReceived")
             }
             #expect(message.body == "Hello privately")

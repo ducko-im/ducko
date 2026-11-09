@@ -691,7 +691,7 @@ private final class StubPEPPeer: Sendable {
     var encryptedMessageIDs: [String?] {
         recorded.withLock { recorded in
             recorded.events.compactMap { event in
-                if case let .omemoEncryptedMessageReceived(message, _) = event { message.id } else { nil }
+                if case let .omemoEncryptedMessageReceived(message, _, _) = event { message.id } else { nil }
             }
         }
     }
@@ -699,7 +699,7 @@ private final class StubPEPPeer: Sendable {
     var undecryptableMessageIDs: [String] {
         recorded.withLock { recorded in
             recorded.events.compactMap { event in
-                if case let .omemoEncryptedMessageReceived(message, .undecryptable) = event { message.id } else { nil }
+                if case let .omemoEncryptedMessageReceived(message, .undecryptable, _) = event { message.id } else { nil }
             }
         }
     }

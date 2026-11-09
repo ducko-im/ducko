@@ -1,5 +1,6 @@
 import DuckoTestSupport
 import Foundation
+import struct os.OSAllocatedUnfairLock
 import Testing
 @testable import DuckoCore
 @testable import DuckoXMPP
@@ -37,6 +38,45 @@ struct RoomResumptionTests {
         await fixture.close()
     }
 
+    /// The account is not connected again until the resume is announced, and the room's carried features still trust
+    /// the stanza-id it stamped.
+    @Test
+    func `A room message replayed ahead of the resume keeps the room's stanza-id`() async throws {
+        let fixture = RoomResumptionFixture(roomFeatures: [XMPPNamespaces.stanzaID])
+        try await fixture.signIn()
+        try await fixture.drop(fixture.transports[0])
+        let replay = "<message type='groupchat' from='\(room)/bob' id='m1'><body>Sent during the drop</body>"
+            + "<stanza-id xmlns='urn:xmpp:sid:0' id='R1' by='\(room)'/></message>"
+
+        try await fixture.resume(on: fixture.transports[1], replaying: replay) {
+            try await eventually { try await !fixture.storedMessages(in: room).isEmpty }
+            #expect(fixture.environment.accountService.connectedClient(for: fixture.accountID) == nil)
+        }
+
+        #expect(try await fixture.storedMessages(in: room).map(\.serverID) == ["R1"])
+        await fixture.close()
+    }
+
+    /// The account's features carried for the resume trust the stanza-id it stamped on a chat message replayed while
+    /// the account is not connected again.
+    @Test
+    func `A chat message replayed ahead of the resume keeps the account's stanza-id`() async throws {
+        let fixture = RoomResumptionFixture(accountFeatures: [XMPPNamespaces.stanzaID])
+        try await fixture.signIn()
+        try await fixture.drop(fixture.transports[0])
+        let contact = try #require(BareJID.parse("bob@example.com"))
+        let replay = "<message type='chat' from='\(contact)/phone' id='c1'><body>Sent during the drop</body>"
+            + "<stanza-id xmlns='urn:xmpp:sid:0' id='S1' by='\(testJIDString)'/></message>"
+
+        try await fixture.resume(on: fixture.transports[1], replaying: replay) {
+            try await eventually { try await !fixture.storedMessages(in: contact, type: .chat).isEmpty }
+            #expect(fixture.environment.accountService.connectedClient(for: fixture.accountID) == nil)
+        }
+
+        #expect(try await fixture.storedMessages(in: contact, type: .chat).map(\.serverID) == ["S1"])
+        await fixture.close()
+    }
+
     @Test
     func `An occupant who left during the drop is gone after the resume`() async throws {
         let fixture = RoomResumptionFixture()
@@ -65,6 +105,27 @@ struct RoomResumptionTests {
         }
 
         #expect(try await fixture.storedBodies(in: room).count { $0 == "Hello" } == 1)
+        await fixture.close()
+    }
+
+    /// The room has no occupant ids and shows no real JIDs, so only the user's presence, which the resume carried, ties
+    /// the echo to the user while the account is not connected again.
+    @Test
+    func `The user's own correction echo replayed ahead of the resume is applied`() async throws {
+        let fixture = RoomResumptionFixture()
+        try await fixture.signIn()
+        try await fixture.chat.sendGroupMessage(to: room, body: "Helo", accountID: fixture.accountID)
+        let sent = try await sentStanza(on: fixture.transports[0], containing: "<body>Helo</body>")
+        let stanzaID = try #require(extractIQID(from: sent))
+        try await fixture.drop(fixture.transports[0])
+        let replay = "<message type='groupchat' from='\(room)/alice' id='c1'><body>Hello</body>"
+            + "<replace xmlns='urn:xmpp:message-correct:0' id='\(stanzaID)'/></message>"
+
+        try await fixture.resume(on: fixture.transports[1], replaying: replay) {
+            try await eventually { try await fixture.storedBodies(in: room) == ["Hello"] }
+            #expect(fixture.environment.accountService.connectedClient(for: fixture.accountID) == nil)
+        }
+
         await fixture.close()
     }
 
@@ -401,11 +462,59 @@ struct RoomResumptionTests {
         let carried = try #require(await fixture.carried)
         let account = try #require(fixture.environment.accountService.accounts.first)
 
-        let (client, _) = await DefaultXMPPClientFactory().makeClient(account: account, password: "secret", resuming: carried, requireTLSOverride: nil, omemoService: nil)
+        let accountInfo = ServiceDiscoveryModule.InfoResult(identities: [], features: [XMPPNamespaces.stanzaID, XMPPNamespaces.mam])
+        let resuming = StreamResumeContext(streamManagement: carried.streamManagement, rooms: carried.rooms, accountInfo: accountInfo)
+
+        let (client, _) = await DefaultXMPPClientFactory().makeClient(
+            account: account, password: "secret", resuming: resuming, requireTLSOverride: nil, omemoService: nil
+        )
 
         let occupancy = try #require(await client.module(ofType: MUCModule.self)?.roomOccupancies[room])
         #expect(Set(occupancy.occupants.map(\.nickname)) == ["alice", "bob"])
+        #expect(await client.module(ofType: ServiceDiscoveryModule.self)?.knownAccountInfo?.features == accountInfo.features)
         await fixture.close()
+    }
+
+    /// The production factory hands the room module to the chat module, which reads from it who sent a room private
+    /// chat's correction.
+    @Test
+    func `The production factory's chat module tells who sent a room private chat's correction`() async throws {
+        let account = try Account(id: UUID(), jid: #require(BareJID.parse(testJIDString)), isEnabled: true, connectOnLaunch: false, createdAt: Date())
+        let (client, _) = await DefaultXMPPClientFactory().makeClient(account: account, password: "secret", resuming: nil, requireTLSOverride: nil, omemoService: nil)
+        let muc = try #require(await client.module(ofType: MUCModule.self))
+        let chat = try #require(await client.module(ofType: ChatModule.self))
+        let events = OSAllocatedUnfairLock<[XMPPEvent]>(initialState: [])
+        let context = ModuleContext(
+            sendStanza: { _, onAccepted in onAccepted?() },
+            sendIQ: { iq, _ in
+                guard iq.childElement?.namespace == XMPPNamespaces.discoInfo else { return nil }
+                return discoInfoQuery(features: [XMPPNamespaces.occupantID])
+            },
+            emitEvent: { event in events.withLock { $0.append(event) } }, generateID: { "id-1" },
+            connectedJID: { FullJID.parse("\(testJIDString)/ducko") }, domain: "example.com"
+        )
+        muc.setUp(context)
+        chat.setUp(context)
+        try await muc.joinRoom(room, nickname: "alice")
+        var mucUser = DuckoXMPP.XMLElement(name: "x", namespace: XMPPNamespaces.mucUser)
+        mucUser.addChild(DuckoXMPP.XMLElement(name: "item", attributes: ["affiliation": "member", "role": "participant"]))
+        mucUser.addChild(DuckoXMPP.XMLElement(name: "status", attributes: ["code": "110"]))
+        var selfPresence = DuckoXMPP.XMLElement(name: "presence", attributes: ["from": "\(room)/alice"])
+        selfPresence.addChild(mucUser)
+        try muc.handlePresence(XMPPPresence(element: selfPresence))
+        var correction = XMPPMessage(type: .chat, to: .bare(account.jid), id: "p2")
+        correction.from = try .full(#require(FullJID(bareJID: room, resourcePart: "bob")))
+        correction.body = "hello"
+        correction.element.addChild(DuckoXMPP.XMLElement(name: "replace", namespace: XMPPNamespaces.messageCorrect, attributes: ["id": "p1"]))
+        correction.element.addChild(DuckoXMPP.XMLElement(name: "occupant-id", namespace: XMPPNamespaces.occupantID, attributes: ["id": "occupant-bob"]))
+
+        try chat.handleMessage(correction)
+
+        let authors = events.withLock { $0 }.compactMap { event -> RoomAuthorIdentity? in
+            guard case let .messageCorrected(_, _, _, _, _, roomAuthor) = event else { return nil }
+            return roomAuthor
+        }
+        #expect(authors.map(\.occupantID) == ["occupant-bob"])
     }
 }
 
@@ -461,9 +570,11 @@ private final class RoomResumptionFixture {
         environment.bookmarksService.bookmarks.map(\.jidString)
     }
 
-    init(transports: [MockTransport] = [MockTransport(), MockTransport()]) {
+    /// Each joinable room's disco#info lists `roomFeatures`. With `accountFeatures`, the client discovers the account,
+    /// whose disco#info lists them on the first transport only.
+    init(transports: [MockTransport] = [MockTransport(), MockTransport()], roomFeatures: [String] = [], accountFeatures: [String]? = nil) {
         self.transports = transports
-        self.factory = RoomResumeFactory(transports: transports, gate: resumeGate)
+        self.factory = RoomResumeFactory(transports: transports, gate: resumeGate, roomFeatures: roomFeatures, accountFeatures: accountFeatures)
         self.environment = AppEnvironment(store: store, transcripts: transcripts, credentialStore: MockCredentialStore(), clientFactory: factory)
     }
 
@@ -472,9 +583,13 @@ private final class RoomResumptionFixture {
     }
 
     func storedBodies(in room: BareJID) async throws -> [String] {
-        let conversation = try await store.fetchConversation(jid: room.description, type: .groupchat, accountID: accountID, importSourceJID: nil)
+        try await storedMessages(in: room).map(\.body)
+    }
+
+    func storedMessages(in jid: BareJID, type: Conversation.ConversationType = .groupchat) async throws -> [ChatMessage] {
+        let conversation = try await store.fetchConversation(jid: jid.description, type: type, accountID: accountID, importSourceJID: nil)
         guard let conversation else { return [] }
-        return try await transcripts.fetchMessages(for: conversation.id, before: nil, limit: 50).map(\.body)
+        return try await transcripts.fetchMessages(for: conversation.id, before: nil, limit: 50)
     }
 
     // MARK: Sessions
@@ -604,16 +719,21 @@ private final class RoomResumptionFixture {
 private actor RoomResumeFactory: XMPPClientFactory {
     private let transports: [MockTransport]
     private let gate: ResumeGate
+    private let roomFeatures: [String]
+    private let accountFeatures: [String]?
     private var index = 0
     private(set) var lastResuming: StreamResumeContext?
 
-    init(transports: [MockTransport], gate: ResumeGate) {
+    init(transports: [MockTransport], gate: ResumeGate, roomFeatures: [String], accountFeatures: [String]?) {
         self.transports = transports
         self.gate = gate
+        self.roomFeatures = roomFeatures
+        self.accountFeatures = accountFeatures
     }
 
     func makeClient(account: Account, password: String, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
         let transport = transports[index]
+        let isFirstSignIn = index == 0
         index += 1
         lastResuming = resuming
         var builder = XMPPClientBuilder(domain: account.jid.domainPart, username: account.jid.localPart ?? "", password: password)
@@ -624,12 +744,21 @@ private actor RoomResumeFactory: XMPPClientFactory {
         builder.withModule(sm)
         builder.withInterceptor(sm)
         builder.withModule(MUCModule(resuming: resuming?.rooms))
+        if let accountFeatures {
+            builder.withModule(ServiceDiscoveryModule(resuming: resuming?.accountInfo))
+            if isFirstSignIn {
+                await transport.answerDiscoInfo(of: account.jid.description, features: accountFeatures)
+            }
+        }
         let pep = PEPModule()
         pep.registerNotifyInterest(XMPPNamespaces.bookmarks2)
         builder.withModule(pep)
         builder.withModule(gate)
         // A requested disconnect waits for the server to acknowledge what was sent.
         await transport.ackSyncRequests(from: sm)
+        for joinable in [room, otherRoom, rememberedRoom] {
+            await transport.answerDiscoInfo(of: joinable.description, features: roomFeatures)
+        }
         return await (builder.build(), sm)
     }
 }

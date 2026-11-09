@@ -12,3 +12,10 @@ extension XMPPMessage {
         element.child(named: "origin-id", namespace: XMPPNamespaces.stanzaID)?.attribute("id")
     }
 }
+
+public extension ServiceDiscoveryModule.InfoResult {
+    /// Whether the entity whose disco#info this is stamps the messages it handles with stanza-ids (XEP-0359).
+    var supportsStanzaIDs: Bool {
+        features.contains(XMPPNamespaces.stanzaID)
+    }
+}

@@ -45,7 +45,7 @@ enum ChatModuleCorrectionTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .messageCorrected(originalID, newBody, replyFallbackRange, from, messageType) = events.last else {
+            guard case let .messageCorrected(originalID, newBody, replyFallbackRange, from, messageType, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected messageCorrected")
             }
             #expect(originalID == "msg-1")
@@ -68,7 +68,7 @@ enum ChatModuleCorrectionTests {
 
             let eventsTask = Task {
                 try await collectEvents(from: client) { event in
-                    if case .messageCorrected(originalID: "msg-next", _, _, _, _) = event { return true }
+                    if case .messageCorrected(originalID: "msg-next", _, _, _, _, _) = event { return true }
                     return false
                 }
             }
@@ -87,13 +87,39 @@ enum ChatModuleCorrectionTests {
 
             let amended = try await eventsTask.value.compactMap { event -> String? in
                 switch event {
-                case let .messageCorrected(originalID, _, _, _, _), let .messageRetracted(originalID, _, _): originalID
+                case let .messageCorrected(originalID, _, _, _, _, _), let .messageRetracted(originalID, _, _, _): originalID
                 default: nil
                 }
             }
             #expect(amended == ["msg-next"])
 
             await disconnectFast(client)
+        }
+    }
+
+    struct MalformedRetraction {
+        /// XEP-0424 never shows a retraction's body, so a correction beside a retraction without an id is not applied.
+        /// The same correction without the retraction is.
+        @Test(arguments: [true, false])
+        func `A retraction without an id stops the correction beside it`(carriesRetraction: Bool) throws {
+            let recorded = OSAllocatedUnfairLock<[XMPPEvent]>(initialState: [])
+            let module = ChatModule()
+            module.setUp(makeStubModuleContext(emitEvent: { event in recorded.withLock { $0.append(event) } }))
+            let retraction = carriesRetraction ? "<retract xmlns='\(XMPPNamespaces.messageRetract)'/>" : ""
+
+            try module.handleMessage(XMPPMessage(element: stanza("""
+            <message from='contact@example.com/res' to='user@example.com/ducko' type='chat' id='msg-2'>\
+            \(retraction)<replace xmlns='\(XMPPNamespaces.messageCorrect)' id='msg-1'/>\
+            <body>Replaced</body></message>
+            """)))
+
+            let amendedIDs = recorded.withLock { $0 }.compactMap { event -> String? in
+                switch event {
+                case let .messageCorrected(originalID, _, _, _, _, _), let .messageRetracted(originalID, _, _, _): originalID
+                default: nil
+                }
+            }
+            #expect(amendedIDs == (carriesRetraction ? [] : ["msg-1"]))
         }
     }
 

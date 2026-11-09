@@ -128,6 +128,7 @@ func makeStubModuleContext(
     sendStanza: @escaping ModuleContext.StanzaSender = { _, onAccepted in onAccepted?() },
     sendIQ: @escaping ModuleContext.IQSender = { _, _ in nil },
     emitEvent: @Sendable @escaping (XMPPEvent) -> Void = { _ in },
+    generateID: @Sendable @escaping () -> String = { "test-1" },
     sendElement: @Sendable @escaping (XMLElement) async throws -> Void = { _ in },
     serverStreamFeatures: @Sendable @escaping () -> XMLElement? = { nil },
     connectedJID: FullJID? = FullJID.parse("user@example.com/res"),
@@ -138,7 +139,7 @@ func makeStubModuleContext(
         sendStanza: sendStanza,
         sendIQ: sendIQ,
         emitEvent: emitEvent,
-        generateID: { "test-1" },
+        generateID: generateID,
         connectedJID: { connectedJID },
         domain: "example.com",
         sendElement: sendElement,
@@ -146,6 +147,28 @@ func makeStubModuleContext(
         dispatchDecryptedMessage: dispatchDecryptedMessage,
         reportConnectionLost: reportConnectionLost
     )
+}
+
+// MARK: - Stubbed Room Module
+
+/// A room module driven without a client, whose rooms answer disco#info with what `answerRoomInfo` returns or throws.
+/// Its other IQs get an empty result.
+func makeStubbedRoomModule(
+    resuming: MUCResumeState? = nil,
+    emitEvent: @Sendable @escaping (XMPPEvent) -> Void = { _ in },
+    generateID: @Sendable @escaping () -> String = { "test-1" },
+    answerRoomInfo: @escaping @Sendable () throws -> XMLElement?
+) -> MUCModule {
+    let module = MUCModule(resuming: resuming)
+    module.setUp(makeStubModuleContext(
+        sendIQ: { iq, _ in
+            guard iq.childElement?.namespace == XMPPNamespaces.discoInfo else { return nil }
+            return try answerRoomInfo()
+        },
+        emitEvent: emitEvent,
+        generateID: generateID
+    ))
+    return module
 }
 
 // MARK: - STARTTLS Failure

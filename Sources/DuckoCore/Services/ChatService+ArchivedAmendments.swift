@@ -14,9 +14,15 @@ struct MessageAmendment {
     let originalID: String
     let change: Change
     let from: JID
+    /// Who sent it in a room or a room's private chat, which tells whether it may change the message it names.
+    let roomAuthor: RoomAuthorIdentity?
     /// When it was made, which orders it among the corrections of one message: when the archive received it, or when
     /// a carried one was sent.
     let timestamp: Date
+
+    var sender: AmendmentSender {
+        AmendmentSender(from: from, roomAuthor: roomAuthor)
+    }
 
     /// Whether an archived `message` carries a correction or retraction, so it is not stored as a message even when it
     /// cannot be applied. An encrypted message carries them inside its encryption.
@@ -24,9 +30,9 @@ struct MessageAmendment {
         !message.isEncrypted && message.carriesAmendment
     }
 
-    /// The amendment `message`, made at `timestamp`, makes in `conversation`. Nil when it names no message, and for a
-    /// moderation that does not come from the room itself.
-    init?(_ message: XMPPMessage, timestamp: Date, in conversation: Conversation) {
+    /// The amendment `message`, made at `timestamp`, makes in `conversation`, where `roomAuthor` sent it in a room or a
+    /// room's private chat. Nil when it names no message, and for a moderation that does not come from the room itself.
+    init?(_ message: XMPPMessage, timestamp: Date, roomAuthor: RoomAuthorIdentity?, in conversation: Conversation) {
         guard let from = message.from else { return nil }
         if let retract = message.element.child(named: "retract", namespace: XMPPNamespaces.messageRetract) {
             guard let originalID = retract.attribute("id") else { return nil }
@@ -45,6 +51,7 @@ struct MessageAmendment {
             return nil
         }
         self.from = from
+        self.roomAuthor = roomAuthor
         self.timestamp = timestamp
     }
 
@@ -52,9 +59,11 @@ struct MessageAmendment {
     func event(messageType: XMPPMessage.MessageType) -> XMPPEvent {
         switch change {
         case let .correction(newBody, replyFallbackRange):
-            .messageCorrected(originalID: originalID, newBody: newBody, replyFallbackRange: replyFallbackRange, from: from, messageType: messageType)
+            .messageCorrected(
+                originalID: originalID, newBody: newBody, replyFallbackRange: replyFallbackRange, from: from, messageType: messageType, roomAuthor: roomAuthor
+            )
         case .retraction:
-            .messageRetracted(originalID: originalID, from: from, messageType: messageType)
+            .messageRetracted(originalID: originalID, from: from, messageType: messageType, roomAuthor: roomAuthor)
         case .moderation:
             .messageModerated(originalID: originalID, moderator: from.description, room: from.bareJID, reason: nil)
         }
@@ -87,12 +96,12 @@ extension ChatService {
         switch amendment.change {
         case let .correction(newBody, replyFallbackRange):
             await applyCorrection(
-                originalID: amendment.originalID, newBody: newBody, replyFallbackRange: replyFallbackRange, from: amendment.from,
+                originalID: amendment.originalID, newBody: newBody, replyFallbackRange: replyFallbackRange, by: amendment.sender,
                 in: conversation, accountID: accountID, timestamp: amendment.timestamp, isDecrypted: isDecrypted
             )
         case .retraction:
             await applyRetraction(
-                originalID: amendment.originalID, from: amendment.from, in: conversation, accountID: accountID,
+                originalID: amendment.originalID, by: amendment.sender, in: conversation, accountID: accountID,
                 timestamp: amendment.timestamp, isDecrypted: isDecrypted
             )
         case .moderation:

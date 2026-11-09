@@ -7,6 +7,7 @@ private let log = Logger(label: "im.ducko.xmpp.muc")
 public struct MUCResumeState: Sendable {
     fileprivate let rooms: [BareJID: MUCModule.RoomState]
     fileprivate let pendingNickChanges: [BareJID: [String: RoomOccupant]]
+    fileprivate let roomInfo: [BareJID: ServiceDiscoveryModule.InfoResult]
 }
 
 /// Implements XEP-0045 Multi-User Chat — room join/leave, occupant tracking, group messaging, and invitations.
@@ -30,7 +31,7 @@ public final class MUCModule: XMPPModule, Sendable {
     /// Self-ping interval for detecting silent MUC disconnections (XEP-0410).
     private let selfPingInterval: Duration
 
-    fileprivate struct RoomState {
+    struct RoomState {
         var nickname: String
         /// Whether the room confirmed `nickname` with the user's own presence. Until then the join is pending, and
         /// another occupant may still hold the nickname asked for.
@@ -39,6 +40,10 @@ public final class MUCModule: XMPPModule, Sendable {
         var occupants: [String: RoomOccupant] = [:]
         var subject: String?
         var flags: Set<RoomFlag> = []
+        /// The occupant id the room gave the user's own presence.
+        var ownOccupantID: String?
+        /// A token for each occupant's continuous presence under its nickname, by nickname.
+        var presenceSessions: [String: String] = [:]
         var lastActivity: ContinuousClock.Instant = .now
 
         var confirmedNickname: String? {
@@ -46,14 +51,16 @@ public final class MUCModule: XMPPModule, Sendable {
         }
 
         var occupancy: RoomOccupancy {
-            RoomOccupancy(nickname: nickname, occupants: Array(occupants.values), subject: subject, flags: flags)
+            RoomOccupancy(nickname: nickname, occupants: Array(occupants.values), subject: subject, flags: flags, ownOccupantID: ownOccupantID)
         }
     }
 
-    private struct State {
+    struct State {
         var context: ModuleContext?
         var rooms: [BareJID: RoomState] = [:]
         var pendingNickChanges: [BareJID: [String: RoomOccupant]] = [:]
+        /// Each room's disco#info, kept apart from `rooms` so a rejoin's fresh `RoomState` keeps it.
+        var knownRoomInfo: [BareJID: ServiceDiscoveryModule.InfoResult] = [:]
         var selfPingTasks: [BareJID: Task<Void, Never>] = [:]
 
         /// Stops tracking `room`, returning its self-ping task for the caller to cancel outside the lock.
@@ -64,7 +71,7 @@ public final class MUCModule: XMPPModule, Sendable {
         }
     }
 
-    private let state: OSAllocatedUnfairLock<State>
+    let state: OSAllocatedUnfairLock<State>
     private let presenceModule: PresenceModule?
 
     public var features: [String] {
@@ -78,6 +85,7 @@ public final class MUCModule: XMPPModule, Sendable {
         if let resuming {
             initial.rooms = resuming.rooms
             initial.pendingNickChanges = resuming.pendingNickChanges
+            initial.knownRoomInfo = resuming.roomInfo
         }
         self.state = OSAllocatedUnfairLock(initialState: initial)
     }
@@ -94,6 +102,7 @@ public final class MUCModule: XMPPModule, Sendable {
         state.withLock { state in
             state.rooms.removeAll()
             state.pendingNickChanges.removeAll()
+            state.knownRoomInfo.removeAll()
         }
     }
 
@@ -124,6 +133,7 @@ public final class MUCModule: XMPPModule, Sendable {
         let item: XMLElement?
         let mucUser: XMLElement?
         let statusCodes: Set<Int>
+        let occupantID: String?
         var isSelfPresence: Bool {
             statusCodes.contains(110)
         }
@@ -154,7 +164,7 @@ public final class MUCModule: XMPPModule, Sendable {
 
         let info = PresenceInfo(
             roomJID: roomJID, nickname: nickname, occupant: occupant,
-            item: item, mucUser: mucUser, statusCodes: parseStatusCodes(mucUser)
+            item: item, mucUser: mucUser, statusCodes: parseStatusCodes(mucUser), occupantID: presence.occupantID
         )
 
         if presence.presenceType == .unavailable {
@@ -185,6 +195,7 @@ public final class MUCModule: XMPPModule, Sendable {
                 var pending = state.pendingNickChanges[info.roomJID] ?? [:]
                 pending[newNick] = info.occupant
                 state.pendingNickChanges[info.roomJID] = pending
+                state.rooms[info.roomJID]?.presenceSessions.removeValue(forKey: info.nickname)
             }
             return
         }
@@ -226,9 +237,12 @@ public final class MUCModule: XMPPModule, Sendable {
 
         if let pendingOccupant {
             let oldNickname = pendingOccupant.nickname
+            let session = context?.generateID()
             state.withLock { state in
                 state.rooms[info.roomJID]?.occupants.removeValue(forKey: oldNickname)
                 state.rooms[info.roomJID]?.occupants[info.nickname] = info.occupant
+                // A new nickname is a new full JID, so the presence under the old one does not continue.
+                state.rooms[info.roomJID]?.presenceSessions[info.nickname] = session
                 if info.isSelfPresence {
                     // The user's own presence confirms the new nickname, as it confirms a join.
                     state.rooms[info.roomJID]?.nickname = info.nickname
@@ -240,19 +254,15 @@ public final class MUCModule: XMPPModule, Sendable {
                 room: info.roomJID, oldNickname: oldNickname, occupant: info.occupant, isSelf: info.isSelfPresence
             ))
         } else if info.isSelfPresence {
-            handleSelfJoined(roomJID: info.roomJID, nickname: info.nickname, occupant: info.occupant, statusCodes: info.statusCodes, context: context)
+            handleSelfJoined(info, context: context)
         } else {
             handleOccupantJoined(roomJID: info.roomJID, nickname: info.nickname, occupant: info.occupant, context: context)
         }
     }
 
-    private func handleSelfJoined(
-        roomJID: BareJID,
-        nickname: String,
-        occupant: RoomOccupant,
-        statusCodes: Set<Int>,
-        context: ModuleContext?
-    ) {
+    private func handleSelfJoined(_ info: PresenceInfo, context: ModuleContext?) {
+        let (roomJID, nickname, occupant, statusCodes) = (info.roomJID, info.nickname, info.occupant, info.statusCodes)
+        let session = context?.generateID()
         let flags: Set<RoomFlag> = {
             var result = Set<RoomFlag>()
             if statusCodes.contains(100) { result.insert(.nonAnonymous) }
@@ -266,18 +276,20 @@ public final class MUCModule: XMPPModule, Sendable {
             state.rooms[roomJID]?.isJoined = true
             state.rooms[roomJID]?.occupants[nickname] = occupant
             state.rooms[roomJID]?.flags = flags
+            // Kept even before the room's features are known, as for a room this join created.
+            state.rooms[roomJID]?.ownOccupantID = info.occupantID
+            state.rooms[roomJID]?.startPresenceSession(of: nickname, id: session)
             state.rooms[roomJID]?.lastActivity = .now
             guard let room = state.rooms[roomJID] else {
-                return RoomOccupancy(nickname: nickname, occupants: [occupant], subject: nil, flags: flags)
+                return RoomOccupancy(nickname: nickname, occupants: [occupant], subject: nil, flags: flags, ownOccupantID: info.occupantID)
             }
-            return RoomOccupancy(
-                nickname: nickname,
-                occupants: Array(room.occupants.values),
-                subject: room.subject,
-                flags: flags
-            )
+            return room.occupancy
         }
         let isNewlyCreated = statusCodes.contains(201)
+        if isNewlyCreated, knownRoomInfo(for: roomJID) == nil {
+            // A room this join created had nothing to answer before it existed.
+            Task { _ = await roomInfo(for: roomJID, timeout: Self.joinRoomInfoTimeout) }
+        }
         log.info("Joined a room\(isNewlyCreated ? " [new room]" : "")")
         log.debug("The joined room is \(roomJID), as \(nickname)")
         context?.emitEvent(.roomJoined(room: roomJID, occupancy: occupancy, isNewlyCreated: isNewlyCreated))
@@ -285,8 +297,10 @@ public final class MUCModule: XMPPModule, Sendable {
     }
 
     private func handleOccupantJoined(roomJID: BareJID, nickname: String, occupant: RoomOccupant, context: ModuleContext?) {
+        let session = context?.generateID()
         state.withLock {
             $0.rooms[roomJID]?.occupants[nickname] = occupant
+            $0.rooms[roomJID]?.startPresenceSession(of: nickname, id: session)
             $0.rooms[roomJID]?.lastActivity = .now
         }
         log.debug("Occupant \(nickname) joined \(roomJID)")
@@ -301,6 +315,7 @@ public final class MUCModule: XMPPModule, Sendable {
         let nickname = info.nickname
         let (isSelf, pingTask) = state.withLock { state -> (Bool, Task<Void, Never>?) in
             state.rooms[roomJID]?.occupants.removeValue(forKey: nickname)
+            state.rooms[roomJID]?.presenceSessions.removeValue(forKey: nickname)
             let selfLeft = info.isSelfPresence || state.rooms[roomJID]?.confirmedNickname == nickname
             return (selfLeft, selfLeft ? state.removeRoom(roomJID) : nil)
         }
@@ -354,7 +369,7 @@ public final class MUCModule: XMPPModule, Sendable {
 
         // XEP-0424/0425: Message retraction or moderation
         if let retract = message.element.child(named: "retract", namespace: XMPPNamespaces.messageRetract) {
-            handleRetraction(retract: retract, from: from, roomJID: roomJID)
+            handleRetraction(retract: retract, in: message, from: from, roomJID: roomJID)
             return
         }
 
@@ -367,7 +382,8 @@ public final class MUCModule: XMPPModule, Sendable {
                 return state.context
             }
             context?.emitEvent(.messageCorrected(
-                originalID: originalID, newBody: newBody, replyFallbackRange: message.replyFallbackRange(in: newBody), from: from, messageType: .groupchat
+                originalID: originalID, newBody: newBody, replyFallbackRange: message.replyFallbackRange(in: newBody), from: from, messageType: .groupchat,
+                roomAuthor: roomAuthor(of: message, in: roomJID)
             ))
             return
         }
@@ -381,7 +397,7 @@ public final class MUCModule: XMPPModule, Sendable {
             state.rooms[roomJID]?.lastActivity = .now
             return state.context
         }
-        context?.emitEvent(.roomMessageReceived(message))
+        context?.emitEvent(.roomMessageReceived(message, author: roomAuthor(of: message, in: roomJID)))
     }
 
     /// Handles a mediated (XEP-0045 §7.8.2) or direct (XEP-0249) invite. Returns whether `message` was one.
@@ -444,12 +460,12 @@ public final class MUCModule: XMPPModule, Sendable {
         }
         guard let context else { return false }
         if !message.carriesAmendment, !message.isOMEMOEncrypted {
-            context.emitEvent(.mucPrivateMessageReceived(message))
+            context.emitEvent(.mucPrivateMessageReceived(message, author: roomAuthor(of: message, in: roomJID)))
         }
         return true
     }
 
-    private func handleRetraction(retract: XMLElement, from: JID, roomJID: BareJID) {
+    private func handleRetraction(retract: XMLElement, in message: XMPPMessage, from: JID, roomJID: BareJID) {
         let context = state.withLock { $0.context }
         if let moderated = retract.child(named: "moderated", namespace: XMPPNamespaces.messageModerate),
            let originalID = retract.attribute("id") {
@@ -463,7 +479,9 @@ public final class MUCModule: XMPPModule, Sendable {
             let reason = retract.child(named: "reason")?.textContent
             context?.emitEvent(.messageModerated(originalID: originalID, moderator: moderator, room: roomJID, reason: reason))
         } else if let originalID = retract.attribute("id") {
-            context?.emitEvent(.messageRetracted(originalID: originalID, from: from, messageType: .groupchat))
+            context?.emitEvent(.messageRetracted(
+                originalID: originalID, from: from, messageType: .groupchat, roomAuthor: roomAuthor(of: message, in: roomJID)
+            ))
         }
     }
 
@@ -501,6 +519,11 @@ public final class MUCModule: XMPPModule, Sendable {
         guard let context = state.withLock({ $0.context }) else { return }
         let nickname = try Self.normalizedNickname(nickname)
         let password = password ?? state.withLock { $0.rooms[room]?.password }
+        // Every join asks afresh, since the room may have changed its features since it last answered. The answer is
+        // stored before the join goes out, so it is in place for the room's first stanzas. One that does not come
+        // leaves the features unknown.
+        state.withLock { _ = $0.knownRoomInfo.removeValue(forKey: room) }
+        _ = await roomInfo(for: room, timeout: Self.joinRoomInfoTimeout)
 
         let presence = buildJoinPresence(room: room, nickname: nickname, password: password, history: history, context: context)
         // The room is tracked from the moment the client takes the join: stream management re-sends it on a resume
@@ -683,7 +706,7 @@ public final class MUCModule: XMPPModule, Sendable {
 
     /// A snapshot of the tracked rooms, seeding the module of the client that resumes this one's stream.
     public var resumeState: MUCResumeState {
-        state.withLock { MUCResumeState(rooms: $0.rooms, pendingNickChanges: $0.pendingNickChanges) }
+        state.withLock { MUCResumeState(rooms: $0.rooms, pendingNickChanges: $0.pendingNickChanges, roomInfo: $0.knownRoomInfo) }
     }
 
     /// Full JIDs (room + nickname) for all currently joined rooms.

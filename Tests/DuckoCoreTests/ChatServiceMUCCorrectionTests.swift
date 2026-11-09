@@ -6,6 +6,8 @@ import Testing
 
 private let testAccountID = UUID()
 private let roomJID = BareJID(localPart: "room", domainPart: "conference.example.com")!
+/// Who sent the seeded message, in a room that advertises occupant ids.
+private let aliceAuthor = RoomAuthorIdentity(roomSupportsOccupantIDs: true, occupantID: "occupant-alice")
 
 private func makeStore() -> MockPersistenceStore {
     MockPersistenceStore()
@@ -28,7 +30,7 @@ private func seedGroupchatMessage(store: MockPersistenceStore, transcripts: Mock
     ))
     let message = ChatMessage(
         id: UUID(), conversationID: conversationID, stanzaID: "msg-original",
-        fromJID: "alice", body: "Original text",
+        fromJID: "alice", roomSender: RoomSenderIdentity(aliceAuthor), body: "Original text",
         timestamp: Date(), isOutgoing: false,
         isDelivered: false, isEdited: false, type: "groupchat"
     )
@@ -42,7 +44,7 @@ enum ChatServiceMUCCorrectionTests {
     struct IncomingCorrection {
         @Test
         @MainActor
-        func `MUC correction updates body when nickname matches`() async throws {
+        func `MUC correction updates body when nickname and occupant id match`() async throws {
             let store = makeStore()
             let transcripts = makeTranscripts()
             let service = makeChatService(store: store, transcripts: transcripts)
@@ -50,7 +52,9 @@ enum ChatServiceMUCCorrectionTests {
 
             let from = try #require(JID.parse("room@conference.example.com/alice"))
             await service.handleEvent(
-                .messageCorrected(originalID: "msg-original", newBody: "Corrected text", replyFallbackRange: nil, from: from, messageType: .groupchat),
+                .messageCorrected(
+                    originalID: "msg-original", newBody: "Corrected text", replyFallbackRange: nil, from: from, messageType: .groupchat, roomAuthor: aliceAuthor
+                ),
                 accountID: testAccountID
             )
 
@@ -64,7 +68,7 @@ enum ChatServiceMUCCorrectionTests {
     struct SenderVerification {
         @Test
         @MainActor
-        func `MUC correction rejected when nickname does not match`() async throws {
+        func `MUC correction rejected when nickname does not match, even with the same occupant id`() async throws {
             let store = makeStore()
             let transcripts = makeTranscripts()
             let service = makeChatService(store: store, transcripts: transcripts)
@@ -72,7 +76,9 @@ enum ChatServiceMUCCorrectionTests {
 
             let attacker = try #require(JID.parse("room@conference.example.com/bob"))
             await service.handleEvent(
-                .messageCorrected(originalID: "msg-original", newBody: "Hacked text", replyFallbackRange: nil, from: attacker, messageType: .groupchat),
+                .messageCorrected(
+                    originalID: "msg-original", newBody: "Hacked text", replyFallbackRange: nil, from: attacker, messageType: .groupchat, roomAuthor: aliceAuthor
+                ),
                 accountID: testAccountID
             )
 
@@ -81,11 +87,11 @@ enum ChatServiceMUCCorrectionTests {
             #expect(messages[0].isEdited == false)
         }
 
-        /// With `joined`, the room module confirmed the user's nickname and the room stores none. Without it, the
-        /// stored nickname is the only one.
+        /// With `joined`, the room module recorded the occupant id its self-presence carried. Without it, the user's own
+        /// occupant id is the one stored when the room last confirmed a join.
         @Test(arguments: [false, true])
         @MainActor
-        func `Only the user's nickname corrects or retracts the user's own room message`(joined: Bool) async throws {
+        func `Only the user's own occupant id corrects or retracts the user's own room message`(joined: Bool) async throws {
             let store = makeStore()
             let transcripts = makeTranscripts()
             let service = makeChatService(store: store, transcripts: transcripts)
@@ -93,6 +99,7 @@ enum ChatServiceMUCCorrectionTests {
             var accountService: AccountService?
             if joined {
                 let transport = MockTransport()
+                await transport.answerDiscoInfo(of: roomJID.description, features: [XMPPNamespaces.occupantID])
                 let connected = makeAccountService(store: store, clientFactory: MockXMPPClientFactory(transport: transport, modules: [MUCModule()]))
                 service.setAccountService(connected)
                 let connectTask = Task { @MainActor in
@@ -104,7 +111,8 @@ enum ChatServiceMUCCorrectionTests {
                 try await muc.joinRoom(roomJID, nickname: "me")
                 await transport.simulateReceive(
                     "<presence from='\(roomJID)/me'><x xmlns='http://jabber.org/protocol/muc#user'>"
-                        + "<item affiliation='member' role='participant'/><status code='110'/></x></presence>"
+                        + "<item affiliation='member' role='participant'/><status code='110'/></x>"
+                        + "<occupant-id xmlns='urn:xmpp:occupant-id:0' id='occupant-me'/></presence>"
                 )
                 try await eventually { muc.confirmedNickname(in: roomJID) == "me" }
                 accountService = connected
@@ -112,7 +120,7 @@ enum ChatServiceMUCCorrectionTests {
             let conversationID = UUID()
             await store.addConversation(Conversation(
                 id: conversationID, accountID: accountID, jid: roomJID, type: .groupchat, isPinned: false, isMuted: false,
-                unreadCount: 0, roomNickname: joined ? nil : "me", createdAt: Date()
+                unreadCount: 0, roomNickname: joined ? nil : "me", roomOccupantID: joined ? nil : "occupant-me", createdAt: Date()
             ))
             await transcripts.addMessage(ChatMessage(
                 id: UUID(), conversationID: conversationID, stanzaID: "msg-own", fromJID: "me", body: "Mine",
@@ -121,10 +129,12 @@ enum ChatServiceMUCCorrectionTests {
 
             let other = try #require(JID.parse("room@conference.example.com/bob"))
             let own = try #require(JID.parse("room@conference.example.com/me"))
-            await service.handleEvent(.messageCorrected(originalID: "msg-own", newBody: "Hacked", replyFallbackRange: nil, from: other, messageType: .groupchat), accountID: accountID)
-            await service.handleEvent(.messageRetracted(originalID: "msg-own", from: other, messageType: .groupchat), accountID: accountID)
-            // Armed: the user's own correction goes through.
-            await service.handleEvent(.messageCorrected(originalID: "msg-own", newBody: "Fixed", replyFallbackRange: nil, from: own, messageType: .groupchat), accountID: accountID)
+            let bob = RoomAuthorIdentity(roomSupportsOccupantIDs: true, occupantID: "occupant-bob")
+            let me = RoomAuthorIdentity(roomSupportsOccupantIDs: true, occupantID: "occupant-me")
+            await service.handleEvent(.messageCorrected(originalID: "msg-own", newBody: "Hacked", replyFallbackRange: nil, from: other, messageType: .groupchat, roomAuthor: bob), accountID: accountID)
+            await service.handleEvent(.messageRetracted(originalID: "msg-own", from: other, messageType: .groupchat, roomAuthor: bob), accountID: accountID)
+            // Armed: the user's own correction goes through with the user's occupant id.
+            await service.handleEvent(.messageCorrected(originalID: "msg-own", newBody: "Fixed", replyFallbackRange: nil, from: own, messageType: .groupchat, roomAuthor: me), accountID: accountID)
 
             let amendments = await transcripts.amendments.map(\.amendment)
             #expect(amendments.map(\.action) == [.edit])
@@ -144,7 +154,9 @@ enum ChatServiceMUCCorrectionTests {
 
             let bareFrom = JID.bare(roomJID)
             await service.handleEvent(
-                .messageCorrected(originalID: "msg-original", newBody: "Spoofed text", replyFallbackRange: nil, from: bareFrom, messageType: .groupchat),
+                .messageCorrected(
+                    originalID: "msg-original", newBody: "Spoofed text", replyFallbackRange: nil, from: bareFrom, messageType: .groupchat, roomAuthor: aliceAuthor
+                ),
                 accountID: testAccountID
             )
 

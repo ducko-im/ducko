@@ -37,6 +37,7 @@ struct ChatServiceEncryptedRoutingTests {
         self.accountService = makeAccountService(store: store)
         try await accountService.loadAccounts()
         self.chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+        chatService.featureSource = FixedFeatureSource.archiving()
         chatService.setAccountService(accountService)
         self.omemoService = OMEMOService(omemoStore: MockOMEMOStore())
         omemoService.setAccountService(accountService)
@@ -115,9 +116,9 @@ struct ChatServiceEncryptedRoutingTests {
 
         let event = try #require(reported.events.first)
         #expect(reported.events.count == 1)
-        if case let .messageCorrected(originalID, newBody, _, _, _) = event {
+        if case let .messageCorrected(originalID, newBody, _, _, _, _) = event {
             #expect(!isRetraction && originalID == "m1" && newBody == "hello")
-        } else if case let .messageRetracted(originalID, _, _) = event {
+        } else if case let .messageRetracted(originalID, _, _, _) = event {
             #expect(isRetraction && originalID == "m1")
         } else {
             Issue.record("Reported \(event)")
@@ -179,7 +180,7 @@ struct ChatServiceEncryptedRoutingTests {
         case .archive:
             let archived = ArchivedMessage(messageID: "a9", serverID: nil, forwarded: ForwardedMessage(message: amendment, timestamp: "2026-03-01T10:00:00Z"))
             let converted = try await chatService.convertAndDedup(
-                archived: [archived], conversation: chat, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
+                archived: [archived], conversation: chat, roomSupportsOccupantIDs: nil, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
             )
             await chatService.applyArchivedAmendments(converted.amendments, in: chat, accountID: accountID)
         }
@@ -243,7 +244,7 @@ struct ChatServiceEncryptedRoutingTests {
         case .archive:
             let archived = ArchivedMessage(messageID: "a1", serverID: nil, forwarded: ForwardedMessage(message: stanza, timestamp: "2026-03-01T10:00:00Z"))
             _ = try await chatService.convertAndDedup(
-                archived: [archived], conversation: chat, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
+                archived: [archived], conversation: chat, roomSupportsOccupantIDs: nil, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
             )
         case .chat, .room:
             if isOMEMO {
@@ -307,7 +308,7 @@ struct ChatServiceEncryptedRoutingTests {
         case .archive:
             let archived = ArchivedMessage(messageID: "a4", serverID: nil, forwarded: ForwardedMessage(message: stanza, timestamp: "2026-03-01T10:00:00Z"))
             _ = try await chatService.convertAndDedup(
-                archived: [archived], conversation: chat, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
+                archived: [archived], conversation: chat, roomSupportsOccupantIDs: nil, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
             )
         }
 
@@ -326,7 +327,7 @@ struct ChatServiceEncryptedRoutingTests {
         let archived = ArchivedMessage(messageID: "a3", serverID: nil, forwarded: ForwardedMessage(message: stanza, timestamp: "2026-03-01T10:00:00Z"))
 
         _ = try await chatService.convertAndDedup(
-            archived: [archived], conversation: chat, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
+            archived: [archived], conversation: chat, roomSupportsOccupantIDs: nil, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
         )
 
         let stored = try #require(try await messages(in: chat).first)
@@ -343,7 +344,7 @@ struct ChatServiceEncryptedRoutingTests {
         let archived = ArchivedMessage(messageID: "a2", serverID: nil, forwarded: ForwardedMessage(message: stanza, timestamp: nil))
 
         let converted = try await chatService.convertAndDedup(
-            archived: [archived], conversation: chat, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
+            archived: [archived], conversation: chat, roomSupportsOccupantIDs: nil, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
         )
 
         #expect(converted.messages.isEmpty)
@@ -415,12 +416,40 @@ struct ChatServiceEncryptedRoutingTests {
         #expect(stored.last?.undecryptableReason == .senderHidden)
     }
 
+    enum RoomSenderOrigin: CaseIterable {
+        case room, privateChat, privateChatCarbon
+    }
+
+    /// A live message's sender is the one the room's module saw, and a carbon's is read from the forwarded stanza.
+    @Test(arguments: RoomSenderOrigin.allCases)
+    func `an encrypted room or private message keeps who sent it`(origin: RoomSenderOrigin) async throws {
+        chatService.featureSource = FixedFeatureSource.archiving(roomFeatures: [XMPPNamespaces.occupantID])
+        var stanza = encryptedStanza(type: origin == .room ? .groupchat : .chat, from: "\(room)/carol", to: testJIDString, id: "s1")
+        stanza.element.addChild(DuckoXMPP.XMLElement(name: "occupant-id", namespace: XMPPNamespaces.occupantID, attributes: ["id": "occupant-carol"]))
+        let author = RoomAuthorIdentity(roomSupportsOccupantIDs: true, occupantID: "occupant-carol", realJID: contact, presenceSession: "session-1")
+
+        switch origin {
+        case .room, .privateChat:
+            await omemoService.handleEvent(encryptedMessageEvent(stanza, body: "hello", roomAuthor: author), accountID: accountID)
+        case .privateChatCarbon:
+            await chatService.receiveEncryptedMessage(
+                stanza, content: EncryptedContent(encryptedOutcome(of: stanza, body: "hello")), origin: .carbon(isOutgoing: false, sentTime: Date()),
+                accountID: accountID
+            )
+        }
+
+        let message = try #require(await transcripts.messages.first)
+        #expect(message.body == "hello")
+        #expect(message.roomSender == (origin == .privateChatCarbon ? RoomSenderIdentity(occupantID: "occupant-carol") : RoomSenderIdentity(author)))
+    }
+
     /// A room's correction names the message by its own id, and a retraction by the stanza-id the room assigned to it.
     @Test(arguments: [true, false])
     func `a decrypted room correction or retraction applies to the occupant's encrypted message and is reported`(isRetraction: Bool) async throws {
+        let carol = RoomAuthorIdentity(roomSupportsOccupantIDs: true, occupantID: "occupant-carol")
         await transcripts.addMessage(ChatMessage(
-            id: UUID(), conversationID: roomChat.id, stanzaID: "m1", serverID: "R1", fromJID: "carol", body: "helo", timestamp: Date(),
-            isOutgoing: false, isDelivered: false, isEdited: false, type: "groupchat", isEncrypted: true
+            id: UUID(), conversationID: roomChat.id, stanzaID: "m1", serverID: "R1", fromJID: "carol", roomSender: RoomSenderIdentity(carol), body: "helo",
+            timestamp: Date(), isOutgoing: false, isDelivered: false, isEdited: false, type: "groupchat", isEncrypted: true
         ))
         let reported = EventLog()
         chatService.onDecryptedAmendment = { event, _ in reported.events.append(event) }
@@ -429,13 +458,36 @@ struct ChatServiceEncryptedRoutingTests {
         await chatService.receiveEncryptedMessage(
             stanza,
             content: EncryptedContent(encryptedOutcome(of: stanza, body: "hello", elements: [amendment(of: isRetraction ? "R1" : "m1", isRetraction: isRetraction)])),
-            origin: .live, accountID: accountID
+            origin: .live, roomAuthor: carol, accountID: accountID
         )
 
         let stored = try await messages(in: roomChat)
         #expect(stored.count == 1)
         #expect(isRetraction ? stored.first?.isRetracted == true : stored.first?.body == "hello")
         #expect(reported.events.count == 1)
+    }
+
+    /// A carbon shows no presence, so a received copy's author is told apart by the occupant id the room stamped on its
+    /// outer stanza. The carbon reaches the chat service as `OMEMOService.handleEncryptedCarbon` hands it on once read.
+    @Test(arguments: [false, true])
+    func `an encrypted carbon's correction of a room's private message applies only with its author's occupant id`(isSameOccupant: Bool) async throws {
+        chatService.featureSource = FixedFeatureSource.archiving(roomFeatures: [XMPPNamespaces.occupantID])
+        let original = encryptedStanza(from: "\(room)/carol", to: testJIDString, id: "s1")
+        let carol = RoomAuthorIdentity(roomSupportsOccupantIDs: true, occupantID: "occupant-carol")
+        await omemoService.handleEvent(encryptedMessageEvent(original, body: "helo", roomAuthor: carol), accountID: accountID)
+        var carbon = encryptedStanza(from: "\(room)/carol", to: testJIDString, id: "s2")
+        carbon.element.addChild(DuckoXMPP.XMLElement(
+            name: "occupant-id", namespace: XMPPNamespaces.occupantID, attributes: ["id": isSameOccupant ? "occupant-carol" : "occupant-eve"]
+        ))
+
+        await chatService.receiveEncryptedMessage(
+            carbon, content: EncryptedContent(encryptedOutcome(of: carbon, body: "hello", elements: [amendment(of: "s1", isRetraction: false)])),
+            origin: .carbon(isOutgoing: false, sentTime: Date()), accountID: accountID
+        )
+
+        let stored = try #require(await transcripts.messages.first)
+        #expect(stored.roomSender == RoomSenderIdentity(carol))
+        #expect(try await transcripts.findMessage(id: stored.id, conversationID: stored.conversationID)?.body == (isSameOccupant ? "hello" : "helo"))
     }
 
     @Test func `encrypted join history is stored without counting as unread`() async throws {
@@ -508,8 +560,9 @@ struct ChatServiceEncryptedRoutingTests {
     @Test func `an unreadable room message under the user's nickname that this device did not send shows its notice`() async throws {
         var echo = encryptedStanza(type: .groupchat, from: "\(room)/me", to: testJIDString, id: "o1")
         echo.element.addChild(DuckoXMPP.XMLElement(name: "stanza-id", namespace: XMPPNamespaces.stanzaID, attributes: ["id": "R10", "by": room.description]))
+        let author = RoomAuthorIdentity(roomSupportsOccupantIDs: false)
 
-        await omemoService.handleEvent(encryptedMessageEvent(echo, body: nil, reason: .notForThisDevice), accountID: accountID)
+        await omemoService.handleEvent(encryptedMessageEvent(echo, body: nil, reason: .notForThisDevice, roomAuthor: author), accountID: accountID)
 
         let stored = try #require(try await messages(in: roomChat).first)
         #expect(stored.isOutgoing)

@@ -87,6 +87,30 @@ struct OMEMOReceivingTests {
         }
     }
 
+    /// The sender writes the envelope, and only the room can vouch for an occupant id.
+    @Test func `a room message's occupant id is its outer stanza's, and one inside the envelope is dropped`() async throws {
+        let room = try #require(BareJID.parse("room@conference.example.com"))
+        try await parties.bobJoins(room, aliceRevealed: true)
+        // The room's disco#info as its join stored it.
+        parties.mucModule.state.withLock { $0.knownRoomInfo[room] = .init(identities: [], features: [XMPPNamespaces.occupantID]) }
+        let forged = XMLElement(name: "occupant-id", namespace: XMPPNamespaces.occupantID, attributes: ["id": "forged-id"])
+        let encrypted = try await parties.alice.encryptGroupMessage(
+            content: [bodyElement("hello room"), forged], time: testEnvelopeTime, roomJID: room, recipients: [(parties.bobJID, [200])], ownDeviceIDs: []
+        ).encrypted
+        var message = XMLElement(name: "message", attributes: ["from": "\(room)/alice", "to": "bob@example.com/laptop", "type": "groupchat", "id": "g1"])
+        message.addChild(encrypted)
+        message.addChild(XMLElement(name: "occupant-id", namespace: XMPPNamespaces.occupantID, attributes: ["id": "alice-id"]))
+
+        try parties.bob.handleMessage(XMPPMessage(element: message))
+
+        let decrypted = try #require(parties.bobRecorder.decryptedEvents.first)
+        #expect(decrypted.message.occupantID == nil)
+        let roomAuthors = parties.bobRecorder.events.compactMap { event -> RoomAuthorIdentity? in
+            if case let .omemoEncryptedMessageReceived(_, _, roomAuthor) = event { roomAuthor } else { nil }
+        }
+        #expect(roomAuthors.map(\.occupantID) == ["alice-id"])
+    }
+
     @Test func `a room's private message decrypts with the session of the occupant's real address`() async throws {
         let room = try #require(BareJID.parse("room@conference.example.com"))
         try await parties.bobJoins(room, aliceRevealed: true)
@@ -501,7 +525,7 @@ private final class Recorder: Sendable {
     }
 
     var outcomes: [OMEMOReceiveOutcome] {
-        events.compactMap { if case let .omemoEncryptedMessageReceived(_, outcome) = $0 { outcome } else { nil } }
+        events.compactMap { if case let .omemoEncryptedMessageReceived(_, outcome, _) = $0 { outcome } else { nil } }
     }
 
     var decryptedEvents: [OMEMODecryptedMessage] {

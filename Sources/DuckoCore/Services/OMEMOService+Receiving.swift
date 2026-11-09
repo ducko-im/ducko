@@ -3,9 +3,10 @@ import Foundation
 
 /// Filing the OMEMO messages this device receives, live and from carbons (XEP-0280).
 extension OMEMOService {
-    /// Files a live OMEMO message the module read, or could not read, and keeps the sessions it moved on.
-    func handleEncryptedMessageReceived(_ message: XMPPMessage, outcome: OMEMOReceiveOutcome, accountID: UUID) async {
-        await chatService?.receiveEncryptedMessage(message, content: EncryptedContent(outcome), origin: .live, accountID: accountID)
+    /// Files a live OMEMO message the module read, or could not read, and keeps the sessions it moved on. `roomAuthor`
+    /// is who sent a room or room private message, as its outer stanza showed it.
+    func handleEncryptedMessageReceived(_ message: XMPPMessage, outcome: OMEMOReceiveOutcome, roomAuthor: RoomAuthorIdentity?, accountID: UUID) async {
+        await chatService?.receiveEncryptedMessage(message, content: EncryptedContent(outcome), origin: .live, roomAuthor: roomAuthor, accountID: accountID)
         await saveSessions(accountID: accountID)
     }
 

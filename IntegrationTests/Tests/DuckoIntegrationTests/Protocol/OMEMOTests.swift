@@ -49,7 +49,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 _ = try await ctx.bob.waitForEvent(
                     matching: { event in
-                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted)) = event,
+                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted), _) = event,
                            decrypted.message.body == body {
                             return true
                         }
@@ -69,7 +69,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 let decryptedBody = try await ctx.bob.waitForEvent(
                     extracting: { event in
-                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted)) = event,
+                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted), _) = event,
                            decrypted.message.body == body {
                             return decrypted.message.body
                         }
@@ -107,7 +107,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 _ = try await bob.waitForEvent(
                     matching: { event in
-                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted)) = event,
+                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted), _) = event,
                            decrypted.message.body == bobBody {
                             return true
                         }
@@ -117,7 +117,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 )
                 _ = try await carol.waitForEvent(
                     matching: { event in
-                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted)) = event,
+                        if case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted), _) = event,
                            decrypted.message.body == carolBody {
                             return true
                         }

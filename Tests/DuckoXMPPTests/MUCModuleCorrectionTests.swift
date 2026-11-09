@@ -11,6 +11,7 @@ private func makeConnectedClient(mock: MockTransport) async throws -> XMPPClient
         transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(MUCModule())
+    await mock.answerDiscoInfo(of: "room@conference.example.com")
 
     let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
     await simulateNoTLSConnect(mock)
@@ -49,7 +50,7 @@ enum MUCModuleCorrectionTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .messageCorrected(originalID, newBody, replyFallbackRange, from, messageType) = events.last else {
+            guard case let .messageCorrected(originalID, newBody, replyFallbackRange, from, messageType, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected messageCorrected")
             }
             #expect(originalID == "msg-1")
@@ -107,6 +108,7 @@ enum MUCModuleCorrectionTests {
             )
             await client.register(ChatModule())
             await client.register(MUCModule())
+            await mock.answerDiscoInfo(of: "room@conference.example.com")
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             await simulateNoTLSConnect(mock)
             try await connectTask.value
@@ -124,13 +126,13 @@ enum MUCModuleCorrectionTests {
 
             let events = try await eventsTask.value
             let privateMessageIDs = events.compactMap { event -> String? in
-                guard case let .mucPrivateMessageReceived(message) = event else { return nil }
+                guard case let .mucPrivateMessageReceived(message, _) = event else { return nil }
                 return message.id
             }
             #expect(privateMessageIDs == ["pm-3"])
             let amendmentTypes = events.compactMap { event -> XMPPMessage.MessageType? in
-                if case let .messageCorrected(_, _, _, _, messageType) = event { return messageType }
-                if case let .messageRetracted(_, _, messageType) = event { return messageType }
+                if case let .messageCorrected(_, _, _, _, messageType, _) = event { return messageType }
+                if case let .messageRetracted(_, _, messageType, _) = event { return messageType }
                 return nil
             }
             #expect(amendmentTypes == [.chat])

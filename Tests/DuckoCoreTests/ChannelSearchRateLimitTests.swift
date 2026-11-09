@@ -176,7 +176,7 @@ struct ChannelSearchRateLimitTests {
 
     private static func makeRoomService(store: MockPersistenceStore, accounts: AccountService, now: @Sendable @escaping () -> Date) -> RoomService {
         let rooms = RoomService(
-            store: store, ensureConversation: { _, _, _ in }, didUpdateConversation: { _ in }, channelSearchNow: now
+            store: store, ensureConversation: { _, _, _, _ in }, didUpdateConversation: { _ in }, channelSearchNow: now
         )
         rooms.setAccountService(accounts)
         return rooms

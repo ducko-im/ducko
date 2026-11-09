@@ -1,4 +1,5 @@
 import DuckoTestSupport
+import struct os.OSAllocatedUnfairLock
 import Testing
 @testable import DuckoXMPP
 
@@ -11,12 +12,22 @@ private func makeConnectedClient(mock: MockTransport) async throws -> XMPPClient
         transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(ServiceDiscoveryModule())
+    await mock.answerDiscoInfo(of: "user@example.com")
 
     let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
     await simulateNoTLSConnect(mock)
     try await connectTask.value
 
     return client
+}
+
+/// The account's disco#info answer, listing the archive feature.
+private func accountInfoResult(id: String) -> String {
+    """
+    <iq type='result' id='\(id)' from='user@example.com'>\
+    <query xmlns='\(XMPPNamespaces.discoInfo)'><feature var='\(XMPPNamespaces.mam)'/></query>\
+    </iq>
+    """
 }
 
 // MARK: - Tests
@@ -203,6 +214,125 @@ enum ServiceDiscoveryModuleTests {
             #expect(result.isEmpty)
 
             await disconnectFast(client)
+        }
+    }
+
+    struct AccountInfo {
+        /// Starts signing in with `disco` and initial presence, and returns once the bind is answered.
+        private static func startSignIn(mock: MockTransport, disco: ServiceDiscoveryModule) async -> (XMPPClient, Task<Void, any Error>) {
+            let client = XMPPClient(
+                domain: "example.com",
+                credentials: .init(username: "user", password: "pass"),
+                transport: mock, requireTLS: false, allowsPLAIN: true
+            )
+            await client.register(disco)
+            await client.register(PresenceModule())
+            let signIn = Task { try await client.connect(host: "example.com", port: 5222) }
+            await simulateNoTLSConnect(mock)
+            return (client, signIn)
+        }
+
+        private static func awaitAccountQuery(on mock: MockTransport) async throws -> String {
+            try await awaitOutgoingIQ(on: mock, type: .get, namespace: XMPPNamespaces.discoInfo) {
+                $0.contains("to=\"user@example.com\"")
+            }.id
+        }
+
+        @Test
+        func `The account's info is stored before initial presence goes out`() async throws {
+            let mock = MockTransport()
+            let disco = ServiceDiscoveryModule()
+            let (client, signIn) = await Self.startSignIn(mock: mock, disco: disco)
+
+            let queryID = try await Self.awaitAccountQuery(on: mock)
+            let sentBeforeAnswer = await mock.sentBytes.map { String(decoding: $0, as: UTF8.self) }
+            #expect(!sentBeforeAnswer.contains { $0.hasPrefix("<presence") })
+            await mock.simulateReceive(accountInfoResult(id: queryID))
+
+            #expect(await mock.waitForSent { $0.hasPrefix("<presence") } != nil)
+            #expect(disco.knownAccountInfo?.features.contains(XMPPNamespaces.mam) == true)
+            try await signIn.value
+
+            await disconnectFast(client)
+        }
+
+        @Test
+        func `An account answering late holds sign-in for at most five seconds, and its answer is still stored`() async throws {
+            let mock = MockTransport()
+            let disco = ServiceDiscoveryModule()
+            let started = ContinuousClock.now
+            let (client, signIn) = await Self.startSignIn(mock: mock, disco: disco)
+            let queryID = try await Self.awaitAccountQuery(on: mock)
+
+            try await signIn.value
+            #expect(ContinuousClock.now - started < .seconds(7))
+            #expect(disco.knownAccountInfo == nil)
+
+            await mock.simulateReceive(accountInfoResult(id: queryID))
+            #expect(await disco.accountInfo()?.features.contains(XMPPNamespaces.mam) == true)
+
+            await disconnectFast(client)
+        }
+
+        @Test(arguments: [true, false])
+        func `The account's info carried for a resume is kept only when the stream resumes`(resumed: Bool) {
+            let carried = ServiceDiscoveryModule.InfoResult(identities: [], features: [XMPPNamespaces.mam])
+            let module = ServiceDiscoveryModule(resuming: carried)
+            #expect(module.knownAccountInfo?.features == [XMPPNamespaces.mam])
+
+            module.handleSessionEstablished(resumed: resumed)
+
+            #expect((module.knownAccountInfo != nil) == resumed)
+        }
+
+        @Test(arguments: [false, true])
+        func `A resume asks the account for its info only when it carried none, without waiting for the answer`(carriesAccountInfo: Bool) async throws {
+            let requests = OSAllocatedUnfairLock(initialState: 0)
+            let answered = AsyncSemaphore()
+            let carried = ServiceDiscoveryModule.InfoResult(identities: [], features: [XMPPNamespaces.stanzaID])
+            let module = ServiceDiscoveryModule(resuming: carriesAccountInfo ? carried : nil)
+            module.setUp(makeStubModuleContext(sendIQ: { _, _ in
+                requests.withLock { $0 += 1 }
+                await answered.wait()
+                return discoInfoQuery(features: [XMPPNamespaces.mam])
+            }))
+            module.handleSessionEstablished(resumed: true)
+
+            let resumed = try await boundedOutcome { try await module.handleResume() }
+            #expect(resumed != nil)
+            await answered.signal()
+
+            if carriesAccountInfo {
+                // A query the resume started would have been sent by now.
+                try await Task.sleep(for: .milliseconds(200))
+                #expect(requests.withLock { $0 } == 0)
+                #expect(module.knownAccountInfo?.features == carried.features)
+            } else {
+                try await eventually { module.knownAccountInfo?.features == [XMPPNamespaces.mam] }
+            }
+        }
+
+        @Test
+        func `Asking for the account's info before sign-in reaches the module starts the query that sign-in then shares`() async throws {
+            let requests = OSAllocatedUnfairLock(initialState: [String]())
+            let requested = AsyncSemaphore()
+            let answered = AsyncSemaphore()
+            let module = ServiceDiscoveryModule()
+            module.setUp(makeStubModuleContext(sendIQ: { iq, _ in
+                requests.withLock { $0.append(iq.to?.description ?? "") }
+                await requested.signal()
+                await answered.wait()
+                return discoInfoQuery(features: [XMPPNamespaces.mam])
+            }))
+
+            let early = Task { await module.accountInfo() }
+            await requested.wait()
+            let connect = Task { try await module.handleConnect() }
+            await answered.signal()
+            try await connect.value
+
+            #expect(await early.value?.features == [XMPPNamespaces.mam])
+            #expect(requests.withLock { $0 } == ["user@example.com"])
         }
     }
 }

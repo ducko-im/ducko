@@ -151,7 +151,6 @@ enum ChatServiceFilterTests {
         @MainActor
         func `the room's echo of our own correction is filtered, so its amendment keeps htmlBody`() async throws {
             let harness = try await makeFilterHarness(modules: [MUCModule()], filters: [StylingFilter(), EmojiFilter()])
-            // The room's stored nickname "alice" tells `isOwnMessage` the echo is our own.
             let conversation = try await seedPlaintextRoom(harness)
 
             let original = ChatMessage(
@@ -162,10 +161,14 @@ enum ChatServiceFilterTests {
             await harness.transcripts.addMessage(original)
 
             try await harness.chatService.sendCorrection(of: original, newBody: "*hi* :)", in: conversation, accountID: harness.accountID)
-            // The room echoes back the body we sent (already emoji-transformed on the wire).
+            // The room echoes back the body we sent (already emoji-transformed on the wire), from the account's real JID
+            // in a room without occupant ids.
             let echoFrom = try #require(JID.parse("\(roomJID.description)/alice"))
+            let echoAuthor = RoomAuthorIdentity(roomSupportsOccupantIDs: false, realJID: BareJID.parse(testJIDString))
             await harness.chatService.handleEvent(
-                .messageCorrected(originalID: "orig-1", newBody: "*hi* \(smiley)", replyFallbackRange: nil, from: echoFrom, messageType: .groupchat),
+                .messageCorrected(
+                    originalID: "orig-1", newBody: "*hi* \(smiley)", replyFallbackRange: nil, from: echoFrom, messageType: .groupchat, roomAuthor: echoAuthor
+                ),
                 accountID: harness.accountID
             )
 
@@ -188,14 +191,17 @@ enum ChatServiceFilterTests {
             let conversation = try await seedPlaintextRoom(harness)
             let original = ChatMessage(
                 id: UUID(), conversationID: conversation.id, stanzaID: "peer-1",
-                fromJID: "bob", body: "old", timestamp: Date(),
+                fromJID: "bob", roomSender: RoomSenderIdentity(realJID: "bob@example.com"), body: "old", timestamp: Date(),
                 isOutgoing: false, isDelivered: false, isEdited: false, type: "groupchat"
             )
             await harness.transcripts.addMessage(original)
 
             let peerFrom = try #require(JID.parse("\(roomJID.description)/bob"))
+            let peerAuthor = RoomAuthorIdentity(roomSupportsOccupantIDs: false, realJID: BareJID(localPart: "bob", domainPart: "example.com"))
             await harness.chatService.handleEvent(
-                .messageCorrected(originalID: "peer-1", newBody: "*hi*", replyFallbackRange: nil, from: peerFrom, messageType: .groupchat),
+                .messageCorrected(
+                    originalID: "peer-1", newBody: "*hi*", replyFallbackRange: nil, from: peerFrom, messageType: .groupchat, roomAuthor: peerAuthor
+                ),
                 accountID: harness.accountID
             )
 

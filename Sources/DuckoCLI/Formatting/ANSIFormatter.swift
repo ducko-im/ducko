@@ -130,9 +130,9 @@ struct ANSIFormatter: CLIFormatter {
         case let .presenceSubscriptionRevoked(from: jid): "\(Color.yellow)✗ Subscription revoked by \(jid)\(Color.reset)"
         case let .deliveryReceiptReceived(messageID, from): "\(Color.dim)\u{2713} delivery receipt: \(messageID) from \(from.bareJID)\(Color.reset)"
         case let .chatMarkerReceived(messageID, .displayed, from): "\(Color.dim)\u{2713}\u{2713} read marker: \(messageID) from \(from.bareJID)\(Color.reset)"
-        case let .messageCorrected(_, newBody, _, from, _): "\(Color.yellow)message corrected by \(from.bareJID): \(newBody)\(Color.reset)"
+        case let .messageCorrected(_, newBody, _, from, _, _): "\(Color.yellow)message corrected by \(from.bareJID): \(newBody)\(Color.reset)"
         case let .messageError(_, from, error): "\(Color.red)message error from \(from.bareJID): \(error.displayText)\(Color.reset)"
-        case let .messageRetracted(originalID, from, _): "\(Color.dim)\u{2298} message retracted by \(from.bareJID) (id: \(originalID))\(Color.reset)"
+        case let .messageRetracted(originalID, from, _, _): "\(Color.dim)\u{2298} message retracted by \(from.bareJID) (id: \(originalID))\(Color.reset)"
         case let .messageModerated(originalID, moderator, room, reason): formatModeratedMessage(originalID: originalID, moderator: moderator, room: room, reason: reason)
         case let .roomJoined(room, occupancy, isNewlyCreated): formatRoomJoinedMUC(room: room, occupancy: occupancy, isNewlyCreated: isNewlyCreated)
         case let .roomOccupantJoined(room, occupant): "\(Color.yellow)\(room): \(occupant.nickname) joined\(Color.reset)"
@@ -140,8 +140,8 @@ struct ANSIFormatter: CLIFormatter {
         case let .roomOccupantNickChanged(room, oldNickname, occupant, _): "\(Color.yellow)\(room): \(oldNickname) is now known as \(occupant.nickname)\(Color.reset)"
         case let .roomSubjectChanged(room, subject, setter): formatRoomSubject(room: room, subject: subject, setter: setter)
         case let .roomInviteReceived(invite): formatRoomInviteMUC(invite)
-        case let .roomMessageReceived(message): formatIncomingRoomMessage(message)
-        case let .mucPrivateMessageReceived(message): formatIncomingPrivateMessage(message)
+        case let .roomMessageReceived(message, _): formatIncomingRoomMessage(message)
+        case let .mucPrivateMessageReceived(message, _): formatIncomingPrivateMessage(message)
         case let .roomDestroyed(room, reason, alternate): formatRoomDestroyedMUC(room: room, reason: reason, alternate: alternate)
         case .mucSelfPingFailed: nil
         case let .jingleFileTransferReceived(offer): formatFileOffer(fileName: offer.fileName, fileSize: offer.fileSize, from: offer.from.bareJID.description, offerID: offer.offerID)

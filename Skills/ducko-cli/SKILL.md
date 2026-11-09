@@ -82,8 +82,8 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/encrypt <jid> on|off` — toggle OMEMO encryption for a conversation. `off` also keeps a contact's encrypted message from switching it back on.
 - `/pref chatstates on|off` — toggle chat state notifications (typing indicators)
 - `/pref markers on|off` — toggle displayed markers (read receipts)
-- `/reply <jid> <message>` — reply to the last incoming message from JID, or in the room JID, skipping a room message the room gave no id of its own. The reply starts with a quote of that message, unless the message was encrypted and the reply is not.
-- `/retract <jid>` — retract last sent message to JID (a room message only once the room has echoed it)
+- `/reply <jid> <message>` — reply to the last incoming message from JID, or in the room JID, skipping a room message without an id from the room. Ducko accepts a room's ids only when its disco#info lists `urn:xmpp:sid:0`. The reply starts with a quote of that message, unless the message was encrypted and the reply is not.
+- `/retract <jid>` — retract last sent message to JID (a room message only once the room has echoed it, in a room whose disco#info lists `urn:xmpp:sid:0`)
 - `/edit <jid> <new-body>` — edit last sent message to JID
 - In `/reply`, `/retract` and `/edit`, `room@service/nick` names the private chat with that occupant. An address that names none of the account's chats, such as a contact's full JID, is reported as an error.
 - `/moderate [reason]` — moderate last message in current room (MUC moderator)

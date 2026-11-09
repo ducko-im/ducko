@@ -33,7 +33,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 // Everything bob sees of the room from here to the echo of his last message, which follows the resume
                 // and the three waits after it.
                 let untilLastEcho = TestTimeout.streamResume + TestTimeout.event * 3
-                async let bobEvents = bob.collectEvents(until: { Self.isRoomMessage($0, body: afterResume) }, timeout: untilLastEcho)
+                async let bobEvents = bob.collectEvents(until: { $0.isRoomMessage(body: afterResume) }, timeout: untilLastEcho)
                 async let disconnected = alice.waitForEvent(matching: Self.isDisconnected)
                 async let resumed = alice.waitForEvent(matching: Self.isStreamResumed, timeout: TestTimeout.streamResume)
 
@@ -50,7 +50,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 }
                 try await alice.waitForCondition(aliceSeesBob)
 
-                async let received = alice.waitForEvent(matching: { Self.isRoomMessage($0, body: afterResume) })
+                async let received = alice.waitForEvent(matching: { $0.isRoomMessage(body: afterResume) })
                 try await bobMUC.sendMessage(to: roomJID, body: afterResume)
                 _ = try await received
 
@@ -73,11 +73,6 @@ extension DuckoIntegrationTests.ProtocolLayer {
         private static func isArrivalOrDeparture(_ event: XMPPEvent, of nickname: String, in roomJID: BareJID) -> Bool {
             if case let .roomOccupantJoined(room, occupant) = event { return room == roomJID && occupant.nickname == nickname }
             if case let .roomOccupantLeft(room, occupant, _, _) = event { return room == roomJID && occupant.nickname == nickname }
-            return false
-        }
-
-        private static func isRoomMessage(_ event: XMPPEvent, body: String) -> Bool {
-            if case let .roomMessageReceived(message) = event { return message.body == body }
             return false
         }
     }

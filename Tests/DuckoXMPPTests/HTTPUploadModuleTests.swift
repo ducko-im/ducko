@@ -11,6 +11,7 @@ private func makeConnectedClient(mock: MockTransport) async throws -> XMPPClient
         transport: mock, requireTLS: false, allowsPLAIN: true
     )
     await client.register(ServiceDiscoveryModule())
+    await mock.answerDiscoInfo(of: "user@example.com")
     await client.register(HTTPUploadModule())
 
     let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }

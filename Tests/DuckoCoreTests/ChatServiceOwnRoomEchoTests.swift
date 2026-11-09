@@ -25,7 +25,9 @@ private struct RoomWithOwnMessage {
     }
 
     func makeChatService(transcripts: any TranscriptStore) -> ChatService {
-        ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+        let chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+        chatService.featureSource = FixedFeatureSource.archiving()
+        return chatService
     }
 }
 
@@ -55,6 +57,33 @@ struct ChatServiceOwnRoomEchoTests {
 
         let messages = try await transcripts.fetchMessages(for: room.conversation.id, before: nil, limit: 50)
         #expect(messages.map(\.serverID) == [recorded])
+    }
+
+    /// With the room's features unknown, a delayed copy under the user's nickname, such as join history, may be another
+    /// occupant's who held the nickname then. Only a row this device stored when sending makes it the user's.
+    @Test(arguments: [false, true])
+    @MainActor
+    func `Join history under the user's nickname is theirs only when it matches a message they sent`(matchesSentMessage: Bool) async throws {
+        let room = RoomWithOwnMessage()
+        await room.store.addConversation(room.conversation)
+        let transcripts = MockTranscriptStore()
+        await transcripts.addMessage(room.ownMessage)
+        let service = room.makeChatService(transcripts: transcripts)
+        var history = ownEcho(stampedBy: testRoomJID.description)
+        if !matchesSentMessage {
+            history.body = "Not mine"
+        }
+        history.element.addChild(DuckoXMPP.XMLElement(
+            name: "delay", namespace: XMPPNamespaces.delay, attributes: ["from": testRoomJID.description, "stamp": "2026-02-28T10:00:00Z"]
+        ))
+
+        await service.handleEvent(.roomMessageReceived(history, author: RoomAuthorIdentity(roomSupportsOccupantIDs: nil)), accountID: testAccountID)
+
+        let messages = try await transcripts.fetchMessages(for: room.conversation.id, before: nil, limit: 50)
+        let rows = messages.map { "\($0.body), outgoing \($0.isOutgoing), server id \($0.serverID ?? "none")" }.sorted()
+        #expect(rows == (matchesSentMessage
+                ? ["Hello room, outgoing true, server id srv-1"]
+                : ["Hello room, outgoing true, server id none", "Not mine, outgoing false, server id srv-1"]))
     }
 
     @Test(arguments: [false, true])

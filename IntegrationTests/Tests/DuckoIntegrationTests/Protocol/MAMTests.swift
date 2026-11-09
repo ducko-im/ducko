@@ -69,10 +69,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                     sentBodies.append(body)
                     try await aliceMUC.sendMessage(to: roomJID, body: body)
 
-                    _ = try await bob.waitForEvent { event in
-                        if case let .roomMessageReceived(m) = event, m.body == body { return true }
-                        return false
-                    }
+                    _ = try await bob.waitForEvent { $0.isRoomMessage(body: body) }
                 }
 
                 let aliceMAM = try await harness.module(MAMModule.self, for: "alice")

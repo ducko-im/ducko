@@ -48,7 +48,8 @@ enum ChatServiceMUCTests {
             let occupancy = RoomOccupancy(
                 nickname: "me",
                 occupants: [RoomOccupant(nickname: "me", affiliation: .member, role: .participant)],
-                subject: nil
+                subject: nil,
+                ownOccupantID: "occupant-me"
             )
             await service.handleEvent(.roomJoined(room: testRoomJID, occupancy: occupancy, isNewlyCreated: false), accountID: testAccountID)
 
@@ -57,6 +58,25 @@ enum ChatServiceMUCTests {
             #expect(conversations[0].jid == testRoomJID)
             #expect(conversations[0].type == .groupchat)
             #expect(conversations[0].roomNickname == "me")
+            #expect(conversations[0].roomOccupantID == "occupant-me")
+        }
+
+        @Test
+        @MainActor
+        func `A join stores the user's new occupant id under an unchanged nickname`() async throws {
+            let store = makeStore()
+            let service = makeChatService(store: store, transcripts: makeTranscripts())
+            await store.addConversation(Conversation(
+                id: UUID(), accountID: testAccountID, jid: testRoomJID, type: .groupchat, isPinned: false, isMuted: false,
+                unreadCount: 0, roomNickname: "me", roomOccupantID: "occupant-old", createdAt: Date()
+            ))
+
+            let occupant = RoomOccupant(nickname: "me", affiliation: .member, role: .participant)
+            let occupancy = RoomOccupancy(nickname: "me", occupants: [occupant], subject: nil, ownOccupantID: "occupant-new")
+            await service.handleEvent(.roomJoined(room: testRoomJID, occupancy: occupancy, isNewlyCreated: false), accountID: testAccountID)
+
+            let stored = try await store.fetchConversations(for: testAccountID).first { $0.jid == testRoomJID }
+            #expect(stored?.roomOccupantID == "occupant-new")
         }
     }
 
@@ -96,16 +116,35 @@ enum ChatServiceMUCTests {
             let occupancy = RoomOccupancy(nickname: "me", occupants: [], subject: nil)
             await service.handleEvent(.roomJoined(room: testRoomJID, occupancy: occupancy, isNewlyCreated: false), accountID: testAccountID)
 
-            // Without a client there is no room module to ask, so the stored nickname tells the echo of the user's own
-            // message from another occupant's.
+            // Without a client there is no room module to ask, so in a room without occupant ids the stored nickname tells
+            // the echo of the user's own message from another occupant's.
             for nickname in ["me", "other"] {
                 let xmppMessage = makeGroupMessage(from: testRoomJID, senderNickname: nickname, body: "From \(nickname)")
-                await service.handleEvent(.roomMessageReceived(xmppMessage), accountID: testAccountID)
+                let author = RoomAuthorIdentity(roomSupportsOccupantIDs: false)
+                await service.handleEvent(.roomMessageReceived(xmppMessage, author: author), accountID: testAccountID)
             }
 
             let conversations = try await store.fetchConversations(for: testAccountID)
             let messages = try await transcripts.fetchMessages(for: conversations[0].id, before: nil, limit: 50)
             #expect(messages.map(\.body) == ["From other"])
+        }
+
+        @Test
+        @MainActor
+        func `While the room's features are unknown, only the nickname the room confirmed tells the user's own echo`() async throws {
+            let store = makeStore()
+            let transcripts = makeTranscripts()
+            let service = makeChatService(store: store, transcripts: transcripts)
+            let occupancy = RoomOccupancy(nickname: "me", occupants: [], subject: nil)
+            await service.handleEvent(.roomJoined(room: testRoomJID, occupancy: occupancy, isNewlyCreated: false), accountID: testAccountID)
+
+            // No room module confirms the stored nickname, so another occupant may hold it.
+            let xmppMessage = makeGroupMessage(from: testRoomJID, senderNickname: "me", body: "From me")
+            await service.handleEvent(.roomMessageReceived(xmppMessage, author: RoomAuthorIdentity(roomSupportsOccupantIDs: nil)), accountID: testAccountID)
+
+            let conversations = try await store.fetchConversations(for: testAccountID)
+            let messages = try await transcripts.fetchMessages(for: conversations[0].id, before: nil, limit: 50)
+            #expect(messages.map(\.isOutgoing) == [false])
         }
     }
 

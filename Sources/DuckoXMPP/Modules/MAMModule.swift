@@ -27,9 +27,6 @@ public final class MAMModule: XMPPModule, Sendable {
         public let before: RSMBefore
         public let after: String?
         public let max: Int?
-        public let afterID: String?
-        public let beforeID: String?
-        public let flipPage: Bool
 
         public init(
             to: BareJID? = nil,
@@ -38,10 +35,7 @@ public final class MAMModule: XMPPModule, Sendable {
             end: String? = nil,
             before: RSMBefore = .omitted,
             after: String? = nil,
-            max: Int? = nil,
-            afterID: String? = nil,
-            beforeID: String? = nil,
-            flipPage: Bool = false
+            max: Int? = nil
         ) {
             self.to = to
             self.with = with
@@ -50,9 +44,6 @@ public final class MAMModule: XMPPModule, Sendable {
             self.before = before
             self.after = after
             self.max = max
-            self.afterID = afterID
-            self.beforeID = beforeID
-            self.flipPage = flipPage
         }
     }
 
@@ -71,8 +62,7 @@ public final class MAMModule: XMPPModule, Sendable {
 
         /// An archive returns no more than it was asked for. Of what one sends beyond that, the results nearest to
         /// where the query pages from are kept, so that none is missing next to what is already held: the first
-        /// ones paging forward, the last ones paging backward. A flipped page arrives in reverse, which is not
-        /// accounted for.
+        /// ones paging forward, the last ones paging backward.
         mutating func take(_ message: ArchivedMessage) {
             guard let limit, messages.count >= limit else {
                 messages.append(message)
@@ -123,7 +113,8 @@ public final class MAMModule: XMPPModule, Sendable {
             return
         }
 
-        // Query IDs are sequential, so anyone can name an open query. Only the archive that was asked is believed.
+        // Query IDs are random, yet another entity can still answer an open query (XEP-0313, Sender Impersonation).
+        // Only the archive that was asked is believed.
         let sender = message.element.attribute("from")
         let appended = state.withLock { state -> Bool in
             guard state.activeQueries[queryID]?.isAnswered(by: sender) == true else { return false }
@@ -137,11 +128,11 @@ public final class MAMModule: XMPPModule, Sendable {
 
     // MARK: - Public API
 
-    /// Queries the message archive with optional filters, extended fields, and pagination.
+    /// Queries the message archive with optional filters and pagination.
     /// For MUC room archives, set `to` to the room's bare JID.
     public func queryMessages(_ query: Query = Query()) async throws -> (messages: [ArchivedMessage], fin: MAMFin) {
         guard let context = state.withLock({ $0.context }) else {
-            return ([], MAMFin(complete: true, first: nil, last: nil, count: nil))
+            return ([], MAMFin(complete: true, isStable: true, first: nil, last: nil, count: nil))
         }
 
         let queryID = context.generateID()
@@ -161,9 +152,6 @@ public final class MAMModule: XMPPModule, Sendable {
         if let form = Self.buildFilterForm(jid: query.with, start: query.start, end: query.end) {
             queryElement.addChild(form)
         }
-        if let extForm = Self.buildExtendedForm(afterID: query.afterID, beforeID: query.beforeID, flipPage: query.flipPage) {
-            queryElement.addChild(extForm)
-        }
         if let rsm = Self.buildRSM(max: query.max, before: query.before, after: query.after) {
             queryElement.addChild(rsm)
         }
@@ -179,7 +167,7 @@ public final class MAMModule: XMPPModule, Sendable {
         let fin: MAMFin = if let finElement, let parsed = MAMFin.parse(finElement) {
             parsed
         } else {
-            MAMFin(complete: true, first: nil, last: nil, count: nil)
+            MAMFin(complete: true, isStable: true, first: nil, last: nil, count: nil)
         }
 
         context.emitEvent(.archivedMessagesLoaded(messages, fin: fin))
@@ -188,7 +176,7 @@ public final class MAMModule: XMPPModule, Sendable {
     }
 
     /// Backward-compatible overload with individual parameters.
-    /// Does not support `.lastPage` or extended fields; use the `Query`-based overload for those.
+    /// Does not support `.lastPage`; use the `Query`-based overload for that.
     public func queryMessages(
         to: BareJID? = nil,
         with jid: BareJID? = nil,
@@ -214,19 +202,6 @@ public final class MAMModule: XMPPModule, Sendable {
         if let jid { fields.append(DataFormField(variable: "with", values: [jid.description])) }
         if let start { fields.append(DataFormField(variable: "start", values: [start])) }
         if let end { fields.append(DataFormField(variable: "end", values: [end])) }
-
-        return buildSubmitForm(fields)
-    }
-
-    private static func buildExtendedForm(afterID: String?, beforeID: String?, flipPage: Bool) -> XMLElement? {
-        guard afterID != nil || beforeID != nil || flipPage else { return nil }
-
-        var fields: [DataFormField] = [
-            DataFormField(variable: "FORM_TYPE", type: "hidden", values: [XMPPNamespaces.mamExtended])
-        ]
-        if let afterID { fields.append(DataFormField(variable: "after-id", values: [afterID])) }
-        if let beforeID { fields.append(DataFormField(variable: "before-id", values: [beforeID])) }
-        if flipPage { fields.append(DataFormField(variable: "flip-page", values: ["true"])) }
 
         return buildSubmitForm(fields)
     }
@@ -262,5 +237,12 @@ public final class MAMModule: XMPPModule, Sendable {
         }
 
         return rsm
+    }
+}
+
+public extension ServiceDiscoveryModule.InfoResult {
+    /// Whether the entity whose disco#info this is keeps an archive that can be read (XEP-0313 §6).
+    var supportsMessageArchive: Bool {
+        features.contains(XMPPNamespaces.mam)
     }
 }

@@ -70,7 +70,7 @@ extension OMEMOModuleTests {
             try await connectTask.value
             await mock.simulateReceive(message.xmlString)
 
-            guard case let .omemoEncryptedMessageReceived(stanza, _) = try await received.value.last else {
+            guard case let .omemoEncryptedMessageReceived(stanza, _, _) = try await received.value.last else {
                 Issue.record("Expected an encrypted message")
                 return
             }

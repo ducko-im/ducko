@@ -66,7 +66,7 @@ public actor MockTranscriptStore: TranscriptStore {
         if message.serverID == nil || fromArchive, let stanzaID = message.stanzaID {
             let isDuplicate = stored.contains { row in
                 guard row.stanzaID == stanzaID, !fromArchive || row.serverID == nil else { return false }
-                return message.isOutgoing ? row.isOutgoing : !row.isOutgoing && row.fromJID == message.fromJID
+                return message.isOutgoing ? row.isOutgoing : row.isReceived(from: message.fromJID, as: message.roomSender)
             }
             if isDuplicate { return .duplicate }
         }
@@ -156,13 +156,12 @@ public actor MockTranscriptStore: TranscriptStore {
         try await findMessage(serverID: serverID, conversationID: conversationID) != nil
     }
 
-    public func messageExists(stanzaID: String, fromJID: String, conversationID: UUID) async throws -> Bool {
+    public func messageExists(stanzaID: String, fromJID: String, as roomSender: RoomSenderIdentity?, conversationID: UUID) async throws -> Bool {
         // Match FileTranscriptStore: outgoing rows store `fromJID` as the
         // recipient, so an unfiltered match would shadow fresh inbound stanzas.
         messages.contains {
-            !$0.isOutgoing
-                && $0.stanzaID == stanzaID
-                && $0.fromJID == fromJID
+            $0.stanzaID == stanzaID
+                && $0.isReceived(from: fromJID, as: roomSender)
                 && $0.conversationID == conversationID
         }
     }

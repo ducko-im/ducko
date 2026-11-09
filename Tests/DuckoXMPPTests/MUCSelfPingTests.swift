@@ -17,6 +17,8 @@ private func makeConnectedClient(mock: MockTransport) async throws -> (XMPPClien
     )
     let module = MUCModule(selfPingInterval: .milliseconds(10))
     await client.register(module)
+    await mock.answerDiscoInfo(of: testRoomJID.description)
+    await mock.answerDiscoInfo(of: otherRoomJID.description)
 
     let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
     await simulateNoTLSConnect(mock)

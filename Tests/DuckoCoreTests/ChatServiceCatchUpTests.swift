@@ -68,8 +68,9 @@ private struct CatchUpHarness {
     let chatService: ChatService
     let accountID: UUID
     let connection: Task<Void, any Error>
-    /// Connects once `seed` has stored what the account holds before it connects.
+    /// Connects with `modules` once `seed` has stored what the account holds before it connects.
     static func connect(
+        modules: [any XMPPModule] = [MAMModule()],
         seed: (_ store: MockPersistenceStore, _ transcripts: MockTranscriptStore, _ accountID: UUID) async throws -> Void = { _, _, _ in }
     ) async throws -> CatchUpHarness {
         let store = MockPersistenceStore()
@@ -78,9 +79,10 @@ private struct CatchUpHarness {
         await store.addAccount(account)
         try await seed(store, transcripts, account.id)
         let transport = MockTransport()
-        let accountService = makeAccountService(store: store, clientFactory: MockXMPPClientFactory(transport: transport, modules: [MAMModule()]))
+        let accountService = makeAccountService(store: store, clientFactory: MockXMPPClientFactory(transport: transport, modules: modules))
         try await accountService.loadAccounts()
         let chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+        chatService.featureSource = FixedFeatureSource.archiving()
         chatService.setAccountService(accountService)
         accountService.onSessionStarting = { [chatService] in await chatService.captureCatchUpStart(accountID: $0) }
         let (_, connection) = try await driveMockConnect(accountService, accountID: account.id, transport: transport)
@@ -91,9 +93,13 @@ private struct CatchUpHarness {
     }
 
     /// Runs catch-up and answers the account archive's queries with `pages` in turn. The last page's `fin` reports the
-    /// archive `complete`. Then the query of each of `rooms` rooms gets an empty last page, or an error for a room in
-    /// `failingRooms`. Returns every archive query the service sent.
-    func catchUp(pages: [[ArchiveEntry]], complete: Bool = true, rooms: Int = 0, failingRooms: Set<BareJID> = []) async throws -> [String] {
+    /// archive `complete`, and marks the page unstable unless `isStable`. Then the query of each of `rooms` rooms gets
+    /// an empty last page, one marked unstable for a room in `unstableRooms`, or an error for a room in `failingRooms`.
+    /// Returns every archive query the service sent.
+    func catchUp(
+        pages: [[ArchiveEntry]], complete: Bool = true, isStable: Bool = true, rooms: Int = 0, failingRooms: Set<BareJID> = [],
+        unstableRooms: Set<BareJID> = []
+    ) async throws -> [String] {
         let tasks = await startCatchUp()
         var answered: Set<String> = []
         for (index, page) in pages.enumerated() {
@@ -101,20 +107,22 @@ private struct CatchUpHarness {
             for entry in page {
                 await transport.simulateReceive(entry.result(queryID: query.queryID))
             }
-            let isComplete = index == pages.count - 1 && complete
+            let isLast = index == pages.count - 1
             let last = page.last.map { "<last>\($0.archiveID)</last>" } ?? ""
             await transport.simulateReceive(
-                "<iq type='result' id='\(query.iqID)'><fin xmlns='urn:xmpp:mam:2'\(isComplete ? " complete='true'" : "")>"
+                "<iq type='result' id='\(query.iqID)'><fin xmlns='urn:xmpp:mam:2'\(isLast && complete ? " complete='true'" : "")"
+                    + "\(isLast && !isStable ? " stable='false'" : "")>"
                     + "<set xmlns='http://jabber.org/protocol/rsm'>\(last)</set></fin></iq>"
             )
         }
         for _ in 0 ..< rooms {
             let query = try await nextArchiveQuery(on: transport, answered: &answered)
             let room = try #require([roomJID, otherRoomJID].first { query.iq.contains("to=\"\($0)\"") })
+            let stability = unstableRooms.contains(room) ? " stable='false'" : ""
             await transport.simulateReceive(
                 failingRooms.contains(room)
                     ? "<iq type='error' id='\(query.iqID)' from='\(room)'><error type='cancel'><item-not-found xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>"
-                    : "<iq type='result' id='\(query.iqID)' from='\(room)'><fin xmlns='urn:xmpp:mam:2' complete='true'/></iq>"
+                    : "<iq type='result' id='\(query.iqID)' from='\(room)'><fin xmlns='urn:xmpp:mam:2' complete='true'\(stability)/></iq>"
             )
         }
         try await Self.drain(tasks)
@@ -165,6 +173,72 @@ private struct CatchUpHarness {
     func disconnect() async {
         connection.cancel()
         await accountService.disconnect(accountID: accountID)
+    }
+
+    /// Confirms the user's join of `roomJID` under the occupant id `occupant-alice`, and answers each of the `rooms`
+    /// archive queries the catch-up waiting for it sends with an empty last page. Returns every archive query the
+    /// service sent.
+    func confirmJoin(rooms: Int) async throws -> [String] {
+        await transport.clearSentBytes()
+        let tasks = await confirmJoin()
+        var answered: Set<String> = []
+        for _ in 0 ..< rooms {
+            let query = try await nextArchiveQuery(on: transport, answered: &answered)
+            await transport.simulateReceive("<iq type='result' id='\(query.iqID)' from='\(roomJID)'><fin xmlns='urn:xmpp:mam:2' complete='true'/></iq>")
+        }
+        try await Self.drain(tasks)
+        return await sentArchiveQueries()
+    }
+
+    /// Confirms the user's join of `roomJID`, which waits for it, and runs catch-up again while the room's query waits
+    /// for its answer, answering the account archive's query with an empty last page. Once that catch-up is done, answers
+    /// the room's query with one. Returns every archive query the service sent from the join on.
+    func catchUpWhileWaitingRoomIsRead() async throws -> [String] {
+        await transport.clearSentBytes()
+        let joinTasks = await confirmJoin()
+        var answered: Set<String> = []
+        let roomQuery = try await nextArchiveQuery(on: transport, answered: &answered)
+        let queries = await sentArchiveQueries()
+        let catchUpTasks = await startCatchUp()
+        let accountQuery = try await nextArchiveQuery(on: transport, answered: &answered)
+        await transport.simulateReceive("<iq type='result' id='\(accountQuery.iqID)'><fin xmlns='urn:xmpp:mam:2' complete='true'/></iq>")
+        try await Self.drain(catchUpTasks)
+        await transport.simulateReceive("<iq type='result' id='\(roomQuery.iqID)' from='\(roomJID)'><fin xmlns='urn:xmpp:mam:2' complete='true'/></iq>")
+        try await Self.drain(joinTasks)
+        return await queries + sentArchiveQueries()
+    }
+
+    /// Runs catch-up, and confirms the user's join of `roomJID` to `muc` alone while catch-up looks up the room's stored
+    /// occupant id, which it does once `muc` showed none. Answers the account archive's query and each room query with
+    /// empty last pages. Returns every archive query the service sent.
+    func catchUpConfirmingJoinDuringLookup(muc: MUCModule) async throws -> [String] {
+        await transport.autoReply { stanza in
+            guard stanza.contains("urn:xmpp:mam:2"), stanza.contains("to=\"\(roomJID)\""), let id = extractIQID(from: stanza) else { return nil }
+            return "<iq type='result' id='\(id)' from='\(roomJID)'><fin xmlns='urn:xmpp:mam:2' complete='true'/></iq>"
+        }
+        let tasks = await startCatchUp()
+        var answered: Set<String> = []
+        let accountQuery = try await nextArchiveQuery(on: transport, answered: &answered)
+        let lookup = AsyncSemaphore()
+        let release = AsyncSemaphore()
+        await store.installFetchConversationGate(entered: lookup, release: release)
+        await transport.simulateReceive("<iq type='result' id='\(accountQuery.iqID)'><fin xmlns='urn:xmpp:mam:2' complete='true'/></iq>")
+        try #require(try await boundedOutcome { await lookup.wait() } != nil)
+        await transport.simulateReceive(
+            "<presence from='\(roomJID)/alice'><x xmlns='http://jabber.org/protocol/muc#user'><item affiliation='member' role='participant'/>"
+                + "<status code='110'/></x><occupant-id xmlns='urn:xmpp:occupant-id:0' id='occupant-alice'/></presence>"
+        )
+        try await eventually { muc.ownOccupantID(in: roomJID) != nil }
+        await release.signal()
+        try await Self.drain(tasks)
+        return await sentArchiveQueries()
+    }
+
+    /// Hands the chat service the room's confirmation of the user's join of `roomJID`, and returns the tasks it starts.
+    private func confirmJoin() async -> [Task<Void, Never>] {
+        let occupancy = RoomOccupancy(nickname: "alice", occupants: [], subject: nil, ownOccupantID: "occupant-alice")
+        await chatService.handleEvent(.roomJoined(room: roomJID, occupancy: occupancy, isNewlyCreated: false), accountID: accountID)
+        return chatService.takePendingTasks()
     }
 
     /// Starts catch-up, as the roster's first delivery on a session does, and returns its tasks.
@@ -400,6 +474,21 @@ enum ChatServiceCatchUpTests {
         }
 
         @Test
+        func `A page the archive marks unstable is not stored, and leaves its start to the next catch-up`() async throws {
+            let (harness, conversation) = try await connect()
+            let entry = ArchiveEntry(archiveID: "arch-1", message: incoming(from: "\(contactJID)/phone", id: "c1", "<body>settling</body>"))
+            _ = try await harness.catchUp(pages: [[entry]], isStable: false)
+            #expect(await harness.transcripts.messages.map(\.body) == ["stored"])
+            try await receiveAndReconnect(harness, in: conversation)
+
+            let queries = try await harness.catchUp(pages: [[entry]])
+
+            #expect(queries.last?.contains("2026-03-01T09:00:00Z") == true)
+            #expect(await harness.transcripts.messages.map(\.body) == ["stored", "stored", "settling"])
+            await harness.disconnect()
+        }
+
+        @Test
         func `A completed catch-up lets the next one start after a later message`() async throws {
             let (harness, conversation) = try await connect()
             _ = try await harness.catchUp(pages: [[]])
@@ -480,10 +569,14 @@ enum ChatServiceCatchUpTests {
             await seeded.harness.disconnect()
         }
 
-        @Test
-        func `A room whose archive cannot be read keeps only its own start for the next catch-up`() async throws {
+        @Test(arguments: [false, true])
+        func `A room whose archive cannot be read, or answers with an unstable page, keeps only its own start for the next catch-up`(
+            isUnstable: Bool
+        ) async throws {
             let seeded = try await connect()
-            _ = try await seeded.harness.catchUp(pages: [[]], rooms: 2, failingRooms: [roomJID])
+            _ = try await seeded.harness.catchUp(
+                pages: [[]], rooms: 2, failingRooms: isUnstable ? [] : [roomJID], unstableRooms: isUnstable ? [roomJID] : []
+            )
             try await receiveAndReconnect(seeded)
 
             let queries = try await seeded.harness.catchUp(pages: [[]], rooms: 2)
@@ -492,6 +585,109 @@ enum ChatServiceCatchUpTests {
             #expect(queries.map { $0.contains("2026-03-01T11:00:00Z") } == [false, true, false])
             #expect(queries.map { $0.contains("2026-03-02T08:00:00Z") } == [true, false, true])
             await seeded.harness.disconnect()
+        }
+    }
+
+    /// An archive is read only once it is known to advertise `urn:xmpp:mam:2` (XEP-0313).
+    @MainActor
+    struct ArchiveFeatures {
+        enum UnreadArchive: CaseIterable {
+            case accountWithoutMAM, accountFeaturesUnknown, roomsWithoutMAM, roomFeaturesUnknown
+        }
+
+        private static let archiving: Set<String> = [XMPPNamespaces.stanzaID, XMPPNamespaces.mam]
+        private static let notArchiving: Set<String> = [XMPPNamespaces.stanzaID]
+
+        @Test(arguments: UnreadArchive.allCases)
+        func `An archive not known to advertise mam:2 is not asked, and keeps its start for the next catch-up`(archive: UnreadArchive) async throws {
+            var seeded: [Conversation] = []
+            let harness = try await CatchUpHarness.connect { store, transcripts, accountID in
+                let conversations = [chat(with: contactJID, accountID: accountID)] + [roomJID, otherRoomJID].map { chat(with: $0, accountID: accountID, type: .groupchat) }
+                for conversation in conversations {
+                    try await store.upsertConversation(conversation)
+                    try await seedMessage(at: "2026-03-01T09:00:00Z", in: conversation, store: store, transcripts: transcripts)
+                }
+                seeded = conversations
+            }
+            harness.chatService.featureSource = switch archive {
+            case .accountWithoutMAM: FixedFeatureSource(accountFeatures: Self.notArchiving, roomFeatures: Self.archiving)
+            case .accountFeaturesUnknown: FixedFeatureSource(accountFeatures: nil, roomFeatures: Self.archiving)
+            case .roomsWithoutMAM: FixedFeatureSource(accountFeatures: Self.archiving, roomFeatures: Self.notArchiving)
+            case .roomFeaturesUnknown: FixedFeatureSource(accountFeatures: Self.archiving, roomFeatures: nil)
+            }
+            let readsAccount = archive == .roomsWithoutMAM || archive == .roomFeaturesUnknown
+
+            let skipping = try await harness.catchUp(pages: readsAccount ? [[]] : [], rooms: readsAccount ? 0 : 2)
+            for conversation in seeded {
+                try await seedMessage(at: "2026-03-02T08:00:00Z", in: conversation, store: harness.store, transcripts: harness.transcripts)
+            }
+            await harness.chatService.captureCatchUpStart(accountID: harness.accountID)
+            harness.chatService.featureSource = FixedFeatureSource.archiving()
+            let next = try await harness.catchUp(pages: [[]], rooms: 2)
+
+            #expect(skipping.map { $0.contains("conference.example.com") } == (readsAccount ? [false] : [true, true]))
+            #expect(next.map { $0.contains("2026-03-01T09:00:00Z") } == (readsAccount ? [false, true, true] : [true, false, false]))
+            await harness.disconnect()
+        }
+    }
+
+    /// A room that advertises occupant ids is read only once the user's own is known, which its join confirms.
+    @MainActor
+    struct WaitingForJoin {
+        /// Connects with the room `roomJID`, which advertises occupant ids and stores no occupant id of the user's, with
+        /// its last message at 11:00 when `hasStoredMessages`.
+        private func connect(modules: [any XMPPModule] = [MAMModule()], hasStoredMessages: Bool = true) async throws -> CatchUpHarness {
+            let harness = try await CatchUpHarness.connect(modules: modules) { store, transcripts, accountID in
+                let room = chat(with: roomJID, accountID: accountID, type: .groupchat)
+                try await store.upsertConversation(room)
+                if hasStoredMessages {
+                    try await seedMessage(at: "2026-03-01T11:00:00Z", in: room, store: store, transcripts: transcripts)
+                }
+            }
+            harness.chatService.featureSource = FixedFeatureSource.archiving(roomFeatures: [XMPPNamespaces.occupantID])
+            return harness
+        }
+
+        @Test(arguments: [true, false])
+        func `Catch-up reads the room once its join confirms the user's own occupant id`(hasStoredMessages: Bool) async throws {
+            let harness = try await connect(hasStoredMessages: hasStoredMessages)
+
+            let beforeJoin = try await harness.catchUp(pages: [[]])
+            let afterJoin = try await harness.confirmJoin(rooms: 1)
+            let againJoined = try await harness.confirmJoin(rooms: 0)
+
+            #expect(beforeJoin.count == 1)
+            #expect(afterJoin.count == 1)
+            #expect(afterJoin.first?.contains("to=\"\(roomJID)\"") == true)
+            #expect(afterJoin.first?.contains(hasStoredMessages ? "2026-03-01T11:00:00Z" : "<before/>") == true)
+            #expect(againJoined.isEmpty)
+            await harness.disconnect()
+        }
+
+        @Test
+        func `A catch-up that runs while the waiting room is read reads it no second time`() async throws {
+            let harness = try await connect()
+            _ = try await harness.catchUp(pages: [[]])
+
+            let queries = try await harness.catchUpWhileWaitingRoomIsRead()
+
+            #expect(queries.count { $0.contains("to=\"\(roomJID)\"") } == 1)
+            await harness.disconnect()
+        }
+
+        /// No join confirmation reaches the chat service, so only catch-up looking at the room module again once the room
+        /// waits has it read.
+        @Test
+        func `A join that confirms while catch-up looks the room up has the room read`() async throws {
+            let muc = MUCModule()
+            let harness = try await connect(modules: [MAMModule(), muc])
+            await harness.transport.answerDiscoInfo(of: roomJID.description, features: [XMPPNamespaces.occupantID])
+            try await muc.joinRoom(roomJID, nickname: "alice")
+
+            let queries = try await harness.catchUpConfirmingJoinDuringLookup(muc: muc)
+
+            #expect(queries.count { $0.contains("to=\"\(roomJID)\"") } == 1)
+            await harness.disconnect()
         }
     }
 
@@ -538,6 +734,83 @@ enum ChatServiceCatchUpTests {
 
             let conversations = try await harness.store.fetchConversations(for: harness.accountID)
             #expect(conversations.map(\.occupantNickname).sorted { ($0 ?? "") < ($1 ?? "") } == ["bob", "carol"])
+            await harness.disconnect()
+        }
+
+        /// The server authenticates the account's own address, so a copy the user sent from another device is the user's.
+        @Test
+        func `The user's own correction of a room private message, archived from another device, applies`() async throws {
+            var privateChat: Conversation?
+            let harness = try await CatchUpHarness.connect { store, transcripts, accountID in
+                try await store.upsertConversation(chat(with: roomJID, accountID: accountID, type: .groupchat))
+                let conversation = chat(with: roomJID, accountID: accountID, nickname: "bob")
+                try await store.upsertConversation(conversation)
+                await transcripts.addMessage(ChatMessage(
+                    id: UUID(), conversationID: conversation.id, stanzaID: "p1", fromJID: "bob", body: "helo", timestamp: Date(),
+                    isOutgoing: true, isDelivered: false, isEdited: false, type: "chat"
+                ))
+                privateChat = conversation
+            }
+            let correction = ArchiveEntry(archiveID: "arch-2", message: message(
+                from: "\(accountJID)/phone", to: "\(roomJID)/bob", id: "p2", "<body>hello</body><replace xmlns='urn:xmpp:message-correct:0' id='p1'/>"
+            ))
+
+            _ = try await harness.catchUp(pages: [[correction]], rooms: 1)
+
+            let conversation = try #require(privateChat)
+            let stored = try await harness.transcripts.fetchMessages(for: conversation.id, before: nil, limit: 10)
+            #expect(stored.map(\.body) == ["hello"])
+            await harness.disconnect()
+        }
+
+        @Test
+        func `A message the user sent and its archived copy are one row, which gains the archive's id`() async throws {
+            var sentChat: Conversation?
+            let harness = try await CatchUpHarness.connect { store, transcripts, accountID in
+                let conversation = chat(with: contactJID, accountID: accountID)
+                try await store.upsertConversation(conversation)
+                await transcripts.addMessage(ChatMessage(
+                    id: UUID(), conversationID: conversation.id, stanzaID: "c1", fromJID: contactJID.description, body: "hi", timestamp: Date(),
+                    isOutgoing: true, isDelivered: false, isEdited: false, type: "chat"
+                ))
+                sentChat = conversation
+            }
+            let archived = ArchiveEntry(archiveID: "arch-1", message: message(from: "\(accountJID)/ducko", to: contactJID.description, id: "c1", "<body>hi</body>"))
+
+            _ = try await harness.catchUp(pages: [[archived]])
+
+            let conversation = try #require(sentChat)
+            let stored = await harness.transcripts.messages
+            #expect(stored.count == 1)
+            #expect(try await harness.transcripts.findMessage(serverID: "arch-1", conversationID: conversation.id)?.id == stored.first?.id)
+            await harness.disconnect()
+        }
+
+        /// The room advertises occupant ids, so the account's archive keeps the occupant id of a private message from
+        /// one of its occupants, and only a correction carrying that id applies.
+        @Test(arguments: [true, false])
+        func `An archived room private message keeps its occupant id, and takes corrections only with it`(isSameOccupant: Bool) async throws {
+            let harness = try await CatchUpHarness.connect { store, _, accountID in
+                try await store.upsertConversation(chat(with: roomJID, accountID: accountID, type: .groupchat))
+            }
+            harness.chatService.featureSource = FixedFeatureSource.archiving(roomFeatures: [XMPPNamespaces.occupantID])
+            let original = ArchiveEntry(archiveID: "arch-1", message: incoming(
+                from: "\(roomJID)/bob", id: "p1", "<body>helo</body><occupant-id xmlns='urn:xmpp:occupant-id:0' id='occupant-bob'/>"
+            ))
+            var correction = ArchiveEntry(archiveID: "arch-2", message: incoming(
+                from: "\(roomJID)/bob", id: "p2",
+                "<body>hello</body><replace xmlns='urn:xmpp:message-correct:0' id='p1'/>"
+                    + "<occupant-id xmlns='urn:xmpp:occupant-id:0' id='\(isSameOccupant ? "occupant-bob" : "occupant-eve")'/>"
+            ))
+            correction.stamp = "2026-03-01T10:01:00Z"
+
+            // The room waits for the user's own occupant id, so only the account's archive is read.
+            _ = try await harness.catchUp(pages: [[original, correction]])
+
+            let stored = try #require(await harness.transcripts.messages.first)
+            let current = try #require(await harness.transcripts.findMessage(id: stored.id, conversationID: stored.conversationID))
+            #expect(current.roomSender?.occupantID == "occupant-bob")
+            #expect(current.body == (isSameOccupant ? "hello" : "helo"))
             await harness.disconnect()
         }
 

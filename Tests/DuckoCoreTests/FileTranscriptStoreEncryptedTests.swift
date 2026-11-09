@@ -66,6 +66,24 @@ extension FileTranscriptStoreTests {
             }
         }
 
+        /// Someone who takes a room occupant's nickname can reuse their message id, and only the occupant id tells the
+        /// two apart.
+        @Test(arguments: [false, true])
+        func `An archived room message under a reused id is a copy only from the same occupant`(isSameOccupant: Bool) async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                var stored = encrypted(stanzaID: "ducko-6", serverID: nil, body: "first", from: .bob)
+                stored.roomSender = RoomSenderIdentity(occupantID: "occupant-bob")
+                try await store.appendMessage(stored)
+                var archived = encrypted(stanzaID: "ducko-6", serverID: "S9", body: "second", from: .bob)
+                archived.roomSender = RoomSenderIdentity(occupantID: isSameOccupant ? "occupant-bob" : "occupant-eve")
+
+                let outcome = try await store.storeEncryptedMessage(archived, fromArchive: true)
+
+                #expect(outcome == (isSameOccupant ? .duplicate : .inserted))
+            }
+        }
+
         enum Placeholder: String, CaseIterable, Sendable {
             case liveCopyUndecryptable
             case retracted

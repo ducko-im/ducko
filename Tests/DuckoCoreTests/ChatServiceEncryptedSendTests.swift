@@ -218,7 +218,7 @@ private struct EncryptedSendHarness {
         message.from = JID.parse("\(testJIDString)/ducko")
         try module.handleMessage(message)
         return events.withLock { $0 }.lazy.compactMap { event -> XMPPMessage? in
-            guard case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted)) = event else { return nil }
+            guard case let .omemoEncryptedMessageReceived(_, .decrypted(decrypted), _) = event else { return nil }
             return decrypted.message
         }.first
     }

@@ -26,7 +26,9 @@ private func makeChatService(store: MockPersistenceStore, transcripts: MockTrans
 // MARK: - MAM Ingest Helpers
 
 /// Connected ChatService bundle pre-seeded with one conversation, used to drive `fetchServerHistory` against simulated
-/// MAM archives. The conversation is the room (nickname `alice`), or with `type: .chat` a chat with `contactJID`.
+/// MAM archives. The conversation is the room (nickname `alice`), or with `type: .chat` a chat with `contactJID`. The
+/// account and the room archive and stamp trusted stanza-ids, and the room has no occupant ids, so its archive shows the
+/// user's own messages under their nickname.
 @MainActor
 private struct MAMHarness {
     let store: MockPersistenceStore
@@ -46,6 +48,7 @@ private func makeMAMHarness(
     let store = makeStore()
     let transcripts = makeTranscripts()
     let transport = MockTransport()
+    await transport.answerDiscoInfo(of: roomJID.description)
     let factory = MockXMPPClientFactory(transport: transport, modules: modules)
     let accountService = makeAccountService(store: store, clientFactory: factory)
     let pipeline = MessageFilterPipeline()
@@ -53,6 +56,7 @@ private func makeMAMHarness(
         await pipeline.register(filter)
     }
     let chatService = ChatService(store: store, transcripts: transcriptStore ?? transcripts, filterPipeline: pipeline)
+    chatService.featureSource = FixedFeatureSource.archiving()
     chatService.setAccountService(accountService)
 
     let connectTask = Task { @MainActor in
@@ -114,7 +118,8 @@ private func ingestArchives(
     return messages
 }
 
-/// Describes a groupchat message to wrap in a MAM `<result>`, stamped with a trusted `<stanza-id by=room>`.
+/// Describes a groupchat message to wrap in a MAM `<result>`, stamped with a trusted `<stanza-id by=room>`, which is the
+/// archive's id for it.
 private struct GroupArchiveSpec {
     let fromNick: String
     let serverID: String
@@ -125,12 +130,12 @@ private struct GroupArchiveSpec {
     var metadataXML = ""
 }
 
-private func groupArchive(queryID: String, archiveID: String, _ spec: GroupArchiveSpec) -> String {
+private func groupArchive(queryID: String, _ spec: GroupArchiveSpec) -> String {
     let encryptedElement = spec.encrypted
         ? "<encrypted xmlns='urn:xmpp:omemo:2'><header sid='1'/><payload>AAAA</payload></encrypted>"
         : ""
     return "<message from='\(roomJID.description)'>"
-        + "<result xmlns='urn:xmpp:mam:2' queryid='\(queryID)' id='\(archiveID)'>"
+        + "<result xmlns='urn:xmpp:mam:2' queryid='\(queryID)' id='\(spec.serverID)'>"
         + "<forwarded xmlns='urn:xmpp:forward:0'>"
         + "<delay xmlns='urn:xmpp:delay' stamp='2026-02-28T10:00:00Z'/>"
         + "<message from='\(roomJID.description)/\(spec.fromNick)' type='groupchat' id='\(spec.stanzaID)'>"
@@ -145,13 +150,13 @@ private func groupArchive(queryID: String, archiveID: String, _ spec: GroupArchi
 private struct ChatArchiveSpec {
     let from: BareJID
     let stanzaID: String
-    /// The archive's stamp inside the archived message, left out when nil.
-    var serverID: String?
+    /// Whether the archived message carries the archive's stanza-id for it, which XEP-0313 lets an archive leave out.
+    var stampsStanzaID = false
     var stamp = "2026-02-28T10:00:00Z"
 }
 
 private func chatArchive(queryID: String, archiveID: String, _ spec: ChatArchiveSpec) -> String {
-    let stanzaIDElement = spec.serverID.map { "<stanza-id xmlns='urn:xmpp:sid:0' id='\($0)' by='\(testJIDString)'/>" } ?? ""
+    let stanzaIDElement = spec.stampsStanzaID ? "<stanza-id xmlns='urn:xmpp:sid:0' id='\(archiveID)' by='\(testJIDString)'/>" : ""
     return "<message>"
         + "<result xmlns='urn:xmpp:mam:2' queryid='\(queryID)' id='\(archiveID)'>"
         + "<forwarded xmlns='urn:xmpp:forward:0'>"
@@ -297,18 +302,18 @@ enum ChatServiceMAMTests {
             var answered: Set<String> = []
 
             let first = try await nextArchiveQuery(on: harness.transport, answered: &answered)
-            await harness.transport.simulateReceive(groupArchive(queryID: first.queryID, archiveID: "arch-2", GroupArchiveSpec(
+            await harness.transport.simulateReceive(groupArchive(queryID: first.queryID, GroupArchiveSpec(
                 fromNick: "bob", serverID: "R1", stanzaID: "S1", body: "already here"
             )))
-            await harness.transport.simulateReceive(roomFin(iqID: first.iqID, complete: false, first: "arch-2"))
+            await harness.transport.simulateReceive(roomFin(iqID: first.iqID, complete: false, first: "R1"))
 
             let second = try await nextArchiveQuery(on: harness.transport, answered: &answered)
-            #expect(second.iq.contains("<before>arch-2</before>"))
+            #expect(second.iq.contains("<before>R1</before>"))
             #expect(second.iq.contains("<max>50</max>"))
-            await harness.transport.simulateReceive(groupArchive(queryID: second.queryID, archiveID: "arch-1", GroupArchiveSpec(
+            await harness.transport.simulateReceive(groupArchive(queryID: second.queryID, GroupArchiveSpec(
                 fromNick: "bob", serverID: "R0", stanzaID: "S0", body: "older"
             )))
-            await harness.transport.simulateReceive(roomFin(iqID: second.iqID, complete: false, first: "arch-1"))
+            await harness.transport.simulateReceive(roomFin(iqID: second.iqID, complete: false, first: "R0"))
 
             let (messages, hasMore) = try await fetchTask.value
             #expect(messages.map(\.body) == ["older"])
@@ -389,21 +394,21 @@ enum ChatServiceMAMTests {
             }
             var answered = Set<String>()
             let query = try await nextArchiveQuery(on: harness.transport, answered: &answered)
-            await harness.transport.simulateReceive(groupArchive(queryID: query.queryID, archiveID: "arch-1", GroupArchiveSpec(
+            await harness.transport.simulateReceive(groupArchive(queryID: query.queryID, GroupArchiveSpec(
                 fromNick: "alice_", serverID: "R", stanzaID: "S", body: "", encrypted: true, omitsBody: true
             )))
             await harness.transport.simulateReceive(roomFin(iqID: query.iqID, complete: true))
             _ = try await fetch.value
 
             // The live copy of the archived message takes its place with the decrypted text.
-            let sender = try JID.full(#require(FullJID(bareJID: roomJID, resourcePart: "alice_")))
+            let occupant = try #require(FullJID(bareJID: roomJID, resourcePart: "alice_"))
             var live = XMPPMessage(type: .groupchat, id: "S")
-            live.from = sender
+            live.from = .full(occupant)
             live.element.addChild(DuckoXMPP.XMLElement(name: "encrypted", namespace: XMPPNamespaces.omemo))
             live.element.addChild(DuckoXMPP.XMLElement(
                 name: "stanza-id", namespace: XMPPNamespaces.stanzaID, attributes: ["id": "R", "by": roomJID.description]
             ))
-            let isOwn = await harness.chatService.isOwnMessage(from: sender, in: harness.conversation, accountID: harness.accountID)
+            let isOwn = await harness.chatService.isOwnRoomEcho(live, ofEncrypted: true, body: "", author: nil, accountID: harness.accountID)
             let outcome = await harness.chatService.ingestEncryptedMessage(
                 EncryptedArrival(stanza: live, content: EncryptedContent(encryptedOutcome(of: live, body: "hi")), sender: "alice_", isOutgoing: isOwn, sentTime: Date()),
                 in: harness.conversation, accountID: harness.accountID
@@ -450,7 +455,7 @@ enum ChatServiceMAMTests {
             var answered = Set<String>()
             let query = try await nextArchiveQuery(on: harness.transport, answered: &answered)
             for (index, nickname) in ["bob", "alice"].enumerated() {
-                await harness.transport.simulateReceive(groupArchive(queryID: query.queryID, archiveID: "arch-\(index)", GroupArchiveSpec(
+                await harness.transport.simulateReceive(groupArchive(queryID: query.queryID, GroupArchiveSpec(
                     fromNick: nickname, serverID: "R\(index)", stanzaID: "S\(index)", body: "from \(nickname)"
                 )))
             }
@@ -478,7 +483,7 @@ enum ChatServiceMAMTests {
             ))
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "alice", serverID: "R", stanzaID: "S", body: "hi room"
                 ))]
             }
@@ -503,7 +508,7 @@ enum ChatServiceMAMTests {
             ))
 
             _ = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "alice", serverID: "R", stanzaID: isRenamed ? "room-chosen" : "S", body: "hi room", encrypted: isEncrypted,
                     omitsBody: isEncrypted, metadataXML: isRenamed ? "<origin-id xmlns='urn:xmpp:sid:0' id='S'/>" : ""
                 ))]
@@ -521,7 +526,7 @@ enum ChatServiceMAMTests {
             let harness = try await makeMAMHarness()
 
             _ = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(fromNick: "bob", serverID: "R", stanzaID: "S", body: "latest"))]
+                [groupArchive(queryID: queryID, GroupArchiveSpec(fromNick: "bob", serverID: "R", stanzaID: "S", body: "latest"))]
             }
 
             let stored = try await harness.store.fetchConversations(for: harness.accountID).first { $0.id == harness.conversation.id }
@@ -543,7 +548,7 @@ enum ChatServiceMAMTests {
             ))
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "alice", serverID: "R", stanzaID: "S",
                     body: "This message is OMEMO encrypted", encrypted: true
                 ))]
@@ -566,7 +571,7 @@ enum ChatServiceMAMTests {
             ))
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "bob", serverID: "Rbob", stanzaID: "S", body: "hi from bob"
                 ))]
             }
@@ -590,7 +595,7 @@ enum ChatServiceMAMTests {
             ))
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "alice", serverID: "R2", stanzaID: "S2", body: "later"
                 ))]
             }
@@ -611,7 +616,7 @@ enum ChatServiceMAMTests {
             ))
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "alice", serverID: "R", stanzaID: "S", body: "a different line"
                 ))]
             }
@@ -639,7 +644,7 @@ enum ChatServiceMAMTests {
             )
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "alice", serverID: "R", stanzaID: "S", body: "hi room"
                 ))]
             }
@@ -667,7 +672,7 @@ enum ChatServiceMAMTests {
             )
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "alice", serverID: "R", stanzaID: "S",
                     body: "This message is OMEMO encrypted", encrypted: true
                 ))]
@@ -687,7 +692,7 @@ enum ChatServiceMAMTests {
             let harness = try await makeMAMHarness(filters: [StylingFilter()])
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "bob", serverID: "R", stanzaID: "S", body: "*bold*"
                 ))]
             }
@@ -705,7 +710,7 @@ enum ChatServiceMAMTests {
             let harness = try await makeMAMHarness(filters: [EmojiFilter()])
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "alice", serverID: "R", stanzaID: "S", body: "hi :)"
                 ))]
             }
@@ -728,7 +733,7 @@ enum ChatServiceMAMTests {
             )
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "bob", serverID: "R", stanzaID: "S", body: "see https://example.com"
                 ))]
             }
@@ -751,7 +756,7 @@ enum ChatServiceMAMTests {
             let harness = try await makeMAMHarness()
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+                [groupArchive(queryID: queryID, GroupArchiveSpec(
                     fromNick: "bob", serverID: "R", stanzaID: "S",
                     body: otherClientFallbackBody, encrypted: true, omitsBody: omitsBody
                 ))]
@@ -805,11 +810,13 @@ enum ChatServiceMAMTests {
 
             let ownJID = try #require(BareJID.parse(testJIDString))
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [chatArchive(queryID: queryID, archiveID: "arch-5", ChatArchiveSpec(from: ownJID, stanzaID: "ducko-5", serverID: "S5"))]
+                [chatArchive(queryID: queryID, archiveID: "S5", ChatArchiveSpec(from: ownJID, stanzaID: "ducko-5", stampsStanzaID: true))]
             }
 
             #expect(imported.isEmpty)
-            #expect(await harness.transcripts.messages.count == 1)
+            let stored = await harness.transcripts.messages
+            #expect(stored.count == 1)
+            #expect(try await harness.transcripts.findMessage(serverID: "S5", conversationID: harness.conversation.id)?.id == stored.first?.id)
             await harness.accountService.disconnect(accountID: harness.accountID)
         }
 
@@ -824,7 +831,7 @@ enum ChatServiceMAMTests {
             ))
 
             let imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                [chatArchive(queryID: queryID, archiveID: "arch-7", ChatArchiveSpec(from: contactJID, stanzaID: "ducko-7", serverID: "S2"))]
+                [chatArchive(queryID: queryID, archiveID: "S2", ChatArchiveSpec(from: contactJID, stanzaID: "ducko-7", stampsStanzaID: true))]
             }
 
             #expect(imported.map(\.serverID) == ["S2"])
@@ -861,7 +868,7 @@ enum ChatServiceMAMTests {
             let tasks = harness.chatService.takePendingTasks()
             let queryID = try #require(extractQueryID(from: query))
             await harness.transport.simulateReceive(chatArchive(
-                queryID: queryID, archiveID: "arch-1", ChatArchiveSpec(from: contactJID, stanzaID: "ducko-1", serverID: "S1", stamp: stamp)
+                queryID: queryID, archiveID: "S1", ChatArchiveSpec(from: contactJID, stanzaID: "ducko-1", stampsStanzaID: true, stamp: stamp)
             ))
             try await harness.transport.simulateReceive(
                 "<iq type='result' id='\(#require(extractIQID(from: query)))'><fin xmlns='urn:xmpp:mam:2' complete='true'/></iq>"
@@ -940,7 +947,7 @@ enum ChatServiceMAMTests {
 
             try await beforeRelease(harness)
 
-            await harness.transport.simulateReceive(groupArchive(queryID: queryID, archiveID: "arch-1", GroupArchiveSpec(
+            await harness.transport.simulateReceive(groupArchive(queryID: queryID, GroupArchiveSpec(
                 fromNick: "bob", serverID: "R", stanzaID: "S", body: "hi room"
             )))
             await harness.transport.simulateReceive(
@@ -1025,7 +1032,7 @@ extension ChatServiceMAMTests {
             let imported: [ChatMessage]
             do {
                 imported = try await ingestArchives(harness: harness, finCount: 1) { queryID in
-                    [groupArchive(queryID: queryID, archiveID: "archive-id", GroupArchiveSpec(
+                    [groupArchive(queryID: queryID, GroupArchiveSpec(
                         fromNick: outgoing ? "alice" : "bob", serverID: "trusted-id", stanzaID: "incoming-id", body: body,
                         metadataXML: "<reply xmlns='urn:xmpp:reply:0' id='original-id'/>"
                             + "<stanza-id xmlns='urn:xmpp:sid:0' by='attacker@example.com' id='forged-id'/>"

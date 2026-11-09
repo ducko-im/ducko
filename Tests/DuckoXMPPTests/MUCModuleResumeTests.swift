@@ -111,6 +111,7 @@ private func makeStreamManagedClient(mock: MockTransport, sm: StreamManagementMo
     await client.register(sm)
     await client.addInterceptor(sm)
     await client.register(muc)
+    await mock.answerDiscoInfo(of: testRoomJID.description)
     return client
 }
 
@@ -518,7 +519,7 @@ enum MUCModuleResumeTests {
                 if case .roomMessageReceived = event { return true }
                 return false
             }
-            guard case let .roomMessageReceived(message) = events.last else {
+            guard case let .roomMessageReceived(message, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected roomMessageReceived event")
             }
             #expect(message.body == "Hello group!")

@@ -482,20 +482,26 @@ struct ChatWindowHistoryTests {
 // MARK: - With the server archive
 
 extension ChatWindowHistoryTests {
-    private static func connected() async throws -> (ChatWindowFixture, MockServerSession) {
+    /// A chat with `jidString` over a connected account, whose archives `featureSource` tells apart.
+    private static func connected(
+        jidString: String = ChatWindowFixture.jidString, type: Conversation.ConversationType = .chat,
+        featureSource: FixedFeatureSource = .archiving()
+    ) async throws -> (ChatWindowFixture, MockServerSession) {
         let transport = MockTransport()
         let fixture = try await ChatWindowFixture.make(
-            clientFactory: MockXMPPClientFactory(transport: transport, modules: [MAMModule()]), loads: false
+            jidString: jidString, type: type, clientFactory: MockXMPPClientFactory(transport: transport, modules: [MAMModule()]), loads: false
         )
+        fixture.environment.chatService.featureSource = featureSource
         let server = MockServerSession(transport: transport)
         try await server.connect(fixture.environment, accountID: fixture.accountID)
         return (fixture, server)
     }
 
     /// Answers the next archive query with `entries`, each a body and the ISO 8601 time it was archived at. The
-    /// archive holds more before them when `first` names the page's first entry, and nothing more otherwise.
+    /// archive holds more before them when `first` names the page's first entry, and nothing more otherwise. Unless
+    /// `isStable`, the archive marks the page unstable.
     private static func answerArchiveQuery(
-        _ server: MockServerSession, with entries: [(body: String, stamp: String)], first: String? = nil
+        _ server: MockServerSession, with entries: [(body: String, stamp: String)], first: String? = nil, isStable: Bool = true
     ) async throws -> String {
         let query = try await server.next("urn:xmpp:mam:2")
         let queryID = try #require(extractQueryID(from: query))
@@ -508,10 +514,11 @@ extension ChatWindowHistoryTests {
                     + "</forwarded></result></message>"
             )
         }
+        let stability = isStable ? "" : " stable='false'"
         let fin = if let first {
-            "<fin xmlns='urn:xmpp:mam:2'><set xmlns='http://jabber.org/protocol/rsm'><first>\(first)</first></set></fin>"
+            "<fin xmlns='urn:xmpp:mam:2'\(stability)><set xmlns='http://jabber.org/protocol/rsm'><first>\(first)</first></set></fin>"
         } else {
-            "<fin xmlns='urn:xmpp:mam:2' complete='true'/>"
+            "<fin xmlns='urn:xmpp:mam:2' complete='true'\(stability)/>"
         }
         await server.reply(to: query, contents: fin)
         return query
@@ -550,6 +557,53 @@ extension ChatWindowHistoryTests {
 
         #expect(fixture.windowState.hasReachedEnd)
         #expect(fixture.windowState.lastLoadHistoryError == nil)
+        await fixture.environment.accountService.disconnect(accountID: fixture.accountID)
+    }
+
+    /// The room advertises occupant ids, and its archive waits for the join to confirm the user's own.
+    @Test func `paging a room whose archive is not ready yet ends no history, and pages once it is`() async throws {
+        let room = "room@conference.example.com"
+        let (fixture, server) = try await Self.connected(
+            jidString: room, type: .groupchat, featureSource: .archiving(roomFeatures: [XMPPNamespaces.occupantID])
+        )
+        await fixture.transcripts.addMessage(Self.message(fixture, at: 0))
+        await fixture.windowState.load()
+        _ = Self.scrolledUpList(fixture)
+
+        await fixture.windowState.loadOlderMessages()
+
+        #expect(!fixture.windowState.hasReachedEnd)
+        #expect(!fixture.windowState.isLoadingOlder)
+        #expect(fixture.windowState.lastLoadHistoryError == nil)
+        #expect(await !server.transport.sentBytes.contains { String(decoding: $0, as: UTF8.self).contains("urn:xmpp:mam:2") })
+
+        // The join stores the occupant id the room gave the user.
+        try await fixture.store.updateConversation(fixture.conversationID) { $0.roomOccupantID = "occupant-alice" }
+        let paging = Task { await fixture.windowState.loadOlderMessages() }
+        let query = try await server.next("urn:xmpp:mam:2")
+        try await server.transport.simulateReceive(
+            "<iq type='result' id='\(#require(extractIQID(from: query)))' from='\(room)'><fin xmlns='urn:xmpp:mam:2' complete='true'/></iq>"
+        )
+        await paging.value
+
+        #expect(fixture.windowState.hasReachedEnd)
+        await fixture.environment.accountService.disconnect(accountID: fixture.accountID)
+    }
+
+    @Test func `a page the archive marks unstable stores nothing, says why, and ends no history`() async throws {
+        let (fixture, server) = try await Self.connected()
+        await fixture.transcripts.addMessage(Self.message(fixture, at: 0))
+        await fixture.windowState.load()
+        _ = Self.scrolledUpList(fixture)
+
+        let paging = Task { await fixture.windowState.loadOlderMessages() }
+        _ = try await Self.answerArchiveQuery(server, with: [("settling", Self.stamp(-60))], isStable: false)
+        await paging.value
+
+        #expect(fixture.windowState.lastLoadHistoryError == ChatService.ChatServiceError.unstableArchive.localizedDescription)
+        #expect(!fixture.windowState.hasReachedEnd)
+        #expect(!fixture.windowState.isLoadingOlder)
+        #expect(await !fixture.transcripts.messages.contains { $0.body == "settling" })
         await fixture.environment.accountService.disconnect(accountID: fixture.accountID)
     }
 

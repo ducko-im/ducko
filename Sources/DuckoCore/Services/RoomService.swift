@@ -37,7 +37,7 @@ final class RoomService {
     private var roomsReplayingHistory: Set<RoomJoinKey> = []
     private let store: any PersistenceStore
     private weak var accountService: AccountService?
-    private let ensureConversation: (BareJID, String?, UUID) async throws -> Void
+    private let ensureConversation: (BareJID, String?, String?, UUID) async throws -> Void
     private let didUpdateConversation: (Conversation) -> Void
     private var pendingTasks: [UUID: Task<Void, Never>] = [:]
     private let channelSearchNow: @Sendable () -> Date
@@ -46,7 +46,7 @@ final class RoomService {
 
     init(
         store: any PersistenceStore,
-        ensureConversation: @escaping (BareJID, String?, UUID) async throws -> Void,
+        ensureConversation: @escaping (BareJID, String?, String?, UUID) async throws -> Void,
         didUpdateConversation: @escaping (Conversation) -> Void,
         channelSearchNow: @Sendable @escaping () -> Date = { Date() }
     ) {
@@ -90,7 +90,7 @@ final class RoomService {
         }
         // The nickname is stored once the room confirms it (`handleRoomJoined`): until then it may be refused,
         // rewritten, or another occupant's.
-        try await ensureConversation(jid, nil, accountID)
+        try await ensureConversation(jid, nil, nil, accountID)
         return outcome
     }
 
@@ -586,7 +586,7 @@ final class RoomService {
     /// resumed stream and applies every replayed change before it announces it. Its state is therefore the complete
     /// one, whether a replayed occupant event is handled before or after this replacement.
     private func restoreRooms(accountID: UUID) {
-        guard let occupancies = accountService?.roomModule(for: accountID)?.roomOccupancies else { return }
+        guard let occupancies = accountService?.connectedRoomModule(for: accountID)?.roomOccupancies else { return }
         roomParticipants = roomParticipants.filter { $0.key.accountID != accountID }
         roomFlags = roomFlags.filter { $0.key.accountID != accountID }
         for (room, occupancy) in occupancies {
@@ -608,7 +608,7 @@ final class RoomService {
         }
 
         let notifierID = roomJoinNotifiers[key]?.id
-        try? await ensureConversation(room, occupancy.nickname, accountID)
+        try? await ensureConversation(room, occupancy.nickname, occupancy.ownOccupantID, accountID)
         guard !Task.isCancelled else {
             if let notifierID { clearRoomJoinNotifier(jid: room, accountID: accountID, id: notifierID) }
             return

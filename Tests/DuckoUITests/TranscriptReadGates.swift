@@ -132,8 +132,8 @@ struct GatedTranscriptStore: TranscriptStore {
         try await mock.messageExists(serverID: serverID, conversationID: conversationID)
     }
 
-    func messageExists(stanzaID: String, fromJID: String, conversationID: UUID) async throws -> Bool {
-        try await mock.messageExists(stanzaID: stanzaID, fromJID: fromJID, conversationID: conversationID)
+    func messageExists(stanzaID: String, fromJID: String, as roomSender: RoomSenderIdentity?, conversationID: UUID) async throws -> Bool {
+        try await mock.messageExists(stanzaID: stanzaID, fromJID: fromJID, as: roomSender, conversationID: conversationID)
     }
 
     func transcriptDays(for conversationID: UUID) async throws -> [Date] {

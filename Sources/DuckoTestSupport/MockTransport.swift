@@ -289,6 +289,30 @@ public actor MockTransport: XMPPTransport {
         autoReplies.append(reply)
     }
 
+    /// Answers each disco#info request sent to `entity` with a result from `entity` that lists `features`.
+    public func answerDiscoInfo(of entity: String, features: [String] = []) {
+        let featureElements = features.map { "<feature var='\($0)'/>" }.joined()
+        replyToDiscoInfo(of: entity) { id in
+            "<iq type='result' id='\(id)' from='\(entity)'><query xmlns='\(XMPPNamespaces.discoInfo)'>\(featureElements)</query></iq>"
+        }
+    }
+
+    /// Answers each disco#info request sent to `entity` with a `service-unavailable` error from `entity`.
+    public func refuseDiscoInfo(of entity: String) {
+        replyToDiscoInfo(of: entity) { id in
+            "<iq type='error' id='\(id)' from='\(entity)'><error type='cancel'>"
+                + "<service-unavailable xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>"
+        }
+    }
+
+    private func replyToDiscoInfo(of entity: String, with reply: @escaping @Sendable (String) -> String) {
+        autoReply { stanza in
+            guard stanza.hasPrefix("<iq "), stanza.contains("type=\"get\""), stanza.contains("to=\"\(entity)\""),
+                  stanza.contains(XMPPNamespaces.discoInfo), let id = extractIQID(from: stanza) else { return nil }
+            return reply(id)
+        }
+    }
+
     /// Answers each stream-management `<r/>` with an `<a/>` carrying `sm`'s outgoing counter as it stands when the
     /// request is sent, which is what a server that processed every stanza would report.
     public func ackSyncRequests(from sm: StreamManagementModule) {

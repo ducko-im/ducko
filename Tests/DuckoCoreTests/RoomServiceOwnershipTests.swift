@@ -35,7 +35,7 @@ struct RoomServiceOwnershipTests {
         let release = AsyncSemaphore()
         let service = RoomService(
             store: MockPersistenceStore(),
-            ensureConversation: { _, _, _ in await entered.signal(); await release.wait() },
+            ensureConversation: { _, _, _, _ in await entered.signal(); await release.wait() },
             didUpdateConversation: { _ in }
         )
         let (_, originalStream) = service.registerRoomJoinNotifier(jid: room, accountID: accountID)
@@ -69,7 +69,7 @@ struct RoomServiceOwnershipTests {
         let release = AsyncSemaphore()
         let service = RoomService(
             store: MockPersistenceStore(),
-            ensureConversation: { _, _, _ in await entered.signal(); await release.wait() },
+            ensureConversation: { _, _, _, _ in await entered.signal(); await release.wait() },
             didUpdateConversation: { _ in }
         )
         let (notifierID, stream) = service.registerRoomJoinNotifier(jid: room, accountID: accountID)

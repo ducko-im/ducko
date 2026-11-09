@@ -47,6 +47,7 @@ private func makeConnectedHarness(modules: [any XMPPModule]) async throws -> Loc
     let factory = MockXMPPClientFactory(transport: transport, modules: modules)
     let accountService = makeAccountService(store: store, clientFactory: factory)
     let chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+    chatService.featureSource = FixedFeatureSource.archiving()
     chatService.setAccountService(accountService)
 
     let connectTask = Task { @MainActor in

@@ -45,7 +45,6 @@ final class ConnectedAccount {
         try await waitForRouter(timeout: timeout, deliver: extract)
     }
 
-    // periphery:ignore - reserved for multi-event protocol tests
     /// Collects every event up to and including the one that satisfies `predicate`.
     func collectEvents(
         until predicate: @Sendable @escaping (XMPPEvent) -> Bool,
@@ -114,5 +113,22 @@ final class ConnectedAccount {
                 router.cancelWaiter(accountID: accountID, id: waiterID, error: .streamClosed)
             }
         }
+    }
+}
+
+/// Predicates on the events that more than one suite waits for.
+extension XMPPEvent {
+    /// Whether this is a room message with `body`.
+    func isRoomMessage(body: String) -> Bool {
+        if case let .roomMessageReceived(message, _) = self { return message.body == body }
+        return false
+    }
+
+    /// Whether this is another occupant's departure under `nickname` from `room`.
+    func isDeparture(of nickname: String, from room: BareJID) -> Bool {
+        if case let .roomOccupantLeft(left, occupant, _, isSelf) = self {
+            return left == room && occupant.nickname == nickname && !isSelf
+        }
+        return false
     }
 }

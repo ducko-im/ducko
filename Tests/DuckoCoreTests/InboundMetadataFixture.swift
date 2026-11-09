@@ -15,13 +15,17 @@ func verifyPersistedInboundMetadata(origin: InboundMetadataOrigin, hasReply: Boo
         let transcripts = FileTranscriptStore(baseDirectory: directory)
         let environment = AppEnvironment(store: store, transcripts: transcripts, credentialStore: NullCredentialStore())
         let accountID = try await environment.accountService.createAccount(jidString: "alice@example.com")
+        environment.chatService.featureSource = FixedFeatureSource.archiving()
         let stanza = try metadataStanza(origin: origin, hasReply: hasReply)
+        let author = try RoomAuthorIdentity(
+            roomSupportsOccupantIDs: true, occupantID: "occupant-bob", realJID: #require(BareJID.parse("bob@example.com")), presenceSession: "session-1"
+        )
         let event: XMPPEvent = switch origin {
         case .live: .messageReceived(stanza)
         case .carbonReceived: .messageCarbonReceived(ForwardedMessage(message: stanza, timestamp: "2026-02-28T10:00:00Z"))
         case .carbonSent: .messageCarbonSent(ForwardedMessage(message: stanza, timestamp: "2026-02-28T10:00:00Z"))
-        case .room: .roomMessageReceived(stanza)
-        case .privateRoom: .mucPrivateMessageReceived(stanza)
+        case .room: .roomMessageReceived(stanza, author: author)
+        case .privateRoom: .mucPrivateMessageReceived(stanza, author: author)
         }
         await environment.chatService.handleEvent(event, accountID: accountID)
         let conversation = try #require(try await store.fetchConversations(for: accountID).first)
@@ -39,11 +43,16 @@ func verifyPersistedInboundMetadata(origin: InboundMetadataOrigin, hasReply: Boo
         #expect(message.attachments.first?.oobDescription == "image description")
         #expect(message.attachments.first?.origin == .remote)
         switch origin {
-        case .live, .carbonReceived, .carbonSent: #expect(message.serverID == "trusted-id")
-        case .room: #expect(message.serverID == "room-id")
+        case .live, .carbonReceived, .carbonSent:
+            #expect(message.serverID == "trusted-id")
+            #expect(message.roomSender == nil)
+        case .room:
+            #expect(message.serverID == "room-id")
+            #expect(message.roomSender == RoomSenderIdentity(occupantID: "occupant-bob", realJID: "bob@example.com", presenceSession: "session-1"))
         case .privateRoom:
             #expect(message.serverID == "trusted-id")
             #expect(conversation.occupantNickname == "Bob")
+            #expect(message.roomSender == RoomSenderIdentity(occupantID: "occupant-bob", realJID: "bob@example.com", presenceSession: "session-1"))
         }
         #expect(message.isOutgoing == (origin == .carbonSent))
         await environment.shutdown(within: .seconds(2))

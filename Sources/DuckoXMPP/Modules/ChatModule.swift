@@ -7,13 +7,16 @@ package let retractionFallbackBody = "This person attempted to retract a previou
 /// including XEP-0308 corrections and XEP-0461 replies.
 public final class ChatModule: XMPPModule, Sendable {
     private let state: OSAllocatedUnfairLock<ModuleContext?>
+    /// Tells who sent a room private chat's amendment.
+    private let mucModule: MUCModule?
 
     public var features: [String] {
         [XMPPNamespaces.messageRetract, XMPPNamespaces.messageCorrect, XMPPNamespaces.messageReply, XMPPNamespaces.oob]
     }
 
-    public init() {
+    public init(mucModule: MUCModule? = nil) {
         self.state = OSAllocatedUnfairLock(initialState: nil)
+        self.mucModule = mucModule
     }
 
     public func setUp(_ context: ModuleContext) {
@@ -40,10 +43,13 @@ public final class ChatModule: XMPPModule, Sendable {
             return
         }
 
-        // XEP-0424: Message retraction
-        if let retract = message.element.child(named: "retract", namespace: XMPPNamespaces.messageRetract),
-           let originalID = retract.attribute("id") {
-            context?.emitEvent(.messageRetracted(originalID: originalID, from: from, messageType: messageType))
+        let roomAuthor = mucModule?.roomAuthor(of: message, in: from.bareJID)
+
+        // XEP-0424: Message retraction. A retraction without an id is malformed, and is still never read as a correction.
+        if let retract = message.element.child(named: "retract", namespace: XMPPNamespaces.messageRetract) {
+            if let originalID = retract.attribute("id") {
+                context?.emitEvent(.messageRetracted(originalID: originalID, from: from, messageType: messageType, roomAuthor: roomAuthor))
+            }
             return
         }
 
@@ -52,7 +58,8 @@ public final class ChatModule: XMPPModule, Sendable {
            let originalID = replace.attribute("id"),
            let newBody = message.body {
             context?.emitEvent(.messageCorrected(
-                originalID: originalID, newBody: newBody, replyFallbackRange: message.replyFallbackRange(in: newBody), from: from, messageType: messageType
+                originalID: originalID, newBody: newBody, replyFallbackRange: message.replyFallbackRange(in: newBody), from: from, messageType: messageType,
+                roomAuthor: roomAuthor
             ))
             return
         }

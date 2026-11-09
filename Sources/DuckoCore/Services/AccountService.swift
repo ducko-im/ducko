@@ -44,6 +44,7 @@ public final class AccountService {
         var client: XMPPClient?
         var streamManagement: StreamManagementModule?
         var muc: MUCModule?
+        var disco: ServiceDiscoveryModule?
         var resumeState: StreamResumeContext?
         var password: String?
         var eventTask: Task<Void, Never>?
@@ -192,6 +193,7 @@ public final class AccountService {
             connectionResources[accountID]?.client = nil
             connectionResources[accountID]?.streamManagement = nil
             connectionResources[accountID]?.muc = nil
+            connectionResources[accountID]?.disco = nil
             connectionResources[accountID]?.eventTask = nil
             connectionResources[accountID]?.reconnectTask = nil
             connectionResources[accountID]?.retryDue = nil
@@ -495,10 +497,23 @@ public final class AccountService {
         return connectionResources[accountID]?.client
     }
 
-    /// The room module of the client `connectedClient(for:)` returns, readable without a suspension.
+    /// The room module of the client `client(for:)` returns, connected or not yet, readable without a suspension. A
+    /// resumed stream's replayed stanzas are handled before the stream counts as connected. The module already holds
+    /// what the resume carried, so it tells who sent them.
     func roomModule(for accountID: UUID) -> MUCModule? {
+        connectionResources[accountID]?.muc
+    }
+
+    /// The room module of the client `connectedClient(for:)` returns, readable without a suspension.
+    func connectedRoomModule(for accountID: UUID) -> MUCModule? {
         guard case .connected = connectionStates[accountID] else { return nil }
         return connectionResources[accountID]?.muc
+    }
+
+    /// The service discovery module of the client `client(for:)` returns, connected or not yet, as `roomModule(for:)`
+    /// explains.
+    func discoveryModule(for accountID: UUID) -> ServiceDiscoveryModule? {
+        connectionResources[accountID]?.disco
     }
 
     /// True when at least one account is `.connected`. Drives `WelcomeView`'s contacts-window transition and `ContactListView`'s `accessibilityValue` sentinel.
@@ -576,17 +591,10 @@ public final class AccountService {
         let resuming = connectionResources[accountID]?.resumeState
         connectionResources[accountID]?.resumeState = nil
         let (client, sm) = await buildClient(account: account, resuming: resuming)
-        let muc = await client.module(ofType: MUCModule.self)
-        guard !Task.isCancelled, connectionResources[accountID]?.attemptID == attemptID else {
+        guard await attach(client, streamManagement: sm, accountID: accountID, attemptID: attemptID) else {
             await client.disconnect()
             throw CancellationError()
         }
-        connectionResources[accountID]?.client = client
-        connectionResources[accountID]?.streamManagement = sm
-        connectionResources[accountID]?.muc = muc
-        onRosterSessionStarted?(accountID, attemptID, client)
-
-        startEventConsumption(for: accountID, client: client)
 
         do {
             try await signIn(with: client, accountID: accountID) {
@@ -597,7 +605,8 @@ public final class AccountService {
             guard connectionResources[accountID]?.attemptID == attemptID else { throw error }
             // Restore the resumable state so the next retry can attempt resumption. After a rejected resume stream
             // management has none left, and the rooms are dropped with it.
-            connectionResources[accountID]?.resumeState = Self.resumeContext(streamManagement: sm, muc: muc)
+            let resumeState = Self.resumeContext(of: connectionResources[accountID])
+            connectionResources[accountID]?.resumeState = resumeState
             connectionStates[accountID] = .error(error.localizedDescription)
             // A running retry is the account's reconnect task, and its own failure reschedules it.
             if retriesFailedConnects, Self.isRetryable(error), connectionResources[accountID]?.reconnectTask == nil {
@@ -623,10 +632,25 @@ public final class AccountService {
         }
     }
 
-    /// What the next client takes over from these modules, or nil when their stream cannot be resumed.
-    private static func resumeContext(streamManagement: StreamManagementModule?, muc: MUCModule?) -> StreamResumeContext? {
-        guard let state = streamManagement?.resumeState else { return nil }
-        return StreamResumeContext(streamManagement: state, rooms: muc?.resumeState)
+    /// Makes `client` the account's session unless the task was cancelled or `attemptID` superseded meanwhile, and
+    /// returns whether it did.
+    private func attach(_ client: XMPPClient, streamManagement sm: StreamManagementModule, accountID: UUID, attemptID: UUID) async -> Bool {
+        let muc = await client.module(ofType: MUCModule.self)
+        let disco = await client.module(ofType: ServiceDiscoveryModule.self)
+        guard !Task.isCancelled, connectionResources[accountID]?.attemptID == attemptID else { return false }
+        connectionResources[accountID]?.client = client
+        connectionResources[accountID]?.streamManagement = sm
+        connectionResources[accountID]?.muc = muc
+        connectionResources[accountID]?.disco = disco
+        onRosterSessionStarted?(accountID, attemptID, client)
+        startEventConsumption(for: accountID, client: client)
+        return true
+    }
+
+    /// What the next client takes over from these session modules, or nil when their stream cannot be resumed.
+    private static func resumeContext(of resources: AccountConnectionResources?) -> StreamResumeContext? {
+        guard let state = resources?.streamManagement?.resumeState else { return nil }
+        return StreamResumeContext(streamManagement: state, rooms: resources?.muc?.resumeState, accountInfo: resources?.disco?.knownAccountInfo)
     }
 
     private func buildClient(
@@ -733,13 +757,13 @@ public final class AccountService {
             connectionResources[accountID]?.redirectCount = 0
             connectionStates[accountID] = .disconnected
         case let .streamError(condition, text):
-            connectionResources[accountID]?.resumeState = Self.resumeContext(streamManagement: detached?.streamManagement, muc: detached?.muc)
+            connectionResources[accountID]?.resumeState = Self.resumeContext(of: detached)
             connectionStates[accountID] = .error(Self.streamErrorMessage(condition: condition, text: text))
             if Self.isRetryable(condition) {
                 scheduleReconnect(accountID: accountID)
             }
         case let .connectionLost(detail):
-            connectionResources[accountID]?.resumeState = Self.resumeContext(streamManagement: detached?.streamManagement, muc: detached?.muc)
+            connectionResources[accountID]?.resumeState = Self.resumeContext(of: detached)
             connectionStates[accountID] = .error(Self.connectionLostMessage(detail))
             scheduleReconnect(accountID: accountID)
         case let .redirect(host, port):
@@ -820,16 +844,10 @@ public final class AccountService {
                 await onSessionStarting?(accountID)
                 // Force TLS for redirects to prevent plaintext credential exposure via see-other-host injection.
                 let (client, sm) = await buildClient(account: account, resuming: nil, requireTLSOverride: true)
-                let muc = await client.module(ofType: MUCModule.self)
-                guard !Task.isCancelled, connectionResources[accountID]?.attemptID == attemptID else {
+                guard await attach(client, streamManagement: sm, accountID: accountID, attemptID: attemptID) else {
                     await client.disconnect()
                     return
                 }
-                connectionResources[accountID]?.client = client
-                connectionResources[accountID]?.streamManagement = sm
-                connectionResources[accountID]?.muc = muc
-                onRosterSessionStarted?(accountID, attemptID, client)
-                startEventConsumption(for: accountID, client: client)
                 try await signIn(with: client, accountID: accountID) {
                     try await client.connect(host: host, port: port ?? 5222)
                 }

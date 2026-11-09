@@ -19,6 +19,7 @@ extension ConversationRecord {
             unreadCount: unreadCount,
             roomSubject: roomSubject,
             roomNickname: roomNickname,
+            roomOccupantID: roomOccupantID,
             rejoinsOnConnect: rejoinsOnConnect,
             encryptionEnabled: encryptionEnabled,
             encryptionOptedOut: encryptionOptedOut,
@@ -40,6 +41,7 @@ extension ConversationRecord {
         unreadCount = conversation.unreadCount
         roomSubject = conversation.roomSubject
         roomNickname = conversation.roomNickname
+        roomOccupantID = conversation.roomOccupantID
         rejoinsOnConnect = conversation.rejoinsOnConnect
         encryptionEnabled = conversation.encryptionEnabled
         encryptionOptedOut = conversation.encryptionOptedOut

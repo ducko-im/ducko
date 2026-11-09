@@ -21,11 +21,12 @@ func makeEncryptedStanza(from: JID, id: String?, serverID: String? = nil, type: 
 }
 
 /// The event `OMEMOModule` reports for `stanza`: decrypted to a message with `body` and `elements`, else undecryptable
-/// for `reason`.
+/// for `reason`, sent by `roomAuthor` in a room or a room's private chat.
 func encryptedMessageEvent(
-    _ stanza: XMPPMessage, body: String?, elements: [DuckoXMPP.XMLElement] = [], reason: OMEMOUndecryptableReason = .decryptionFailed
+    _ stanza: XMPPMessage, body: String?, elements: [DuckoXMPP.XMLElement] = [], reason: OMEMOUndecryptableReason = .decryptionFailed,
+    roomAuthor: RoomAuthorIdentity? = nil
 ) -> XMPPEvent {
-    .omemoEncryptedMessageReceived(message: stanza, outcome: encryptedOutcome(of: stanza, body: body, elements: elements, reason: reason))
+    .omemoEncryptedMessageReceived(message: stanza, outcome: encryptedOutcome(of: stanza, body: body, elements: elements, reason: reason), roomAuthor: roomAuthor)
 }
 
 func encryptedOutcome(
@@ -73,6 +74,7 @@ struct ChatServiceEncryptedIngestTests {
         self.accountService = makeAccountService(store: store)
         try await accountService.loadAccounts()
         self.chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+        chatService.featureSource = FixedFeatureSource.archiving()
         chatService.setAccountService(accountService)
         self.service = OMEMOService(omemoStore: MockOMEMOStore())
         service.setAccountService(accountService)
@@ -86,8 +88,10 @@ struct ChatServiceEncryptedIngestTests {
         self.conversation = conversation
     }
 
-    private func receive(_ stanza: XMPPMessage, body: String?, elements: [DuckoXMPP.XMLElement] = []) async {
-        await service.handleEvent(encryptedMessageEvent(stanza, body: body, elements: elements), accountID: accountID)
+    private func receive(
+        _ stanza: XMPPMessage, body: String?, elements: [DuckoXMPP.XMLElement] = [], roomAuthor: RoomAuthorIdentity? = nil
+    ) async {
+        await service.handleEvent(encryptedMessageEvent(stanza, body: body, elements: elements, roomAuthor: roomAuthor), accountID: accountID)
     }
 
     private func storedConversation() async throws -> Conversation {
@@ -184,7 +188,11 @@ struct ChatServiceEncryptedIngestTests {
         ))
 
         for nickname in ["me", "other"] {
-            try await receive(makeEncryptedStanza(from: .full(#require(FullJID.parse("\(room)/\(nickname)"))), id: nickname, type: .groupchat), body: "hi")
+            // A room without occupant ids tells the user's own messages by the nickname it stored for them.
+            try await receive(
+                makeEncryptedStanza(from: .full(#require(FullJID.parse("\(room)/\(nickname)"))), id: nickname, type: .groupchat), body: "hi",
+                roomAuthor: RoomAuthorIdentity(roomSupportsOccupantIDs: false)
+            )
         }
 
         #expect(await transcripts.messages.map(\.isOutgoing) == [true, false])

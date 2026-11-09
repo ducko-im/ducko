@@ -37,7 +37,8 @@ extension OMEMOModule {
         if case let .decrypted(decrypted) = outcome {
             context.dispatchDecryptedMessage(decrypted.message)
         }
-        context.emitEvent(.omemoEncryptedMessageReceived(message: message, outcome: outcome))
+        let roomAuthor = message.from.flatMap { mucModule?.roomAuthor(of: message, in: $0.bareJID) }
+        context.emitEvent(.omemoEncryptedMessageReceived(message: message, outcome: outcome, roomAuthor: roomAuthor))
     }
 
     /// Reads the OMEMO message a carbon forwards (XEP-0280), sent by another of the user's devices or received by one.
@@ -137,13 +138,18 @@ extension OMEMOModule {
     }
 
     /// The message as its sender wrote it: the stanza's attributes, with the envelope's content as its children. A
-    /// stanza-id is the server's to assign, so one inside the envelope is dropped.
+    /// stanza-id is the server's to assign, and an occupant id the room's, so one inside the envelope is dropped.
     private func rebuiltMessage(_ message: XMPPMessage, content: [XMLElement]) -> XMPPMessage {
         var element = XMLElement(name: message.element.name, namespace: message.element.namespace, attributes: message.element.attributes)
-        for child in content where !(child.name == "stanza-id" && child.namespace == XMPPNamespaces.stanzaID) {
+        for child in content where !Self.isAssignedByServer(child) {
             element.addChild(child)
         }
         return XMPPMessage(element: element)
+    }
+
+    private static func isAssignedByServer(_ child: XMLElement) -> Bool {
+        (child.name == "stanza-id" && child.namespace == XMPPNamespaces.stanzaID)
+            || (child.name == "occupant-id" && child.namespace == XMPPNamespaces.occupantID)
     }
 
     // MARK: - Decryption

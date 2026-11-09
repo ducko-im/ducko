@@ -11,7 +11,9 @@ private let roomJID = BareJID(localPart: "room", domainPart: "conference.example
 
 @MainActor
 private func makeChatService(store: MockPersistenceStore, transcripts: MockTranscriptStore) -> ChatService {
-    ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+    let chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
+    chatService.featureSource = FixedFeatureSource.archiving()
+    return chatService
 }
 
 // MARK: - Tests

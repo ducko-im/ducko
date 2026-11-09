@@ -6,106 +6,6 @@ import Testing
 
 private let roomJID = BareJID(localPart: "room", domainPart: "conference.example.com")!
 
-/// A groupchat message as the room's archive returns it, known to the archive as `arch-<id>`. Without `nick` it comes
-/// from the room itself.
-private struct RoomEntry {
-    var nick: String? = "bob"
-    let id: String
-    var serverID: String?
-    let stamp: String
-    var body: String?
-    var payload = ""
-
-    func xml(queryID: String) -> String {
-        let from = nick.map { "\(roomJID)/\($0)" } ?? roomJID.description
-        let stanzaID = serverID.map { "<stanza-id xmlns='urn:xmpp:sid:0' id='\($0)' by='\(roomJID)'/>" } ?? ""
-        return "<message from='\(roomJID)'>"
-            + "<result xmlns='urn:xmpp:mam:2' queryid='\(queryID)' id='arch-\(id)'>"
-            + "<forwarded xmlns='urn:xmpp:forward:0'>"
-            + "<delay xmlns='urn:xmpp:delay' stamp='2026-02-28T\(stamp)Z'/>"
-            + "<message from='\(from)' type='groupchat' id='\(id)'>"
-            + (body.map { "<body>\($0)</body>" } ?? "")
-            + payload + stanzaID
-            + "</message></forwarded></result></message>"
-    }
-
-    static func original(_ id: String, serverID: String, body: String, at stamp: String) -> RoomEntry {
-        RoomEntry(id: id, serverID: serverID, stamp: stamp, body: body)
-    }
-
-    static func correction(_ id: String, of originalID: String, body: String, at stamp: String) -> RoomEntry {
-        RoomEntry(
-            id: id, stamp: stamp, body: body,
-            payload: "<replace xmlns='urn:xmpp:message-correct:0' id='\(originalID)'/>"
-        )
-    }
-}
-
-/// A chat service connected to an archive, with the room `roomJID` stored, in which the user is `alice`.
-@MainActor
-private struct ArchiveHarness {
-    let transcripts: MockTranscriptStore
-    let transport: MockTransport
-    let accountService: AccountService
-    let chatService: ChatService
-    let room: Conversation
-    let accountID: UUID
-
-    static func connect() async throws -> ArchiveHarness {
-        let store = MockPersistenceStore()
-        let transcripts = MockTranscriptStore()
-        let transport = MockTransport()
-        let accountService = makeAccountService(store: store, clientFactory: MockXMPPClientFactory(transport: transport, modules: [MAMModule()]))
-        let chatService = ChatService(store: store, transcripts: transcripts, filterPipeline: MessageFilterPipeline())
-        chatService.setAccountService(accountService)
-        let connectTask = Task { @MainActor in
-            try await accountService.createAndConnect(jidString: testJIDString, password: "secret", host: "example.com", port: 5222)
-        }
-        await simulateNoTLSConnect(transport)
-        let accountID = try await connectTask.value
-        let room = Conversation(
-            id: UUID(), accountID: accountID, jid: roomJID, type: .groupchat,
-            isPinned: false, isMuted: false, unreadCount: 0, roomNickname: "alice", createdAt: Date()
-        )
-        try await store.upsertConversation(room)
-        return ArchiveHarness(
-            transcripts: transcripts, transport: transport, accountService: accountService,
-            chatService: chatService, room: room, accountID: accountID
-        )
-    }
-
-    func fetchHistory() -> Task<(messages: [ChatMessage], hasMore: Bool), any Error> {
-        Task { @MainActor in
-            try await chatService.fetchServerHistory(jid: roomJID, accountID: accountID, before: nil, limit: 50)
-        }
-    }
-
-    /// Answers the next archive query with `entries` as one page, whose `fin` names its first entry.
-    func answerNextQuery(with entries: [RoomEntry], complete: Bool, answered: inout Set<String>) async throws {
-        let query = try await nextArchiveQuery(on: transport, answered: &answered)
-        for entry in entries {
-            await transport.simulateReceive(entry.xml(queryID: query.queryID))
-        }
-        let first = entries.first.map { "<first>arch-\($0.id)</first>" } ?? ""
-        await transport.simulateReceive(
-            "<iq type='result' id='\(query.iqID)' from='\(roomJID)'>"
-                + "<fin xmlns='urn:xmpp:mam:2'\(complete ? " complete='true'" : "")>"
-                + "<set xmlns='http://jabber.org/protocol/rsm'>\(first)</set></fin></iq>"
-        )
-    }
-
-    func storedMessages() async throws -> [ChatMessage] {
-        try await transcripts.fetchMessages(for: room.id, before: nil, limit: 50)
-    }
-
-    func addMessage(_ id: String, serverID: String, body: String) async {
-        await transcripts.addMessage(ChatMessage(
-            id: UUID(), conversationID: room.id, stanzaID: id, serverID: serverID, fromJID: "bob", body: body,
-            timestamp: Date(timeIntervalSince1970: 1_772_272_800), isOutgoing: false, isDelivered: false, isEdited: false, type: "groupchat"
-        ))
-    }
-}
-
 struct ChatServiceArchiveAmendmentTests {
     @Test(arguments: [false, true])
     @MainActor
@@ -157,8 +57,10 @@ struct ChatServiceArchiveAmendmentTests {
         await harness.addMessage("m1", serverID: "R1", body: "helo")
         if liveCorrectionFirst {
             let bob = try JID.full(#require(FullJID(bareJID: roomJID, resourcePart: "bob")))
+            let author = RoomAuthorIdentity(roomSupportsOccupantIDs: true, occupantID: "occupant-bob")
             await harness.chatService.handleEvent(
-                .messageCorrected(originalID: "m1", newBody: "hello at last", replyFallbackRange: nil, from: bob, messageType: .groupchat), accountID: harness.accountID
+                .messageCorrected(originalID: "m1", newBody: "hello at last", replyFallbackRange: nil, from: bob, messageType: .groupchat, roomAuthor: author),
+                accountID: harness.accountID
             )
         }
         let fetch = harness.fetchHistory()
@@ -176,23 +78,27 @@ struct ChatServiceArchiveAmendmentTests {
         await harness.accountService.disconnect(accountID: harness.accountID)
     }
 
-    @Test(arguments: [false, true])
+    /// A retraction names its message by the archive's id for it, which an entry the archive stamped no stanza-id on
+    /// has too.
+    @Test(arguments: [false, true], [false, true])
     @MainActor
-    func `An archived retraction removes its message and is never shown`(byModerator: Bool) async throws {
+    func `An archived retraction removes its message and is never shown`(byModerator: Bool, originalCarriesStanzaID: Bool) async throws {
+        let original = RoomEntry(id: "m1", serverID: originalCarriesStanzaID ? "R1" : nil, stamp: "10:00:00", body: "oops")
         let retraction = byModerator
             ? RoomEntry(
                 nick: nil, id: "m2", stamp: "10:01:00", body: "A moderator removed a message",
-                payload: "<retract xmlns='urn:xmpp:message-retract:1' id='R1'>"
+                payload: "<retract xmlns='urn:xmpp:message-retract:1' id='\(original.archiveID)'>"
                     + "<moderated xmlns='urn:xmpp:message-moderate:1' by='\(roomJID)/mod'/></retract>"
             )
-            : RoomEntry(id: "m2", stamp: "10:01:00", body: "bob retracted a message", payload: "<retract xmlns='urn:xmpp:message-retract:1' id='R1'/>")
+            : RoomEntry(
+                id: "m2", stamp: "10:01:00", body: "bob retracted a message",
+                payload: "<retract xmlns='urn:xmpp:message-retract:1' id='\(original.archiveID)'/>"
+            )
         let harness = try await ArchiveHarness.connect()
         let fetch = harness.fetchHistory()
         var answered: Set<String> = []
 
-        try await harness.answerNextQuery(
-            with: [.original("m1", serverID: "R1", body: "oops", at: "10:00:00"), retraction], complete: true, answered: &answered
-        )
+        try await harness.answerNextQuery(with: [original, retraction], complete: true, answered: &answered)
 
         _ = try await fetch.value
         let stored = try await harness.storedMessages()
@@ -222,6 +128,133 @@ struct ChatServiceArchiveAmendmentTests {
         let stored = try await harness.storedMessages()
         #expect(stored.map(\.body) == ["keep"])
         #expect(stored.first?.isRetracted == false)
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
+    /// The room's archive shows the sender's real JID (XEP-0313), and an occupant id counts only from a room that
+    /// advertises them.
+    @Test(arguments: [false, true])
+    @MainActor
+    func `An archived room message keeps who sent it`(roomAdvertisesOccupantIDs: Bool) async throws {
+        let harness = try await ArchiveHarness.connect()
+        harness.chatService.featureSource = FixedFeatureSource.archiving(roomFeatures: roomAdvertisesOccupantIDs ? [XMPPNamespaces.occupantID] : [])
+        let fetch = harness.fetchHistory()
+        var answered: Set<String> = []
+        let original = RoomEntry(
+            id: "m1", serverID: "R1", stamp: "10:00:00", body: "hello",
+            payload: "<x xmlns='http://jabber.org/protocol/muc#user'><item jid='bob@example.com/phone'/></x>"
+        )
+
+        try await harness.answerNextQuery(with: [original], complete: true, answered: &answered)
+
+        _ = try await fetch.value
+        let stored = try await harness.storedMessages()
+        #expect(stored.map(\.roomSender) == [RoomSenderIdentity(occupantID: roomAdvertisesOccupantIDs ? "occupant-bob" : nil, realJID: "bob@example.com")])
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
+    /// The room advertises occupant ids, so another occupant can post under the user's nickname while the user is away,
+    /// and only the user's own occupant id makes an entry theirs.
+    @Test(arguments: [false, true])
+    @MainActor
+    func `An archived room message under the user's nickname is theirs only with their occupant id`(hasOwnOccupantID: Bool) async throws {
+        let harness = try await ArchiveHarness.connect()
+        let fetch = harness.fetchHistory()
+        var answered: Set<String> = []
+        let entry = RoomEntry(
+            nick: "alice", occupantID: hasOwnOccupantID ? "occupant-alice" : "occupant-eve", id: "m1", serverID: "R1", stamp: "10:00:00", body: "hello"
+        )
+
+        try await harness.answerNextQuery(with: [entry], complete: true, answered: &answered)
+
+        _ = try await fetch.value
+        #expect(try await harness.storedMessages().map(\.isOutgoing) == [hasOwnOccupantID])
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
+    /// Without occupant ids, the real JID the room's archive shows tells the user's entries apart, and without one the
+    /// user's nickname does.
+    @Test(arguments: zip([nil, "alice@example.com/phone", "eve@example.com/phone"], [true, true, false]))
+    @MainActor
+    func `In a room without occupant ids, an archived message is the user's by real JID, else by nickname`(realJID: String?, isOwn: Bool) async throws {
+        let harness = try await ArchiveHarness.connect()
+        harness.chatService.featureSource = FixedFeatureSource.archiving()
+        let fetch = harness.fetchHistory()
+        var answered: Set<String> = []
+        var entry = RoomEntry(nick: "alice", id: "m1", serverID: "R1", stamp: "10:00:00", body: "hello")
+        entry.payload = realJID.map { "<x xmlns='http://jabber.org/protocol/muc#user'><item jid='\($0)'/></x>" } ?? ""
+
+        try await harness.answerNextQuery(with: [entry], complete: true, answered: &answered)
+
+        _ = try await fetch.value
+        #expect(try await harness.storedMessages().map(\.isOutgoing) == [isOwn])
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
+    /// The room advertises occupant ids, so the archive's occupant id alone tells the author apart.
+    @Test(arguments: [false, true], [false, true])
+    @MainActor
+    func `An archived amendment applies only with the original's occupant id`(isSameOccupant: Bool, isRetraction: Bool) async throws {
+        let harness = try await ArchiveHarness.connect()
+        let fetch = harness.fetchHistory()
+        var answered: Set<String> = []
+        var amendment = isRetraction
+            ? RoomEntry(id: "m2", stamp: "10:01:00", body: "bob retracted a message", payload: "<retract xmlns='urn:xmpp:message-retract:1' id='R1'/>")
+            : RoomEntry.correction("m2", of: "m1", body: "hello", at: "10:01:00")
+        amendment.occupantID = isSameOccupant ? "occupant-bob" : "occupant-eve"
+
+        try await harness.answerNextQuery(
+            with: [.original("m1", serverID: "R1", body: "helo", at: "10:00:00"), amendment], complete: true, answered: &answered
+        )
+
+        _ = try await fetch.value
+        let stored = try #require(try await harness.storedMessages().first)
+        #expect((isRetraction ? stored.isRetracted : stored.body == "hello") == isSameOccupant)
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
+    /// Without occupant ids, and with no presence to follow in an archive, only a real JID ties a correction to its
+    /// message.
+    @Test(arguments: [false, true])
+    @MainActor
+    func `In a room without occupant ids, an archived correction applies only with the same real JID`(showsRealJIDs: Bool) async throws {
+        let harness = try await ArchiveHarness.connect()
+        harness.chatService.featureSource = FixedFeatureSource.archiving()
+        let fetch = harness.fetchHistory()
+        var answered: Set<String> = []
+        let realJID = showsRealJIDs ? "<x xmlns='http://jabber.org/protocol/muc#user'><item jid='bob@example.com/phone'/></x>" : ""
+        var original = RoomEntry.original("m1", serverID: "R1", body: "helo", at: "10:00:00")
+        original.payload = realJID
+        var correction = RoomEntry.correction("m2", of: "m1", body: "hello", at: "10:01:00")
+        correction.payload += realJID
+
+        try await harness.answerNextQuery(with: [original, correction], complete: true, answered: &answered)
+
+        _ = try await fetch.value
+        #expect(try await harness.storedMessages().map(\.body) == [showsRealJIDs ? "hello" : "helo"])
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
+    /// Without occupant ids, a real JID ties an archived retraction to its message only where the room shows every
+    /// occupant's real JID.
+    @Test(arguments: [false, true])
+    @MainActor
+    func `In a room without occupant ids, an archived retraction applies by real JID only in a non-anonymous room`(isNonAnonymous: Bool) async throws {
+        let harness = try await ArchiveHarness.connect()
+        harness.chatService.featureSource = FixedFeatureSource.archiving(roomFeatures: isNonAnonymous ? [XMPPNamespaces.mucNonAnonymous] : [])
+        let fetch = harness.fetchHistory()
+        var answered: Set<String> = []
+        let realJID = "<x xmlns='http://jabber.org/protocol/muc#user'><item jid='bob@example.com/phone'/></x>"
+        var original = RoomEntry.original("m1", serverID: "R1", body: "helo", at: "10:00:00")
+        original.payload = realJID
+        let retraction = RoomEntry(
+            id: "m2", stamp: "10:01:00", body: "bob retracted a message", payload: "<retract xmlns='urn:xmpp:message-retract:1' id='R1'/>" + realJID
+        )
+
+        try await harness.answerNextQuery(with: [original, retraction], complete: true, answered: &answered)
+
+        _ = try await fetch.value
+        #expect(try await harness.storedMessages().map(\.isRetracted) == [isNonAnonymous])
         await harness.accountService.disconnect(accountID: harness.accountID)
     }
 }

@@ -4,10 +4,12 @@ import DuckoXMPP
 public struct StreamResumeContext: Sendable {
     public let streamManagement: SMResumeState
     public let rooms: MUCResumeState?
+    public let accountInfo: ServiceDiscoveryModule.InfoResult?
 
-    public init(streamManagement: SMResumeState, rooms: MUCResumeState?) {
+    public init(streamManagement: SMResumeState, rooms: MUCResumeState?, accountInfo: ServiceDiscoveryModule.InfoResult?) {
         self.streamManagement = streamManagement
         self.rooms = rooms
+        self.accountInfo = accountInfo
     }
 }
 

@@ -31,6 +31,7 @@ enum PresenceDecorationTests {
     /// Connects a client bound to `user@example.com/ducko` with `modules` registered.
     private static func connectedClient(registering modules: [any XMPPModule]) async throws -> (MockTransport, XMPPClient) {
         let mock = MockTransport()
+        await mock.answerDiscoInfo(of: "room@conference.example.com")
         let client = XMPPClient(
             domain: "example.com",
             credentials: .init(username: "user", password: "pass"),

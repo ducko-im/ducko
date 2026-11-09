@@ -290,7 +290,7 @@ public final class BookmarksService {
     /// The rooms the room module already tracks, which a join must leave alone. A resumed stream carries its rooms
     /// over, and a fresh session starts with none.
     private func trackedRooms(accountID: UUID) -> Set<BareJID> {
-        Set((accountService?.roomModule(for: accountID)?.roomOccupancies ?? [:]).keys)
+        Set((accountService?.connectedRoomModule(for: accountID)?.roomOccupancies ?? [:]).keys)
     }
 
     /// The extensions of the bookmark the account already has for `jid`. Without a fetched list, the server's copy of

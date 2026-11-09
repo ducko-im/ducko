@@ -740,7 +740,7 @@ enum FileTranscriptStoreTests {
 
                 // Fresh inbound from bob with the same stanzaID must NOT be deduped.
                 let exists = try await store.messageExists(
-                    stanzaID: "collide", fromJID: "bob@example.com", conversationID: testConversationID
+                    stanzaID: "collide", fromJID: "bob@example.com", as: nil, conversationID: testConversationID
                 )
                 #expect(exists == false, "outgoing row leaked into inbound dedup")
 
@@ -750,9 +750,28 @@ enum FileTranscriptStoreTests {
                 )
                 try await store.appendMessage(inbound)
                 let existsAfter = try await store.messageExists(
-                    stanzaID: "collide", fromJID: "bob@example.com", conversationID: testConversationID
+                    stanzaID: "collide", fromJID: "bob@example.com", as: nil, conversationID: testConversationID
                 )
                 #expect(existsAfter == true)
+            }
+        }
+
+        /// Someone who takes a room occupant's nickname can reuse their message id, and only the occupant id tells the
+        /// two apart.
+        @Test(arguments: ["occupant-bob", "occupant-eve"])
+        func `A room message under a reused id exists only from the same occupant`(occupantID: String) async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                var stored = makeMessage(stanzaID: "ducko-6", fromJID: "room@conference.example.com/bob")
+                stored.roomSender = RoomSenderIdentity(occupantID: "occupant-bob")
+                try await store.appendMessage(stored)
+
+                let exists = try await store.messageExists(
+                    stanzaID: "ducko-6", fromJID: "room@conference.example.com/bob",
+                    as: RoomSenderIdentity(occupantID: occupantID), conversationID: testConversationID
+                )
+
+                #expect(exists == (occupantID == "occupant-bob"))
             }
         }
     }
@@ -1052,6 +1071,21 @@ enum TranscriptRecordTests {
 
             #expect(restored.isUndecryptable == expected)
             #expect(restored.body == (expected ? "" : body))
+        }
+
+        @Test
+        func `A record written before room senders were kept reads with none`() throws {
+            let json = """
+            {"type":"msg","id":"\(UUID().uuidString)","fromJID":"bob","body":"hello","timestamp":"2026-01-01T00:00:00Z",\
+            "isOutgoing":false,"isEncrypted":false,"messageType":"groupchat","attachments":[]}
+            """
+
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let record = try decoder.decode(TranscriptRecord.self, from: Data(json.utf8))
+            let restored = try #require(record.toChatMessage(conversationID: testConversationID))
+
+            #expect(restored.roomSender == nil)
         }
 
         @Test

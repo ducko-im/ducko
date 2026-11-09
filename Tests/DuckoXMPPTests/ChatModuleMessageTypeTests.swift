@@ -43,7 +43,7 @@ enum ChatModuleMessageTypeTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .messageCorrected(originalID, newBody, _, from, messageType) = events.last else {
+            guard case let .messageCorrected(originalID, newBody, _, from, messageType, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected messageCorrected")
             }
             #expect(originalID == "msg-1")
@@ -75,7 +75,7 @@ enum ChatModuleMessageTypeTests {
             """)
 
             let events = try await eventsTask.value
-            guard case let .messageRetracted(originalID, from, messageType) = events.last else {
+            guard case let .messageRetracted(originalID, from, messageType, _) = events.last else {
                 throw XMPPClientError.unexpectedStreamState("Expected messageRetracted")
             }
             #expect(originalID == "msg-1")

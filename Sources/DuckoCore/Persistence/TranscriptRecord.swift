@@ -13,6 +13,7 @@ enum TranscriptRecord: Codable {
         var stanzaID: String?
         var serverID: String?
         var fromJID: String
+        var roomSender: RoomSenderIdentity?
         var body: String
         var htmlBody: String?
         var timestamp: Date
@@ -100,6 +101,7 @@ enum TranscriptRecord: Codable {
             stanzaID: message.stanzaID,
             serverID: message.serverID,
             fromJID: message.fromJID,
+            roomSender: message.roomSender,
             body: message.body,
             htmlBody: message.htmlBody,
             timestamp: message.timestamp,
@@ -150,6 +152,7 @@ enum TranscriptRecord: Codable {
             stanzaID: entry.stanzaID,
             serverID: entry.serverID,
             fromJID: entry.fromJID,
+            roomSender: entry.roomSender,
             body: isUndecryptable ? "" : entry.body,
             htmlBody: entry.htmlBody,
             timestamp: entry.timestamp,

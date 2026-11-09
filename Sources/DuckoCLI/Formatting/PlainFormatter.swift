@@ -105,9 +105,9 @@ struct PlainFormatter: CLIFormatter {
         case let .presenceSubscriptionRevoked(from: jid): "Subscription revoked by \(jid)"
         case let .deliveryReceiptReceived(messageID, from): "delivery receipt: \(messageID) from \(from.bareJID)"
         case let .chatMarkerReceived(messageID, .displayed, from): "read marker: \(messageID) from \(from.bareJID)"
-        case let .messageCorrected(_, newBody, _, from, _): "message corrected by \(from.bareJID): \(newBody)"
+        case let .messageCorrected(_, newBody, _, from, _, _): "message corrected by \(from.bareJID): \(newBody)"
         case let .messageError(_, from, error): "message error from \(from.bareJID): \(error.displayText)"
-        case let .messageRetracted(originalID, from, _): "[retracted] message retracted by \(from.bareJID) (id: \(originalID))"
+        case let .messageRetracted(originalID, from, _, _): "[retracted] message retracted by \(from.bareJID) (id: \(originalID))"
         case let .messageModerated(originalID, moderator, room, reason): formatModeratedMessage(originalID: originalID, moderator: moderator, room: room, reason: reason)
         case let .roomJoined(room, occupancy, isNewlyCreated): formatRoomJoinedMUC(room: room, occupancy: occupancy, isNewlyCreated: isNewlyCreated)
         case let .roomOccupantJoined(room, occupant): "\(room): \(occupant.nickname) joined"
@@ -115,8 +115,8 @@ struct PlainFormatter: CLIFormatter {
         case let .roomOccupantNickChanged(room, oldNickname, occupant, _): "\(room): \(oldNickname) is now known as \(occupant.nickname)"
         case let .roomSubjectChanged(room, subject, setter): roomSubjectText(room: room, subject: subject, setter: setter)
         case let .roomInviteReceived(invite): formatRoomInviteMUC(invite)
-        case let .roomMessageReceived(message): formatIncomingRoomMessage(message)
-        case let .mucPrivateMessageReceived(message): formatIncomingPrivateMessage(message)
+        case let .roomMessageReceived(message, _): formatIncomingRoomMessage(message)
+        case let .mucPrivateMessageReceived(message, _): formatIncomingPrivateMessage(message)
         case let .roomDestroyed(room, reason, alternate): formatRoomDestroyedMUC(room: room, reason: reason, alternate: alternate)
         case .mucSelfPingFailed: nil
         case let .jingleFileTransferReceived(offer): formatFileOffer(fileName: offer.fileName, fileSize: offer.fileSize, from: offer.from.bareJID.description, offerID: offer.offerID)
