@@ -60,6 +60,14 @@ private actor DelayedWriteCompletionTransport: XMPPTransport {
         await mock.disconnect()
     }
 
+    var tlsInfo: TLSInfo? {
+        get async { await mock.tlsInfo }
+    }
+
+    func channelBindings() async -> [ChannelBindingType: [UInt8]] {
+        await mock.channelBindings()
+    }
+
     func send(_ bytes: [UInt8]) async throws {
         try await mock.send(bytes)
         if String(decoding: bytes, as: UTF8.self).contains("delayed-write") {

@@ -17,7 +17,7 @@ actor NIOTransport: XMPPTransport {
     private var transitioning = false
     private var lastWrite: EventLoopFuture<Void>?
     private(set) var tlsInfo: TLSInfo?
-    private var binding: [UInt8]?
+    private var bindings: [ChannelBindingType: [UInt8]] = [:]
 
     init(
         connectTimeout: TimeAmount = .seconds(30), handshakeTimeout: Duration = .seconds(30), writeTimeout: Duration = .seconds(5),
@@ -122,15 +122,18 @@ actor NIOTransport: XMPPTransport {
             try await channel.eventLoop.submit {
                 let receiver = try channel.pipeline.syncOperations.handler(type: NIOReceiveHandler.self)
                 receiver.prepareHandshake(ready, continuation: continuation, timeout: timeout)
+                let owner = NIOLoopBound(receiver, eventLoop: channel.eventLoop)
                 var configuration = TLSConfiguration.makeClientConfiguration()
                 configuration.minimumTLSVersion = .tlsv12
                 configuration.applicationProtocols = ["xmpp-client"]
                 configuration.additionalTrustRoots = try roots.map { try .certificates([NIOSSLCertificate(bytes: $0, format: .der)]) }
                 let usesIPIdentity = if case .v4? = try? SocketAddress(ipAddress: serverName, port: 0) { true } else { false }
                 if usesIPIdentity { configuration.certificateVerification = .noHostnameVerification }
+                // BoringSSL logs each secret from inside the handshake step this event loop drives, so the exporter
+                // secret is recorded before the handshake completes. A hop off the loop here would lose that order.
+                configuration.keyLogCallback = { line in owner.value.recordKeyLogLine(line) }
                 let context = try NIOSSLContext(configuration: configuration)
-                let owner = NIOLoopBound(receiver, eventLoop: channel.eventLoop)
-                // NIOSSL still checks the host name itself after this callback, except for an IP identity.
+                // NIOSSL still checks the host name itself after this verification callback, except for an IP identity.
                 let handler = try NIOSSLClientHandler(context: context, serverHostname: usesIPIdentity ? nil : serverName) { chain, promise in
                     verifyCertificateChain(chain, serverName: serverName, trustRoots: roots, promise: promise) { reason in
                         owner.value.recordTrustFailure(reason)
@@ -142,7 +145,7 @@ actor NIOTransport: XMPPTransport {
             let result = try await ready.futureResult.getAbandoningOnCancel()
             guard attempt === owner, !Task.isCancelled else { throw CancellationError() }
             tlsInfo = result.info
-            binding = result.binding
+            bindings = result.bindings
         } catch {
             try? await channel.eventLoop.submit {
                 try channel.pipeline.syncOperations.handler(type: NIOReceiveHandler.self).failHandshake(error)
@@ -188,7 +191,7 @@ actor NIOTransport: XMPPTransport {
             receiving = false
             transitioning = false
             tlsInfo = nil
-            binding = nil
+            bindings = [:]
             lastWrite = nil
         }
         for channel in channels {
@@ -196,7 +199,7 @@ actor NIOTransport: XMPPTransport {
         }
     }
 
-    func channelBindingData() -> [UInt8]? {
-        binding
+    func channelBindings() async -> [ChannelBindingType: [UInt8]] {
+        bindings
     }
 }

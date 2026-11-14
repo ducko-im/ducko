@@ -19,7 +19,7 @@ public actor MockTransport: XMPPTransport {
     /// The most recent TLS server name (SNI) passed to `connectWithTLS`/`upgradeTLS`.
     public private(set) var tlsServerName: String?
 
-    private var channelBinding: [UInt8]?
+    private var bindings: [ChannelBindingType: [UInt8]] = [:]
     private var storedTLSInfo: TLSInfo?
     private var disconnectGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private let connectError: (any Error)?
@@ -160,9 +160,9 @@ public actor MockTransport: XMPPTransport {
         disconnectGate = (entered, release)
     }
 
-    /// What `setChannelBindingData(_:)` stored, as TLS would supply it.
-    public func channelBindingData() -> [UInt8]? {
-        channelBinding
+    /// What `setChannelBindings(_:)` stored, as TLS would supply it.
+    public func channelBindings() async -> [ChannelBindingType: [UInt8]] {
+        bindings
     }
 
     /// What `setTLSInfo(_:)` stored, as TLS would supply it.
@@ -172,8 +172,8 @@ public actor MockTransport: XMPPTransport {
 
     // MARK: - Test Helpers
 
-    public func setChannelBindingData(_ data: [UInt8]?) {
-        channelBinding = data
+    public func setChannelBindings(_ bindings: [ChannelBindingType: [UInt8]]) {
+        self.bindings = bindings
     }
 
     public func setTLSInfo(_ info: TLSInfo?) {

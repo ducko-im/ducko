@@ -22,7 +22,7 @@ struct NIOTransportTests {
                     guard rejected, case let XMPPClientError.untrustedCertificate(reason) = error else { throw error }
                     #expect(reason == (scenario == "ip-untrusted" ? .notTrusted : .nameMismatch))
                     #expect(await connection.tlsInfo == nil)
-                    #expect(await connection.channelBindingData == nil)
+                    #expect(await connection.channelBindings.isEmpty)
                 }
                 await connection.disconnect()
                 try await peer.expectSuccess()
@@ -168,6 +168,7 @@ private func exerciseNIOConnection(mode: String, useDefault: Bool, group: any Ev
         #expect(await connection.tlsInfo == nil)
     }
     await connection.disconnect()
+    #expect(await connection.channelBindings.isEmpty)
     do { try await peer.expectSuccess() } catch {
         await peer.stop()
         throw error
@@ -195,7 +196,9 @@ private func exerciseNIOExchange(mode: String, port: UInt16, connection: XMPPCon
         #expect(info.protocolVersion == "TLS 1.2" || info.protocolVersion == "TLS 1.3")
         #expect(info.cipherSuite == nil)
         #expect(info.certificateSHA256 != nil)
-        #expect(await connection.channelBindingData != nil)
+        let bindings = await connection.channelBindings
+        #expect(bindings[.tlsServerEndPoint] != nil)
+        #expect((bindings[.tlsExporter] != nil) == (info.protocolVersion == "TLS 1.3"))
         try await connection.send(XMPPStreamWriter.streamOpening(to: serverName))
         _ = try await reader.awaitFeatures()
     }

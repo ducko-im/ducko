@@ -348,7 +348,7 @@ enum XMPPClientTests { // swiftlint:disable:this type_body_length
         @Test
         func `SASL1 binds sign-in to the TLS channel the server lists`() async throws {
             let mock = MockTransport()
-            await mock.setChannelBindingData(Array(repeating: 0xCD, count: 32))
+            await mock.setChannelBindings([.tlsServerEndPoint: endPointBinding])
             let client = XMPPClient(
                 domain: "example.com",
                 credentials: .init(username: "user", password: "pass"),

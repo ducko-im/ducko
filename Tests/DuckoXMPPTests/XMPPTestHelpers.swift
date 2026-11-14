@@ -752,3 +752,25 @@ final class JingleInitiatorHarness: Sendable {
         return nil
     }
 }
+
+// MARK: - Test Vectors
+
+/// The bytes a hex test vector spells.
+func bytes(_ hex: String) -> [UInt8] {
+    var result: [UInt8] = []
+    var index = hex.startIndex
+    while index < hex.endIndex {
+        let next = hex.index(index, offsetBy: 2)
+        result.append(UInt8(hex[index ..< next], radix: 16)!)
+        index = next
+    }
+    return result
+}
+
+// MARK: - Channel Bindings
+
+/// Stand-in channel-binding values, distinct per type so a test can tell which one went out.
+let endPointBinding: [UInt8] = Array(repeating: 0xCD, count: 32)
+let exporterBinding: [UInt8] = Array(repeating: 0xEF, count: 32)
+/// What TLS 1.3 computes: both binding types.
+let tls13Bindings: [ChannelBindingType: [UInt8]] = [.tlsServerEndPoint: endPointBinding, .tlsExporter: exporterBinding]

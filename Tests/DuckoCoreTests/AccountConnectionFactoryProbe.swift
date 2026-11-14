@@ -133,6 +133,14 @@ actor AccountConnectionTransport: XMPPTransport {
         disconnected.yield(())
         disconnected.finish()
     }
+
+    var tlsInfo: TLSInfo? {
+        get async { await mock.tlsInfo }
+    }
+
+    func channelBindings() async -> [ChannelBindingType: [UInt8]] {
+        await mock.channelBindings()
+    }
 }
 
 /// Waits for `transport` to send a stanza containing `fragment`, then clears what it sent and plays `response`.

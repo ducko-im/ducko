@@ -96,9 +96,9 @@ actor XMPPConnection {
         get async { await transport.tlsInfo }
     }
 
-    var channelBindingData: [UInt8]? {
+    var channelBindings: [ChannelBindingType: [UInt8]] {
         get async {
-            await transport.channelBindingData()
+            await transport.channelBindings()
         }
     }
 

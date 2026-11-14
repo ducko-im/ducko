@@ -94,7 +94,7 @@ struct SASL2Authenticator {
         password: String,
         inlinePayloads: [XMLElement],
         userAgent: SASL2UserAgent = SASL2UserAgent(),
-        channelBindingData: [UInt8]? = nil,
+        channelBindings: [ChannelBindingType: [UInt8]] = [:],
         tlsVersion: UInt16? = nil,
         allowsPLAIN: Bool = false
     ) throws(SASLAuthError) -> XMLElement {
@@ -103,7 +103,7 @@ struct SASL2Authenticator {
         }
 
         let channelBinding = try chooseChannelBinding(
-            bindingData: channelBindingData,
+            bindings: channelBindings,
             advertisedTypes: parseChannelBindingTypes(features),
             offeredMechanisms: sasl2Features.mechanisms,
             isSASL2: true

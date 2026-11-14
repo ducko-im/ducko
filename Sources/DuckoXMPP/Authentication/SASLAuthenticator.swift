@@ -21,13 +21,13 @@ struct SASLAuthenticator {
         features: XMLElement,
         authcid: String,
         password: String,
-        channelBindingData: [UInt8]? = nil,
+        channelBindings: [ChannelBindingType: [UInt8]] = [:],
         tlsVersion: UInt16? = nil,
         allowsPLAIN: Bool = false
     ) throws(SASLAuthError) -> XMLElement {
         let offeredNames = parseMechanisms(features)
         let channelBinding = try chooseChannelBinding(
-            bindingData: channelBindingData,
+            bindings: channelBindings,
             advertisedTypes: parseChannelBindingTypes(features),
             offeredMechanisms: offeredNames,
             isSASL2: false

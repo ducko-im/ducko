@@ -312,7 +312,7 @@ enum TransportContractTests {
                     #expect(throws: XMPPClientError.self) { try result.get() }
                 }
                 #expect(await transport.tlsInfo == nil)
-                #expect(await transport.channelBindingData() == nil)
+                #expect(await transport.channelBindings().isEmpty)
             }
         }
     }

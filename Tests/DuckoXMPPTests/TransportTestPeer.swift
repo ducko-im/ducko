@@ -9,14 +9,20 @@ final class TransportTestPeer {
         let fingerprint: String
         let expiry: Double
         let protocolVersion: String?
+        let certificate: String?
+        let key: String?
     }
 
     private let process: Process
+    private let output: Pipe
     let port: UInt16
     let anchor: Data
     let fingerprint: String
     let expiry: Date
     let protocolVersion: String?
+    /// The leaf certificate and its private key as PEM, from a peer that only creates them.
+    let certificate: String?
+    let key: String?
 
     init(mode: String, scriptName: String = "tls-peer") throws {
         let script = try #require(Bundle.module.url(forResource: scriptName, withExtension: "py", subdirectory: "Fixtures"))
@@ -36,11 +42,19 @@ final class TransportTestPeer {
             self.fingerprint = endpoint.fingerprint
             self.expiry = Date(timeIntervalSince1970: endpoint.expiry)
             self.protocolVersion = endpoint.protocolVersion
+            self.certificate = endpoint.certificate
+            self.key = endpoint.key
             self.process = process
+            self.output = output
         } catch {
             if process.isRunning { process.terminate() }
             throw error
         }
+    }
+
+    /// Decodes the next JSON line the peer prints after its endpoint.
+    func nextValue<Value: Decodable>(_: Value.Type) throws -> Value {
+        try JSONDecoder().decode(Value.self, from: output.fileHandleForReading.availableData)
     }
 
     func expectSuccess() async throws {

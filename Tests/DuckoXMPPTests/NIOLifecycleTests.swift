@@ -96,7 +96,7 @@ struct NIOLifecycleTests {
         var byte: UInt8 = 0
         #expect(recv(fd, &byte, 1, 0) == 0)
         #expect(await transport.tlsInfo == nil)
-        #expect(await transport.channelBindingData() == nil)
+        #expect(await transport.channelBindings().isEmpty)
     }
 }
 

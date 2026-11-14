@@ -58,13 +58,15 @@ GUI automation (smoke tests, the ducko-ui scripts, the `UILayer` integration sui
 
 ### TLS integration fixtures
 
-Transport fixtures use a local Python peer and fresh test certificates. Run the TLS policy cases with a Python linked to modern OpenSSL (including TLS 1.3):
+Transport fixtures use a local Python peer and fresh test certificates. Run the TLS policy cases with a Python linked to modern OpenSSL (including TLS 1.3), and the `tls-exporter` interop cases with an OpenSSL 3 or later binary:
 
 ```sh
-DUCKO_TLS_PYTHON=/opt/homebrew/bin/python3 swift test --filter 'NIO|Transport|TLSInfo'
+DUCKO_TLS_PYTHON=/opt/homebrew/bin/python3 DUCKO_TLS_OPENSSL=/opt/homebrew/bin/openssl swift test --filter 'NIO|Transport|TLSInfo'
 ```
 
-`NIOProtocolVersionTests` is skipped when `DUCKO_TLS_PYTHON` is unset; report that skip rather than treating it as policy coverage.
+`NIOProtocolVersionTests` is skipped when `DUCKO_TLS_PYTHON` is unset, and `NIOExporterInteropTests` when `DUCKO_TLS_OPENSSL` is unset; report either skip rather than treating it as coverage.
+
+Ducko reads the TLS 1.3 exporter secret through swift-nio-ssl's key-log callback. If a swift-nio-ssl update changes that callback, the `tls-exporter` binding disappears, but the TLS handshake still succeeds. Ducko then binds with `tls-server-end-point` where the server also lists it. It refuses sign-in to servers that offer `-PLUS` but list only `tls-exporter`, which includes Prosody in its default setup. `NIOExporterCaptureTests` catches a broken capture on every test run. After any swift-nio-ssl update, also run `NIOExporterInteropTests`, which checks the binding against OpenSSL's, and the live `AuthenticationTests`.
 
 The other opt-in fixtures require a disposable environment: `DUCKO_TLS_INSTALLED_ROOT=1` exercises a root already installed there, `DUCKO_TLS_EXPECT_UNTRUSTED=1` checks its removal, and `DUCKO_TLS_SRV_FIXTURE=1` exercises a configured local SRV fixture. `DUCKO_TLS_FIXTURE_DIRECTORY` selects that environment's certificate files.
 

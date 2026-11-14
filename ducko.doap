@@ -41,8 +41,11 @@
 
         <implements rdf:resource="https://xmpp.org/rfcs/rfc6120.html"/>
         <implements rdf:resource="https://xmpp.org/rfcs/rfc6121.html"/>
+        <!-- RFC 5929: only the tls-server-end-point channel binding (section 4), not tls-unique -->
+        <implements rdf:resource="https://www.rfc-editor.org/rfc/rfc5929"/>
         <implements rdf:resource="https://www.rfc-editor.org/rfc/rfc7590"/>
         <implements rdf:resource="https://www.rfc-editor.org/rfc/rfc7622"/>
+        <implements rdf:resource="https://www.rfc-editor.org/rfc/rfc9266"/>
 
         <implements>
             <xmpp:SupportedXep>
@@ -320,7 +323,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0388.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">XEP-0440, which this requires, is only partially supported. SASL2 is used only when the server also offers Bind 2, and further sign-in tasks such as a second factor are not supported. A SASL2 offer removed in transit leads to the SASL1 sign-in</xmpp:note>
+                <xmpp:note xml:lang="en">SASL2 is used only when the server also offers Bind 2, and further sign-in tasks such as a second factor are not supported. A SASL2 offer removed in transit leads to the SASL1 sign-in</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -401,8 +404,8 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0440.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Only tls-server-end-point is supported, not tls-exporter. When the server's SCRAM reply carries a XEP-0474 hash, a mismatch aborts the sign-in and a match accepts the offer. Without one, against rules 5 and 6, sign-in proceeds unbound with the GS2 flag "n" when the server lists channel-binding types but offers no -PLUS mechanism, or lists only types Ducko cannot compute. It does the same when -PLUS is offered over SASL1 without types. An attacker holding a trusted certificate for the server can therefore switch binding off on servers that send no hash</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">Supports tls-exporter (TLS 1.3 only) and tls-server-end-point, and prefers tls-exporter. tls-unique is not supported. Sign-in is refused when -PLUS is offered but no listed type can be used on the connection. Over SASL1, -PLUS offered without types binds with tls-server-end-point</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -415,6 +418,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0474.html"/>
                 <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">Ducko does not apply the section 7 relaxation of XEP-0440 rule 6, so a matching hash never allows an unbound sign-in. The hash shows only that the offer arrived unchanged. An interceptor holding a trusted certificate can still pick a TLS version on which the listed binding type cannot be computed, such as TLS 1.2 for tls-exporter, and then relay the unbound sign-in</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>

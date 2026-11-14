@@ -76,6 +76,14 @@ private actor RegistrationStreamServer: XMPPTransport {
         received.finish()
     }
 
+    var tlsInfo: TLSInfo? {
+        nil
+    }
+
+    func channelBindings() -> [ChannelBindingType: [UInt8]] {
+        [:]
+    }
+
     private func reply(_ text: String) {
         received.yield(Array(text.utf8))
     }

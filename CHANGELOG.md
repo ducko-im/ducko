@@ -35,6 +35,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Show a group chat message someone else posted under your nickname as theirs, so its images wait for a click instead of loading as yours
 - Trust a message's server-assigned id only from a server or group chat that announces such ids
 - Stop a sign-in before the password proof goes out when the server's list of sign-in options or the connection's encryption version was changed on the way, which can mean the connection is being tampered with
+- Tie sign-ins to the encrypted connection on servers such as Prosody that support only the newer TLS 1.3 form of this protection, so someone holding a trusted certificate for the server cannot pass your sign-in on
+- Refuse a sign-in when the server offers sign-in protection that Ducko cannot use on the connection, or when its sign-in options contradict each other, instead of signing in without that protection
 
 ## [0.11.0] - 2026-10-23
 

@@ -61,6 +61,17 @@ extension DuckoIntegrationTests.ProtocolLayer {
             }
         }
 
+        @Test @MainActor func `Sign-in is bound to the TLS channel`() async throws {
+            try await TestHarness.withHarness { harness in
+                try await harness.setUp(accounts: ["alice": TestCredentials.alice])
+
+                let alice = try #require(harness.accounts["alice"])
+                let client = try #require(harness.environment.accountService.client(for: alice.accountID))
+
+                #expect(client.verifiedSCRAMMechanism?.hasSuffix("-PLUS") == true)
+            }
+        }
+
         @Test @MainActor func `Service discovery returns server info`() async throws {
             try await TestHarness.withHarness { harness in
                 try await harness.setUp(accounts: ["alice": TestCredentials.alice])

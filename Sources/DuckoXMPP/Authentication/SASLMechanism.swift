@@ -1,9 +1,6 @@
 /// SASL namespace per RFC 6120 §6.
 let saslNamespace = "urn:ietf:params:xml:ns:xmpp-sasl"
 
-/// Channel binding type for `tls-server-end-point` (RFC 5929 §4.1).
-let tlsServerEndPointCBType = "tls-server-end-point"
-
 /// Result of a SASL exchange step.
 enum SASLAuthResponse {
     case continueWith(XMLElement)
@@ -21,7 +18,13 @@ enum SASLAuthError: Error, Equatable {
     case serverFailure(condition: String, text: String?)
     case invalidState(String)
     case iterationCountTooLow(Int)
-    case channelBindingDowngrade
+    /// `-PLUS` is offered over SASL2 without any channel-binding type listed (XEP-0440 rule 4).
+    case channelBindingTypesMissing
+    /// Channel-binding types are listed without any `-PLUS` mechanism (XEP-0440 rule 5).
+    case channelBindingMechanismMissing
+    /// `-PLUS` is offered, but with no listed type this side can compute, or only `-PLUS` mechanisms it does not
+    /// implement (XEP-0440 rule 6).
+    case channelBindingUnavailable
     /// The server's XEP-0474 hash of the offer does not match the offer as it arrived.
     case mechanismListTampered
     /// The server's XEP-0515 TLS version does not match the one negotiated.
@@ -43,7 +46,11 @@ enum SASLAuthError: Error, Equatable {
             if let text, !text.allSatisfy(\.isWhitespace) { text } else { Condition(rawValue: condition)?.displayText ?? "The server refused the sign-in" }
         case let .invalidState(reason): "Unexpected authentication state: \(reason)"
         case let .iterationCountTooLow(count): "The server's password hashing is too weak (\(count) iterations)"
-        case .channelBindingDowngrade: "The server's authentication options contradict each other, which can mean the connection is being tampered with"
+        case .channelBindingTypesMissing:
+            "The server's sign-in options are missing required security information, which can mean the connection is being tampered with"
+        case .channelBindingMechanismMissing:
+            "The server advertises sign-in protection but offers no sign-in method that uses it, which can mean the connection is being tampered with"
+        case .channelBindingUnavailable: "The server offers only sign-in protection that this client cannot use on this connection"
         case .mechanismListTampered: "The server's sign-in options were changed on the way, which can mean the connection is being tampered with"
         case .tlsVersionTampered: "The connection's encryption version was changed on the way, which can mean the connection is being tampered with"
         case .unsupportedSignInStep: "The server asked for an extra authentication step that is not supported"
@@ -109,33 +116,49 @@ private let scramPlusPreferenceOrder = [
 
 private let implementedPlusMechanisms = Set(scramPlusPreferenceOrder)
 
-/// Chooses how SCRAM binds to the TLS channel, per XEP-0440 §3, or throws when the offer looks downgraded.
+/// Chooses how SCRAM binds to the TLS channel, per XEP-0440 §3, or throws where those rules say to abort.
 ///
 /// "`-PLUS` offered" means any offered name ending in `-PLUS`, implemented or not, because a server offering any
-/// `-PLUS` mechanism rejects `y,,` as a downgrade.
+/// `-PLUS` mechanism rejects `y,,` as a downgrade. The rules, in order:
+/// - Without bindings, which means without TLS, the client cannot bind and signs in with `n,,` (rule 2).
+/// - `-PLUS` without listed types aborts over SASL2 (rule 4). Over SASL1, rule 4 allows trying `tls-server-end-point`,
+///   so an implemented `-PLUS` binds with it. A server that cannot check that binding refuses the sign-in. An offer
+///   whose only `-PLUS` mechanisms are unimplemented aborts, as under rule 6.
+/// - Listed types without any `-PLUS` abort (rule 5).
+/// - Neither types nor `-PLUS` sign in with `y,,` (rule 3).
+/// - An implemented `-PLUS` binds with the most preferred type that is both listed and computed.
+/// - Otherwise no listed type can be computed here, or only unimplemented `-PLUS` mechanisms are offered, and the
+///   sign-in aborts (rule 6).
 ///
-/// Three cases sign in unbound rather than abort. The server-first message's XEP-0474 hash then checks that choice: a
-/// match proves the offer genuine (XEP-0474 §7), and a mismatch fails the sign-in before the proof goes out. Without a
-/// hash the choice goes against rules 5 and 6 and RFC 5802 §6.
-/// - Types listed without any `-PLUS`. Prosody does this with PLAIN-only auth backends, and it rejects `y,,`
-///   whenever it lists types.
-/// - Only types this client can't compute.
-/// - SASL1 offering `-PLUS` without listing any type.
+/// This client does not take XEP-0474 §7's relaxation of rule 6, which signs in unbound once the server's hash confirms
+/// the offer. The hash shows the offer arrived unchanged, not that binding was impossible: an interceptor holding a
+/// trusted certificate picks the TLS version, so it can leave the client only types it cannot compute and relay the
+/// unbound sign-in.
 func chooseChannelBinding(
-    bindingData: [UInt8]?,
+    bindings: [ChannelBindingType: [UInt8]],
     advertisedTypes: Set<String>,
     offeredMechanisms: Set<String>,
     isSASL2: Bool
 ) throws(SASLAuthError) -> ChannelBindingMode {
-    guard let bindingData else { return .none }
+    guard !bindings.isEmpty else { return .none }
     let plusOffered = offeredMechanisms.contains { $0.hasSuffix("-PLUS") }
-    if isSASL2, plusOffered, advertisedTypes.isEmpty { throw .channelBindingDowngrade }
     let implementedPlusOffered = !offeredMechanisms.isDisjoint(with: implementedPlusMechanisms)
-    if advertisedTypes.contains(tlsServerEndPointCBType), implementedPlusOffered {
-        return .bound(type: tlsServerEndPointCBType, data: bindingData)
+    if plusOffered, advertisedTypes.isEmpty {
+        if isSASL2 { throw .channelBindingTypesMissing }
+        guard implementedPlusOffered, let data = bindings[.tlsServerEndPoint] else { throw .channelBindingUnavailable }
+        return .bound(type: .tlsServerEndPoint, data: data)
     }
-    if advertisedTypes.isEmpty, !plusOffered { return .clientSupportsButNotUsed }
-    return .none
+    if !plusOffered {
+        guard advertisedTypes.isEmpty else { throw .channelBindingMechanismMissing }
+        return .clientSupportsButNotUsed
+    }
+    if implementedPlusOffered {
+        for type in ChannelBindingType.allCases.sorted(by: { $0.preferenceRank < $1.preferenceRank })
+            where advertisedTypes.contains(type.rawValue) {
+            if let data = bindings[type] { return .bound(type: type, data: data) }
+        }
+    }
+    throw .channelBindingUnavailable
 }
 
 /// Builds SASL mechanism preference order for the chosen channel binding: only `-PLUS` mechanisms when bound, so a

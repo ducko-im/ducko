@@ -7,7 +7,7 @@ enum ChannelBindingMode {
     /// Client supports CB but server didn't offer -PLUS (GS2 header `y,,`).
     case clientSupportsButNotUsed
     /// Active channel binding (GS2 header `p=<type>,,` with binding data).
-    case bound(type: String, data: [UInt8])
+    case bound(type: ChannelBindingType, data: [UInt8])
 }
 
 /// Generic SCRAM state machine per RFC 5802.
@@ -46,13 +46,6 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
         let escapedUser = escapeUsername(authcid)
         clientFirstMessageBare = "n=\(escapedUser),r=\(clientNonce)"
         phase = .waitingForServerFirst
-
-        // gs2-header per RFC 5802 §7
-        let gs2Header = switch channelBindingMode {
-        case .none: "n,,"
-        case .clientSupportsButNotUsed: "y,,"
-        case let .bound(type, _): "p=\(type),,"
-        }
         return "\(gs2Header)\(clientFirstMessageBare)"
     }
 
@@ -96,11 +89,7 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
         let serverKey = hmac(key: saltedPassword, data: Array("Server Key".utf8))
 
         // Build auth message with channel binding per RFC 5802 §7
-        let gs2HeaderBytes: [UInt8] = switch channelBindingMode {
-        case .none: Array("n,,".utf8)
-        case .clientSupportsButNotUsed: Array("y,,".utf8)
-        case let .bound(type, _): Array("p=\(type),,".utf8)
-        }
+        let gs2HeaderBytes = Array(gs2Header.utf8)
         let cbPayload: [UInt8] = switch channelBindingMode {
         case .none, .clientSupportsButNotUsed: gs2HeaderBytes
         case let .bound(_, data): gs2HeaderBytes + data
@@ -146,6 +135,15 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
 
         phase = .completed
         return .success(())
+    }
+
+    /// The gs2-header per RFC 5802 §7.
+    private var gs2Header: String {
+        switch channelBindingMode {
+        case .none: "n,,"
+        case .clientSupportsButNotUsed: "y,,"
+        case let .bound(type, _): "p=\(type.rawValue),,"
+        }
     }
 
     /// Checks the server's view of the offer (XEP-0474 `h`) and of the TLS version (XEP-0515 `t`) against what this

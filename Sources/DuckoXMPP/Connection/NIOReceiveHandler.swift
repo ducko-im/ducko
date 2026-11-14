@@ -9,7 +9,7 @@ private let log = Logger(label: "im.ducko.xmpp.transport")
 
 struct NIOHandshakeResult: Sendable {
     let info: TLSInfo
-    let binding: [UInt8]
+    let bindings: [ChannelBindingType: [UInt8]]
 }
 
 final class NIOReceiveHandler: ChannelInboundHandler {
@@ -22,6 +22,7 @@ final class NIOReceiveHandler: ChannelInboundHandler {
         let continuation: AsyncStream<[UInt8]>.Continuation
         /// Why the certificate was rejected, once the trust check has said.
         var trustFailure: CertificateTrustFailure?
+        var exporterSecret = ExporterSecretCapture.none
     }
 
     func stop() {
@@ -46,6 +47,12 @@ final class NIOReceiveHandler: ChannelInboundHandler {
     /// arriving once the handshake has settled changes nothing.
     func recordTrustFailure(_ reason: CertificateTrustFailure) {
         handshake?.trustFailure = reason
+    }
+
+    /// Records a key-log line of the pending handshake, keeping only what it says about the exporter secret. A line
+    /// arriving once the handshake has settled changes nothing.
+    func recordKeyLogLine(_ line: ByteBuffer) {
+        handshake?.exporterSecret.record(exporterSecret(fromKeyLogLine: line))
     }
 
     func failHandshake(_ error: any Error) {
@@ -81,13 +88,21 @@ final class NIOReceiveHandler: ChannelInboundHandler {
                 guard let details = extractCertificateInfo(cert) else {
                     throw XMPPClientError.tlsNegotiationFailed("The server certificate could not be read")
                 }
+                let bindings = handshakeBindings(
+                    serverEndPoint: certificateChannelBinding(cert),
+                    capture: handshake?.exporterSecret ?? ExporterSecretCapture.none,
+                    isTLS13: version == .tlsv13
+                )
+                if version == .tlsv13, bindings[.tlsExporter] == nil {
+                    log.debug("TLS 1.3 handshake gave no usable exporter secret; tls-exporter binding unavailable")
+                }
                 let result = NIOHandshakeResult(info: TLSInfo(
                     protocolVersion: version == .tlsv13 ? "TLS 1.3" : "TLS 1.2",
                     wireVersion: tlsWireVersion(version),
                     cipherSuite: nil,
                     certificateSubject: details.subject, certificateIssuer: details.issuer,
                     certificateExpiry: details.expiry, certificateSHA256: details.sha256
-                ), binding: certificateChannelBinding(cert))
+                ), bindings: bindings)
                 let pending = handshake
                 handshake = nil
                 if let pending {

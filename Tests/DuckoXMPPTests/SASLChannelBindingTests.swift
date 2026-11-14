@@ -29,7 +29,7 @@ enum ChannelBindingTests {
         @Test
         func `Bound channel binding produces p= header`() {
             var state = SCRAMState<SHA256>(
-                channelBindingMode: .bound(type: "tls-server-end-point", data: Self.mockCBData),
+                channelBindingMode: .bound(type: .tlsServerEndPoint, data: Self.mockCBData),
                 nonceGenerator: { Self.clientNonce }
             )
             let message = state.clientFirstMessage(authcid: "user", password: "pencil")
@@ -45,7 +45,7 @@ enum ChannelBindingTests {
             #expect(messageNone.hasSuffix(expectedBare))
 
             var stateBound = SCRAMState<SHA256>(
-                channelBindingMode: .bound(type: "tls-server-end-point", data: Self.mockCBData),
+                channelBindingMode: .bound(type: .tlsServerEndPoint, data: Self.mockCBData),
                 nonceGenerator: { Self.clientNonce }
             )
             let messageBound = stateBound.clientFirstMessage(authcid: "user", password: "pencil")
@@ -83,7 +83,7 @@ enum ChannelBindingTests {
         @Test
         func `Bound CB produces c=base64(p=type,, + data)`() throws {
             var state = SCRAMState<SHA256>(
-                channelBindingMode: .bound(type: "tls-server-end-point", data: Self.mockCBData),
+                channelBindingMode: .bound(type: .tlsServerEndPoint, data: Self.mockCBData),
                 nonceGenerator: { Self.clientNonce }
             )
             _ = state.clientFirstMessage(authcid: "user", password: "pencil")
@@ -107,7 +107,7 @@ enum ChannelBindingTests {
             // We can't use RFC test vectors (those assume n,,), but we can verify
             // internal consistency: the auth message used for proof == the one used for verification.
             var state = SCRAMState<SHA256>(
-                channelBindingMode: .bound(type: "tls-server-end-point", data: Self.mockCBData),
+                channelBindingMode: .bound(type: .tlsServerEndPoint, data: Self.mockCBData),
                 nonceGenerator: { Self.clientNonce }
             )
             _ = state.clientFirstMessage(authcid: "user", password: "pencil")
@@ -134,7 +134,7 @@ enum SCRAMPLUSTests {
         func `Start produces correct auth element`() throws {
             var mechanism = SCRAM(
                 mechanismName: SCRAMMechanismName.sha256Plus,
-                session: SCRAMState<SHA256>(channelBindingMode: .bound(type: tlsServerEndPointCBType, data: Self.mockCBData), nonceGenerator: { Self.clientNonce })
+                session: SCRAMState<SHA256>(channelBindingMode: .bound(type: .tlsServerEndPoint, data: Self.mockCBData), nonceGenerator: { Self.clientNonce })
             )
             let auth = mechanism.start(authcid: "user", password: "pencil")
 
@@ -157,7 +157,7 @@ enum SCRAMPLUSTests {
         func `Start produces correct auth element`() throws {
             var mechanism = SCRAM(
                 mechanismName: SCRAMMechanismName.sha1Plus,
-                session: SCRAMState<Insecure.SHA1>(channelBindingMode: .bound(type: tlsServerEndPointCBType, data: Self.mockCBData), nonceGenerator: { Self.clientNonce })
+                session: SCRAMState<Insecure.SHA1>(channelBindingMode: .bound(type: .tlsServerEndPoint, data: Self.mockCBData), nonceGenerator: { Self.clientNonce })
             )
             let auth = mechanism.start(authcid: "user", password: "pencil")
 
@@ -175,14 +175,21 @@ enum SCRAMPLUSTests {
 
 // MARK: - Channel Binding Choice Tests
 
-/// Each way a server can offer channel binding (XEP-0440 §3), through both authenticators, with binding data from TLS
-/// unless an offer says otherwise.
+/// Each way a server can offer channel binding (XEP-0440 §3), through both authenticators.
 struct ChannelBindingChoiceTests {
     enum Outcome: Sendable, Equatable {
         /// `header` is the GS2 header, which PLAIN doesn't have.
         case mechanism(String, header: String?)
-        case abort
-        case plainRefused
+        case failed(SASLAuthError)
+
+        static func bound(_ type: ChannelBindingType, with mechanism: String) -> Outcome {
+            .mechanism(mechanism, header: "p=\(type.rawValue),,")
+        }
+    }
+
+    /// The bindings TLS computed: both on TLS 1.3, only the end-point one on TLS 1.2, and none without TLS.
+    enum Computed: Sendable {
+        case both, endPointOnly, none
     }
 
     struct Offer: Sendable, CustomTestStringConvertible {
@@ -192,22 +199,35 @@ struct ChannelBindingChoiceTests {
         let types: [String]?
         let sasl1: Outcome
         let sasl2: Outcome
-        var hasBindingData = true
+        var computed = Computed.both
         var allowsPLAIN = false
+
+        var bindings: [ChannelBindingType: [UInt8]] {
+            switch computed {
+            case .both: tls13Bindings
+            case .endPointOnly: tls13Bindings.filter { $0.key == .tlsServerEndPoint }
+            case .none: [:]
+            }
+        }
     }
 
-    private static let bound = Outcome.mechanism(SCRAMMechanismName.sha256Plus, header: "p=tls-server-end-point,,")
+    private static let both = ["tls-server-end-point", "tls-exporter"]
+    private static let plusAndUnbound = ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"]
 
     static let offers: [Offer] = [
         Offer(
-            testDescription: "listed type with PLUS binds", mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"],
-            types: ["tls-server-end-point"], sasl1: bound, sasl2: bound
+            testDescription: "tls-exporter is preferred over tls-server-end-point", mechanisms: plusAndUnbound, types: both,
+            sasl1: .bound(.tlsExporter, with: "SCRAM-SHA-256-PLUS"), sasl2: .bound(.tlsExporter, with: "SCRAM-SHA-256-PLUS")
         ),
         Offer(
-            testDescription: "listed type binds over a stronger unbound mechanism", mechanisms: ["SCRAM-SHA-256", "SCRAM-SHA-1-PLUS"],
+            testDescription: "tls-server-end-point binds when only it is computed", mechanisms: plusAndUnbound, types: both,
+            sasl1: .bound(.tlsServerEndPoint, with: "SCRAM-SHA-256-PLUS"), sasl2: .bound(.tlsServerEndPoint, with: "SCRAM-SHA-256-PLUS"),
+            computed: .endPointOnly
+        ),
+        Offer(
+            testDescription: "a listed type binds over a stronger unbound mechanism", mechanisms: ["SCRAM-SHA-256", "SCRAM-SHA-1-PLUS"],
             types: ["tls-server-end-point"],
-            sasl1: .mechanism("SCRAM-SHA-1-PLUS", header: "p=tls-server-end-point,,"),
-            sasl2: .mechanism("SCRAM-SHA-1-PLUS", header: "p=tls-server-end-point,,")
+            sasl1: .bound(.tlsServerEndPoint, with: "SCRAM-SHA-1-PLUS"), sasl2: .bound(.tlsServerEndPoint, with: "SCRAM-SHA-1-PLUS")
         ),
         Offer(
             testDescription: "no types and no PLUS says the client supports binding", mechanisms: ["SCRAM-SHA-256"],
@@ -218,59 +238,65 @@ struct ChannelBindingChoiceTests {
             types: [], sasl1: .mechanism("SCRAM-SHA-256", header: "y,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "y,,")
         ),
         Offer(
-            testDescription: "types without PLUS signs in unbound", mechanisms: ["SCRAM-SHA-256"],
+            testDescription: "types without PLUS abort", mechanisms: ["SCRAM-SHA-256"], types: ["tls-server-end-point"],
+            sasl1: .failed(.channelBindingMechanismMissing), sasl2: .failed(.channelBindingMechanismMissing)
+        ),
+        Offer(
+            testDescription: "types with only PLAIN abort even when PLAIN is allowed", mechanisms: ["PLAIN"], types: ["tls-exporter"],
+            sasl1: .failed(.channelBindingMechanismMissing), sasl2: .failed(.channelBindingMechanismMissing), allowsPLAIN: true
+        ),
+        Offer(
+            testDescription: "types with only PLAIN abort by default", mechanisms: ["PLAIN"], types: ["tls-exporter"],
+            sasl1: .failed(.channelBindingMechanismMissing), sasl2: .failed(.channelBindingMechanismMissing)
+        ),
+        Offer(
+            testDescription: "PLUS with an empty type list", mechanisms: plusAndUnbound, types: [],
+            sasl1: .bound(.tlsServerEndPoint, with: "SCRAM-SHA-256-PLUS"), sasl2: .failed(.channelBindingTypesMissing)
+        ),
+        Offer(
+            testDescription: "PLUS without types binds with tls-server-end-point over SASL1",
+            mechanisms: ["SCRAM-SHA-1-PLUS", "SCRAM-SHA-1", "PLAIN"], types: nil,
+            sasl1: .bound(.tlsServerEndPoint, with: "SCRAM-SHA-1-PLUS"), sasl2: .failed(.channelBindingTypesMissing), allowsPLAIN: true
+        ),
+        Offer(
+            testDescription: "an unimplemented PLUS without types aborts", mechanisms: ["SCRAM-SHA-384-PLUS", "SCRAM-SHA-256"], types: nil,
+            sasl1: .failed(.channelBindingUnavailable), sasl2: .failed(.channelBindingTypesMissing)
+        ),
+        Offer(
+            testDescription: "a listed type with only an unimplemented PLUS aborts", mechanisms: ["SCRAM-SHA-384-PLUS", "SCRAM-SHA-256"],
             types: ["tls-server-end-point"],
-            sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "n,,")
+            sasl1: .failed(.channelBindingUnavailable), sasl2: .failed(.channelBindingUnavailable)
         ),
         Offer(
-            testDescription: "types with only PLAIN signs in with PLAIN", mechanisms: ["PLAIN"],
-            types: ["tls-exporter"], sasl1: .mechanism("PLAIN", header: nil), sasl2: .mechanism("PLAIN", header: nil),
-            allowsPLAIN: true
+            testDescription: "only tls-exporter listed without an exporter aborts", mechanisms: plusAndUnbound, types: ["tls-exporter"],
+            sasl1: .failed(.channelBindingUnavailable), sasl2: .failed(.channelBindingUnavailable), computed: .endPointOnly
         ),
         Offer(
-            testDescription: "types with only PLAIN are refused by default", mechanisms: ["PLAIN"],
-            types: ["tls-exporter"], sasl1: .plainRefused, sasl2: .plainRefused
+            testDescription: "only tls-unique listed aborts", mechanisms: plusAndUnbound, types: ["tls-unique"],
+            sasl1: .failed(.channelBindingUnavailable), sasl2: .failed(.channelBindingUnavailable)
         ),
         Offer(
-            testDescription: "PLUS with an empty type list", mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"],
-            types: [], sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .abort
+            testDescription: "only types the client can't compute abort even when PLAIN is allowed", mechanisms: ["SCRAM-SHA-256-PLUS", "PLAIN"],
+            types: ["tls-unique"], sasl1: .failed(.channelBindingUnavailable), sasl2: .failed(.channelBindingUnavailable), allowsPLAIN: true
         ),
         Offer(
-            testDescription: "PLUS without types leaves the PLUS mechanism out", mechanisms: ["SCRAM-SHA-1-PLUS", "SCRAM-SHA-1", "PLAIN"],
-            types: nil, sasl1: .mechanism("SCRAM-SHA-1", header: "n,,"), sasl2: .abort
+            testDescription: "no bindings sign in unbound", mechanisms: plusAndUnbound, types: ["tls-server-end-point"],
+            sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "n,,"), computed: .none
         ),
         Offer(
-            testDescription: "an unimplemented PLUS without types", mechanisms: ["SCRAM-SHA-384-PLUS", "SCRAM-SHA-256"],
-            types: nil, sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .abort
-        ),
-        Offer(
-            testDescription: "a listed type with only an unimplemented PLUS signs in unbound",
-            mechanisms: ["SCRAM-SHA-384-PLUS", "SCRAM-SHA-256"], types: ["tls-server-end-point"],
-            sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "n,,")
-        ),
-        Offer(
-            testDescription: "only types the client can't compute signs in unbound", mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"],
-            types: ["tls-exporter"], sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "n,,")
-        ),
-        Offer(
-            testDescription: "no binding data signs in unbound", mechanisms: ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"],
-            types: ["tls-server-end-point"],
-            sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "n,,"),
-            hasBindingData: false
+            testDescription: "no bindings sign in unbound when PLUS comes without types", mechanisms: plusAndUnbound, types: nil,
+            sasl1: .mechanism("SCRAM-SHA-256", header: "n,,"), sasl2: .mechanism("SCRAM-SHA-256", header: "n,,"), computed: .none
         )
     ]
-
-    private static let bindingData: [UInt8] = Array(repeating: 0xCD, count: 32)
 
     @Test(arguments: offers)
     func `Chooses the binding the offer calls for`(offer: Offer) {
         let features = Self.features(for: offer)
-        let bindingData = offer.hasBindingData ? Self.bindingData : nil
 
         var sasl1 = SASLAuthenticator()
         let sasl1Outcome = Self.outcome(Result { () throws(SASLAuthError) -> XMLElement in
             try sasl1.begin(
-                features: features, authcid: "user", password: "pencil", channelBindingData: bindingData, allowsPLAIN: offer.allowsPLAIN
+                features: features, authcid: "user", password: "pencil", channelBindings: offer.bindings, allowsPLAIN: offer.allowsPLAIN
             )
         }, initialResponse: \.textContent)
         #expect(sasl1Outcome == offer.sasl1)
@@ -278,7 +304,7 @@ struct ChannelBindingChoiceTests {
         var sasl2 = SASL2Authenticator()
         let sasl2Outcome = Self.outcome(Result { () throws(SASLAuthError) -> XMLElement in
             try sasl2.begin(
-                features: features, authcid: "user", password: "pencil", inlinePayloads: [], channelBindingData: bindingData,
+                features: features, authcid: "user", password: "pencil", inlinePayloads: [], channelBindings: offer.bindings,
                 allowsPLAIN: offer.allowsPLAIN
             )
         }, initialResponse: { $0.childText(named: "initial-response") })
@@ -316,12 +342,8 @@ struct ChannelBindingChoiceTests {
             guard let mechanism = element.attribute("mechanism"),
                   let decoded = initialResponse(element).flatMap(Base64.decodeString) else { return nil }
             return .mechanism(mechanism, header: decoded.firstRange(of: ",,").map { String(decoded[..<$0.upperBound]) })
-        case .failure(.channelBindingDowngrade):
-            return .abort
-        case .failure(.plainRefused):
-            return .plainRefused
-        case .failure:
-            return nil
+        case let .failure(error):
+            return .failed(error)
         }
     }
 }

@@ -47,7 +47,7 @@ struct NIOTLSIdentityTests {
                             throw error
                         }
                         #expect(await transport.tlsInfo == nil)
-                        #expect(await transport.channelBindingData() == nil)
+                        #expect(await transport.channelBindings().isEmpty)
                     } else {
                         await transport.disconnect()
                         throw error

@@ -1,3 +1,19 @@
+/// A TLS channel-binding type, named as IANA registers it.
+public enum ChannelBindingType: String, CaseIterable, Hashable, Sendable {
+    /// RFC 9266, derived from the TLS 1.3 keying-material exporter.
+    case tlsExporter = "tls-exporter"
+    /// RFC 5929 §4.1, derived from the server certificate.
+    case tlsServerEndPoint = "tls-server-end-point"
+
+    /// Lower binds first when the server lists several types.
+    var preferenceRank: Int {
+        switch self {
+        case .tlsExporter: 0
+        case .tlsServerEndPoint: 1
+        }
+    }
+}
+
 /// Abstracts the network transport for testability.
 public protocol XMPPTransport: Sendable {
     func connect(host: String, port: UInt16) async throws
@@ -24,17 +40,7 @@ public protocol XMPPTransport: Sendable {
     /// Closes the connection and finishes whichever phase's receive stream is current.
     func disconnect() async
 
-    /// Returns `tls-server-end-point` channel binding data (RFC 5929).
-    /// Returns `nil` if TLS is not active or channel binding is not supported.
-    func channelBindingData() async -> [UInt8]?
-}
-
-public extension XMPPTransport {
-    var tlsInfo: TLSInfo? {
-        get async { nil }
-    }
-
-    func channelBindingData() async -> [UInt8]? {
-        nil
-    }
+    /// The channel bindings computed for the current TLS connection, by type, and empty without TLS. A type whose value
+    /// could not be computed is left out, never filled with a placeholder.
+    func channelBindings() async -> [ChannelBindingType: [UInt8]]
 }

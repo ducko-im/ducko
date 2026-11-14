@@ -6,8 +6,6 @@ import Testing
 
 // MARK: - Helpers
 
-private let bindingData: [UInt8] = Array(repeating: 0xCD, count: 32)
-
 /// Stream features offering `mechanisms` over SASL1 and, with Bind 2, `sasl2Mechanisms` (by default the same) over
 /// SASL2, plus `types` in `<sasl-channel-binding>` when given.
 private func offer(_ mechanisms: [String], sasl2Mechanisms: [String]? = nil, types: [String]? = nil) -> String {
@@ -24,8 +22,11 @@ private func offer(_ mechanisms: [String], sasl2Mechanisms: [String]? = nil, typ
     """
 }
 
-private func makeClient(_ mock: MockTransport) -> XMPPClient {
-    XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "pencil"), transport: mock, requireTLS: false)
+private func makeClient(_ mock: MockTransport, allowsPLAIN: Bool = false) -> XMPPClient {
+    XMPPClient(
+        domain: "example.com", credentials: .init(username: "user", password: "pencil"), transport: mock, requireTLS: false,
+        allowsPLAIN: allowsPLAIN
+    )
 }
 
 private func sent(_ mock: MockTransport, _ prefix: String) async -> Bool {
@@ -81,7 +82,7 @@ private func signIn(
     await mock.waitForSent(count: 1) // stream opening
     await mock.simulateReceive(testServerStreamOpen)
     await mock.simulateReceive(features)
-    let start = try #require(await mock.waitForSent { $0.hasPrefix(sasl2 ? "<authenticate " : "<auth ") })
+    let start = try #require(await nextSent(mock, before: connect) { $0.hasPrefix(sasl2 ? "<authenticate " : "<auth ") })
     let first = try server.serverFirst(answering: #require(SCRAMTestServer.payload(in: start)))
     let namespace = sasl2 ? XMPPNamespaces.sasl2 : saslNamespace
     await mock.simulateReceive("<challenge xmlns='\(namespace)'>\(first)</challenge>")
@@ -156,7 +157,7 @@ enum SCRAMDowngradeProtectionTests {
         @Test(arguments: [false, true])
         func `A hash that does not match the offer fails before the proof goes out`(sasl2: Bool) async throws {
             let mock = MockTransport()
-            await mock.setChannelBindingData(bindingData)
+            await mock.setChannelBindings(tls13Bindings)
             let client = makeClient(mock)
             var server = SCRAMTestServer(password: "pencil", mechanism: "SCRAM-SHA-1", attributes: [.wrongOfferHash])
 
@@ -170,7 +171,7 @@ enum SCRAMDowngradeProtectionTests {
         @Test
         func `A failed abort still reports the tampered offer`() async throws {
             let mock = MockTransport()
-            await mock.setChannelBindingData(bindingData)
+            await mock.setChannelBindings(tls13Bindings)
             await mock.failNextSend(matching: "<abort", error: XMPPClientError.sendFailed("Broken pipe"))
             let client = makeClient(mock)
             var server = SCRAMTestServer(password: "pencil", mechanism: "SCRAM-SHA-1", attributes: [.wrongOfferHash])
@@ -197,21 +198,83 @@ enum SCRAMDowngradeProtectionTests {
             #expect(run.sentProof)
             #expect(client.verifiedSCRAMMechanism == "SCRAM-SHA-1")
         }
+    }
 
-        @Test(arguments: [false, true])
-        func `A matching hash accepts an offer whose only types the client cannot compute`(sasl2: Bool) async throws {
+    /// Offers that leave no way to bind. Each fails before any sign-in element goes out, even with PLAIN allowed, so no
+    /// server hash gets the chance to accept the unbound sign-in.
+    struct UnbindableOffer {
+        struct Case: Sendable, CustomTestStringConvertible {
+            let testDescription: String
+            let mechanisms: [String]
+            let types: [String]?
+            let error: SASLAuthError
+            let sasl2: Bool
+        }
+
+        static let cases: [Case] = [false, true].flatMap { sasl2 in
+            [
+                Case(
+                    testDescription: "only tls-unique listed", mechanisms: ["SCRAM-SHA-1", "SCRAM-SHA-1-PLUS", "PLAIN"],
+                    types: ["tls-unique"], error: .channelBindingUnavailable, sasl2: sasl2
+                ),
+                Case(
+                    testDescription: "only an unimplemented PLUS", mechanisms: ["SCRAM-SHA-1", "SCRAM-SHA-384-PLUS", "PLAIN"],
+                    types: ["tls-server-end-point"], error: .channelBindingUnavailable, sasl2: sasl2
+                ),
+                Case(
+                    testDescription: "an unimplemented PLUS without types", mechanisms: ["SCRAM-SHA-1", "SCRAM-SHA-384-PLUS", "PLAIN"],
+                    types: nil, error: sasl2 ? .channelBindingTypesMissing : .channelBindingUnavailable, sasl2: sasl2
+                )
+            ]
+        }
+
+        @Test(arguments: cases, [false, true])
+        func `The sign-in fails before any sign-in element is sent`(item: Case, allowsPLAIN: Bool) async throws {
             let mock = MockTransport()
-            await mock.setChannelBindingData(bindingData)
+            await mock.setChannelBindings(tls13Bindings)
+            let client = makeClient(mock, allowsPLAIN: allowsPLAIN)
+            let events = Task { try await collectEvents(from: client) { if case .authenticationFailed = $0 { true } else { false } } }
+
+            let connect = Task {
+                if item.sasl2 {
+                    try await client.connectWithTLS(host: "example.com", port: 5223)
+                } else {
+                    try await client.connect(host: "example.com", port: 5222)
+                }
+            }
+            await mock.waitForSent(count: 1) // stream opening
+            await mock.simulateReceive(testServerStreamOpen)
+            await mock.simulateReceive(offer(item.mechanisms, types: item.types))
+
+            #expect(try await failureMessage(boundedFailure(of: connect)) == item.error.displayText)
+            #expect(await mock.sentBytes.count == 1)
+            #expect(try await !events.value.contains { if case .plainSignInRefused = $0 { true } else { false } })
+        }
+    }
+
+    struct BoundSignIn {
+        @Test(arguments: [
+            ([String]?.some(["tls-server-end-point", "tls-exporter"]), ChannelBindingType.tlsExporter, false),
+            (["tls-server-end-point"], .tlsServerEndPoint, false),
+            (nil, .tlsServerEndPoint, false),
+            (["tls-server-end-point", "tls-exporter"], .tlsExporter, true),
+            (["tls-server-end-point"], .tlsServerEndPoint, true)
+        ])
+        func `Binds with the preferred listed type's own bytes`(types: [String]?, bound: ChannelBindingType, sasl2: Bool) async throws {
+            let mock = MockTransport()
+            await mock.setChannelBindings(tls13Bindings)
             let client = makeClient(mock)
+            let mechanisms = ["SCRAM-SHA-256-PLUS", "SCRAM-SHA-256"]
             var server = SCRAMTestServer(
-                password: "pencil", mechanism: "SCRAM-SHA-1",
-                attributes: [.offerHash(mechanisms: Self.mechanisms, channelBindingTypes: Self.types)]
+                password: "pencil", mechanism: "SCRAM-SHA-256-PLUS",
+                attributes: [.offerHash(mechanisms: mechanisms, channelBindingTypes: types)]
             )
 
-            _ = try await signIn(client, on: mock, server: &server, features: offer(Self.mechanisms, types: Self.types), sasl2: sasl2)
+            _ = try await signIn(client, on: mock, server: &server, features: offer(mechanisms, types: types), sasl2: sasl2)
 
-            #expect(server.clientGS2Header == "n,,")
-            #expect(client.verifiedSCRAMMechanism == "SCRAM-SHA-1")
+            #expect(server.clientGS2Header == "p=\(bound.rawValue),,")
+            #expect(server.clientBindingData == tls13Bindings[bound])
+            #expect(client.verifiedSCRAMMechanism == "SCRAM-SHA-256-PLUS")
         }
     }
 
@@ -278,11 +341,11 @@ enum SCRAMDowngradeProtectionTests {
         func `Signs in with the offered mechanism and verifies the server`(item: Case) async throws {
             let mock = MockTransport()
             if item.bound {
-                await mock.setChannelBindingData(bindingData)
+                await mock.setChannelBindings([.tlsServerEndPoint: endPointBinding])
             }
             let client = makeClient(mock)
             var server = SCRAMTestServer(password: "pencil", mechanism: item.mechanism)
-            let features = offer([item.mechanism, "SCRAM-SHA-256"], types: item.bound ? [tlsServerEndPointCBType] : nil)
+            let features = offer([item.mechanism, "SCRAM-SHA-256"], types: item.bound ? [ChannelBindingType.tlsServerEndPoint.rawValue] : nil)
 
             let run = try await signIn(client, on: mock, server: &server, features: features, sasl2: item.sasl2)
 
@@ -290,7 +353,7 @@ enum SCRAMDowngradeProtectionTests {
             #expect(client.verifiedSCRAMMechanism == item.mechanism)
             if item.bound {
                 #expect(server.clientGS2Header == "p=tls-server-end-point,,")
-                #expect(server.clientBindingData == bindingData)
+                #expect(server.clientBindingData == endPointBinding)
             } else {
                 #expect(server.clientGS2Header == "n,,")
             }
@@ -300,11 +363,11 @@ enum SCRAMDowngradeProtectionTests {
         func `A server signature made with another password fails`(item: Case) async throws {
             let mock = MockTransport()
             if item.bound {
-                await mock.setChannelBindingData(bindingData)
+                await mock.setChannelBindings([.tlsServerEndPoint: endPointBinding])
             }
             let client = makeClient(mock)
             var server = SCRAMTestServer(password: "not the password", mechanism: item.mechanism)
-            let features = offer([item.mechanism], types: item.bound ? [tlsServerEndPointCBType] : nil)
+            let features = offer([item.mechanism], types: item.bound ? [ChannelBindingType.tlsServerEndPoint.rawValue] : nil)
 
             let run = try await signIn(client, on: mock, server: &server, features: features, sasl2: item.sasl2)
 
@@ -336,7 +399,7 @@ enum SCRAMDowngradeProtectionTests {
             (ChannelBindingMode.none, [
                 SCRAMMechanismName.sha3_512, SCRAMMechanismName.sha512, SCRAMMechanismName.sha256, SCRAMMechanismName.sha1
             ]),
-            (.bound(type: tlsServerEndPointCBType, data: bindingData), [
+            (.bound(type: .tlsServerEndPoint, data: endPointBinding), [
                 SCRAMMechanismName.sha3_512Plus, SCRAMMechanismName.sha512Plus, SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha1Plus
             ])
         ])

@@ -744,13 +744,13 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
     private func authenticate(features: XMLElement, reader: EventReader) async throws {
         var authenticator = SASLAuthenticator()
-        let cbData = await connection.channelBindingData
+        let bindings = await connection.channelBindings
         let tlsVersion = await connection.tlsInfo?.wireVersion
         let authElement: XMLElement
         do {
             authElement = try authenticator.begin(
                 features: features, authcid: credentials.username, password: credentials.password,
-                channelBindingData: cbData, tlsVersion: tlsVersion, allowsPLAIN: allowsPLAIN
+                channelBindings: bindings, tlsVersion: tlsVersion, allowsPLAIN: allowsPLAIN
             )
         } catch {
             throw authenticationFailure(error)
@@ -793,7 +793,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         }
         inlinePayloads.append(buildBind2Request(tag: userAgent.software, enableSM: requestsSM, enableCarbons: requestsCarbons))
 
-        let cbData = await connection.channelBindingData
+        let bindings = await connection.channelBindings
         let tlsVersion = await connection.tlsInfo?.wireVersion
         let authElement: XMLElement
         do {
@@ -803,7 +803,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
                 password: credentials.password,
                 inlinePayloads: inlinePayloads,
                 userAgent: userAgent,
-                channelBindingData: cbData,
+                channelBindings: bindings,
                 tlsVersion: tlsVersion,
                 allowsPLAIN: allowsPLAIN
             )

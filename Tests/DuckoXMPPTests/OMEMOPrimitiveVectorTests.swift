@@ -4,17 +4,6 @@ import Testing
 
 // MARK: - Helpers
 
-private func bytes(_ hex: String) -> [UInt8] {
-    var result: [UInt8] = []
-    var index = hex.startIndex
-    while index < hex.endIndex {
-        let next = hex.index(index, offsetBy: 2)
-        result.append(UInt8(hex[index ..< next], radix: 16)!)
-        index = next
-    }
-    return result
-}
-
 private func repeated(_ byte: UInt8, _ count: Int) -> [UInt8] {
     [UInt8](repeating: byte, count: count)
 }

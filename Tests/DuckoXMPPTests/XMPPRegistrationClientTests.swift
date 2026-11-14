@@ -354,6 +354,14 @@ private actor RegistrationTransport: XMPPTransport {
         await mock.disconnect()
     }
 
+    var tlsInfo: TLSInfo? {
+        get async { await mock.tlsInfo }
+    }
+
+    func channelBindings() async -> [ChannelBindingType: [UInt8]] {
+        await mock.channelBindings()
+    }
+
     func awaitSent(matching predicate: @escaping @Sendable (String) -> Bool) async throws {
         try await withThrowingTaskGroup(of: String?.self) { group in
             defer { group.cancelAll() }
