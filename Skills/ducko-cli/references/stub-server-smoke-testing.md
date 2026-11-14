@@ -1,6 +1,6 @@
 # Stub-Server Smoke Testing
 
-Exercise stream-level behavior (STARTTLS negotiation, stream features, a rejected server certificate, injected or malformed server data) through the CLI against a local stub instead of a live server, or run a whole session against a stub that serves a made-up roster.
+Exercise stream-level behavior (STARTTLS negotiation, stream features, sign-in failures, a rejected server certificate, injected or malformed server data) through the CLI against a local stub instead of a live server, or run a whole session against a stub that serves a made-up roster.
 
 ## Point the CLI at the Stub
 
@@ -26,6 +26,14 @@ Failures exit 1 with `Error: <summary>[: <reason>]`. `account check-registration
 ## Pair Negative Scenarios with a Control
 
 A rejection only means something when a control that differs in the dimension under test reaches the code beyond it. For example, a stub that answers `<starttls/>` with `<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>` plus an injected `<message>` in one send expects `Secure connection failed: The server sent unexpected data after agreeing to start TLS`. Its control sends only the `<proceed/>`, so the client starts a real TLS ClientHello. Answering that with non-TLS junk such as `HTTP/1.1 400 Bad Request\r\n\r\n` yields a handshake reason (e.g. `Secure connection failed: record overflow`), which proves the upgrade was reached.
+
+## Stage Sign-In Failures
+
+In place of a fresh stub per scenario, one stub that serves repeated connections on one port can pick each sign-in scenario by the `to` domain of the client's stream header, with one account per domain (`user@<scenario>.test`). Add each with `--host 127.0.0.1 --port <port> --no-connect`, then `account set <jid> --no-require-tls`, adding `--allow-plain` for a PLAIN scenario. Offer only the mechanism under test in `<mechanisms>`, without `<starttls>`.
+
+A SCRAM scenario decodes the client-first-message from `<auth>` and starts the server nonce with its `r=` value, with `i=` at least 4096. Otherwise the client fails on the nonce or iteration check before reaching the case under test.
+
+Drive each account with `profile --account <uuid> --output json`, which prints the `authentication_failed` record. A server `<failure><not-authorized/></failure>` is the control and reads "Incorrect username or password". To see the raw error behind a message, run `defaults write im.ducko.dev.<unique> advancedLogLevel debug` and read the profile's `ducko.log` for `The sign-in failed with …`.
 
 ## Rejected Server Certificate
 

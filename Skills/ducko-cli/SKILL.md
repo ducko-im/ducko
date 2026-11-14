@@ -518,6 +518,8 @@ Any command except `logs` creates the directory of a profile that has none yet, 
 
 The first sign-in on a fresh profile publishes a new OMEMO device to the account's device list, which the cleanup above does not remove. For a check that only needs a sign-in, copy a persisted profile that already signed in (`rsync -a --exclude Logs "$HOME/Library/Application Support/Ducko-Dev-<persisted>/" "$HOME/Library/Application Support/Ducko-Dev-<unique>/"`), run against the copy while the original is not signed in, and clean it up as above. The copy reuses the device the original already published, and leaving out `Logs` keeps `logs show` to this run's lines.
 
+A copy also keeps the original's remembered rooms, and `interactive` rejoins them on connect, which on the live server creates a room again as new when it no longer exists. Before running `interactive` on a copy, list what it will rejoin with `sqlite3 "$HOME/Library/Application Support/Ducko-Dev-<unique>/default.store" "SELECT ZJID, ZREJOINSONCONNECT FROM ZCONVERSATIONRECORD;"` (`1` rejoins). Afterwards, `/leave` each room it rejoined before `quit`, so the server removes a room the rejoin created, which also clears the flag in the copy. One-shot commands rejoin none.
+
 ## Live Smoke Testing
 
 Drive the REPL non-interactively against a live account by piping one command per line into `interactive`, ending with `quit`. Pass `--output plain`: the default format keys off stdout being a terminal, so piped stdin alone still yields ANSI. The session exits 0 even when commands fail, so read the transcript for the outcome.
@@ -534,9 +536,15 @@ Output sent to a pipe or file is block-buffered and arrives only when the sessio
 
 To stage a pending subscription request, read the requester's `roster list --output json`, then run `roster add <target>` from that account, which must not be subscribed to the target. For an entry the snapshot already shows, pass its `--name` and `--group`, since `roster add` without them clears both. The target's REPL prints `Subscription request from <jid>`, and its GUI shows `<jid> wants to subscribe` in a banner in the Contacts window. Undo the request with `/deny <requester>` in the target's REPL. When the requester had no entry for the target before, `/deny` leaves the new one at `subscription=none`, so also run `roster remove <target>` from the requester. When the entry existed before, leave it in place: `roster remove` would also cancel a `from` subscription it had.
 
+To check server discovery without writing to the server:
+
+- **HTTP upload**: discovery runs before the slot request. `send --file <path> --method http <jid>` with a sparse file larger than the server's limit (`mkfile -n 100g <path>`) exits 1 with `Error: The file is too large: the server accepts up to <size>`, and uploads nothing.
+- **Proxy65**: discovery runs before a Jingle offer goes out. `send --file <small file> --method jingle <contact>/<resource that does not exist>` logs `Discovered a Proxy65 streamhost` in the file log, then exits 1 with `Error: File transfer negotiation failed: The service is unavailable`, delivering nothing. Use a small file: a Jingle send reads the whole file before discovery.
+- **Rooms and channel search**: the test server lists no public rooms and has no channel search service, so `room list` prints an empty result and `room list --search` exits 1 with `Error: The server does not offer channel search`, whether or not discovery works.
+
 ## Stream-Level Smoke Testing
 
-To exercise STARTTLS negotiation, stream features, a rejected server certificate, injected server data, or a whole session with a made-up roster without a live server, follow [references/stub-server-smoke-testing.md](references/stub-server-smoke-testing.md).
+To exercise STARTTLS negotiation, stream features, sign-in failures, a rejected server certificate, injected server data, or a whole session with a made-up roster without a live server, follow [references/stub-server-smoke-testing.md](references/stub-server-smoke-testing.md).
 
 ## Connection Smoke Testing
 
