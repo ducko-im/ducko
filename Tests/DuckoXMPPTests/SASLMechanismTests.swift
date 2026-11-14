@@ -88,8 +88,8 @@ struct SASLPlainTests {
         var mechanism = SASLPlain()
         _ = mechanism.start(authcid: "user", password: "pencil")
         let response = mechanism.handleChallenge(XMLElement(name: "challenge", namespace: saslNamespace))
-        guard case .failure(.invalidState) = response else {
-            Issue.record("Expected invalidState failure, got \(response)")
+        guard case .failure(.unsupportedSignInStep) = response else {
+            Issue.record("Expected unsupportedSignInStep failure, got \(response)")
             return
         }
     }
@@ -211,6 +211,23 @@ struct SCRAMSHA1Tests {
             Issue.record("Expected serverSignatureMismatch, got \(result)")
             return
         }
+    }
+
+    @Test(arguments: [
+        ("e=invalid-proof", SASLAuthError.scramServerError("invalid-proof")),
+        ("x=unknown", SASLAuthError.serverProofMissing),
+        ("v=!!!", SASLAuthError.invalidBase64)
+    ])
+    func `Server-final-message without a usable signature names why`(serverFinal: String, expected: SASLAuthError) {
+        var state = SCRAMState<Insecure.SHA1>(nonceGenerator: { Self.clientNonce })
+        _ = state.clientFirstMessage(authcid: "user", password: "pencil")
+        _ = state.clientFinalMessage(serverFirstMessage: Self.serverFirstMessage)
+        let result = state.verifyServerFinal(serverFinalMessage: serverFinal)
+        guard case let .failure(error) = result else {
+            Issue.record("Expected \(expected), got \(result)")
+            return
+        }
+        #expect(error == expected)
     }
 
     @Test

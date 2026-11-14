@@ -75,9 +75,10 @@ struct SCRAM {
     }
 
     mutating func handleSuccess(_ success: XMLElement) -> SASLAuthResponse {
-        guard let encoded = success.textContent,
-              let decoded = Base64.decodeString(encoded)
-        else {
+        guard let encoded = success.textContent else {
+            return .failure(.serverProofMissing)
+        }
+        guard let decoded = Base64.decodeString(encoded) else {
             return .failure(.invalidBase64)
         }
 

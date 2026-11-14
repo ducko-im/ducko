@@ -280,18 +280,18 @@ enum SASL2AuthenticatorTests {
             let response = try plainResponse(to: sasl2Success(jid: jid, streamManagement: resumed))
             if case .success(.resumed) = response {
                 #expect(resumes)
-            } else if case .failure(.invalidState) = response {
+            } else if case .failure(.accountAddressMissing) = response {
                 #expect(!resumes)
             } else {
-                Issue.record("Expected a resumed stream or invalidState, got \(response)")
+                Issue.record("Expected a resumed stream or accountAddressMissing, got \(response)")
             }
         }
 
         @Test
         func `A fresh session must name its full JID`() throws {
             let response = try plainResponse(to: sasl2Success(jid: "user@example.com"))
-            guard case .failure(.invalidState) = response else {
-                Issue.record("Expected invalidState, got \(response)")
+            guard case .failure(.accountAddressMissing) = response else {
+                Issue.record("Expected accountAddressMissing, got \(response)")
                 return
             }
         }
@@ -371,11 +371,11 @@ enum SASL2AuthenticatorTests {
         }
 
         @Test
-        func `Receive without begin returns invalidState`() {
+        func `Receive without begin returns unexpectedReply`() {
             var auth = SASL2Authenticator()
             let response = auth.receive(XMLElement(name: "success", namespace: XMPPNamespaces.sasl2))
-            guard case .failure(.invalidState) = response else {
-                Issue.record("Expected invalidState, got \(response)")
+            guard case .failure(.unexpectedReply) = response else {
+                Issue.record("Expected unexpectedReply, got \(response)")
                 return
             }
         }

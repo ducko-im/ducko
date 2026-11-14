@@ -14,7 +14,7 @@ struct SASLPlain {
     }
 
     mutating func handleChallenge(_: XMLElement) -> SASLAuthResponse {
-        .failure(.invalidState("PLAIN does not expect challenges"))
+        .failure(.unsupportedSignInStep)
     }
 
     mutating func handleSuccess(_: XMLElement) -> SASLAuthResponse {

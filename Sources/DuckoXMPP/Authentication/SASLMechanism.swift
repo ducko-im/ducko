@@ -12,11 +12,21 @@ enum SASLAuthResponse {
 enum SASLAuthError: Error, Equatable {
     case noSupportedMechanism
     case invalidBase64
-    case malformedChallenge(String)
+    /// The SCRAM server-first-message lacks the nonce, salt, or iteration count.
+    case malformedChallenge
     case invalidServerNonce
+    /// The server ends SCRAM without the signature that proves it knows the password.
+    case serverProofMissing
     case serverSignatureMismatch
     case serverFailure(condition: String, text: String?)
-    case invalidState(String)
+    /// The server ends SCRAM with an RFC 5802 `e=` error value, which only the debug log shows.
+    case scramServerError(String)
+    /// A reply arrives before sign-in starts, or a SCRAM step arrives out of order.
+    case unexpectedReply
+    /// A reply element no sign-in step defines, whose name only the debug log shows.
+    case unknownReply(element: String)
+    case accountAddressMissing
+    case unrequestedResume
     case iterationCountTooLow(Int)
     /// `-PLUS` is offered over SASL2 without any channel-binding type listed (XEP-0440 rule 4).
     case channelBindingTypesMissing
@@ -39,12 +49,17 @@ enum SASLAuthError: Error, Equatable {
         switch self {
         case .noSupportedMechanism: "The server offers no supported authentication mechanism"
         case .invalidBase64: "The server sent malformed authentication data"
-        case let .malformedChallenge(reason): "The server sent a malformed challenge: \(reason)"
+        case .malformedChallenge: "The server sent an incomplete sign-in challenge"
         case .invalidServerNonce: "The server sent an invalid nonce"
+        case .serverProofMissing: "The server left out its proof that it knows the password"
         case .serverSignatureMismatch: "The server could not prove it knows the password"
         case let .serverFailure(condition, text):
             if let text, !text.allSatisfy(\.isWhitespace) { text } else { Condition(rawValue: condition)?.displayText ?? "The server refused the sign-in" }
-        case let .invalidState(reason): "Unexpected authentication state: \(reason)"
+        case .scramServerError: "The server refused the sign-in"
+        case .unexpectedReply: "The server sent a sign-in reply out of order"
+        case .unknownReply: "The server sent an unknown sign-in reply"
+        case .accountAddressMissing: "The server's sign-in confirmation has no valid account address"
+        case .unrequestedResume: "The server resumed a session that was not requested"
         case let .iterationCountTooLow(count): "The server's password hashing is too weak (\(count) iterations)"
         case .channelBindingTypesMissing:
             "The server's sign-in options are missing required security information, which can mean the connection is being tampered with"

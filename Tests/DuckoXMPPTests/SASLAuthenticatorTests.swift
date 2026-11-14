@@ -230,17 +230,17 @@ enum SASLAuthenticatorTests {
         }
 
         @Test
-        func `Receive without begin returns invalidState`() {
+        func `Receive without begin returns unexpectedReply`() {
             var auth = SASLAuthenticator()
             let response = auth.receive(XMLElement(name: "success", namespace: saslNamespace))
-            guard case .failure(.invalidState) = response else {
-                Issue.record("Expected invalidState, got \(response)")
+            guard case .failure(.unexpectedReply) = response else {
+                Issue.record("Expected unexpectedReply, got \(response)")
                 return
             }
         }
 
         @Test
-        func `Unexpected element name returns invalidState`() throws {
+        func `Unexpected element name returns unknownReply`() throws {
             var auth = SASLAuthenticator()
             _ = try auth.begin(
                 features: features(mechanisms: ["PLAIN"]),
@@ -250,8 +250,8 @@ enum SASLAuthenticatorTests {
             )
 
             let response = auth.receive(XMLElement(name: "unknown"))
-            guard case .failure(.invalidState) = response else {
-                Issue.record("Expected invalidState, got \(response)")
+            guard case .failure(.unknownReply(element: "unknown")) = response else {
+                Issue.record("Expected unknownReply, got \(response)")
                 return
             }
         }

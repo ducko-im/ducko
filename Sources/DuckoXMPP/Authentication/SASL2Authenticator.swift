@@ -144,7 +144,7 @@ struct SASL2Authenticator {
     /// Dispatches a received stanza (`<challenge>`, `<success>`, or `<failure>`) to the active mechanism.
     mutating func receive(_ stanza: XMLElement) -> Response {
         guard var mechanism = activeMechanism else {
-            return .failure(.invalidState("No active mechanism"))
+            return .failure(.unexpectedReply)
         }
 
         let response: Response = switch stanza.name {
@@ -157,7 +157,7 @@ struct SASL2Authenticator {
         case "continue":
             .failure(.unsupportedSignInStep)
         default:
-            .failure(.invalidState("Unexpected SASL2 element: \(stanza.name)"))
+            .failure(.unknownReply(element: stanza.name))
         }
 
         activeMechanism = mechanism
@@ -201,7 +201,7 @@ struct SASL2Authenticator {
             mechanism = .scram(scram)
             return response
         case .plain:
-            return .failure(.invalidState("PLAIN does not expect challenges"))
+            return .failure(.unsupportedSignInStep)
         }
     }
 
@@ -234,9 +234,11 @@ struct SASL2Authenticator {
     /// Verifies the SCRAM server signature from `<additional-data>`.
     /// Returns an error response if verification fails, `nil` on success.
     private func verifyScramSignature(_ stanza: XMLElement, scram: inout any SCRAMSession) -> Response? {
-        guard let additionalData = stanza.childText(named: "additional-data"),
-              let decoded = Base64.decodeString(additionalData) else {
-            return .failure(.invalidState("Missing additional-data for SCRAM server verification"))
+        guard let additionalData = stanza.childText(named: "additional-data") else {
+            return .failure(.serverProofMissing)
+        }
+        guard let decoded = Base64.decodeString(additionalData) else {
+            return .failure(.invalidBase64)
         }
         let result = scram.verifyServerFinal(serverFinalMessage: decoded)
         if case let .failure(error) = result { return .failure(error) }
@@ -252,7 +254,7 @@ struct SASL2Authenticator {
             return .success(.resumed(resumed))
         }
         guard let fullJID = jid.flatMap(FullJID.parse) else {
-            return .failure(.invalidState("No valid account address in the success reply"))
+            return .failure(.accountAddressMissing)
         }
         return .success(.session(fullJID, bound: stanza.child(named: "bound", namespace: XMPPNamespaces.bind2)))
     }

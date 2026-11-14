@@ -462,7 +462,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     /// elements it doesn't know.
     private func completeInlineResume(_ resumed: XMLElement, sm: StreamManagementModule?) async throws -> Bool {
         guard let sm, case let .resumed(jid, retransmitQueue) = sm.processResumeResponse(resumed) else {
-            throw authenticationFailure(.invalidState("Resumed a session that was not requested"))
+            throw authenticationFailure(.unrequestedResume)
         }
         let sessionFeatures = sm.sessionFeatures
         serverStreamLock.withLock { $0.features = sessionFeatures }
@@ -836,6 +836,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     }
 
     private func authenticationFailure(_ error: SASLAuthError) -> XMPPClientError {
+        log.debug("The sign-in failed with \(error)")
         if error == .plainRefused {
             eventContinuation.yield(.plainSignInRefused)
             return .plainSignInRefused

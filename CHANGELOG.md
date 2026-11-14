@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Wait up to two seconds for a group chat to describe itself before joining it, so its first messages are told apart by who sent them
 - Catch up on a group chat's archive once you have rejoined it, when the group chat identifies its members by occupant id
 - Read message archives only from servers and group chats that announce one
+- Explain in plain words why a sign-in failed when the server answers out of order, leaves out part of its reply, or refuses the sign-in partway, instead of showing internal names such as "Expected waitingForServerFirst"
 
 ### Fixed
 

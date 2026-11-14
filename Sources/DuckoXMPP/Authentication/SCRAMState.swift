@@ -52,7 +52,7 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
     /// Processes `server-first-message` and produces `client-final-message`.
     mutating func clientFinalMessage(serverFirstMessage: String) -> Result<String, SASLAuthError> {
         guard phase == .waitingForServerFirst else {
-            return .failure(.invalidState("Expected waitingForServerFirst, got \(phase)"))
+            return .failure(.unexpectedReply)
         }
 
         // Parse server-first-message: r=<nonce>,s=<salt>,i=<iterations>
@@ -62,7 +62,7 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
               let iterStr = attrs["i"],
               let iterations = Int(iterStr)
         else {
-            return .failure(.malformedChallenge("Missing r, s, or i in server-first-message"))
+            return .failure(.malformedChallenge)
         }
 
         // Server nonce must start with our client nonce
@@ -114,19 +114,20 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
     /// Verifies `server-final-message`.
     mutating func verifyServerFinal(serverFinalMessage: String) -> Result<Void, SASLAuthError> {
         guard phase == .waitingForServerFinal else {
-            return .failure(.invalidState("Expected waitingForServerFinal, got \(phase)"))
+            return .failure(.unexpectedReply)
         }
 
         let attrs = parseAttributes(serverFinalMessage)
 
         if let error = attrs["e"] {
-            return .failure(.malformedChallenge(error))
+            return .failure(.scramServerError(error))
         }
 
-        guard let verifier = attrs["v"],
-              let serverSig = Base64.decode(verifier)
-        else {
-            return .failure(.malformedChallenge("Missing v in server-final-message"))
+        guard let verifier = attrs["v"] else {
+            return .failure(.serverProofMissing)
+        }
+        guard let serverSig = Base64.decode(verifier) else {
+            return .failure(.invalidBase64)
         }
 
         guard serverSig == serverSignature else {

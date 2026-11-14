@@ -50,7 +50,7 @@ struct SASLAuthenticator {
     /// Dispatches a received stanza (`<challenge>`, `<success>`, or `<failure>`) to the active mechanism.
     mutating func receive(_ stanza: XMLElement) -> SASLAuthResponse {
         guard var mechanism = activeMechanism else {
-            return .failure(.invalidState("No active mechanism"))
+            return .failure(.unexpectedReply)
         }
 
         let response: SASLAuthResponse = switch stanza.name {
@@ -61,7 +61,7 @@ struct SASLAuthenticator {
         case "failure":
             .failure(.parse(failure: stanza))
         default:
-            .failure(.invalidState("Unexpected SASL element: \(stanza.name)"))
+            .failure(.unknownReply(element: stanza.name))
         }
         if case .success = response {
             verifiedSCRAMMechanism = mechanism.scramMechanismName
