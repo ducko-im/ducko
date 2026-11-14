@@ -514,6 +514,10 @@ rm -f "$HOME/Library/Preferences/im.ducko.dev.<unique>.plist"
 
 `defaults delete` leaves the domain's plist behind empty, hence the final `rm`.
 
+Any command except `logs` creates the directory of a profile that has none yet, read-only `account list` included. To find a profile with an account, list `~/Library/Application Support/Ducko-Dev-*` and run `account list` only against the names it shows, rather than against guessed names.
+
+The first sign-in on a fresh profile publishes a new OMEMO device to the account's device list, which the cleanup above does not remove. For a check that only needs a sign-in, copy a persisted profile that already signed in (`rsync -a --exclude Logs "$HOME/Library/Application Support/Ducko-Dev-<persisted>/" "$HOME/Library/Application Support/Ducko-Dev-<unique>/"`), run against the copy while the original is not signed in, and clean it up as above. The copy reuses the device the original already published, and leaving out `Logs` keeps `logs show` to this run's lines.
+
 ## Live Smoke Testing
 
 Drive the REPL non-interactively against a live account by piping one command per line into `interactive`, ending with `quit`. Pass `--output plain`: the default format keys off stdout being a terminal, so piped stdin alone still yields ANSI. The session exits 0 even when commands fail, so read the transcript for the outcome.
@@ -547,7 +551,9 @@ DUCKO_PROFILE=smoke-connect ducko account delete USER_JID
 /bin/rm -rf "$HOME/Library/Application Support/Ducko-Dev-smoke-connect"
 ```
 
-To stage a connection that drops and resumes, run the relay and add the account pointing at it. The relay, `ps` and `kill` need to run unsandboxed too:
+The `account add` here signs in a fresh profile, which publishes a new OMEMO device. When the check needs no custom host or port, run it on a copy of a persisted profile instead, as Throwaway Profiles describes.
+
+To stage a connection that drops and resumes, run the relay and add the account pointing at it, since the account needs the relay's host and port. The relay, `ps` and `kill` need to run unsandboxed too:
 
 ```
 python3 Skills/ducko-cli/scripts/tcp-relay.py <port> <server-host>   # keep running in the background; forwards 127.0.0.1:<port> to <server-host>:5222
