@@ -663,16 +663,9 @@ public final class MUCModule: XMPPModule, Sendable {
     /// Discovers rooms on a MUC service using disco#items.
     public func discoverRooms(on service: String) async throws -> [(jid: BareJID, name: String?)] {
         guard let context = state.withLock({ $0.context }), let serviceJID = BareJID.parse(service) else { return [] }
-        var iq = XMPPIQ(type: .get, to: .bare(serviceJID), id: context.generateID())
-        let query = XMLElement(name: "query", namespace: XMPPNamespaces.discoItems)
-        iq.element.addChild(query)
-
-        guard let result = try await context.sendIQ(iq) else { return [] }
-
-        return result.children(named: "item").compactMap { item in
-            guard let jidString = item.attribute("jid"),
-                  let jid = BareJID.parse(jidString) else { return nil }
-            return (jid: jid, name: item.attribute("name"))
+        return try await ServiceDiscoveryModule.queryItems(for: .bare(serviceJID), context: context).compactMap { item in
+            guard case let .bare(jid) = item.jid else { return nil }
+            return (jid: jid, name: item.name)
         }
     }
 

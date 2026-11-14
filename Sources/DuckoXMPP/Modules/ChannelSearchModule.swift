@@ -106,14 +106,8 @@ public final class ChannelSearchModule: XMPPModule, Sendable {
 
         guard let domainJID = JID.parse(context.domain) else { return nil }
 
-        var itemsIQ = XMPPIQ(type: .get, to: domainJID, id: context.generateID())
-        let itemsQuery = XMLElement(name: "query", namespace: XMPPNamespaces.discoItems)
-        itemsIQ.element.addChild(itemsQuery)
-
-        guard let itemsResult = try await context.sendIQ(itemsIQ) else { return nil }
-        let items = itemsResult.children(named: "item").compactMap { $0.attribute("jid") }
-
-        let match = await findSearchService(items: items, context: context)
+        let items = try await ServiceDiscoveryModule.queryItems(for: domainJID, context: context)
+        let match = await findSearchService(items: items.map(\.jid), context: context)
         if let match {
             state.withLock { $0.cachedSearchService = match }
             log.info("Discovered a channel search service")
@@ -201,18 +195,12 @@ public final class ChannelSearchModule: XMPPModule, Sendable {
         return seconds >= Double(Int.max) ? Int.max : Int(seconds.rounded(.up))
     }
 
-    private func findSearchService(items: [String], context: ModuleContext) async -> String? {
+    private func findSearchService(items: [JID], context: ModuleContext) async -> String? {
         await withTaskGroup(of: String?.self) { group in
             for item in items {
                 group.addTask {
-                    guard let itemJID = JID.parse(item) else { return nil }
-                    var infoIQ = XMPPIQ(type: .get, to: itemJID, id: context.generateID())
-                    let infoQuery = XMLElement(name: "query", namespace: XMPPNamespaces.discoInfo)
-                    infoIQ.element.addChild(infoQuery)
-
-                    guard let infoResult = try? await context.sendIQ(infoIQ) else { return nil }
-                    let featureVars = Set(infoResult.children(named: "feature").compactMap({ $0.attribute("var") }))
-                    return featureVars.contains(XMPPNamespaces.channelSearch) ? item : nil
+                    guard let info = try? await ServiceDiscoveryModule.queryInfo(for: item, context: context) else { return nil }
+                    return info.features.contains(XMPPNamespaces.channelSearch) ? item.description : nil
                 }
             }
             for await result in group {

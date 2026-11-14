@@ -183,11 +183,6 @@ public final class BlockingModule: XMPPModule, Sendable {
 
     private func serverAdvertisesBlocking(context: ModuleContext) async throws -> Bool {
         guard let domainJID = JID.parse(context.domain) else { return false }
-
-        var iq = XMPPIQ(type: .get, to: domainJID, id: context.generateID())
-        iq.element.addChild(XMLElement(name: "query", namespace: XMPPNamespaces.discoInfo))
-
-        let result = try await context.sendIQ(iq)
-        return result?.children(named: "feature").contains { $0.attribute("var") == XMPPNamespaces.blocking } ?? false
+        return try await ServiceDiscoveryModule.queryInfo(for: domainJID, context: context).features.contains(XMPPNamespaces.blocking)
     }
 }

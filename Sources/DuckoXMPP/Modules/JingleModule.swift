@@ -2300,13 +2300,14 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         let cached = state.withLock { $0.cachedProxy65 }
         if let cached { return cached }
 
-        let items = try await queryDiscoItems(context: context)
+        guard let domainJID = JID.parse(context.domain) else { return nil }
+        let items = try await ServiceDiscoveryModule.queryItems(for: domainJID, context: context)
 
         for item in items {
-            let features = try? await queryDiscoFeatures(for: item, context: context)
-            guard let features, features.contains(XMPPNamespaces.bytestreams) else { continue }
+            guard let info = try? await ServiceDiscoveryModule.queryInfo(for: item.jid, context: context),
+                  info.features.contains(XMPPNamespaces.bytestreams) else { continue }
 
-            if let proxy = try? await queryStreamhost(jid: item, context: context) {
+            if let proxy = try? await queryStreamhost(jid: item.jid, context: context) {
                 state.withLock { $0.cachedProxy65 = proxy }
                 log.info("Discovered a Proxy65 streamhost")
                 log.debug("The Proxy65 streamhost is \(proxy.jid) at \(proxy.host):\(proxy.port)")
@@ -2317,34 +2318,8 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         return nil
     }
 
-    private func queryDiscoItems(context: ModuleContext) async throws -> [String] {
-        guard let domainJID = JID.parse(context.domain) else { return [] }
-
-        var iq = XMPPIQ(type: .get, to: domainJID, id: context.generateID())
-        let query = XMLElement(name: "query", namespace: XMPPNamespaces.discoItems)
-        iq.element.addChild(query)
-
-        guard let result = try await context.sendIQ(iq) else { return [] }
-
-        return result.children(named: "item").compactMap { $0.attribute("jid") }
-    }
-
-    private func queryDiscoFeatures(for jid: String, context: ModuleContext) async throws -> Set<String> {
-        guard let targetJID = JID.parse(jid) else { return [] }
-
-        var iq = XMPPIQ(type: .get, to: targetJID, id: context.generateID())
-        let query = XMLElement(name: "query", namespace: XMPPNamespaces.discoInfo)
-        iq.element.addChild(query)
-
-        guard let result = try await context.sendIQ(iq) else { return [] }
-
-        return Set(result.children(named: "feature").compactMap { $0.attribute("var") })
-    }
-
-    private func queryStreamhost(jid: String, context: ModuleContext) async throws -> ProxyInfo? {
-        guard let targetJID = JID.parse(jid) else { return nil }
-
-        var iq = XMPPIQ(type: .get, to: targetJID, id: context.generateID())
+    private func queryStreamhost(jid: JID, context: ModuleContext) async throws -> ProxyInfo? {
+        var iq = XMPPIQ(type: .get, to: jid, id: context.generateID())
         let query = XMLElement(name: "query", namespace: XMPPNamespaces.bytestreams)
         iq.element.addChild(query)
 
@@ -2353,7 +2328,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
               let portStr = streamhost.attribute("port"),
               let port = UInt16(portStr) else { return nil }
 
-        return ProxyInfo(jid: jid, host: host, port: port)
+        return ProxyInfo(jid: jid.description, host: host, port: port)
     }
 
     // MARK: - Candidate Building

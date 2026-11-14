@@ -277,7 +277,11 @@ public final class ServiceDiscoveryModule: XMPPModule, Sendable {
         guard let context = state.withLock({ $0.context }) else {
             throw XMPPClientError.notConnected
         }
+        return try await Self.queryItems(for: jid, node: node, context: context)
+    }
 
+    /// Queries a remote entity for its disco#items over `context`, for a module that asks on its own.
+    static func queryItems(for jid: JID, node: String? = nil, context: ModuleContext) async throws -> [Item] {
         var iq = XMPPIQ(type: .get, to: jid, id: context.generateID())
         var query = XMLElement(name: "query", namespace: XMPPNamespaces.discoItems)
         if let node { query.setAttribute("node", value: node) }

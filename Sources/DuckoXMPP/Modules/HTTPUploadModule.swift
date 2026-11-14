@@ -69,22 +69,23 @@ public final class HTTPUploadModule: XMPPModule, Sendable {
             throw HTTPUploadError.notConnected
         }
 
-        let items = try await queryItems(context: context)
+        guard let domainJID = JID.parse(context.domain) else { return nil }
+        let items = try await ServiceDiscoveryModule.queryItems(for: domainJID, context: context)
 
         for item in items {
-            let info: DiscoInfoResult
+            let info: ServiceDiscoveryModule.InfoResult
             do {
-                info = try await queryInfo(for: item, context: context)
+                info = try await ServiceDiscoveryModule.queryInfo(for: item.jid, context: context)
             } catch {
-                log.debug("Skipping disco#info for \(item): \(error)")
+                log.debug("Skipping disco#info for \(item.jid): \(error)")
                 continue
             }
             if info.features.contains(XMPPNamespaces.httpUpload) {
-                let maxFileSize = parseMaxFileSize(from: info.extensions)
-                let result = (jid: item, maxFileSize: maxFileSize)
+                let maxFileSize = parseMaxFileSize(from: info.forms)
+                let result = (jid: item.jid.description, maxFileSize: maxFileSize)
                 state.withLock { $0.cachedService = result }
                 log.info("Discovered an upload service, maxFileSize: \(maxFileSize.map(String.init) ?? "unlimited")")
-                log.debug("The upload service is \(item)")
+                log.debug("The upload service is \(item.jid)")
                 return result
             }
         }
@@ -135,57 +136,10 @@ public final class HTTPUploadModule: XMPPModule, Sendable {
 
     // MARK: - Private: Discovery
 
-    private func queryItems(context: ModuleContext) async throws -> [String] {
-        guard let domainJID = JID.parse(context.domain) else { return [] }
-
-        var iq = XMPPIQ(type: .get, to: domainJID, id: context.generateID())
-        let query = XMLElement(name: "query", namespace: XMPPNamespaces.discoItems)
-        iq.element.addChild(query)
-
-        guard let result = try await context.sendIQ(iq) else { return [] }
-
-        return result.children(named: "item").compactMap { $0.attribute("jid") }
-    }
-
-    private struct DiscoInfoResult {
-        let features: Set<String>
-        let extensions: [XMLElement]
-    }
-
-    private func queryInfo(for jid: String, context: ModuleContext) async throws -> DiscoInfoResult {
-        guard let targetJID = JID.parse(jid) else {
-            return DiscoInfoResult(features: [], extensions: [])
-        }
-
-        var iq = XMPPIQ(type: .get, to: targetJID, id: context.generateID())
-        let query = XMLElement(name: "query", namespace: XMPPNamespaces.discoInfo)
-        iq.element.addChild(query)
-
-        guard let result = try await context.sendIQ(iq) else {
-            return DiscoInfoResult(features: [], extensions: [])
-        }
-
-        var features = Set<String>()
-        for element in result.children(named: "feature") {
-            if let featureVar = element.attribute("var") {
-                features.insert(featureVar)
-            }
-        }
-
-        let extensions = result.children(named: "x").filter {
-            $0.namespace == XMPPNamespaces.dataForms
-        }
-
-        return DiscoInfoResult(features: features, extensions: extensions)
-    }
-
-    private func parseMaxFileSize(from extensions: [XMLElement]) -> Int64? {
-        for form in extensions {
-            for field in form.children(named: "field") {
-                guard field.attribute("var") == "max-file-size" else { continue }
-                if let valueElement = field.child(named: "value"),
-                   let text = valueElement.textContent,
-                   let size = Int64(text) {
+    private func parseMaxFileSize(from forms: [[DataFormField]]) -> Int64? {
+        for fields in forms {
+            for field in fields where field.variable == "max-file-size" {
+                if let size = field.values.first.flatMap(Int64.init) {
                     return size
                 }
             }
