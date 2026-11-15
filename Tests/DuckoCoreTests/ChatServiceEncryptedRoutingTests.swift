@@ -180,7 +180,8 @@ struct ChatServiceEncryptedRoutingTests {
         case .archive:
             let archived = ArchivedMessage(messageID: "a9", serverID: nil, forwarded: ForwardedMessage(message: amendment, timestamp: "2026-03-01T10:00:00Z"))
             let converted = try await chatService.convertAndDedup(
-                archived: [archived], conversation: chat, roomSupportsOccupantIDs: nil, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
+                archived: [archived], conversation: chat, read: ArchiveRead(roomSupportsOccupantIDs: nil, isCatchUp: true),
+                accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
             )
             await chatService.applyArchivedAmendments(converted.amendments, in: chat, accountID: accountID)
         }
@@ -244,7 +245,8 @@ struct ChatServiceEncryptedRoutingTests {
         case .archive:
             let archived = ArchivedMessage(messageID: "a1", serverID: nil, forwarded: ForwardedMessage(message: stanza, timestamp: "2026-03-01T10:00:00Z"))
             _ = try await chatService.convertAndDedup(
-                archived: [archived], conversation: chat, roomSupportsOccupantIDs: nil, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
+                archived: [archived], conversation: chat, read: ArchiveRead(roomSupportsOccupantIDs: nil, isCatchUp: true),
+                accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
             )
         case .chat, .room:
             if isOMEMO {
@@ -257,7 +259,8 @@ struct ChatServiceEncryptedRoutingTests {
         let stored = try #require(try await messages(in: origin == .room ? roomChat : chat).first)
         #expect(stored.isUndecryptable)
         #expect(stored.body.isEmpty)
-        // The archive is not decrypted yet, so its OMEMO message is undecryptable with no reason given.
+        // `convertAndDedup` is given no decrypted entries, so the archived OMEMO message stays undecryptable, with no
+        // reason given.
         let expected: UndecryptableReason? = isOMEMO ? (origin == .archive ? nil : .notForThisDevice) : .otherMethod(name: "OpenPGP for XMPP")
         #expect(stored.undecryptableReason == expected)
     }
@@ -308,7 +311,8 @@ struct ChatServiceEncryptedRoutingTests {
         case .archive:
             let archived = ArchivedMessage(messageID: "a4", serverID: nil, forwarded: ForwardedMessage(message: stanza, timestamp: "2026-03-01T10:00:00Z"))
             _ = try await chatService.convertAndDedup(
-                archived: [archived], conversation: chat, roomSupportsOccupantIDs: nil, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
+                archived: [archived], conversation: chat, read: ArchiveRead(roomSupportsOccupantIDs: nil, isCatchUp: true),
+                accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
             )
         }
 
@@ -327,7 +331,8 @@ struct ChatServiceEncryptedRoutingTests {
         let archived = ArchivedMessage(messageID: "a3", serverID: nil, forwarded: ForwardedMessage(message: stanza, timestamp: "2026-03-01T10:00:00Z"))
 
         _ = try await chatService.convertAndDedup(
-            archived: [archived], conversation: chat, roomSupportsOccupantIDs: nil, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
+            archived: [archived], conversation: chat, read: ArchiveRead(roomSupportsOccupantIDs: nil, isCatchUp: true),
+            accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
         )
 
         let stored = try #require(try await messages(in: chat).first)
@@ -344,7 +349,8 @@ struct ChatServiceEncryptedRoutingTests {
         let archived = ArchivedMessage(messageID: "a2", serverID: nil, forwarded: ForwardedMessage(message: stanza, timestamp: nil))
 
         let converted = try await chatService.convertAndDedup(
-            archived: [archived], conversation: chat, roomSupportsOccupantIDs: nil, accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
+            archived: [archived], conversation: chat, read: ArchiveRead(roomSupportsOccupantIDs: nil, isCatchUp: true),
+            accountJID: #require(BareJID.parse(testJIDString)), accountID: accountID
         )
 
         #expect(converted.messages.isEmpty)

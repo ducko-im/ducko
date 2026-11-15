@@ -67,9 +67,11 @@ extension OMEMOModuleTests {
         }
 
         /// A fetch that fails for any reason but a missing node publishes only the bundle and skips pruning. The device
-        /// is added afterwards from a fresh read, never over the unread list.
+        /// is added afterwards from a fresh read, never over the unread list. Only an existing device gets this far: a new
+        /// one is not created over an unread list.
         @Test(arguments: [false, true])
         func `A failed own device-list fetch registers the device from a fresh read`(failsAtSend: Bool) async throws {
+            try omemoModule.configureIdentity(OMEMO2Fixtures.device("bob").identityData)
             let seenDevices = SeenDevices(initial: [99])
             omemoModule.configureSeenDeviceClassificationProvider(seenDevices, accountID: "acct-1")
             if failsAtSend {
@@ -107,6 +109,7 @@ extension OMEMOModuleTests {
         /// after the last delay.
         @Test(arguments: [1, 3])
         func `Registration retries stop after success or the last delay`(failedRetries: Int) async throws {
+            try omemoModule.configureIdentity(OMEMO2Fixtures.device("bob").identityData)
             let (client, connectTask) = await startConnect()
             let connectReadID = try #require(await extractIQID(from: sentStanza(5)))
             await failDeviceListRead(id: connectReadID)

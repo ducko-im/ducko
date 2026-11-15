@@ -83,13 +83,15 @@ public struct Bookmark: Sendable {
         return conference
     }
 
-    // MARK: - XEP-0223 Publish Options
+    // MARK: - Publish Options
 
-    /// Publish options for persistent, private PEP storage (XEP-0223).
+    /// Publish options for persistent, private PEP storage (XEP-0223) that never
+    /// pushes the last item on presence (XEP-0402).
     public static let publishOptions: [DataFormField] = [
         DataFormField.pubsubPublishOptionsHeader,
         DataFormField(variable: "pubsub#persist_items", values: ["true"]),
         DataFormField(variable: "pubsub#access_model", values: ["whitelist"]),
-        DataFormField(variable: "pubsub#max_items", values: ["max"])
+        DataFormField(variable: "pubsub#max_items", values: ["max"]),
+        DataFormField(variable: "pubsub#send_last_published_item", values: ["never"])
     ]
 }

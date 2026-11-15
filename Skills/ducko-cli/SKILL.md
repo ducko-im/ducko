@@ -80,6 +80,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/profile` — view own vCard profile
 - `/connection-info` — show TLS connection info (protocol, cipher, certificate)
 - `/encrypt <jid> on|off` — toggle OMEMO encryption for a conversation. `off` also keeps a contact's encrypted message from switching it back on.
+- `/omemo-reset <jid> [device-id]` — reset the OMEMO sessions with the contact's devices, or with your other devices for your own JID, as `omemo reset` does
 - `/pref chatstates on|off` — toggle chat state notifications (typing indicators)
 - `/pref markers on|off` — toggle displayed markers (read receipts)
 - `/reply <jid> <message>` — reply to the last incoming message from JID, or in the room JID, skipping a room message without an id from the room. Ducko accepts a room's ids only when its disco#info lists `urn:xmpp:sid:0`. The reply starts with a quote of that message, unless the message was encrypted and the reply is not.
@@ -395,7 +396,7 @@ ducko room send chat@conference.example.com "Hello everyone"
 
 ### `omemo fingerprint`
 
-Display own OMEMO device fingerprint (the local device's identity key).
+Display own OMEMO device fingerprint (the local device's identity key). Fingerprints show in the form XEP-0384 recommends: the key's Curve25519 form as eight groups of eight lowercase hex digits, matching what other OMEMO 2 clients display. The stored, raw form is the Ed25519 key in hex.
 
 ```
 ducko omemo fingerprint
@@ -404,7 +405,7 @@ ducko omemo fingerprint --output json
 
 ### `omemo devices <jid>`
 
-List a contact's OMEMO devices with trust status.
+List a contact's OMEMO devices with trust status. Only devices on the contact's current device list are shown; while that list cannot be read, every stored device is.
 
 ```
 ducko omemo devices alice@example.com
@@ -413,7 +414,7 @@ ducko omemo devices alice@example.com --output json
 
 ### `omemo trust <jid> <device-id>`
 
-Trust an OMEMO device. Marks the device as trusted for future encrypted sessions. An unknown device ID exits 1 and prints the error on stderr.
+Trust an OMEMO device. Marks the device as trusted for future encrypted sessions. An unknown device ID, or one no longer on the contact's device list, exits 1 and prints the error on stderr.
 
 ```
 ducko omemo trust alice@example.com 12345
@@ -425,6 +426,17 @@ Untrust an OMEMO device. Marks the device as untrusted, preventing encrypted ses
 
 ```
 ducko omemo untrust alice@example.com 12345
+```
+
+### `omemo reset <jid> [--device <id>]`
+
+Reset the OMEMO sessions with every device on the contact's current list, or with one device. With the account's own JID it resets the account's other devices, and naming this device with `--device` is refused. A trusted or undecided device gets a new session and an empty key-exchange message. It is reported as still needing trusting when it is not trusted for encryption, as an undecided device is with trust on first use off. A device marked untrusted only has its session discarded, as do a device that publishes no keys and a `--device` that is not on the current list. A device whose bundle now carries another identity key is marked untrusted under the new key. The command prints each device's outcome, with both fingerprints of a changed key, and leaves a note in the chat with the contact (none for the account's own JID).
+
+JSON emits one `omemo_session_reset` record with `jid` and a `devices` list. Each entry has `deviceID` (a string) and `outcome`: `rebuilt` (with `needsTrusting`, `"true"` or `"false"`), `discarded`, `key_changed` (raw `previousFingerprint`/`newFingerprint`, displayed `previousDisplayFingerprint`/`newDisplayFingerprint`), `no_bundle`, `not_listed`, or `failed` (with `error`).
+
+```
+ducko omemo reset alice@example.com
+ducko omemo reset alice@example.com --device 12345 --output json
 ```
 
 ### `logs show [--lines <n>]`
@@ -470,7 +482,7 @@ ducko import adium --path ~/Library/Application\ Support/Adium\ 2.0/Users/Defaul
 [2026-02-27T10:00:15.000Z] <- alice@example.com: Secret message [encrypted]
 ```
 
-`<-` = incoming, `->` = outgoing. Markers: `[delivered]` for delivery receipts, `[read]` instead once the contact has read the message, `[edited]` for corrected messages, `[encrypted]` for OMEMO-encrypted messages, `[error: ...]` for errors. An encrypted message that could not be decrypted reads `<jid>: error: <notice>` in place of its body, and is also marked `[encrypted]`. The notice says why:
+`<-` = incoming, `->` = outgoing. Markers: `[delivered]` for delivery receipts, `[read]` instead once the contact has read the message, `[edited]` for corrected messages, `[encrypted]` for OMEMO-encrypted messages, `[untrusted device]` after `[encrypted]` for one decrypted from a device that is not trusted for encryption, `[error: ...]` for errors. An encrypted message that could not be decrypted reads `<jid>: error: <notice>` in place of its body, and is also marked `[encrypted]`. The notice says why:
 
 - `This message could not be decrypted`
 - `This message was not encrypted for this device`
@@ -482,11 +494,11 @@ ducko import adium --path ~/Library/Application\ Support/Adium\ 2.0/Users/Defaul
 
 `interactive` prints an encrypted room message as it prints a plaintext one, `<room>/<nick>: <body>`, followed by `[encrypted]`. One in a room's private chat gets the `[PM]` prefix as well.
 
-History also prints timeline notes, which are not messages, on lines of their own: `[<timestamp>] -- Encryption enabled because <jid> sent an encrypted message`.
+History also prints timeline notes, which are not messages, on lines of their own, such as `[<timestamp>] -- Encryption enabled because <jid> sent an encrypted message`. Other notes say that a contact asked for unencrypted messages (with any reason they gave), that they sent an encrypted message again after you switched encryption off, or that the encryption sessions with them were reset (listing the devices that need attention).
 
 ### ANSI
 
-Same as plain with color codes (green incoming, cyan outgoing, red errors, dim timestamps). Delivery shown as one green checkmark and read as two, edited as dim `[edited]`, encrypted as dim green `[encrypted]`, notes dimmed. Default in terminal.
+Same as plain with color codes (green incoming, cyan outgoing, red errors, dim timestamps). Delivery shown as one green checkmark and read as two, edited as dim `[edited]`, encrypted as dim green `[encrypted]`, an untrusted sending device as yellow `[untrusted device]`, notes dimmed. Default in terminal.
 
 ### JSON
 
@@ -494,11 +506,11 @@ Same as plain with color codes (green incoming, cyan outgoing, red errors, dim t
 {"body":"Hello","direction":"incoming","from":"alice@example.com","timestamp":"2026-02-27T10:00:00Z","type":"message"}
 ```
 
-Optional keys: `"action":"true"` for a `/me` message (an outgoing one in history also carries `"actor"`, the account's address), `"attachments":"..."` (comma-separated attachment URLs, leaving out one whose URL is the whole body), `"delivered":"true"`, `"read":"true"` (with `"delivered"` also set), `"edited":"true"`, `"encrypted":"true"`, `"error":"..."`, and `"undecryptable":"true"` for an encrypted message that could not be decrypted (its `body` is then empty, and `"notice"` says why). An encrypted room message `interactive` prints is a `room_message` record, and one in a room's private chat a `muc_private_message` record, each with `room` and `nickname` in place of `from`. Keys are sorted alphabetically.
+Optional keys: `"action":"true"` for a `/me` message (an outgoing one in history also carries `"actor"`, the account's address), `"attachments":"..."` (comma-separated attachment URLs, leaving out one whose URL is the whole body), `"delivered":"true"`, `"read":"true"` (with `"delivered"` also set), `"edited":"true"`, `"encrypted":"true"`, `"untrustedDevice":"true"` for one decrypted from a device that is not trusted for encryption, `"error":"..."`, and `"undecryptable":"true"` for an encrypted message that could not be decrypted (its `body` is then empty, and `"notice"` says why). An encrypted room message `interactive` prints is a `room_message` record, and one in a room's private chat a `muc_private_message` record, each with `room` and `nickname` in place of `from`. Keys are sorted alphabetically.
 
-A timeline note in history is a record of its own: `{"kind":"encryption-enabled-by-contact","text":"...","timestamp":"...","type":"note"}`.
+A timeline note in history is a record of its own: `{"kind":"encryption-enabled-by-contact","text":"...","timestamp":"...","type":"note"}`. `kind` is also `plaintext-requested` (with `detail` holding the reason when one was given, and in a room `subject` holding the requesting occupant's nickname), `encryption-resumed-by-contact` or `sessions-reset` (with `detail` listing the devices that need attention, if any).
 
-Empty lists emit one `<kind>_empty` record instead of text: `accounts_empty`, `roster_empty`, `bookmarks_empty`, `block_list_empty`, `rooms_empty`, `room_participants_empty`, `searched_channels_empty`, `messages_empty`, `omemo_identity_empty` or `omemo_devices_empty`. Account-scoped records carry `"account"`. `omemo_devices_empty` adds `"jid"`, and `room_participants_empty` carries `"room"`. OMEMO commands emit `omemo_fingerprint`, `omemo_device` (`jid`, `deviceID`, `trust`, and `fingerprint` when known) and `omemo_trust` records.
+Empty lists emit one `<kind>_empty` record instead of text: `accounts_empty`, `roster_empty`, `bookmarks_empty`, `block_list_empty`, `rooms_empty`, `room_participants_empty`, `searched_channels_empty`, `messages_empty`, `omemo_identity_empty` or `omemo_devices_empty`. Account-scoped records carry `"account"`. `omemo_devices_empty` adds `"jid"`, and `room_participants_empty` carries `"room"`. OMEMO commands emit `omemo_fingerprint` (`fingerprint` and `displayFingerprint`), `omemo_device` (`jid`, `deviceID`, `trust`, and `fingerprint` and `displayFingerprint` when known), `omemo_trust` and `omemo_session_reset` records. `fingerprint` is the raw Ed25519 hex Ducko stores; `displayFingerprint` is the grouped Curve25519 form the text output shows.
 
 ## Throwaway Profiles
 
@@ -589,7 +601,7 @@ Then run `/encrypt RECEIVER_JID on` and `send RECEIVER_JID <text>` in the sender
 
 The receiver's REPL prints an incoming encrypted message as it arrives, and `/history SENDER_JID` shows it again. A decrypted message ends in `[encrypted]`. A failed one is also marked `[encrypted]` and reads `error:` and a notice in place of its text. `This message was not encrypted for this device` means it carried no key for the receiver's device, because the sender did not trust the receiver's new device, so check the trusted device ID. Otherwise it reads `This message could not be decrypted`, and the failure logs a warning in the receiver's file log. The warning is `OMEMO key exchange rejected: …` when the sender used a pre-key the receiver no longer has, and `OMEMO decryption failed: <error>` otherwise. A repeated key exchange prints no message line and logs `OMEMO key exchange ignored: …`.
 
-On the test server, a message sent while the receiver is offline reaches it through the archive sync on its next sign-in rather than as a live delivery. That path stores an encrypted message as undecryptable without trying, so this setup cannot check how a live delivery from offline storage decrypts.
+On the test server, a message sent while the receiver is offline reaches it through the archive sync on its next sign-in rather than as a live delivery. The sync decrypts it, so this setup checks archive decryption rather than how a live delivery from offline storage decrypts.
 
 Each throwaway profile adds a device to its account's device list on the shared server. Afterwards, with the user's approval, run `DUCKO_RESET_FIXTURES=1 swift test --package-path IntegrationTests --filter ResetTestServerState` to retract the lists, and clean up both profiles as Throwaway Profiles describes.
 

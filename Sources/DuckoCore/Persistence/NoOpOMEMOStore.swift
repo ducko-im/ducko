@@ -13,11 +13,12 @@ struct NoOpOMEMOStore: OMEMOStore {
 
     func savePreKeys(_: [OMEMOStoredPreKey]) async throws {}
     func consumePreKey(id _: UInt32, accountJID _: String) async throws {}
-    func loadSignedPreKey(for _: String) async throws -> OMEMOStoredSignedPreKey? {
-        nil
+    func loadSignedPreKeys(for _: String) async throws -> [OMEMOStoredSignedPreKey] {
+        []
     }
 
     func saveSignedPreKey(_: OMEMOStoredSignedPreKey) async throws {}
+    func deleteSignedPreKeys(for _: String, olderThan _: Date) async throws {}
     func loadSessions(for _: String) async throws -> [OMEMOStoredSession] {
         []
     }

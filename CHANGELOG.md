@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Sign in with SCRAM-SHA-512 and SCRAM-SHA3-512 when the server offers them, preferring the strongest sign-in the server supports
 - Add `ducko account set <jid>` to allow or refuse sending the password and to require an encrypted connection without connecting, `--allow-plain` on `ducko account add`, and both settings in `ducko account list`
+- Reset the encryption sessions with a contact, one of their devices, or one of your own other devices, from the chat's encryption menu, the Device Fingerprints sheet, `ducko omemo reset` or the REPL's `/omemo-reset`, when their messages can't be decrypted. The chat notes which devices changed key or still need trusting
+- Mark a message decrypted from a device you haven't trusted with an orange shield, `[untrusted device]` in the CLI, or `"untrustedDevice":"true"` in JSON
+- Honour a contact's request for unencrypted messages: encrypted sends to them stop with a "Send Unencrypted" choice that switches encryption off and sends the held text once, and the chat notes when they later send encrypted messages again
+- Read encrypted messages that arrived while you were offline once the archive is caught up, and switch encryption on for the reply when a contact's first encrypted message arrives that way
 
 ### Changed
 
@@ -20,11 +24,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Catch up on a group chat's archive once you have rejoined it, when the group chat identifies its members by occupant id
 - Read message archives only from servers and group chats that announce one
 - Explain in plain words why a sign-in failed when the server answers out of order, leaves out part of its reply, or refuses the sign-in partway, instead of showing internal names such as "Expected waitingForServerFirst"
+- Show encryption fingerprints in the standard OMEMO form, eight groups of eight characters, in the app and the CLI. Devices you trusted before keep their trust
+- Encrypt only to the devices on each recipient's current device list, and list only those devices in the Device Fingerprints sheet and `ducko omemo devices`
+- Encrypt to your own other devices only when they are trusted under the trust-on-first-use setting, as for contacts
+- Send an encrypted group message only in group chats that reveal their members' addresses and let Ducko read their member lists, and fetch those lists before each encrypted message
+- Replace your encryption device's signed key every week, keeping the previous one for another week so messages encrypted with it still decrypt
+- Keep your bookmarks working when the server's bookmark storage was set up by another app with different settings, and stop the server from re-sending your bookmarks at every sign-in
 
 ### Fixed
 
 - Stop reading the same archive range twice from adding copies of messages already shown
 - Skip archive pages the server reports as still changing and load them on a later try, instead of keeping an incomplete page
+- Put your encryption device back on your account's device list when another app removes it, and never pick a new device id another of your devices already uses
+- Fetch a contact's device list again when a message comes from a device not on it, so that device can be trusted and encrypted to
 
 ### Removed
 
@@ -38,6 +50,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Stop a sign-in before the password proof goes out when the server's list of sign-in options or the connection's encryption version was changed on the way, which can mean the connection is being tampered with
 - Tie sign-ins to the encrypted connection on servers such as Prosody that support only the newer TLS 1.3 form of this protection, so someone holding a trusted certificate for the server cannot pass your sign-in on
 - Refuse a sign-in when the server offers sign-in protection that Ducko cannot use on the connection, or when its sign-in options contradict each other, instead of signing in without that protection
+- Ignore a request for unencrypted messages that comes from a device you haven't trusted, so it cannot turn encryption off in a chat
+- Drop encrypted elements meant for the server, such as delivery hints and addresses, when they appear inside an encrypted message
 
 ## [0.11.0] - 2026-10-23
 

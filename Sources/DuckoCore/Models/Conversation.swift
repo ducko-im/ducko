@@ -22,6 +22,8 @@ public struct Conversation: Sendable, Identifiable {
     public var encryptionEnabled: Bool
     /// The user switched encryption off in this chat, so a contact's encrypted message does not switch it back on.
     public var encryptionOptedOut: Bool
+    /// The contact's latest request for unencrypted messages, whether or not the user has answered it.
+    public var plaintextRequest: PlaintextRequest?
     public var occupantNickname: String?
     public var lastReadTimestamp: Date?
     public var createdAt: Date
@@ -48,6 +50,7 @@ public struct Conversation: Sendable, Identifiable {
         rejoinsOnConnect: Bool = false,
         encryptionEnabled: Bool = false,
         encryptionOptedOut: Bool = false,
+        plaintextRequest: PlaintextRequest? = nil,
         occupantNickname: String? = nil,
         lastReadTimestamp: Date? = nil,
         createdAt: Date
@@ -69,6 +72,7 @@ public struct Conversation: Sendable, Identifiable {
         self.rejoinsOnConnect = rejoinsOnConnect
         self.encryptionEnabled = encryptionEnabled
         self.encryptionOptedOut = encryptionOptedOut
+        self.plaintextRequest = plaintextRequest
         self.occupantNickname = occupantNickname
         self.lastReadTimestamp = lastReadTimestamp
         self.createdAt = createdAt
@@ -77,6 +81,13 @@ public struct Conversation: Sendable, Identifiable {
     /// A chat with one contact: not a room, and not a private chat with a room's occupant.
     public var isDirectChat: Bool {
         type == .chat && occupantNickname == nil
+    }
+
+    /// The contact's request for unencrypted messages while it waits for the user's answer: encryption is on and the
+    /// request is not confirmed.
+    public var unansweredPlaintextRequest: PlaintextRequest? {
+        guard encryptionEnabled, let plaintextRequest, !plaintextRequest.isConfirmed else { return nil }
+        return plaintextRequest
     }
 
     /// Whether the server archive can be asked for this conversation's history. An archive query names a bare address,

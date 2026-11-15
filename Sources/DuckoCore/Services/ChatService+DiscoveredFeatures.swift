@@ -23,4 +23,10 @@ extension ChatService {
     func roomAdvertises(_ feature: String, room: BareJID, accountID: UUID) -> Bool {
         featureSource.knownRoomInfo(room, accountID: accountID)?.features.contains(feature) == true
     }
+
+    /// Whether `room`'s disco#info lists `feature`, asking the room when its features are not known, as after a rejoin
+    /// whose query went unanswered. False when the room does not answer.
+    func roomAdvertisesAskingIfUnknown(_ feature: String, room: BareJID, accountID: UUID) async -> Bool {
+        await featureSource.roomInfo(room, accountID: accountID)?.features.contains(feature) == true
+    }
 }

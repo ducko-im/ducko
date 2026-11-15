@@ -259,19 +259,24 @@ final class RoomService {
         guard let mucModule = await client.module(ofType: MUCModule.self), let roomJID = BareJID.parse(roomJIDString) else { return [] }
 
         let affiliations: [RoomAffiliation] = [.owner, .admin, .member]
-        return await withTaskGroup(of: [BareJID].self) { group in
-            for affiliation in affiliations {
-                let xmppAffiliation = MUCAffiliation(rawValue: affiliation.rawValue) ?? .none
-                group.addTask {
-                    let items = await (try? mucModule.getAffiliationList(xmppAffiliation, in: roomJID)) ?? []
-                    return items.map(\.jid)
+        do {
+            return try await withThrowingTaskGroup(of: [BareJID].self) { group in
+                for affiliation in affiliations {
+                    let xmppAffiliation = MUCAffiliation(rawValue: affiliation.rawValue) ?? .none
+                    group.addTask {
+                        try await mucModule.getAffiliationList(xmppAffiliation, in: roomJID).map(\.jid)
+                    }
                 }
+                var result = Set<BareJID>()
+                for try await jids in group {
+                    result.formUnion(jids)
+                }
+                return Array(result)
             }
-            var result = Set<BareJID>()
-            for await jids in group {
-                result.formUnion(jids)
-            }
-            return Array(result)
+        } catch {
+            log.warning("A room's member list could not be read")
+            log.debug("The member list of \(roomJID) could not be read: \(error)")
+            throw ChatServiceError.roomMemberListUnavailable(roomJID: roomJID)
         }
     }
 

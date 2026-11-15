@@ -198,6 +198,13 @@ struct ChatHeaderView: View {
                         showDeviceFingerprints = true
                     }
                 }
+                if !isGroupchat, !isMUCPrivateMessage, let windowState {
+                    Button("Reset Encryption Sessions") {
+                        Task { await windowState.resetEncryptionSessions() }
+                    }
+                    .disabled(isOffline)
+                    .accessibilityIdentifier("reset-sessions-button")
+                }
             } label: {
                 Image(systemName: conversation.encryptionEnabled ? "lock.fill" : "lock.open")
                     .foregroundStyle(conversation.encryptionEnabled ? Color.green : .secondary)

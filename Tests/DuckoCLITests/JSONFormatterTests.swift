@@ -223,6 +223,21 @@ struct JSONFormatterTests {
         #expect(json["kind"] == "encryption-enabled-by-contact")
         #expect(json["text"] == "Encryption enabled because bob@example.com sent an encrypted message")
         #expect(json["timestamp"] == "2026-02-28T12:00:00Z")
+        #expect(json["subject"] == nil)
+    }
+
+    @Test func `a plaintext request note carries who asked and why`() throws {
+        let note = TimelineNote(
+            conversationID: UUID(), timestamp: Date(timeIntervalSince1970: 1_772_280_000), kind: .plaintextRequested,
+            subject: "carol", detail: "No OMEMO here"
+        )
+        let output = formatter.formatNote(note, contactName: "room@conference.example.com")
+        let data = try #require(output.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+        #expect(json["kind"] == "plaintext-requested")
+        #expect(json["text"] == "carol asked for unencrypted messages (No OMEMO here)")
+        #expect(json["subject"] == "carol")
+        #expect(json["detail"] == "No OMEMO here")
     }
 
     // MARK: - Search

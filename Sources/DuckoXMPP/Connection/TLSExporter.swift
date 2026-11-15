@@ -91,29 +91,3 @@ private func hkdfExpandLabel<H: HashFunction>(_: H.Type, secret: [UInt8], label:
     let info = [UInt8(length >> 8), UInt8(length & 0xFF), UInt8(fullLabel.count)] + fullLabel + [UInt8(context.count)] + context
     return HKDF<H>.expand(pseudoRandomKey: secret, info: info, outputByteCount: length).withUnsafeBytes { Array($0) }
 }
-
-private func decodeHex(_ digits: some Collection<UInt8>) -> [UInt8]? {
-    guard digits.count.isMultiple(of: 2) else { return nil }
-    var bytes: [UInt8] = []
-    bytes.reserveCapacity(digits.count / 2)
-    var high: UInt8?
-    for digit in digits {
-        guard let value = hexValue(digit) else { return nil }
-        if let pending = high {
-            bytes.append(pending << 4 | value)
-            high = nil
-        } else {
-            high = value
-        }
-    }
-    return bytes
-}
-
-private func hexValue(_ digit: UInt8) -> UInt8? {
-    switch digit {
-    case UInt8(ascii: "0") ... UInt8(ascii: "9"): digit - UInt8(ascii: "0")
-    case UInt8(ascii: "a") ... UInt8(ascii: "f"): digit - UInt8(ascii: "a") + 10
-    case UInt8(ascii: "A") ... UInt8(ascii: "F"): digit - UInt8(ascii: "A") + 10
-    default: nil
-    }
-}

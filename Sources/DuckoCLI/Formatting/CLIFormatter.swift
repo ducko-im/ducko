@@ -37,6 +37,7 @@ protocol CLIFormatter: Sendable {
     func formatOMEMOFingerprint(_ fingerprint: String) -> String
     func formatOMEMODevice(_ device: OMEMODeviceInfo) -> String
     func formatOMEMOTrustChange(jid: String, deviceID: UInt32, trustLevel: OMEMOTrustLevel) -> String
+    func formatOMEMOSessionReset(_ report: OMEMOSessionResetReport) -> String
 }
 
 enum CLIEmptyResult {
@@ -118,6 +119,11 @@ func omemoFingerprintText(_ device: OMEMODeviceInfo) -> String {
 
 func omemoTrustChangeText(jid: String, deviceID: UInt32, trustLevel: OMEMOTrustLevel) -> String {
     "\(trustLevel.rawValue.capitalized) device \(deviceID) for \(jid)."
+}
+
+/// The line above the devices of a session reset, which says so when there were none.
+func omemoSessionResetHeading(_ report: OMEMOSessionResetReport) -> String {
+    report.devices.isEmpty ? "No OMEMO devices to reset for \(report.peerJID)." : "Reset the OMEMO sessions with \(report.peerJID):"
 }
 
 func formatByteCount(_ bytes: Int64) -> String {

@@ -1,4 +1,5 @@
 import DuckoTestSupport
+import struct os.OSAllocatedUnfairLock
 import Testing
 @testable import DuckoXMPP
 
@@ -28,6 +29,41 @@ private func makeConnectedClient(mock: MockTransport, pepModule: PEPModule) asyn
     try await connectTask.value
 
     return client
+}
+
+private let stanzasNamespace = "urn:ietf:params:xml:ns:xmpp-stanzas"
+private let preconditionNotMet = """
+<conflict xmlns='\(stanzasNamespace)'/><precondition-not-met xmlns='http://jabber.org/protocol/pubsub#errors'/>
+"""
+private let reconfigureOptions = [
+    DataFormField.pubsubPublishOptionsHeader,
+    DataFormField(variable: "pubsub#access_model", values: ["whitelist"])
+]
+
+/// Answers each publish with the next of `publishErrors`, a result once they run out or for `nil`, and each
+/// configure with `configureError` or a result.
+private func answerPEPRequests(on mock: MockTransport, publishErrors: [String?], configureError: String? = nil) async {
+    let publishCount = OSAllocatedUnfairLock(initialState: 0)
+    await mock.autoReply { stanza in
+        guard let id = extractIQID(from: stanza) else { return nil }
+        let error: String?
+        if stanza.contains("<publish ") {
+            error = publishCount.withLock { count in
+                defer { count += 1 }
+                return count < publishErrors.count ? publishErrors[count] : nil
+            }
+        } else if stanza.contains("<configure ") {
+            error = configureError
+        } else {
+            return nil
+        }
+        guard let error else { return "<iq type='result' id='\(id)'/>" }
+        return "<iq type='error' id='\(id)'><error type='cancel'>\(error)</error></iq>"
+    }
+}
+
+private func sentIQs(_ mock: MockTransport) async -> [String] {
+    await mock.sentBytes.map { String(decoding: $0, as: UTF8.self) }.filter { $0.hasPrefix("<iq") }
 }
 
 // MARK: - Tests
@@ -397,6 +433,96 @@ enum PEPModuleTests {
             }
 
             try await deleteTask.value
+            await disconnectFast(client)
+        }
+    }
+
+    struct NodeReconfiguration {
+        @Test
+        func `A publish refused for its options reconfigures the node and publishes again`() async throws {
+            let mock = MockTransport()
+            let pepModule = makePEPModule()
+            let client = try await makeConnectedClient(mock: mock, pepModule: pepModule)
+            await mock.clearSentBytes()
+            await answerPEPRequests(on: mock, publishErrors: [preconditionNotMet])
+
+            let payload = XMLElement(name: "data", namespace: testNode)
+            try await pepModule.publishItem(node: testNode, itemID: "item-1", payload: payload, options: reconfigureOptions)
+
+            let sent = await sentIQs(mock)
+            try #require(sent.count == 3)
+            #expect(sent[0].contains("<publish "))
+            #expect(sent[1].contains("<pubsub xmlns=\"\(XMPPNamespaces.pubsubOwner)\""))
+            #expect(sent[1].contains("<configure node=\"\(testNode)\""))
+            #expect(sent[1].contains("<value>\(XMPPNamespaces.pubsubNodeConfig)</value>"))
+            #expect(sent[1].contains("var=\"pubsub#access_model\""))
+            #expect(sent[1].contains("<value>whitelist</value>"))
+            #expect(!sent[1].contains(XMPPNamespaces.pubsubPublishOptions))
+            #expect(sent[2].contains("<publish "))
+            #expect(sent[2].contains("<publish-options>"))
+
+            await disconnectFast(client)
+        }
+
+        @Test(arguments: [
+            "<conflict xmlns='\(stanzasNamespace)'/>",
+            "<not-acceptable xmlns='\(stanzasNamespace)'/><precondition-not-met xmlns='http://jabber.org/protocol/pubsub#errors'/>"
+        ])
+        func `Any other publish error reaches the caller without a reconfigure`(error: String) async throws {
+            let mock = MockTransport()
+            let pepModule = makePEPModule()
+            let client = try await makeConnectedClient(mock: mock, pepModule: pepModule)
+            await mock.clearSentBytes()
+            await answerPEPRequests(on: mock, publishErrors: [error])
+
+            let payload = XMLElement(name: "data", namespace: testNode)
+            await #expect(throws: XMPPStanzaError.self) {
+                try await pepModule.publishItem(node: testNode, itemID: "item-1", payload: payload, options: reconfigureOptions)
+            }
+
+            #expect(await sentIQs(mock).count == 1)
+            await disconnectFast(client)
+        }
+
+        @Test
+        func `A failed reconfigure reaches the caller without a second publish`() async throws {
+            let mock = MockTransport()
+            let pepModule = makePEPModule()
+            let client = try await makeConnectedClient(mock: mock, pepModule: pepModule)
+            await mock.clearSentBytes()
+            await answerPEPRequests(
+                on: mock, publishErrors: [preconditionNotMet], configureError: "<forbidden xmlns='\(stanzasNamespace)'/>"
+            )
+
+            let payload = XMLElement(name: "data", namespace: testNode)
+            let error = await #expect(throws: XMPPStanzaError.self) {
+                try await pepModule.publishItem(node: testNode, itemID: "item-1", payload: payload, options: reconfigureOptions)
+            }
+
+            #expect(error?.condition == .forbidden)
+            let sent = await sentIQs(mock)
+            #expect(sent.count == 2)
+            #expect(sent.last?.contains("<configure ") == true)
+            await disconnectFast(client)
+        }
+
+        @Test
+        func `A second refusal after the reconfigure reaches the caller`() async throws {
+            let mock = MockTransport()
+            let pepModule = makePEPModule()
+            let client = try await makeConnectedClient(mock: mock, pepModule: pepModule)
+            await mock.clearSentBytes()
+            await answerPEPRequests(on: mock, publishErrors: [preconditionNotMet, preconditionNotMet, preconditionNotMet])
+
+            let payload = XMLElement(name: "data", namespace: testNode)
+            let error = await #expect(throws: XMPPStanzaError.self) {
+                try await pepModule.publishItem(node: testNode, itemID: "item-1", payload: payload, options: reconfigureOptions)
+            }
+
+            #expect(error?.condition == .conflict)
+            let sent = await sentIQs(mock)
+            #expect(sent.count == 3)
+            #expect(sent.count { $0.contains("<configure ") } == 1)
             await disconnectFast(client)
         }
     }

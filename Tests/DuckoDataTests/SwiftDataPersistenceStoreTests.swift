@@ -330,6 +330,7 @@ struct SwiftDataPersistenceStoreTests {
             conversation.rejoinsOnConnect = true
             conversation.encryptionEnabled = true
             conversation.encryptionOptedOut = true
+            conversation.plaintextRequest = PlaintextRequest(requester: "Other", reason: "No OMEMO here", isConfirmed: true)
             conversation.occupantNickname = "Other"
             conversation.lastReadTimestamp = createdAt
             try await store.upsertConversation(conversation)
@@ -348,6 +349,13 @@ struct SwiftDataPersistenceStoreTests {
             #expect(updated.occupantNickname == "Renamed")
             #expect(updated.encryptionEnabled == true)
 
+            clearOptionalFields(of: &conversation)
+            try await store.upsertConversation(conversation)
+            let cleared = try #require(try await store.fetchAllConversations().first)
+            expectClearedConversation(cleared)
+        }
+
+        private func clearOptionalFields(of conversation: inout Conversation) {
             conversation.accountID = nil
             conversation.importSourceJID = nil
             conversation.displayName = nil
@@ -359,11 +367,9 @@ struct SwiftDataPersistenceStoreTests {
             conversation.rejoinsOnConnect = false
             conversation.encryptionEnabled = false
             conversation.encryptionOptedOut = false
+            conversation.plaintextRequest = nil
             conversation.occupantNickname = nil
             conversation.lastReadTimestamp = nil
-            try await store.upsertConversation(conversation)
-            let cleared = try #require(try await store.fetchAllConversations().first)
-            expectClearedConversation(cleared)
         }
 
         private func expectClearedConversation(_ cleared: Conversation) {
@@ -378,6 +384,7 @@ struct SwiftDataPersistenceStoreTests {
             #expect(cleared.rejoinsOnConnect == false)
             #expect(cleared.encryptionEnabled == false)
             #expect(cleared.encryptionOptedOut == false)
+            #expect(cleared.plaintextRequest == nil)
             #expect(cleared.occupantNickname == nil)
             #expect(cleared.lastReadTimestamp == nil)
         }
@@ -401,6 +408,7 @@ struct SwiftDataPersistenceStoreTests {
             #expect(inserted.rejoinsOnConnect == true)
             #expect(inserted.encryptionEnabled == true)
             #expect(inserted.encryptionOptedOut == true)
+            #expect(inserted.plaintextRequest == PlaintextRequest(requester: "Other", reason: "No OMEMO here", isConfirmed: true))
             #expect(inserted.occupantNickname == "Other")
             #expect(inserted.lastReadTimestamp == conversation.createdAt)
         }

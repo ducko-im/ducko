@@ -574,6 +574,20 @@ enum FileTranscriptStoreTests {
         }
 
         @Test
+        func `A note keeps whom it names and what it adds`() async throws {
+            try await withTemporaryDirectory { dir in
+                let store = FileTranscriptStore(baseDirectory: dir)
+                let note = TimelineNote(
+                    conversationID: testConversationID, timestamp: Date(timeIntervalSince1970: 1_772_280_000), kind: .plaintextRequested,
+                    subject: "carol", detail: "No OMEMO on this phone"
+                )
+                try await store.appendNote(note)
+
+                #expect(try await FileTranscriptStore(baseDirectory: dir).fetchNotes(for: testConversationID, since: nil, before: nil) == [note])
+            }
+        }
+
+        @Test
         func `Notes are fetched within their bounds across day files, oldest first`() async throws {
             try await withTemporaryDirectory { dir in
                 let store = FileTranscriptStore(baseDirectory: dir)

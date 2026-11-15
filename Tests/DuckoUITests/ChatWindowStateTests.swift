@@ -135,6 +135,14 @@ struct ChatWindowStateTests {
         #expect(fixture.windowState.lastFailedSendBody == typed)
     }
 
+    @Test func `a reset of the encryption sessions that cannot run shows as a send error`() async throws {
+        let fixture = try await ChatWindowFixture.make()
+
+        await fixture.windowState.resetEncryptionSessions()
+
+        #expect(fixture.windowState.lastSendError != nil)
+    }
+
     /// A chat tab whose account is connected over a transport that fails the next stanza carrying a body.
     private static func failingNextSend() async throws -> (ChatWindowFixture, XMPPClientError) {
         let transport = MockTransport()
@@ -259,6 +267,191 @@ struct ChatWindowStateTests {
         fixture.windowState.clearSendError()
 
         #expect(fixture.windowState.lastSendError == nil)
+    }
+
+    /// A connected chat tab whose contact asked for unencrypted messages while the chat's encryption is on.
+    private static func tabBlockedByPlaintextRequest() async throws -> (ChatWindowFixture, MockServerSession) {
+        let transport = MockTransport()
+        let fixture = try await ChatWindowFixture.make(clientFactory: MockXMPPClientFactory(transport: transport, modules: [ChatModule()]))
+        let session = MockServerSession(transport: transport)
+        try await session.connect(fixture.environment, accountID: fixture.accountID)
+        try await eventually { fixture.environment.accountService.connectedClient(for: fixture.accountID) != nil }
+        let requester = Self.jidString
+        try await fixture.store.updateConversation(fixture.conversationID) {
+            $0.encryptionEnabled = true
+            $0.plaintextRequest = PlaintextRequest(requester: requester, reason: nil, isConfirmed: false)
+        }
+        // The service holds the request as it does once one is recorded, so the tab reads it too.
+        try await fixture.environment.chatService.loadConversations(for: fixture.accountID)
+        return (fixture, session)
+    }
+
+    @Test func `a send blocked by a request for unencrypted messages keeps its text, and Send Unencrypted sends it once`() async throws {
+        let (fixture, session) = try await Self.tabBlockedByPlaintextRequest()
+        // The composer empties itself before it sends.
+        fixture.windowState.draftText = ""
+
+        await fixture.windowState.sendMessage("Hello")
+
+        #expect(fixture.windowState.plaintextRequest?.requester == Self.jidString)
+        #expect(fixture.windowState.offersSendUnencrypted)
+        #expect(fixture.windowState.lastSendError == nil)
+        #expect(fixture.windowState.lastFailedSendBody == "Hello")
+
+        await fixture.windowState.confirmPlaintextAndSend()
+
+        let sent = try await session.next("<body>")
+        #expect(sent.contains("<body>Hello</body>") && !sent.contains("<encrypted"))
+        let bodies = await session.transport.sentBytes.filter { String(decoding: $0, as: UTF8.self).contains("<body>Hello</body>") }
+        #expect(bodies.count == 1)
+        #expect(fixture.windowState.plaintextRequest == nil)
+        #expect(fixture.windowState.lastFailedSendBody == nil)
+        #expect(try await fixture.store.fetchConversations(for: fixture.accountID).first?.encryptionEnabled == false)
+    }
+
+    /// The correction of an encrypted message stays encrypted with encryption off, so it cannot be sent unencrypted.
+    @Test func `a blocked edit offers no Send Unencrypted and stays open`() async throws {
+        let (fixture, _) = try await Self.tabBlockedByPlaintextRequest()
+        let own = await Self.ownMessage(in: fixture)
+        fixture.windowState.startEdit(of: own)
+
+        await fixture.windowState.sendMessage("Fixed")
+
+        #expect(fixture.windowState.plaintextRequest != nil)
+        #expect(!fixture.windowState.offersSendUnencrypted)
+        #expect(fixture.windowState.editingMessage?.id == own.id)
+    }
+
+    @Test func `pressing Send Unencrypted again before encryption is off sends the text once`() async throws {
+        let (fixture, session) = try await Self.tabBlockedByPlaintextRequest()
+        let windowState = fixture.windowState
+        await windowState.sendMessage("Hello")
+        try #require(windowState.offersSendUnencrypted)
+        let entered = AsyncSemaphore()
+        let release = AsyncSemaphore()
+        await fixture.store.installConversationWriteGate(entered: entered, release: release)
+
+        // The second press runs while the first is held at storing the switch-off.
+        let first = Task { await windowState.confirmPlaintextAndSend() }
+        await entered.wait()
+        await windowState.confirmPlaintextAndSend()
+        await release.signal()
+        await first.value
+
+        _ = try await session.next("<body>")
+        let bodies = await session.transport.sentBytes.filter { String(decoding: $0, as: UTF8.self).contains("<body>Hello</body>") }
+        #expect(bodies.count == 1)
+    }
+
+    @Test func `Send Unencrypted sends the blocked text as a new message, not as the edit started since`() async throws {
+        let (fixture, session) = try await Self.tabBlockedByPlaintextRequest()
+        let windowState = fixture.windowState
+        let own = await Self.ownMessage(in: fixture)
+        await windowState.sendMessage("Hello")
+        try #require(windowState.offersSendUnencrypted)
+
+        windowState.startEdit(of: own)
+        await windowState.confirmPlaintextAndSend()
+
+        let sent = try await session.next("<body>Hello</body>")
+        #expect(!sent.contains("<replace") && !sent.contains("<encrypted"))
+        // The edit stays open in the composer.
+        #expect(windowState.editingMessage?.id == own.id)
+    }
+
+    @Test func `Send Unencrypted sends the blocked text without the reply started since`() async throws {
+        let (fixture, session) = try await Self.tabBlockedByPlaintextRequest()
+        let windowState = fixture.windowState
+        await windowState.sendMessage("Hello")
+        try #require(windowState.offersSendUnencrypted)
+        let question = ChatMessage(
+            id: UUID(), conversationID: fixture.conversationID, stanzaID: "question", fromJID: Self.jidString, body: "Lunch?",
+            timestamp: Date(), isOutgoing: false, isDelivered: true, isEdited: false, type: "chat"
+        )
+
+        windowState.startReply(to: question)
+        await windowState.confirmPlaintextAndSend()
+
+        let sent = try await session.next("<body>Hello</body>")
+        #expect(!sent.contains("<reply"))
+        #expect(windowState.replyingTo?.id == question.id)
+    }
+
+    /// A message from the contact, sent with `stanzaID`, to reply to.
+    private static func contactMessage(_ stanzaID: String, in fixture: ChatWindowFixture) -> ChatMessage {
+        ChatMessage(
+            id: UUID(), conversationID: fixture.conversationID, stanzaID: stanzaID, fromJID: jidString, body: "Lunch?",
+            timestamp: Date(), isOutgoing: false, isDelivered: true, isEdited: false, type: "chat"
+        )
+    }
+
+    @Test func `Send Unencrypted sends a blocked reply as that reply and empties the composer`() async throws {
+        let (fixture, session) = try await Self.tabBlockedByPlaintextRequest()
+        let windowState = fixture.windowState
+        windowState.startReply(to: Self.contactMessage("a", in: fixture))
+        await windowState.sendMessage("Hello")
+        try #require(windowState.offersSendUnencrypted)
+        // The composer puts the blocked text back, as MessageInputView does.
+        windowState.draftText = "Hello"
+
+        await windowState.confirmPlaintextAndSend()
+
+        let sent = try await session.next("<reply")
+        #expect(sent.contains("<reply xmlns=\"urn:xmpp:reply:0\" id=\"a\"") && !sent.contains("<encrypted"))
+        #expect(windowState.draftText.isEmpty)
+        #expect(windowState.replyingTo == nil)
+    }
+
+    @Test func `Send Unencrypted replies to what the blocked send replied to, not to a reply chosen while it was sent`() async throws {
+        let (fixture, session) = try await Self.tabBlockedByPlaintextRequest()
+        let windowState = fixture.windowState
+        windowState.startReply(to: Self.contactMessage("a", in: fixture))
+        let entered = AsyncSemaphore()
+        let release = AsyncSemaphore()
+        await fixture.store.installFetchConversationsGate(entered: entered, release: release)
+
+        // The send is held at reading the conversation, before the contact's request refuses it.
+        let send = Task { await windowState.sendMessage("Hello") }
+        await entered.wait()
+        windowState.startReply(to: Self.contactMessage("b", in: fixture))
+        await release.signal()
+        await send.value
+        try #require(windowState.offersSendUnencrypted)
+        await windowState.confirmPlaintextAndSend()
+
+        let sent = try await session.next("<reply")
+        #expect(sent.contains("<reply xmlns=\"urn:xmpp:reply:0\" id=\"a\""))
+    }
+
+    @Test func `Send Unencrypted leaves the composer text of an edit started since, even when it matches the sent text`() async throws {
+        let (fixture, session) = try await Self.tabBlockedByPlaintextRequest()
+        let windowState = fixture.windowState
+        let own = await Self.ownMessage(in: fixture)
+        await windowState.sendMessage("Hello")
+        try #require(windowState.offersSendUnencrypted)
+        windowState.startEdit(of: own)
+        windowState.draftText = "Hello"
+
+        await windowState.confirmPlaintextAndSend()
+
+        _ = try await session.next("<body>Hello</body>")
+        #expect(windowState.draftText == "Hello")
+        #expect(windowState.editingMessage?.id == own.id)
+    }
+
+    @Test func `files stay queued while a request for unencrypted messages blocks sends, without Send Unencrypted`() async throws {
+        let (fixture, _) = try await Self.tabBlockedByPlaintextRequest()
+        let windowState = fixture.windowState
+        try #require(windowState.liveConversation?.plaintextRequest != nil)
+        // An upload would fail to read the missing file and say so as a send error.
+        windowState.addAttachment(url: URL(fileURLWithPath: "/nonexistent/notes.txt"))
+
+        await windowState.sendAttachments()
+
+        #expect(windowState.plaintextRequest?.requester == Self.jidString)
+        #expect(!windowState.offersSendUnencrypted)
+        #expect(windowState.lastSendError == nil)
+        #expect(windowState.pendingAttachments.count == 1)
     }
 
     @Test func `roomSubject reflects a live service-side change, not the stale load-time copy`() async throws {

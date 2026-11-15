@@ -20,6 +20,9 @@ final class ConversationRecord {
     var rejoinsOnConnect: Bool = false
     var encryptionEnabled: Bool = false
     var encryptionOptedOut: Bool = false
+    var plaintextRequester: String?
+    var plaintextRequestReason: String?
+    var plaintextRequestConfirmed: Bool = false
     var occupantNickname: String?
     var lastReadTimestamp: Date?
     var createdAt: Date

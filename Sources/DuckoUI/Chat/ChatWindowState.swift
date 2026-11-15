@@ -105,6 +105,13 @@ public final class ChatWindowState {
     /// restore the composer text after a failed send. The composer clears
     /// `text` optimistically; this lets us put it back.
     var lastFailedSendBody: String?
+    /// The contact's request for unencrypted messages that blocked the last send, shown instead of `lastSendError`.
+    var plaintextRequest: (requester: String, reason: String?)?
+    /// Whether the blocked send can go out unencrypted. A correction of an encrypted message stays encrypted with
+    /// encryption off, so a blocked edit cannot.
+    var offersSendUnencrypted = false
+    /// What the blocked send replied to, so Send Unencrypted sends it as that reply even after the composer moved on.
+    @ObservationIgnored private var blockedSendReplyTarget: ChatMessage?
 
     // MARK: - Attachments
 
@@ -301,20 +308,29 @@ public final class ChatWindowState {
 
     func sendMessage(_ body: String) async {
         guard let accountID = resolvedAccountID, let conversation else { return }
+        // Read before the send waits, so a reply or edit started meanwhile is not taken for this send's.
+        let editing = editingMessage
+        let replyTarget = replyingTo
         // A new message is read where it lands. A correction stays where its message is.
-        if editingMessage == nil {
+        if editing == nil {
             scroller.scrollToNewest()
         }
 
         do {
-            if let editing = editingMessage {
+            if let editing {
                 try await environment.chatService.sendCorrection(of: editing, newBody: body, in: conversation, accountID: accountID)
             } else {
-                try await environment.chatService.sendMessage(body, in: conversation, replyingTo: replyingTo, accountID: accountID)
+                try await environment.chatService.sendMessage(body, in: conversation, replyingTo: replyTarget, accountID: accountID)
             }
             clearSendError()
             draftText = ""
             cancelReplyOrEdit()
+        } catch let ChatService.ChatServiceError.plaintextRequested(requester, reason) {
+            lastSendError = nil
+            lastFailedSendBody = body
+            plaintextRequest = (requester, reason)
+            offersSendUnencrypted = editing == nil
+            blockedSendReplyTarget = replyTarget
         } catch {
             // A failed send leaves no message in the chat, so the composer keeps the reply or edit and restores the body.
             lastSendError = error.localizedDescription
@@ -324,9 +340,63 @@ public final class ChatWindowState {
         }
     }
 
+    /// Answers the request that blocked the last send by switching encryption off, then sends the blocked body once, as
+    /// the new message or reply it was. It never goes out as a correction, since Send Unencrypted is offered only for a
+    /// blocked new message. An edit or another reply the composer started since stays in the composer.
+    func confirmPlaintextAndSend() async {
+        guard let accountID = resolvedAccountID, let conversation, let body = lastFailedSendBody else { return }
+        let replyTarget = blockedSendReplyTarget
+        // Taken before the first wait, so pressing Send Unencrypted again meanwhile finds nothing left to send.
+        clearSendError()
+        do {
+            try await environment.chatService.setEncryptionEnabled(false, for: conversation.id, accountID: accountID)
+        } catch {
+            lastSendError = error.localizedDescription
+            lastFailedSendBody = body
+            return
+        }
+        scroller.scrollToNewest()
+        do {
+            try await environment.chatService.sendMessage(body, in: conversation, replyingTo: replyTarget, accountID: accountID)
+        } catch {
+            lastSendError = error.localizedDescription
+            lastFailedSendBody = body
+            log.warning("Send failed")
+            log.debug("The send failed with: \(error)")
+            return
+        }
+        // The composer gives up only what it still holds of the blocked send. An open edit holds its own message's text.
+        guard editingMessage == nil else { return }
+        if draftText == body {
+            draftText = ""
+        }
+        if replyingTo?.id == replyTarget?.id {
+            replyingTo = nil
+        }
+    }
+
     func clearSendError() {
         lastSendError = nil
         lastFailedSendBody = nil
+        plaintextRequest = nil
+        offersSendUnencrypted = false
+        blockedSendReplyTarget = nil
+    }
+
+    /// Resets the encryption sessions with the chat's contact. The chat notes what the reset did with each device. A
+    /// reset that cannot run at all, or finds no device to reset, says so in the send error banner.
+    func resetEncryptionSessions() async {
+        guard let accountID = resolvedAccountID else { return }
+        do {
+            let report = try await environment.omemoService.resetSessions(peerJID: jidString, deviceID: nil, accountID: accountID)
+            if report.devices.isEmpty {
+                lastSendError = "\(displayName) has no encryption devices to reset"
+            }
+        } catch {
+            lastSendError = error.localizedDescription
+            log.warning("Encryption sessions could not be reset")
+            log.debug("Resetting the encryption sessions failed with: \(error)")
+        }
     }
 
     func setRoomSubject(_ subject: String) async {
@@ -682,14 +752,21 @@ public final class ChatWindowState {
     func sendAttachments() async {
         guard let accountID = resolvedAccountID, let conversation else { return }
 
-        let attachmentsToSend = pendingAttachments
         let directly = sendsAttachmentsDirectly
+        // An uploaded file goes out as a message, which the contact's unanswered request for unencrypted messages
+        // blocks. The files stay queued instead of being uploaded for nothing.
+        if !directly, let request = liveConversation?.unansweredPlaintextRequest {
+            showPlaintextRequestBlockingFiles(requester: request.requester, reason: request.reason)
+            return
+        }
+
+        let attachmentsToSend = pendingAttachments
         scroller.scrollToNewest()
         clearAttachments()
         lastSendError = nil
 
         let fileTransferService = environment.fileTransferService
-        for attachment in attachmentsToSend {
+        for (index, attachment) in attachmentsToSend.enumerated() {
             do {
                 if directly {
                     // Returns once the file has its row in the chat, which reports how the transfer goes from there.
@@ -697,9 +774,20 @@ public final class ChatWindowState {
                 } else {
                     try await fileTransferService.sendFile(url: attachment.url, in: conversation, accountID: accountID)
                 }
+            } catch let ChatService.ChatServiceError.plaintextRequested(requester, reason) {
+                // The request came in while the files were sending. The rest would be refused the same way.
+                pendingAttachments = Array(attachmentsToSend[index...]) + pendingAttachments
+                showPlaintextRequestBlockingFiles(requester: requester, reason: reason)
+                return
             } catch {
                 lastSendError = error.localizedDescription
             }
         }
+    }
+
+    /// Send Unencrypted resends only text, so the banner does not offer it for files.
+    private func showPlaintextRequestBlockingFiles(requester: String, reason: String?) {
+        clearSendError()
+        plaintextRequest = (requester, reason)
     }
 }

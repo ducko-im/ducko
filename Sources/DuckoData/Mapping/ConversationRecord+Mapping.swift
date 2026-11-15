@@ -23,6 +23,9 @@ extension ConversationRecord {
             rejoinsOnConnect: rejoinsOnConnect,
             encryptionEnabled: encryptionEnabled,
             encryptionOptedOut: encryptionOptedOut,
+            plaintextRequest: plaintextRequester.map {
+                PlaintextRequest(requester: $0, reason: plaintextRequestReason, isConfirmed: plaintextRequestConfirmed)
+            },
             occupantNickname: occupantNickname,
             lastReadTimestamp: lastReadTimestamp,
             createdAt: createdAt
@@ -45,6 +48,9 @@ extension ConversationRecord {
         rejoinsOnConnect = conversation.rejoinsOnConnect
         encryptionEnabled = conversation.encryptionEnabled
         encryptionOptedOut = conversation.encryptionOptedOut
+        plaintextRequester = conversation.plaintextRequest?.requester
+        plaintextRequestReason = conversation.plaintextRequest?.reason
+        plaintextRequestConfirmed = conversation.plaintextRequest?.isConfirmed ?? false
         occupantNickname = conversation.occupantNickname
         lastReadTimestamp = conversation.lastReadTimestamp
     }

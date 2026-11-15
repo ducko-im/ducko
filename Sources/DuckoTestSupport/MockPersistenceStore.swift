@@ -31,6 +31,7 @@ public actor MockPersistenceStore: PersistenceStore {
     private var markConversationReadGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var fetchAccountsGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var fetchConversationGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
+    private var fetchConversationsGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var contactCaptureGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var contactWriteGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private var rosterApplyGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
@@ -66,6 +67,11 @@ public actor MockPersistenceStore: PersistenceStore {
     /// `entered` once it is held.
     public func installFetchConversationGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
         fetchConversationGate = (entered, release)
+    }
+
+    /// Holds the next `fetchConversations(for:)` until `release` is signaled, signaling `entered` once it is held.
+    public func installFetchConversationsGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
+        fetchConversationsGate = (entered, release)
     }
 
     public func installConversationWriteGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
@@ -232,6 +238,11 @@ public actor MockPersistenceStore: PersistenceStore {
     // MARK: - Conversations
 
     public func fetchConversations(for accountID: UUID) async throws -> [Conversation] {
+        if let gate = fetchConversationsGate {
+            fetchConversationsGate = nil
+            await gate.entered.signal()
+            await gate.release.wait()
+        }
         if let fetchConversationsError { throw fetchConversationsError }
         return conversations.filter { $0.accountID == accountID }
     }

@@ -149,22 +149,25 @@ struct FormatterEventContractTests {
     }
 
     enum EncryptedCase: CaseIterable {
-        case chat, undecryptable, otherMethod, room, privateRoom
+        case chat, untrustedDevice, undecryptable, otherMethod, room, privateRoom
     }
 
     @Test(arguments: EncryptedCase.allCases)
-    func `encrypted messages print as they are stored, marked encrypted, a room's as a room line`(kind: EncryptedCase) throws {
+    func `encrypted messages print as they are stored, marked encrypted and from an untrusted device, a room's as a room line`(
+        kind: EncryptedCase
+    ) throws {
         let room = try #require(BareJID.parse("room@conference.example.com"))
         let reason: UndecryptableReason? = switch kind {
         case .undecryptable: .notForThisDevice
         case .otherMethod: .otherMethod(name: "OpenPGP for XMPP")
-        case .chat, .room, .privateRoom: nil
+        case .chat, .untrustedDevice, .room, .privateRoom: nil
         }
+        let isFromUntrustedDevice = kind == .untrustedDevice
         let isRoom = kind == .room || kind == .privateRoom
         let message = ChatMessage(
             id: UUID(), conversationID: UUID(), stanzaID: "m1", fromJID: isRoom ? "bob" : peer.description, body: reason == nil ? "hello" : "",
             timestamp: Date(), isOutgoing: false, isDelivered: false, isEdited: false, type: kind == .room ? "groupchat" : "chat",
-            isEncrypted: true, isUndecryptable: reason != nil, undecryptableReason: reason
+            isEncrypted: true, isUndecryptable: reason != nil, undecryptableReason: reason, isFromUntrustedDevice: isFromUntrustedDevice
         )
         let conversation = Conversation(
             id: message.conversationID, accountID: accountID, jid: isRoom ? room : peer, type: kind == .room ? .groupchat : .chat,
@@ -174,7 +177,10 @@ struct FormatterEventContractTests {
         switch kind {
         case .room: json.merge(["type": "room_message", "room": room.description, "nickname": "bob"]) { $1 }
         case .privateRoom: json.merge(["type": "muc_private_message", "room": room.description, "nickname": "bob"]) { $1 }
-        case .chat, .undecryptable, .otherMethod: json.merge(["type": "message", "from": peer.description]) { $1 }
+        case .chat, .untrustedDevice, .undecryptable, .otherMethod: json.merge(["type": "message", "from": peer.description]) { $1 }
+        }
+        if isFromUntrustedDevice {
+            json["untrustedDevice"] = "true"
         }
         if let reason {
             json["undecryptable"] = "true"
@@ -183,13 +189,13 @@ struct FormatterEventContractTests {
         let sender = switch kind {
         case .room: "<- room@conference.example.com/bob: "
         case .privateRoom: "<- [PM] room@conference.example.com/bob: "
-        case .chat, .undecryptable, .otherMethod: "<- \(peer): "
+        case .chat, .untrustedDevice, .undecryptable, .otherMethod: "<- \(peer): "
         }
         try expectMessage(
             { $0.formatEncryptedMessage(message, in: conversation, accountID: accountID) }, json: json,
-            human: sender + (reason.map { "error: \($0.text)" } ?? "hello") + " [encrypted]", color: "32",
-            ansiHuman: sender + (reason.map { "\u{001B}[31merror: \($0.text)" } ?? "hello"),
-            ansiTail: " \u{001B}[32m\u{001B}[2m[encrypted]\u{001B}[0m"
+            human: sender + (reason.map { "error: \($0.text)" } ?? "hello") + " [encrypted]" + (isFromUntrustedDevice ? " [untrusted device]" : ""),
+            color: "32", ansiHuman: sender + (reason.map { "\u{001B}[31merror: \($0.text)" } ?? "hello"),
+            ansiTail: " \u{001B}[32m\u{001B}[2m[encrypted]\u{001B}[0m" + (isFromUntrustedDevice ? " \u{001B}[33m[untrusted device]\u{001B}[0m" : "")
         )
     }
 

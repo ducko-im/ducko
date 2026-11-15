@@ -18,6 +18,17 @@ enum OMEMO2FixtureTests {
         }
 
         @Test(arguments: ["alice", "bob"])
+        func `a stored fingerprint displays as the reference agreement key in eight groups of eight`(device name: String) throws {
+            let identityKey = try OMEMO2Fixtures.device(name).identityKey
+
+            let display = omemoDisplayFingerprint(ofStoredFingerprint: omemoFingerprint(of: identityKey.publicKey))
+
+            let groups = display.split(separator: " ", omittingEmptySubsequences: false)
+            #expect(groups.map(\.count) == Array(repeating: 8, count: 8))
+            #expect(groups.joined() == hexString(identityKey.agreementPublicKey))
+        }
+
+        @Test(arguments: ["alice", "bob"])
         func `pre-key private keys give the reference public keys and the signature verifies`(device name: String) throws {
             let device = try OMEMO2Fixtures.device(name)
 

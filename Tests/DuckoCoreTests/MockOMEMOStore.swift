@@ -13,7 +13,7 @@ import Foundation
 actor MockOMEMOStore: OMEMOStore {
     private var identity: [String: OMEMOStoredIdentity] = [:]
     private var preKeys: [String: [OMEMOStoredPreKey]] = [:]
-    private var signedPreKey: [String: OMEMOStoredSignedPreKey] = [:]
+    private var signedPreKeys: [String: [OMEMOStoredSignedPreKey]] = [:]
     private var sessions: [String: [OMEMOStoredSession]] = [:]
     private var trusts: [String: [OMEMOTrust]] = [:]
     private var seenDevices: [String: [UInt32: OMEMOStoredSeenDevice]] = [:]
@@ -28,7 +28,7 @@ actor MockOMEMOStore: OMEMOStore {
 
     /// Failure switches: each call named here throws instead of touching the store.
     enum FailingCall: Hashable {
-        case loadIdentity, loadPreKeys, loadSignedPreKey, loadSessions, loadAllTrust, saveIdentity, savePreKeys, saveSignedPreKey, consumePreKey,
+        case loadIdentity, loadPreKeys, loadSignedPreKeys, loadSessions, loadAllTrust, saveIdentity, savePreKeys, saveSignedPreKey, consumePreKey,
              saveTrust, markTrust,
              // Makes `markTrust` refuse a grant as a store does when a device's rows would disagree.
              markTrustConflict
@@ -48,6 +48,14 @@ actor MockOMEMOStore: OMEMOStore {
         let action = beforeTrustWrite
         beforeTrustWrite = nil
         await action?()
+    }
+
+    /// Runs at every `saveSignedPreKey` that does not fail, before it writes, until replaced. Holds a caller between its
+    /// signed pre-key load and its save.
+    private var beforeSignedPreKeySave: (@Sendable () async -> Void)?
+
+    func setBeforeSignedPreKeySave(_ action: (@Sendable () async -> Void)?) {
+        beforeSignedPreKeySave = action
     }
 
     func setFailing(_ call: FailingCall, _ failing: Bool = true) {
@@ -73,7 +81,7 @@ actor MockOMEMOStore: OMEMOStore {
     }
 
     func seedSignedPreKey(_ key: OMEMOStoredSignedPreKey) {
-        signedPreKey[key.accountJID] = key
+        upsertSignedPreKey(key)
     }
 
     /// Seeds the store with rows derived from `identity` for `accountJID`,
@@ -141,15 +149,28 @@ actor MockOMEMOStore: OMEMOStore {
 
     // MARK: - Signed Pre-Key
 
-    func loadSignedPreKey(for accountJID: String) async throws -> OMEMOStoredSignedPreKey? {
-        try failIfSwitched(.loadSignedPreKey)
-        return signedPreKey[accountJID]
+    func loadSignedPreKeys(for accountJID: String) async throws -> [OMEMOStoredSignedPreKey] {
+        try failIfSwitched(.loadSignedPreKeys)
+        return (signedPreKeys[accountJID] ?? []).sorted { $0.timestamp > $1.timestamp }
     }
 
     func saveSignedPreKey(_ key: OMEMOStoredSignedPreKey) async throws {
         saveSignedPreKeyCalls += 1
         try failIfSwitched(.saveSignedPreKey)
-        signedPreKey[key.accountJID] = key
+        await beforeSignedPreKeySave?()
+        upsertSignedPreKey(key)
+    }
+
+    func deleteSignedPreKeys(for accountJID: String, olderThan date: Date) async throws {
+        signedPreKeys[accountJID]?.removeAll { $0.timestamp < date }
+    }
+
+    /// One row per `(accountJID, keyID)`, as `SwiftDataOMEMOStore` keeps them.
+    private func upsertSignedPreKey(_ key: OMEMOStoredSignedPreKey) {
+        var rows = signedPreKeys[key.accountJID] ?? []
+        rows.removeAll { $0.keyID == key.keyID }
+        rows.append(key)
+        signedPreKeys[key.accountJID] = rows
     }
 
     // MARK: - Sessions

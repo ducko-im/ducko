@@ -253,6 +253,53 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
 
             await disconnectFast(client)
         }
+
+        /// A contact who never published a list has no devices, so a reset or a send finds none instead of failing. The
+        /// node can appear without a notification reaching us, so the next fetch asks again.
+        @Test func `A missing device-list node reads as an empty list, which the next fetch reads again`() async throws {
+            let mock = MockTransport()
+            let pepModule = PEPModule()
+            let omemoModule = OMEMOModule(pepModule: pepModule)
+            let (client, _) = try await makeConnectedClient(mock: mock, omemoModule: omemoModule, pepModule: pepModule)
+            var answered: Set<String> = []
+
+            for _ in 0 ..< 2 {
+                let task = Task { try await omemoModule.fetchDeviceList(for: peerJID) }
+                // Matches only a read the earlier attempt did not send, so a cached second fetch times out.
+                let iqID = try await awaitDeviceListRead(on: mock, notIn: answered)
+                answered.insert(iqID)
+                await mock.simulateReceive(makeItemNotFoundIQ(iqID: iqID, fromJID: peerJID))
+                #expect(try await task.value == [])
+            }
+
+            await disconnectFast(client)
+        }
+
+        /// A forced fetch that finds the node gone leaves no devices cached for the contact, so the next fetch asks
+        /// again instead of answering with the devices the node used to list.
+        @Test func `A cached list whose node a forced fetch finds missing is read again by the next fetch`() async throws {
+            let mock = MockTransport()
+            let pepModule = PEPModule()
+            let omemoModule = OMEMOModule(pepModule: pepModule)
+            let (client, _) = try await makeConnectedClient(mock: mock, omemoModule: omemoModule, pepModule: pepModule)
+
+            let primeTask = Task { try await omemoModule.fetchDeviceList(for: peerJID) }
+            let primeID = try await awaitDeviceListRead(on: mock, notIn: [])
+            await mock.simulateReceive(makeDeviceListResultIQ(iqID: primeID, fromJID: peerJID, devices: [42]))
+            #expect(try await primeTask.value == [42])
+
+            let refreshTask = Task { try await omemoModule.fetchDeviceList(for: peerJID, forceRefresh: true) }
+            let refreshID = try await awaitDeviceListRead(on: mock, notIn: [primeID])
+            await mock.simulateReceive(makeItemNotFoundIQ(iqID: refreshID, fromJID: peerJID))
+            #expect(try await refreshTask.value == [])
+
+            let fetchTask = Task { try await omemoModule.fetchDeviceList(for: peerJID) }
+            let fetchID = try await awaitDeviceListRead(on: mock, notIn: [primeID, refreshID])
+            await mock.simulateReceive(makeDeviceListResultIQ(iqID: fetchID, fromJID: peerJID, devices: [43]))
+            #expect(try await fetchTask.value == [43])
+
+            await disconnectFast(client)
+        }
     }
 
     struct EncryptKeysInParallelTests {
@@ -1508,6 +1555,13 @@ private func makeDeviceListResultIQ(iqID: String, fromJID: BareJID, devices: [UI
     """
 }
 
+/// The id of the next device-list read `mock` sends that is not in `answered`, waited for with a bound.
+private func awaitDeviceListRead(on mock: MockTransport, notIn answered: Set<String>) async throws -> String {
+    try await awaitOutgoingIQ(on: mock, type: .get, namespace: XMPPNamespaces.pubsub) { stanza in
+        stanza.contains(XMPPNamespaces.omemoDevices) && (extractIQID(from: stanza).map { !answered.contains($0) } ?? false)
+    }.id
+}
+
 /// Builds a `<iq type='error'>` with `<item-not-found/>` for the given id.
 private func makeItemNotFoundIQ(iqID: String, fromJID: BareJID) -> String {
     """
@@ -1580,6 +1634,8 @@ func makeKEXMessage(to recipient: TestOMEMOIdentity, plaintext: String, from sen
 
     // The recipient's own JID on the wire is `user@example.com` (the connect helpers' credentials).
     let recipientJID = try #require(BareJID(localPart: "user", domainPart: "example.com"))
+    // That account's list, which the connect cached, has to hold the recipient's device for a key to be sent to it.
+    omemoModule.state.withLock { $0.deviceLists[recipientJID, default: []].append(recipient.data.deviceID) }
     let encryptTask = Task {
         try await omemoModule.encryptMessage(
             plaintext: plaintext, to: recipientJID,

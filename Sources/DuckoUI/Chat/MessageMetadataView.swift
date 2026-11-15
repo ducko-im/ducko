@@ -16,6 +16,13 @@ struct MessageMetadataView: View {
                     .font(.caption2)
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("undecryptable-indicator")
+            } else if message.isFromUntrustedDevice {
+                Image(systemName: "exclamationmark.shield")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .help(untrustedDeviceLabel)
+                    .accessibilityLabel(untrustedDeviceLabel)
+                    .accessibilityIdentifier("untrusted-encrypted-indicator")
             } else if message.isEncrypted {
                 Image(systemName: "lock.fill")
                     .font(.caption2)
@@ -64,6 +71,10 @@ struct MessageMetadataView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityIdentifier(message.isDisplayed ? "read-indicator" : "delivered-indicator")
+    }
+
+    private var untrustedDeviceLabel: String {
+        "Sent from a device you haven't trusted"
     }
 
     private var editedLabel: String {

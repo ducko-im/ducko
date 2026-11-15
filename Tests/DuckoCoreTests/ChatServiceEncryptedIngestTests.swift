@@ -20,17 +20,22 @@ func makeEncryptedStanza(from: JID, id: String?, serverID: String? = nil, type: 
     return message
 }
 
-/// The event `OMEMOModule` reports for `stanza`: decrypted to a message with `body` and `elements`, else undecryptable
-/// for `reason`, sent by `roomAuthor` in a room or a room's private chat.
+/// The event `OMEMOModule` reports for `stanza`: decrypted to a message with `body` and `elements` from the sender's
+/// device `senderDeviceID`, else undecryptable for `reason`, sent by `roomAuthor` in a room or a room's private chat.
 func encryptedMessageEvent(
-    _ stanza: XMPPMessage, body: String?, elements: [DuckoXMPP.XMLElement] = [], reason: OMEMOUndecryptableReason = .decryptionFailed,
-    roomAuthor: RoomAuthorIdentity? = nil
+    _ stanza: XMPPMessage, body: String?, elements: [DuckoXMPP.XMLElement] = [], senderDeviceID: UInt32 = 1,
+    reason: OMEMOUndecryptableReason = .decryptionFailed, roomAuthor: RoomAuthorIdentity? = nil
 ) -> XMPPEvent {
-    .omemoEncryptedMessageReceived(message: stanza, outcome: encryptedOutcome(of: stanza, body: body, elements: elements, reason: reason), roomAuthor: roomAuthor)
+    .omemoEncryptedMessageReceived(
+        message: stanza, outcome: encryptedOutcome(of: stanza, body: body, elements: elements, senderDeviceID: senderDeviceID, reason: reason),
+        roomAuthor: roomAuthor
+    )
 }
 
+/// What `OMEMOModule` reads `stanza` as. A decrypted message names the stanza's sender, or the account when it names
+/// none, as whose session read it.
 func encryptedOutcome(
-    of stanza: XMPPMessage, body: String?, elements: [DuckoXMPP.XMLElement] = [], sentTime: String? = nil,
+    of stanza: XMPPMessage, body: String?, elements: [DuckoXMPP.XMLElement] = [], sentTime: String? = nil, senderDeviceID: UInt32 = 1,
     reason: OMEMOUndecryptableReason = .decryptionFailed
 ) -> OMEMOReceiveOutcome {
     guard let body else { return .undecryptable(reason) }
@@ -39,7 +44,8 @@ func encryptedOutcome(
     for child in elements {
         element.addChild(child)
     }
-    return .decrypted(OMEMODecryptedMessage(message: XMPPMessage(element: element), sentTime: sentTime))
+    let sender = stanza.from?.bareJID ?? BareJID.parse(testJIDString)!
+    return .decrypted(OMEMODecryptedMessage(message: XMPPMessage(element: element), sentTime: sentTime, senderJID: sender, senderDeviceID: senderDeviceID))
 }
 
 private let peer = BareJID(localPart: "peer", domainPart: "example.com")!

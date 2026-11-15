@@ -216,8 +216,12 @@ public protocol OMEMOStore: Sendable {
 
     // MARK: - Signed Pre-Key
 
-    func loadSignedPreKey(for accountJID: String) async throws -> OMEMOStoredSignedPreKey?
+    /// Every signed pre-key of the account, newest `timestamp` first.
+    func loadSignedPreKeys(for accountJID: String) async throws -> [OMEMOStoredSignedPreKey]
+    /// Upserts by `(accountJID, keyID)`, so each key keeps a row of its own.
     func saveSignedPreKey(_ key: OMEMOStoredSignedPreKey) async throws
+    /// Deletes the account's signed pre-keys whose `timestamp` is earlier than `date`.
+    func deleteSignedPreKeys(for accountJID: String, olderThan date: Date) async throws
 
     // MARK: - Sessions
 

@@ -80,6 +80,13 @@ struct ScriptValidationTests {
         #expect(captured.invocations == ["osascript"])
     }
 
+    @Test(arguments: [[], ["reset"], ["all", "123"], ["device"]])
+    func `ducko-omemo-reset rejects an unknown action or a misplaced device ID`(_ arguments: [String]) throws {
+        let result = try ScriptRunner.run("ducko-omemo-reset.sh", arguments: arguments)
+        #expect(result.exitCode == 1)
+        #expect(result.stderr.contains("Usage:"))
+    }
+
     @Test(arguments: [[], ["keep"]])
     func `ducko-sign-in-security rejects a missing or unknown action`(_ arguments: [String]) throws {
         let result = try ScriptRunner.run("ducko-sign-in-security.sh", arguments: arguments)
@@ -302,6 +309,8 @@ private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-join-room.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-login.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-new-chat.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
+    HandlerScriptCase(script: "ducko-omemo-reset.sh", arguments: ["all"], appleScriptArguments: ["-", "all", ""]),
+    HandlerScriptCase(script: "ducko-omemo-reset.sh", arguments: ["device", scriptSpecialArgument], appleScriptArguments: ["-", "device", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-register.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-register-fields.sh", arguments: ["fill", "nick", scriptSpecialArgument], appleScriptArguments: ["-", "fill", "nick", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-remove-contact.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-"], invocations: ["pgrep", "osascript", "osascript"], earlierCallArguments: [["-", scriptSpecialArgument]]),
@@ -310,6 +319,7 @@ private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-room-settings-tab.sh", arguments: ["Members"], appleScriptArguments: ["-", "Members"]),
     HandlerScriptCase(script: "ducko-room-topic.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-select-mode.sh", arguments: ["Register"], appleScriptArguments: ["-", "Register"]),
+    HandlerScriptCase(script: "ducko-send-unencrypted.sh", arguments: [], appleScriptArguments: []),
     HandlerScriptCase(script: "ducko-sign-in-security.sh", arguments: ["dont-allow"], appleScriptArguments: ["-", "dont-allow"]),
     HandlerScriptCase(script: "ducko-sign-in-security.sh", arguments: ["allow"], appleScriptArguments: ["-", "allow"], invocations: ["pgrep", "osascript"]),
     HandlerScriptCase(script: "ducko-status.sh", arguments: ["away", scriptSpecialArgument], appleScriptArguments: ["-", "away", scriptSpecialArgument]),

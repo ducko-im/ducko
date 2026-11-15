@@ -28,6 +28,8 @@ public struct TranscriptAmendment: Sendable {
     public var replyToJID: String?
     /// The files a `decrypted` message carries, which only its encryption names.
     public var attachments: [Attachment]?
+    /// Whether a `decrypted` message came from a device the user has not trusted for encryption.
+    public var isFromUntrustedDevice: Bool?
     public var errorText: String?
     /// The server ID a `serverIDAssigned` amendment records.
     public var serverID: String?
@@ -44,6 +46,7 @@ public struct TranscriptAmendment: Sendable {
         replyToID: String? = nil,
         replyToJID: String? = nil,
         attachments: [Attachment]? = nil,
+        isFromUntrustedDevice: Bool? = nil,
         errorText: String? = nil,
         serverID: String? = nil
     ) {
@@ -58,6 +61,7 @@ public struct TranscriptAmendment: Sendable {
         self.replyToID = replyToID
         self.replyToJID = replyToJID
         self.attachments = attachments
+        self.isFromUntrustedDevice = isFromUntrustedDevice
         self.errorText = errorText
         self.serverID = serverID
     }
@@ -69,7 +73,7 @@ package extension TranscriptAmendment {
         TranscriptAmendment(
             action: .decrypted, targetMessageID: placeholder.id, timestamp: Date(), body: copy.body, htmlBody: copy.htmlBody,
             replyFallbackRange: copy.replyFallbackRange, replyToID: copy.replyToID, replyToJID: copy.replyToJID,
-            attachments: copy.attachments
+            attachments: copy.attachments, isFromUntrustedDevice: copy.isFromUntrustedDevice
         )
     }
 }
@@ -110,6 +114,7 @@ package extension ChatMessage {
     private mutating func applyDecrypted(_ amendment: TranscriptAmendment) {
         isUndecryptable = false
         undecryptableReason = nil
+        isFromUntrustedDevice = amendment.isFromUntrustedDevice ?? false
         guard !isRetracted else { return }
         replyToID = amendment.replyToID
         replyToJID = amendment.replyToJID

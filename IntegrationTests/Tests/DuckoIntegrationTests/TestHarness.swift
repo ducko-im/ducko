@@ -566,7 +566,7 @@ final class TestHarness {
     ///
     /// `OMEMOService.handleConnected` persists identity, prekeys, and signed
     /// prekey via a detached task that outlives initial roster response, so this method
-    /// polls `loadSignedPreKey` (the last of the three writes) before reading
+    /// polls `loadSignedPreKeys` (the last of the three writes) before reading
     /// the store back. A timeout here logs a warning and returns — the next
     /// run regenerates.
     private func captureOMEMOFixture(for credential: TestCredentials.Credential) async throws {
@@ -637,7 +637,7 @@ final class TestHarness {
             return nil
         }
         let storedPreKeys = try await omemoStore.loadPreKeys(for: credential.jid)
-        guard let storedSignedPreKey = try await omemoStore.loadSignedPreKey(for: credential.jid) else {
+        guard let storedSignedPreKey = try await omemoStore.loadSignedPreKeys(for: credential.jid).first else {
             log.warning("OMEMO signed prekey for \(credential.label) missing at capture time; skipping fixture capture")
             return nil
         }
@@ -718,7 +718,7 @@ final class TestHarness {
 
     private func hasSignedPreKey(for credential: TestCredentials.Credential) async -> Bool {
         do {
-            return try await omemoStore.loadSignedPreKey(for: credential.jid) != nil
+            return try await !omemoStore.loadSignedPreKeys(for: credential.jid).isEmpty
         } catch {
             // Keep polling on transient errors. A persistent store error would
             // timeout the 10s budget; surfacing it at debug helps diagnose

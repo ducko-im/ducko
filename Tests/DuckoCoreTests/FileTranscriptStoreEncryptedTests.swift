@@ -177,6 +177,37 @@ extension FileTranscriptStoreTests {
             }
         }
 
+        @Test(arguments: [false, true])
+        func `A message keeps whether it came from an untrusted device, across a restart`(isFromUntrustedDevice: Bool) async throws {
+            try await withTemporaryDirectory { dir in
+                var message = encrypted(stanzaID: "ducko-7", serverID: "S1", body: "hello")
+                message.isFromUntrustedDevice = isFromUntrustedDevice
+
+                try await FileTranscriptStore(baseDirectory: dir).appendMessage(message)
+
+                let stored = try #require(try await FileTranscriptStore(baseDirectory: dir).fetchMessages(for: conversationID, before: nil, limit: 10).first)
+                #expect(stored.isFromUntrustedDevice == isFromUntrustedDevice)
+            }
+        }
+
+        @Test(arguments: [false, true])
+        func `A decrypted copy marks the undecryptable one as from an untrusted device when it is, across a restart`(
+            isFromUntrustedDevice: Bool
+        ) async throws {
+            try await withTemporaryDirectory { dir in
+                let placeholder = encrypted(stanzaID: "ducko-8", serverID: "S1", isUndecryptable: true)
+                try await FileTranscriptStore(baseDirectory: dir).appendMessage(placeholder)
+                var copy = encrypted(stanzaID: "ducko-8", serverID: "S1", body: "hello")
+                copy.isFromUntrustedDevice = isFromUntrustedDevice
+
+                _ = try await FileTranscriptStore(baseDirectory: dir).storeEncryptedMessage(copy, fromArchive: false)
+
+                let message = try #require(try await FileTranscriptStore(baseDirectory: dir).fetchMessages(for: conversationID, before: nil, limit: 10).first)
+                #expect(message.id == placeholder.id)
+                #expect(message.isFromUntrustedDevice == isFromUntrustedDevice)
+            }
+        }
+
         @Test(arguments: [TranscriptAmendment.Action.retract, .edit])
         func `Decrypted text yields to a retraction and to a correction`(earlier: TranscriptAmendment.Action) async throws {
             try await withTemporaryDirectory { dir in

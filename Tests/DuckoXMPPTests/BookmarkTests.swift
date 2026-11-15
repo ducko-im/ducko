@@ -250,7 +250,7 @@ enum BookmarkTests {
 
     struct PublishOptionsTests {
         @Test
-        func `Publish options contain XEP-0223 fields`() {
+        func `Publish options contain XEP-0223 and XEP-0402 fields`() {
             let options = Bookmark.publishOptions
 
             let formType = options.first { $0.variable == "FORM_TYPE" }
@@ -269,6 +269,10 @@ enum BookmarkTests {
             let maxItems = options.first { $0.variable == "pubsub#max_items" }
             let maxItemsValues = maxItems?.values
             #expect(maxItemsValues == ["max"])
+
+            let sendLast = options.first { $0.variable == "pubsub#send_last_published_item" }
+            let sendLastValues = sendLast?.values
+            #expect(sendLastValues == ["never"])
         }
     }
 }

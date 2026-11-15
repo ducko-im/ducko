@@ -19,7 +19,7 @@ struct SwiftDataOMEMOStoreTests {
     /// Every writer that changes a stored row, each run against a store that cannot save: a second container opens the
     /// store read-only, so its saves fail and leave their changes pending.
     enum Writer: String, CaseIterable, Sendable {
-        case identity, signedPreKey, preKeys, consumePreKey, session, deleteSession, trust, insertTrust, markUntrusted, fillFingerprint, deleteTrust,
+        case identity, signedPreKey, deleteSignedPreKeys, preKeys, consumePreKey, session, deleteSession, trust, insertTrust, markUntrusted, fillFingerprint, deleteTrust,
              seenDevices, replaceSeenDevices, purgeSeenDevices
     }
 
@@ -50,6 +50,7 @@ struct SwiftDataOMEMOStoreTests {
                     try await readOnly.saveSignedPreKey(OMEMOStoredSignedPreKey(
                         accountJID: account, keyID: 2, keyData: Data([2, 2]), signature: Data([2, 2]), timestamp: Date()
                     ))
+                case .deleteSignedPreKeys: try await readOnly.deleteSignedPreKeys(for: account, olderThan: Date())
                 case .preKeys:
                     try await readOnly.savePreKeys([OMEMOStoredPreKey(accountJID: account, keyID: 2, keyData: Data([2, 2]), isUsed: false)])
                 case .consumePreKey: try await readOnly.consumePreKey(id: 1, accountJID: account)
@@ -94,12 +95,44 @@ struct SwiftDataOMEMOStoreTests {
     /// What the store shows of every row the writers touch.
     private static func snapshot(of store: SwiftDataOMEMOStore, account: String) async throws -> String {
         let identity = try await store.loadIdentity(for: account)
-        let signedPreKey = try await store.loadSignedPreKey(for: account)
+        let signedPreKeys = try await store.loadSignedPreKeys(for: account)
         let preKeys = try await store.loadPreKeys(for: account)
         let sessions = try await store.loadSessions(for: account)
         let trust = try await store.loadAllDevices(for: "bob@example.com", accountJID: account)
         let seen = try await store.loadSeenDevices(for: account)
-        return "\(String(describing: identity)) \(String(describing: signedPreKey)) \(preKeys) \(sessions) \(trust) \(seen)"
+        return "\(String(describing: identity)) \(signedPreKeys) \(preKeys) \(sessions) \(trust) \(seen)"
+    }
+
+    private static func signedPreKey(_ account: String, keyID: UInt32, data: UInt8, at seconds: TimeInterval) -> OMEMOStoredSignedPreKey {
+        OMEMOStoredSignedPreKey(
+            accountJID: account, keyID: keyID, keyData: Data([data]), signature: Data([data]), timestamp: Date(timeIntervalSince1970: seconds)
+        )
+    }
+
+    @Test func `Each signed pre-key keeps a row of its own, and the keys load newest first`() async throws {
+        let store = try makeStore()
+        let account = "alice@example.com"
+        for (keyID, seconds) in [(UInt32(1), 100.0), (3, 300), (2, 200)] {
+            try await store.saveSignedPreKey(Self.signedPreKey(account, keyID: keyID, data: UInt8(keyID), at: seconds))
+        }
+        try await store.saveSignedPreKey(Self.signedPreKey(account, keyID: 1, data: 9, at: 50))
+
+        let keys = try await store.loadSignedPreKeys(for: account)
+
+        #expect(keys.map(\.keyID) == [3, 2, 1])
+        #expect(keys.map(\.keyData) == [Data([3]), Data([2]), Data([9])])
+    }
+
+    @Test func `Only the account's signed pre-keys older than the date are deleted`() async throws {
+        let store = try makeStore()
+        for (account, keyID, seconds) in [("alice@example.com", UInt32(1), 100.0), ("alice@example.com", 2, 200), ("alice@example.com", 3, 300), ("dave@example.com", 1, 100)] {
+            try await store.saveSignedPreKey(Self.signedPreKey(account, keyID: keyID, data: 1, at: seconds))
+        }
+
+        try await store.deleteSignedPreKeys(for: "alice@example.com", olderThan: Date(timeIntervalSince1970: 200))
+
+        #expect(try await store.loadSignedPreKeys(for: "alice@example.com").map(\.keyID) == [3, 2])
+        #expect(try await store.loadSignedPreKeys(for: "dave@example.com").map(\.keyID) == [1])
     }
 
     @Test

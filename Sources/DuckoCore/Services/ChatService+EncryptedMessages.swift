@@ -7,14 +7,14 @@ private let log = Logger(label: "im.ducko.core.chat")
 /// What an encrypted message holds for the transcript: the message as its sender wrote it, or why it cannot be read.
 enum EncryptedContent {
     /// `message` carries the received stanza's attributes and the encrypted elements. `sentTime` is the envelope's
-    /// `time` affix.
-    case decrypted(XMPPMessage, sentTime: String?)
+    /// `time` affix. `isFromUntrustedDevice` marks a message from a device the user has not trusted for encryption.
+    case decrypted(XMPPMessage, sentTime: String?, isFromUntrustedDevice: Bool)
     case undecryptable(UndecryptableReason)
 
-    init(_ outcome: OMEMOReceiveOutcome) {
+    init(_ outcome: OMEMOReceiveOutcome, isFromUntrustedDevice: Bool = false) {
         switch outcome {
         case let .decrypted(decrypted):
-            self = .decrypted(decrypted.message, sentTime: decrypted.sentTime)
+            self = .decrypted(decrypted.message, sentTime: decrypted.sentTime, isFromUntrustedDevice: isFromUntrustedDevice)
         case let .undecryptable(reason):
             self = switch reason {
             case .decryptionFailed: .undecryptable(.decryptionFailed)
@@ -84,7 +84,7 @@ extension ChatService {
             return
         }
         let content = checkingTime(of: content, sentAt: sentTime)
-        if case let .decrypted(message, _) = content,
+        if case let .decrypted(message, _, _) = content,
            await applyAmendment(carriedBy: message, chatWith: from, sentAt: sentTime, roomAuthor: roomAuthor, isDecrypted: true, accountID: accountID) {
             return
         }
@@ -95,7 +95,8 @@ extension ChatService {
             stanza: stanza, content: content, sender: occupant.resourcePart, roomSender: roomAuthor.map(RoomSenderIdentity.init), isOutgoing: isOwn,
             sentTime: sentTime, isReplayed: isJoinHistory
         )
-        await ingestEncryptedMessage(arrival, in: conversation, accountID: accountID)
+        let outcome = await ingestEncryptedMessage(arrival, in: conversation, accountID: accountID)
+        await takeUpEncryptedMessage(arrival, storedAs: outcome, in: conversation, accountID: accountID)
     }
 
     /// A 1:1 message or a room's private message, live or from a carbon, filed in the chat with its peer: the recipient
@@ -117,7 +118,7 @@ extension ChatService {
         case .carbon: carbonRoomAuthor(of: stanza, chatWith: peer, accountID: accountID)
         }
         let content = checkingTime(of: content, sentAt: sentTime)
-        if case let .decrypted(message, _) = content,
+        if case let .decrypted(message, _, _) = content,
            await applyAmendment(carriedBy: message, chatWith: peer, sentAt: sentTime, roomAuthor: roomAuthor, isDecrypted: true, accountID: accountID) {
             return
         }
@@ -131,22 +132,19 @@ extension ChatService {
             roomSender: chat.occupant == nil ? nil : roomAuthor.map(RoomSenderIdentity.init), isOutgoing: isOutgoing, sentTime: sentTime
         )
         let outcome = await ingestEncryptedMessage(arrival, in: chat.conversation, accountID: accountID)
+        await takeUpEncryptedMessage(arrival, storedAs: outcome, in: chat.conversation, accountID: accountID)
         // Only a new message from the contact that this device could read says something about them. A copy already
-        // stored, as a stanza re-sent after a resume is, says nothing new, and a failed decrypt must not steer routing
-        // or ground encrypting the reply.
-        guard let outcome, outcome != .duplicate, !isOutgoing, case let .decrypted(message, _) = content else { return }
+        // stored, as a stanza re-sent after a resume is, says nothing new, and a failed decrypt must not steer routing.
+        guard let outcome, outcome != .duplicate, !isOutgoing, case let .decrypted(message, _, _) = content else { return }
         learnChatStateUse(of: chat.occupant.map(ChatStateRecipient.occupant) ?? .contact(peer.bareJID), uses: message.chatState != nil, accountID: accountID)
-        guard chat.occupant == nil else { return }
-        if case .live = origin, let from = stanza.from {
-            learnResourceLock(from: from, accountID: accountID, sequence: lockSequence)
-        }
-        await enableEncryptionForContact(in: chat.conversation.id, accountID: accountID)
+        guard chat.occupant == nil, case .live = origin, let from = stanza.from else { return }
+        learnResourceLock(from: from, accountID: accountID, sequence: lockSequence)
     }
 
     /// A decrypted message whose envelope is stamped more than an hour off when it was sent is not trusted (XEP-0420),
     /// so a replayed old message cannot pass for a new one.
-    private func checkingTime(of content: EncryptedContent, sentAt sentTime: Date) -> EncryptedContent {
-        guard case let .decrypted(_, stamp?) = content else { return content }
+    func checkingTime(of content: EncryptedContent, sentAt sentTime: Date) -> EncryptedContent {
+        guard case let .decrypted(_, stamp?, _) = content else { return content }
         guard let time = Date(xmppTimestamp: stamp), abs(time.timeIntervalSince(sentTime)) <= Self.envelopeTimeTolerance else {
             log.warning("Encrypted message stamped at another time than it was sent")
             return .undecryptable(.mismatchedEnvelope)
@@ -169,7 +167,8 @@ extension ChatService {
         do {
             outcome = try await transcripts.storeEncryptedMessage(message, fromArchive: false)
         } catch {
-            log.warning("Could not store an encrypted message: \(error)")
+            log.warning("Could not store an encrypted message")
+            log.debug("Could not store an encrypted message: \(error)")
             return nil
         }
         switch outcome {
@@ -213,24 +212,38 @@ extension ChatService {
             isEncrypted: true
         )
         switch arrival.content {
-        case let .decrypted(decrypted, _):
-            let inner = InboundMessageMetadata(decrypted)
-            guard let body = decrypted.body ?? inner.attachments.first?.url else { return nil }
-            let replyFallbackRange = inner.replyFallbackRange(in: decrypted.body)
-            let filtered = await filterBody(
-                body, direction: arrival.isOutgoing ? .outgoing : .incoming, accountID: accountID, fallback: conversation.jid,
-                isUnstyled: decrypted.isUnstyled, isEncrypted: true, attachments: inner.attachments, replyFallbackRange: replyFallbackRange
-            )
-            message.body = filtered.body
-            message.htmlBody = filtered.htmlBody
-            message.replyToID = inner.replyToID
-            message.replyToJID = inner.replyToJID
-            message.replyFallbackRange = replyFallbackRange
-            message.attachments = inner.attachments
+        case let .decrypted(decrypted, _, isFromUntrustedDevice):
+            return await decryptedRow(message, reading: decrypted, isFromUntrustedDevice: isFromUntrustedDevice, in: conversation, accountID: accountID)
         case let .undecryptable(reason):
             message.isUndecryptable = true
             message.undecryptableReason = reason
+            return message
         }
+    }
+
+    /// `row`, an encrypted message's row with its ids, filled from `decrypted`, the message its sender encrypted: the
+    /// filtered body, the reply, the attachments and whether its device is trusted. Nil for a message without a body or
+    /// attachment.
+    func decryptedRow(
+        _ row: ChatMessage, reading decrypted: XMPPMessage, isFromUntrustedDevice: Bool, in conversation: Conversation, accountID: UUID
+    ) async -> ChatMessage? {
+        let inner = InboundMessageMetadata(decrypted)
+        guard let body = decrypted.body ?? inner.attachments.first?.url else { return nil }
+        let replyFallbackRange = inner.replyFallbackRange(in: decrypted.body)
+        let filtered = await filterBody(
+            body, direction: row.isOutgoing ? .outgoing : .incoming, accountID: accountID, fallback: conversation.jid,
+            isUnstyled: decrypted.isUnstyled, isEncrypted: true, attachments: inner.attachments, replyFallbackRange: replyFallbackRange
+        )
+        var message = row
+        message.body = filtered.body
+        message.htmlBody = filtered.htmlBody
+        message.replyToID = inner.replyToID
+        message.replyToJID = inner.replyToJID
+        message.replyFallbackRange = replyFallbackRange
+        message.attachments = inner.attachments
+        message.isFromUntrustedDevice = isFromUntrustedDevice
+        message.isUndecryptable = false
+        message.undecryptableReason = nil
         return message
     }
 }

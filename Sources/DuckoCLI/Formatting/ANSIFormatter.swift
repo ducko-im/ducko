@@ -34,6 +34,9 @@ struct ANSIFormatter: CLIFormatter {
         if message.isEncrypted {
             line += " \(Color.green)\(Color.dim)[encrypted]\(Color.reset)"
         }
+        if message.isFromUntrustedDevice {
+            line += " \(Color.yellow)[untrusted device]\(Color.reset)"
+        }
         if message.isEdited {
             line += " \(Color.dim)[edited]\(Color.reset)"
         }
@@ -521,6 +524,13 @@ struct ANSIFormatter: CLIFormatter {
     func formatOMEMOTrustChange(jid: String, deviceID: UInt32, trustLevel: OMEMOTrustLevel) -> String {
         let color = trustLevel.isTrustedForEncryption ? Color.green : Color.yellow
         return "\(color)\(omemoTrustChangeText(jid: jid, deviceID: deviceID, trustLevel: trustLevel))\(Color.reset)"
+    }
+
+    func formatOMEMOSessionReset(_ report: OMEMOSessionResetReport) -> String {
+        let devices = report.devices.map { device in
+            "  \(device.needsAttention ? Color.yellow : Color.green)\(device.summary)\(Color.reset)"
+        }
+        return ([omemoSessionResetHeading(report)] + devices).joined(separator: "\n")
     }
 
     func formatProfile(_ profile: ProfileInfo) -> String {

@@ -183,3 +183,16 @@ extension OMEMOModule {
         ]
     }
 }
+
+/// A contact's request to stop encrypting messages to them (XEP-0384 §5.7), with the reason they give, if any.
+public struct OMEMOOptOut: Sendable, Equatable {
+    public let reason: String?
+}
+
+public extension XMPPMessage {
+    /// The opt-out the message carries. It arrives encrypted, so it is read from a decrypted message, whose children are
+    /// the envelope's content.
+    var omemoOptOut: OMEMOOptOut? {
+        element.child(named: "opt-out", namespace: XMPPNamespaces.omemo).map { OMEMOOptOut(reason: $0.child(named: "reason")?.textContent) }
+    }
+}

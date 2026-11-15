@@ -11,6 +11,20 @@ private func makeOMEMOService(store: MockOMEMOStore) -> OMEMOService {
     OMEMOService(omemoStore: store)
 }
 
+/// An identity provider whose identity appears at `readyAt`, as a new device's does once the account's list is read.
+private struct DelayedIdentityProvider: OMEMOIdentityProviding {
+    let identity: OMEMOModule.OMEMOIdentityData
+    let readyAt: ContinuousClock.Instant
+
+    var ownIdentityData: OMEMOModule.OMEMOIdentityData? {
+        ContinuousClock.now >= readyAt ? identity : nil
+    }
+
+    func consumedPreKeyIDs() -> Set<UInt32> {
+        []
+    }
+}
+
 // MARK: - Tests
 
 enum OMEMOServiceTests {
@@ -65,10 +79,25 @@ enum OMEMOServiceTests {
             #expect(storedPreKeys[0].keyID == 1)
             #expect(storedPreKeys[0].keyData == Data(identityData.preKeys[0].keyRaw))
 
-            let storedSPK = try #require(await store.loadSignedPreKey(for: accountJID))
+            let storedSPK = try #require(await store.loadSignedPreKeys(for: accountJID).first)
             #expect(storedSPK.keyID == identityData.signedPreKeyID)
             #expect(storedSPK.keyData == Data(identityData.signedPreKeyRaw))
             #expect(storedSPK.signature == Data(identityData.signedPreKeySignature))
+        }
+
+        /// A new device waits on reading the account's device list, which a slow server can stretch to the IQ timeout.
+        @Test
+        @MainActor
+        func `persists an identity that appears only after several seconds`() async {
+            let store = MockOMEMOStore()
+            let service = makeOMEMOService(store: store)
+
+            await service.handleConnectedFirstTimePersistence(
+                provider: DelayedIdentityProvider(identity: makeIdentityData(deviceID: 4242), readyAt: .now + .seconds(6)),
+                accountJID: testAccountJID.description
+            )
+
+            #expect(await store.saveIdentityCalls == 1)
         }
 
         @Test
@@ -284,10 +313,10 @@ enum OMEMOServiceTests {
             await fixture.store.installConversationWriteGate(entered: entered, release: release)
 
             let first = Task { @MainActor in
-                await fixture.chatService.enableEncryptionForContact(in: fixture.seeded.id, accountID: fixture.accountID)
+                await fixture.chatService.enableEncryptionForContact(in: fixture.seeded, accountID: fixture.accountID)
             }
             await entered.wait()
-            await fixture.chatService.enableEncryptionForContact(in: fixture.seeded.id, accountID: fixture.accountID)
+            await fixture.chatService.enableEncryptionForContact(in: fixture.seeded, accountID: fixture.accountID)
             await release.signal()
             await first.value
 
@@ -304,7 +333,7 @@ enum OMEMOServiceTests {
             try await fixture.store.updateConversation(fixture.seeded.id) { $0.encryptionOptedOut = true }
             try #require(fixture.conversation?.encryptionOptedOut == false)
 
-            await fixture.chatService.enableEncryptionForContact(in: fixture.seeded.id, accountID: fixture.accountID)
+            await fixture.chatService.enableEncryptionForContact(in: fixture.seeded, accountID: fixture.accountID)
 
             let conversation = try #require(fixture.conversation)
             #expect(!conversation.encryptionEnabled)
@@ -323,7 +352,7 @@ enum OMEMOServiceTests {
             await fixture.store.addConversation(room)
             try await fixture.chatService.loadConversations(for: fixture.accountID)
 
-            await fixture.chatService.enableEncryptionForContact(in: room.id, accountID: fixture.accountID)
+            await fixture.chatService.enableEncryptionForContact(in: room, accountID: fixture.accountID)
 
             #expect(fixture.chatService.openConversations.first { $0.id == room.id }?.encryptionEnabled == false)
             #expect(await fixture.transcripts.notes.isEmpty)

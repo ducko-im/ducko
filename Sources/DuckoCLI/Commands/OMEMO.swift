@@ -6,7 +6,7 @@ extension DuckoCLI {
         static let configuration = CommandConfiguration(
             commandName: "omemo",
             abstract: "OMEMO encryption management",
-            subcommands: [Fingerprint.self, Devices.self, Trust.self, Untrust.self]
+            subcommands: [Fingerprint.self, Devices.self, Trust.self, Untrust.self, Reset.self]
         )
 
         struct Fingerprint: AsyncParsableCommand {
@@ -117,6 +117,31 @@ extension DuckoCLI {
                         accountID: selectedAccount.id, peerJID: jid, deviceID: deviceID
                     )
                     print(formatter.formatOMEMOTrustChange(jid: jid, deviceID: deviceID, trustLevel: .untrusted))
+                }
+            }
+        }
+
+        struct Reset: AsyncParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Reset the OMEMO sessions with a contact's devices, or with your other devices"
+            )
+
+            @OptionGroup var global: GlobalOptions
+
+            @OptionGroup var accountOption: AccountOption
+
+            @Argument(help: "The contact JID, or your own JID for your other devices")
+            var jid: String
+
+            @Option(name: .customLong("device"), help: "Reset only the session with this device ID")
+            var deviceID: UInt32?
+
+            func run() async throws {
+                let formatter = global.formatter
+
+                try await ConnectedOperation.run(formatter: formatter, account: accountOption.account) { env, selectedAccount in
+                    let report = try await env.omemoService.resetSessions(peerJID: jid, deviceID: deviceID, accountID: selectedAccount.id)
+                    print(formatter.formatOMEMOSessionReset(report))
                 }
             }
         }

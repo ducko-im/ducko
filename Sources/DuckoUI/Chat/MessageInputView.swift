@@ -23,6 +23,8 @@ struct MessageInputView: View {
         VStack(spacing: 0) {
             SendErrorBanner(windowState: windowState)
 
+            PlaintextRequestBanner(windowState: windowState)
+
             ReplyComposeBar(windowState: windowState)
 
             PendingAttachmentBar(windowState: windowState)
@@ -121,7 +123,7 @@ struct MessageInputView: View {
             if !body.isEmpty {
                 await windowState.sendMessage(body)
             }
-            if windowState.lastSendError != nil, let failedBody = windowState.lastFailedSendBody {
+            if windowState.lastSendError != nil || windowState.plaintextRequest != nil, let failedBody = windowState.lastFailedSendBody {
                 windowState.draftText = failedBody
             }
             if windowState.lastSendError == nil {

@@ -1,4 +1,7 @@
+import Logging
 import struct os.OSAllocatedUnfairLock
+
+private let log = Logger(label: "im.ducko.xmpp.pep")
 
 /// Implements XEP-0163 Personal Eventing Protocol — publish, retrieve,
 /// retract PEP items and dispatch incoming PEP notifications.
@@ -41,7 +44,8 @@ public final class PEPModule: XMPPModule, Sendable {
 
     // MARK: - Public API
 
-    /// Publishes an item to a PEP node.
+    /// Publishes an item to a PEP node. When the node's configuration conflicts with `options`, reconfigures the node
+    /// to match them and publishes once more (XEP-0060 §8.2).
     public func publishItem(
         node: String,
         itemID: String,
@@ -50,23 +54,14 @@ public final class PEPModule: XMPPModule, Sendable {
     ) async throws {
         guard let context = state.withLock({ $0.context }) else { return }
 
-        var iq = XMPPIQ(type: .set, id: context.generateID())
-        var pubsub = XMLElement(name: "pubsub", namespace: XMPPNamespaces.pubsub)
-
-        var publish = XMLElement(name: "publish", attributes: ["node": node])
-        var item = XMLElement(name: "item", attributes: ["id": itemID])
-        item.addChild(payload)
-        publish.addChild(item)
-        pubsub.addChild(publish)
-
-        if let options {
-            var publishOptions = XMLElement(name: "publish-options")
-            publishOptions.addChild(buildSubmitForm(options))
-            pubsub.addChild(publishOptions)
+        do {
+            _ = try await context.sendIQ(makePublishIQ(node: node, itemID: itemID, payload: payload, options: options, context: context))
+        } catch let error as XMPPStanzaError {
+            guard let options, Self.isPublishOptionsConflict(error) else { throw error }
+            try await configureNode(node: node, fields: options.filter { $0.variable != "FORM_TYPE" }, context: context)
+            log.info("Reconfigured PEP node \(node) to match its publish options")
+            _ = try await context.sendIQ(makePublishIQ(node: node, itemID: itemID, payload: payload, options: options, context: context))
         }
-
-        iq.element.addChild(pubsub)
-        _ = try await context.sendIQ(iq)
     }
 
     /// Retrieves items from a PEP node.
@@ -129,6 +124,55 @@ public final class PEPModule: XMPPModule, Sendable {
         iq.element.addChild(pubsub)
 
         _ = try await context.sendIQ(iq)
+    }
+
+    // MARK: - Publishing
+
+    private func makePublishIQ(
+        node: String,
+        itemID: String,
+        payload: XMLElement,
+        options: [DataFormField]?,
+        context: ModuleContext
+    ) -> XMPPIQ {
+        var iq = XMPPIQ(type: .set, id: context.generateID())
+        var pubsub = XMLElement(name: "pubsub", namespace: XMPPNamespaces.pubsub)
+
+        var publish = XMLElement(name: "publish", attributes: ["node": node])
+        var item = XMLElement(name: "item", attributes: ["id": itemID])
+        item.addChild(payload)
+        publish.addChild(item)
+        pubsub.addChild(publish)
+
+        if let options {
+            var publishOptions = XMLElement(name: "publish-options")
+            publishOptions.addChild(buildSubmitForm(options))
+            pubsub.addChild(publishOptions)
+        }
+
+        iq.element.addChild(pubsub)
+        return iq
+    }
+
+    /// Submits `fields` as the node's configuration via XEP-0060 §8.2 (`pubsub#owner`). Fields left out keep their
+    /// current values.
+    private func configureNode(node: String, fields: [DataFormField], context: ModuleContext) async throws {
+        var iq = XMPPIQ(type: .set, id: context.generateID())
+        var pubsub = XMLElement(name: "pubsub", namespace: XMPPNamespaces.pubsubOwner)
+
+        var configure = XMLElement(name: "configure", attributes: ["node": node])
+        let formType = DataFormField(variable: "FORM_TYPE", type: "hidden", values: [XMPPNamespaces.pubsubNodeConfig])
+        configure.addChild(buildSubmitForm([formType] + fields))
+        pubsub.addChild(configure)
+        iq.element.addChild(pubsub)
+
+        _ = try await context.sendIQ(iq)
+    }
+
+    /// Whether a publish failed because the node's configuration does not match its publish options (XEP-0060 §7.1.5).
+    private static func isPublishOptionsConflict(_ error: XMPPStanzaError) -> Bool {
+        guard error.condition == .conflict, let precondition = error.applicationCondition else { return false }
+        return precondition.name == "precondition-not-met" && precondition.namespace == XMPPNamespaces.pubsubErrors
     }
 
     // MARK: - Message Handling

@@ -155,6 +155,149 @@ extension OMEMOServiceTests {
         }
     }
 
+    /// The app and the CLI can rotate the signed pre-key of one profile, so each run takes up what the store holds.
+    @MainActor
+    struct SignedPreKeyRotation {
+        /// Which signed pre-keys a module holds, and which it holds after a run over the stored keys.
+        struct Reconcile: Sendable, CustomTestStringConvertible {
+            let held: (current: UInt32, retained: [UInt32])
+            let stored: [(keyID: UInt32, ageInDays: Double)]
+            let installed: (current: UInt32, retained: [UInt32])
+            let testDescription: String
+        }
+
+        private let store = MockOMEMOStore()
+        private let service: OMEMOService
+
+        init() {
+            self.service = OMEMOService(omemoStore: store)
+        }
+
+        private func seedStoredIdentity(signedPreKeys: [(keyID: UInt32, ageInDays: Double)]) async {
+            await Self.seedStoredIdentity(in: store, signedPreKeys: signedPreKeys)
+        }
+
+        private static func seedStoredIdentity(in store: MockOMEMOStore, signedPreKeys: [(keyID: UInt32, ageInDays: Double)]) async {
+            await store.seedIdentity(OMEMOStoredIdentity(
+                accountJID: accountJID.description, deviceID: 4242, identityKeyData: Data(repeating: 0xA1, count: 32), registrationID: 0
+            ))
+            await store.seedPreKeys(storedPreKeys(1 ... 30))
+            for (keyID, ageInDays) in signedPreKeys {
+                await store.seedSignedPreKey(OMEMOStoredSignedPreKey(
+                    accountJID: accountJID.description, keyID: keyID, keyData: Data(repeating: 0xB2, count: 32),
+                    signature: Data(repeating: 0xC3, count: 64), timestamp: Date(timeIntervalSinceNow: -ageInDays * 86400)
+                ))
+            }
+        }
+
+        @Test(arguments: [(8.0, true), (1.0, false)])
+        func `A signed pre-key seven days old is replaced, and the replaced key is still taken`(ageInDays: Double, rotates: Bool) async throws {
+            await seedStoredIdentity(signedPreKeys: [(7, ageInDays)])
+            let module = StubPreKeyModule(identity: makeIdentityData(preKeyIDs: Array(1 ... 30)))
+
+            await service.maintainPreKeys(accountJID: accountJID.description, module: module)
+
+            let stored = try await store.loadSignedPreKeys(for: accountJID.description)
+            let identity = try #require(module.ownIdentityData)
+            #expect((identity.signedPreKeyID != 7) == rotates)
+            #expect(stored.map(\.keyID) == (rotates ? [identity.signedPreKeyID, 7] : [7]))
+            #expect(stored.first?.keyData == Data(identity.signedPreKeyRaw))
+            #expect(identity.retainedSignedPreKeys.map(\.keyID) == (rotates ? [7] : []))
+        }
+
+        @Test func `A rotation deletes the keys older than the one it replaces, and the module no longer holds them`() async throws {
+            await seedStoredIdentity(signedPreKeys: [(9, 8), (7, 16)])
+            let module = StubPreKeyModule(identity: makeIdentityData(preKeyIDs: Array(1 ... 30), signedPreKeyID: 9, retainedSignedPreKeyIDs: [7]))
+
+            await service.maintainPreKeys(accountJID: accountJID.description, module: module)
+
+            let identity = try #require(module.ownIdentityData)
+            #expect(identity.signedPreKeyID != 9)
+            #expect(try await store.loadSignedPreKeys(for: accountJID.description).map(\.keyID) == [identity.signedPreKeyID, 9])
+            #expect(identity.retainedSignedPreKeys.map(\.keyID) == [9])
+        }
+
+        /// Each draw falls past 2^31 - 1 half the time when the whole 32-bit range is drawn from.
+        @Test func `A new signed pre-key's id is a positive integer up to 2^31 - 1`() async throws {
+            for _ in 0 ..< 32 {
+                let store = MockOMEMOStore()
+                let service = OMEMOService(omemoStore: store)
+                await Self.seedStoredIdentity(in: store, signedPreKeys: [(7, 8)])
+                let module = StubPreKeyModule(identity: makeIdentityData(preKeyIDs: Array(1 ... 30)))
+
+                await service.maintainPreKeys(accountJID: accountJID.description, module: module)
+
+                let keyID = try #require(module.ownIdentityData?.signedPreKeyID)
+                #expect(keyID != 7)
+                #expect((1 ... UInt32(Int32.max)).contains(keyID))
+            }
+        }
+
+        @Test(arguments: [
+            Reconcile(
+                held: (7, []), stored: [(9, 8), (7, 9)], installed: (9, [7]),
+                testDescription: "another process rotated"
+            ),
+            Reconcile(
+                held: (9, [7]), stored: [(9, 8), (8, 8.5), (7, 16)], installed: (9, [8, 7]),
+                testDescription: "the module holds the newest key but not one stored beside it"
+            )
+        ])
+        func `A module holding other signed pre-keys than the store takes up the stored ones instead of rotating`(_ reconcile: Reconcile) async throws {
+            await seedStoredIdentity(signedPreKeys: reconcile.stored)
+            let module = StubPreKeyModule(identity: makeIdentityData(
+                preKeyIDs: Array(1 ... 30), signedPreKeyID: reconcile.held.current, retainedSignedPreKeyIDs: reconcile.held.retained
+            ))
+
+            await service.maintainPreKeys(accountJID: accountJID.description, module: module)
+
+            let identity = try #require(module.ownIdentityData)
+            #expect(identity.signedPreKeyID == reconcile.installed.current)
+            #expect(identity.retainedSignedPreKeys.map(\.keyID) == reconcile.installed.retained)
+            #expect(try await store.loadSignedPreKeys(for: accountJID.description).map(\.keyID) == reconcile.stored.map(\.keyID))
+        }
+
+        @Test func `Two processes rotating from the same key at once keep both new keys and the replaced one`() async throws {
+            await seedStoredIdentity(signedPreKeys: [(7, 8)])
+            let arrived = AsyncSemaphore()
+            let release = AsyncSemaphore()
+            await store.setBeforeSignedPreKeySave {
+                await arrived.signal()
+                await release.wait()
+            }
+            let other = OMEMOService(omemoStore: store)
+            let modules = [StubPreKeyModule(identity: makeIdentityData(preKeyIDs: Array(1 ... 30))), StubPreKeyModule(identity: makeIdentityData(preKeyIDs: Array(1 ... 30)))]
+
+            async let first: Void = service.maintainPreKeys(accountJID: accountJID.description, module: modules[0])
+            async let second: Void = other.maintainPreKeys(accountJID: accountJID.description, module: modules[1])
+            // Both have loaded the key they replace before either saves its new one.
+            let bothArrived = try await boundedOutcome(timeout: .seconds(5)) {
+                await arrived.wait()
+                await arrived.wait()
+            }
+            await release.signal()
+            await release.signal()
+            _ = await (first, second)
+
+            #expect(bothArrived != nil)
+            let newKeyIDs = modules.compactMap(\.ownIdentityData?.signedPreKeyID)
+            #expect(Set(newKeyIDs).count == 2)
+            #expect(try await Set(store.loadSignedPreKeys(for: accountJID.description).map(\.keyID)) == Set(newKeyIDs + [7]))
+        }
+
+        @Test func `A signed pre-key missing from the store is stored from the module`() async throws {
+            await seedStoredIdentity(signedPreKeys: [])
+            let module = StubPreKeyModule(identity: makeIdentityData(preKeyIDs: Array(1 ... 30)))
+
+            await service.maintainPreKeys(accountJID: accountJID.description, module: module)
+
+            let stored = try await store.loadSignedPreKeys(for: accountJID.description)
+            #expect(stored.map(\.keyID) == [7])
+            #expect(stored.first?.keyData == Data(makeIdentityData().signedPreKeyRaw))
+            #expect(module.ownIdentityData?.signedPreKeyID == 7)
+        }
+    }
+
     @MainActor
     struct BuildModule {
         private let store = MockOMEMOStore()
@@ -174,7 +317,7 @@ extension OMEMOServiceTests {
             return module
         }
 
-        @Test(arguments: [MockOMEMOStore.FailingCall.loadIdentity, .loadPreKeys, .loadSignedPreKey, .loadSessions, .loadAllTrust])
+        @Test(arguments: [MockOMEMOStore.FailingCall.loadIdentity, .loadPreKeys, .loadSignedPreKeys, .loadSessions, .loadAllTrust])
         func `Keys that cannot be read never make a new device`(failing: MockOMEMOStore.FailingCall) async throws {
             await store.seedFromIdentityData(makeIdentityData(preKeyIDs: [1]), accountJID: accountJID.description)
             await store.setFailing(failing)
@@ -216,6 +359,20 @@ extension OMEMOServiceTests {
             #expect(module.ownIdentityData?.preKeys.map(\.keyID) == [1])
         }
 
+        @Test func `The newest stored signed pre-key is the built module's current one, and the older ones are retained`() async throws {
+            await store.seedFromIdentityData(makeIdentityData(preKeyIDs: [1], signedPreKeyID: 7), accountJID: accountJID.description)
+            await store.seedSignedPreKey(OMEMOStoredSignedPreKey(
+                accountJID: accountJID.description, keyID: 5, keyData: Data(repeating: 0xB2, count: 32),
+                signature: Data(repeating: 0xC3, count: 64), timestamp: Date(timeIntervalSinceNow: -86400)
+            ))
+
+            let module = await buildInstalledModule(recorder: IQRecorder())
+
+            let identity = try #require(module.ownIdentityData)
+            #expect(identity.signedPreKeyID == 7)
+            #expect(identity.retainedSignedPreKeys.map(\.keyID) == [5])
+        }
+
         @Test func `A new installation's module is guarded too`() async {
             let module = await buildInstalledModule(recorder: IQRecorder())
 
@@ -232,7 +389,7 @@ extension OMEMOServiceTests {
             let module = await buildInstalledModule(recorder: recorder)
             // Armed: nothing was published yet, and the replacement is stored already.
             #expect(recorder.iqs.isEmpty)
-            let signedPreKey = try #require(await store.loadSignedPreKey(for: accountJID.description))
+            let signedPreKey = try #require(await store.loadSignedPreKeys(for: accountJID.description).first)
             await service.maintainPreKeys(accountJID: accountJID.description, module: module)
 
             #expect(module.ownIdentityData?.deviceID == 4242)

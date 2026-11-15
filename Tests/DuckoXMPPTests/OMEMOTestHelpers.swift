@@ -53,6 +53,18 @@ func makeInstalledOMEMOModule(
     return module
 }
 
+/// The `<pubsub>` answer to `iq` when it fetches a device list, listing `devices`, and nil for any other request.
+func deviceListItems(_ devices: [UInt32], answering iq: XMLElement) -> XMLElement? {
+    guard iq.child(named: "pubsub")?.child(named: "items")?.attribute("node") == XMPPNamespaces.omemoDevices else { return nil }
+    var item = XMLElement(name: "item", attributes: ["id": "current"])
+    item.addChild(OMEMOModule(pepModule: PEPModule()).buildDeviceListElement(devices))
+    var items = XMLElement(name: "items", attributes: ["node": XMPPNamespaces.omemoDevices])
+    items.addChild(item)
+    var pubsub = XMLElement(name: "pubsub", namespace: XMPPNamespaces.pubsub)
+    pubsub.addChild(items)
+    return pubsub
+}
+
 extension OMEMOTrustGuard {
     /// Takes in one stored row for `peer`'s device, read now unless `stamp` says when, as the service merges the rows
     /// it loads.

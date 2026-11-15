@@ -131,6 +131,18 @@ extension OMEMOServiceTests {
             #expect(verdict == .untrusted)
         }
 
+        /// A message from the device is then marked, and its opt-out is not honoured.
+        @Test func `A device whose untrust failed to save is not trusted for encryption, though its stored row says trusted`() async throws {
+            try await seedTrust(fingerprint: fingerprintA, level: .trusted)
+            try #require(await service.isTrustedForEncryption(jid: peer, deviceID: 1, accountID: accountID))
+            await store.setFailing(.markTrust)
+
+            try? await untrust()
+
+            #expect(try await storedTrust()?.trustLevel == .trusted)
+            #expect(await !service.isTrustedForEncryption(jid: peer, deviceID: 1, accountID: accountID))
+        }
+
         @Test func `An untrust made before the account's first module is built stays when the module loads the stored rows`() async throws {
             try await seedTrust(fingerprint: fingerprintA, level: .trusted)
             await store.setFailing(.markTrust)
@@ -361,9 +373,8 @@ extension OMEMOServiceTests {
             }
 
             _ = try? await service.encryptMessage(content: [], to: peer, trustedDeviceIDs: [9], accountID: accountID)
-            _ = try? await service.encryptGroupMessage(
-                content: [], roomJID: try #require(BareJID(localPart: "room", domainPart: "conference.example.com")), memberJIDs: [member], accountID: accountID
-            )
+            // A room send resolves each member as a 1:1 send resolves its contact.
+            _ = await service.shouldEncrypt(jid: member, accountID: accountID, conversationEncryptionEnabled: true)
 
             let trustGuard = service.trustGuard(forAccountJID: testJIDString)
             for jid in [own, member] {
@@ -372,5 +383,226 @@ extension OMEMOServiceTests {
             await accounts.disconnect(accountID: accountID)
             _ = await connection.result
         }
+    }
+
+    /// A message is encrypted only to the devices on the recipient's list as last fetched or notified.
+    @MainActor
+    struct ListedRecipients {
+        @Test func `A trusted device that left the contact's list is not encrypted to`() async throws {
+            let harness = try await PeerListing.connect(listing: [2])
+            for deviceID: UInt32 in [1, 2] {
+                try await harness.store.saveTrust(OMEMOTrust(
+                    accountJID: testJIDString, peerJID: peer.description, deviceID: deviceID, fingerprint: "", trustLevel: .trusted
+                ))
+            }
+
+            let resolved = await harness.service.shouldEncrypt(jid: peer, accountID: harness.accountID, conversationEncryptionEnabled: true)
+            let deviceIDs = try #require(resolved.trustedDeviceIDs)
+            let elements = try await harness.service.encryptMessage(content: [], to: peer, trustedDeviceIDs: deviceIDs, accountID: harness.accountID)
+
+            #expect(deviceIDs == [2])
+            let keys = elements.encrypted.child(named: "header")?.children(named: "keys").first { $0.attribute("jid") == peer.description }
+            #expect(keys?.children(named: "key").map { $0.attribute("rid") } == ["2"])
+            await harness.disconnect()
+        }
+
+        @Test func `A listed device without a trust row is recorded as undecided and counts under trust on first use`() async throws {
+            let harness = try await PeerListing.connect(listing: [1])
+
+            let resolved = await harness.service.shouldEncrypt(jid: peer, accountID: harness.accountID, conversationEncryptionEnabled: true)
+
+            let stored = try await harness.store.loadAllDevices(for: peer.description, accountJID: testJIDString)
+            #expect(stored.map(\.deviceID) == [1])
+            #expect(stored.map(\.trustLevel) == [.undecided])
+            if OMEMOPreferences.shared.trustOnFirstUse {
+                #expect(resolved.trustedDeviceIDs == [1])
+            } else {
+                #expect(resolved.isNoTrustedDevices)
+            }
+            await harness.disconnect()
+        }
+
+        @Test func `A list that cannot be read leaves the devices unknown, and the stored rows still reach the guard`() async throws {
+            let harness = try await PeerListing.connect(listing: nil)
+            try await harness.store.saveTrust(OMEMOTrust(
+                accountJID: testJIDString, peerJID: peer.description, deviceID: 1, fingerprint: fingerprintA, trustLevel: .untrusted
+            ))
+
+            let resolved = await harness.service.shouldEncrypt(jid: peer, accountID: harness.accountID, conversationEncryptionEnabled: true)
+
+            #expect(resolved.isDeviceListUnavailable)
+            let verdict = harness.service.trustGuard(forAccountJID: testJIDString).admitSession(with: SessionKey(jid: peer, deviceID: 1), identityKey: keyA)
+            #expect(verdict == .untrusted)
+            await harness.disconnect()
+        }
+    }
+
+    /// The devices shown for a contact are those on its list as last fetched or notified, and every stored one when the
+    /// list cannot be read.
+    @MainActor
+    struct ShownDevices {
+        private static func seedTrustedDevices(_ deviceIDs: [UInt32], in store: MockOMEMOStore) async throws {
+            for deviceID in deviceIDs {
+                try await store.saveTrust(OMEMOTrust(
+                    accountJID: testJIDString, peerJID: peer.description, deviceID: deviceID, fingerprint: "", trustLevel: .trusted
+                ))
+            }
+        }
+
+        @Test func `A stored device that left the contact's list is not shown`() async throws {
+            let harness = try await PeerListing.connect(listing: [2])
+            try await Self.seedTrustedDevices([1, 2], in: harness.store)
+
+            let devices = await harness.service.deviceInfoList(for: peer.description, accountID: harness.accountID)
+
+            #expect(devices.map(\.deviceID) == [2])
+            await harness.disconnect()
+        }
+
+        @Test func `Every stored device is shown when the contact's list cannot be read`() async throws {
+            let harness = try await PeerListing.connect(listing: nil)
+            try await Self.seedTrustedDevices([1, 2], in: harness.store)
+
+            let devices = await harness.service.deviceInfoList(for: peer.description, accountID: harness.accountID)
+
+            #expect(devices.map(\.deviceID).sorted() == [1, 2])
+            await harness.disconnect()
+        }
+
+        @Test func `Every stored device is shown without a connection`() async throws {
+            let store = MockOMEMOStore()
+            let process = try await ServiceProcess(store: store)
+            try await Self.seedTrustedDevices([1, 2], in: store)
+
+            let devices = await process.service.deviceInfoList(for: peer.description, accountID: process.accountID)
+
+            #expect(devices.map(\.deviceID).sorted() == [1, 2])
+        }
+    }
+
+    /// The account's other devices are trusted like a contact's, under the user's trust-on-first-use preference.
+    @MainActor
+    struct OwnDevices {
+        @Test(arguments: [true, false])
+        func `An undecided device of the account's own is encrypted to only under trust on first use`(trustOnFirstUse: Bool) async throws {
+            let harness = try await PeerListing.connect(listing: [1], otherOwnDevices: [3], trustOnFirstUse: trustOnFirstUse)
+
+            let elements = try await harness.service.encryptMessage(content: [], to: peer, trustedDeviceIDs: [1], accountID: harness.accountID)
+
+            let keys = elements.encrypted.child(named: "header")?.children(named: "keys").first { $0.attribute("jid") == testJIDString }
+            let ownRecipients = keys?.children(named: "key").compactMap { $0.attribute("rid") } ?? []
+            #expect(ownRecipients == (trustOnFirstUse ? ["3"] : []))
+            await harness.disconnect()
+        }
+
+        @Test(arguments: [true, false])
+        func `A message from an undecided device of the account's own is marked as untrusted without trust on first use`(trustOnFirstUse: Bool) async throws {
+            let harness = try await PeerListing.connect(listing: [1], trustOnFirstUse: trustOnFirstUse)
+            let own = try #require(BareJID.parse(testJIDString))
+
+            let isTrusted = await harness.service.isTrustedForEncryption(jid: own, deviceID: 3, accountID: harness.accountID)
+
+            #expect(isTrusted == trustOnFirstUse)
+            await harness.disconnect()
+        }
+    }
+}
+
+/// A connected account whose module holds device 100, talking to a server that lists `listing` as the peer's devices, or
+/// refuses the peer's list when nil, and hands out a bundle for each of the peer's devices. With `otherOwnDevices`, the
+/// server lists those devices next to device 100 as the account's and hands them out too.
+@MainActor
+private struct PeerListing {
+    let store: MockOMEMOStore
+    let service: OMEMOService
+    /// Held here, since the service holds it weakly.
+    let accounts: AccountService
+    let accountID: UUID
+    let connection: Task<Void, any Error>
+
+    static func connect(listing: [UInt32]?, otherOwnDevices: [UInt32] = [], trustOnFirstUse: Bool = true) async throws -> PeerListing {
+        let transport = MockTransport()
+        let peerKeys = OMEMOIdentityKeyPair()
+        let signedPreKey = try OMEMOPreKeyManager.generateSignedPreKey(keyID: 1, identityKey: peerKeys)
+        let bundles = Dictionary(uniqueKeysWithValues: ([1, 2] + otherOwnDevices).map { deviceID in
+            let bundle = OMEMOPreKeyManager.buildBundle(
+                deviceID: OMEMODeviceID(value: deviceID), identityKeyPair: peerKeys, signedPreKey: signedPreKey, preKeys: [OMEMOPreKey(keyID: 7)]
+            )
+            return ("\(deviceID)", OMEMOModule(pepModule: PEPModule()).buildBundleElement(bundle).xmlString)
+        })
+        let ownListing = otherOwnDevices.isEmpty ? nil : [100] + otherOwnDevices
+        await transport.autoReply { stanza in reply(to: stanza, listing: listing, ownListing: ownListing, bundles: bundles) }
+        let pepModule = PEPModule()
+        let omemoModule = OMEMOModule(pepModule: pepModule)
+        let ownKeys = OMEMOIdentityKeyPair()
+        let ownSignedPreKey = try OMEMOPreKeyManager.generateSignedPreKey(keyID: 1, identityKey: ownKeys)
+        omemoModule.configureIdentity(OMEMOModule.OMEMOIdentityData(
+            deviceID: 100, identityKeyRaw: ownKeys.rawRepresentation, signedPreKeyID: 1,
+            signedPreKeyRaw: ownSignedPreKey.rawRepresentation, signedPreKeySignature: ownSignedPreKey.signature,
+            preKeys: [.init(keyID: 1, keyRaw: OMEMOPreKey(keyID: 1).rawRepresentation)]
+        ))
+        let accounts = makeAccountService(
+            store: MockPersistenceStore(), clientFactory: MockXMPPClientFactory(transport: transport, modules: [pepModule, omemoModule])
+        )
+        let store = MockOMEMOStore()
+        let service = OMEMOService(omemoStore: store, trustOnFirstUse: { trustOnFirstUse })
+        service.setAccountService(accounts)
+        let accountID = try await accounts.createAccount(jidString: testJIDString, requireTLS: false)
+        let (_, connection) = try await driveMockConnect(accounts, accountID: accountID, transport: transport)
+        return PeerListing(store: store, service: service, accounts: accounts, accountID: accountID, connection: connection)
+    }
+
+    func disconnect() async {
+        await accounts.disconnect(accountID: accountID)
+        _ = await connection.result
+    }
+
+    /// The server's answer to a PubSub request; nil for anything else. `ownListing` is the account's device list, or nil
+    /// to answer it with no items.
+    private nonisolated static func reply(to stanza: String, listing: [UInt32]?, ownListing: [UInt32]?, bundles: [String: String]) -> String? {
+        guard stanza.hasPrefix("<iq"), let id = value(of: " id=\"", in: stanza) else { return nil }
+        let to = value(of: " to=\"", in: stanza)
+        let from = to.map { " from=\"\($0)\"" } ?? ""
+        if stanza.contains(XMPPNamespaces.omemoBundles), stanza.contains("<items"), let itemID = value(of: "<item id=\"", in: stanza), let bundle = bundles[itemID] {
+            return "<iq type=\"result\" id=\"\(id)\"\(from)><pubsub xmlns=\"\(XMPPNamespaces.pubsub)\"><items node=\"\(XMPPNamespaces.omemoBundles)\">"
+                + "<item id=\"\(itemID)\">\(bundle)</item></items></pubsub></iq>"
+        }
+        if stanza.contains(XMPPNamespaces.omemoDevices), stanza.contains("<items"), to == peer.description {
+            guard let listing else {
+                return "<iq type=\"error\" id=\"\(id)\"\(from)><error type=\"wait\"><internal-server-error xmlns=\"urn:ietf:params:xml:ns:xmpp-stanzas\"/></error></iq>"
+            }
+            let devices = listing.map { "<device id=\"\($0)\"/>" }.joined()
+            return "<iq type=\"result\" id=\"\(id)\"\(from)><pubsub xmlns=\"\(XMPPNamespaces.pubsub)\"><items node=\"\(XMPPNamespaces.omemoDevices)\">"
+                + "<item id=\"current\"><devices xmlns=\"\(XMPPNamespaces.omemo)\">\(devices)</devices></item></items></pubsub></iq>"
+        }
+        if stanza.contains(XMPPNamespaces.omemoDevices), stanza.contains("<items"), to == nil || to == testJIDString, let ownListing {
+            let devices = ownListing.map { "<device id=\"\($0)\"/>" }.joined()
+            return "<iq type=\"result\" id=\"\(id)\"\(from)><pubsub xmlns=\"\(XMPPNamespaces.pubsub)\"><items node=\"\(XMPPNamespaces.omemoDevices)\">"
+                + "<item id=\"current\"><devices xmlns=\"\(XMPPNamespaces.omemo)\">\(devices)</devices></item></items></pubsub></iq>"
+        }
+        if stanza.contains(XMPPNamespaces.pubsub) {
+            return "<iq type=\"result\" id=\"\(id)\"\(from)/>"
+        }
+        return nil
+    }
+
+    /// The text from the first `prefix` in `stanza` up to the next quote.
+    private nonisolated static func value(of prefix: String, in stanza: String) -> String? {
+        guard let start = stanza.range(of: prefix), let end = stanza[start.upperBound...].firstIndex(of: "\"") else { return nil }
+        return String(stanza[start.upperBound ..< end])
+    }
+}
+
+private extension OMEMOService.EncryptionResolution {
+    var trustedDeviceIDs: [UInt32]? {
+        if case let .proceed(deviceIDs) = self { deviceIDs } else { nil }
+    }
+
+    var isNoTrustedDevices: Bool {
+        if case .noTrustedDevicesForPeer = self { true } else { false }
+    }
+
+    var isDeviceListUnavailable: Bool {
+        if case .deviceListUnavailable = self { true } else { false }
     }
 }

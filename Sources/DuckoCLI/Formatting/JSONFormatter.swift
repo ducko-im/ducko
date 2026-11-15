@@ -38,6 +38,9 @@ struct JSONFormatter: CLIFormatter {
         if message.isEncrypted {
             dict["encrypted"] = "true"
         }
+        if message.isFromUntrustedDevice {
+            dict["untrustedDevice"] = "true"
+        }
         if message.isUndecryptable {
             dict["undecryptable"] = "true"
             dict["notice"] = message.undecryptableNotice
@@ -56,12 +59,15 @@ struct JSONFormatter: CLIFormatter {
     }
 
     func formatNote(_ note: TimelineNote, contactName: String) -> String {
-        encode([
+        var dict = [
             "type": "note",
             "kind": note.kind.rawValue,
             "text": note.text(contactName: contactName),
             "timestamp": formatTimestamp(note.timestamp)
-        ])
+        ]
+        dict["subject"] = note.subject
+        dict["detail"] = note.detail
+        return encode(dict)
     }
 
     func formatSearchDay(jid: JID, day: Date, matchCount: Int) -> String {
@@ -687,7 +693,7 @@ struct JSONFormatter: CLIFormatter {
     }
 
     func formatOMEMOFingerprint(_ fingerprint: String) -> String {
-        encode(["type": "omemo_fingerprint", "fingerprint": fingerprint])
+        encode(["type": "omemo_fingerprint", "fingerprint": fingerprint, "displayFingerprint": OMEMODeviceInfo.formatFingerprint(fingerprint)])
     }
 
     func formatOMEMODevice(_ device: OMEMODeviceInfo) -> String {
@@ -697,7 +703,10 @@ struct JSONFormatter: CLIFormatter {
             "deviceID": "\(device.deviceID)",
             "trust": device.trustLevel.rawValue
         ]
-        if !device.fingerprint.isEmpty { dict["fingerprint"] = device.fingerprint }
+        if !device.fingerprint.isEmpty {
+            dict["fingerprint"] = device.fingerprint
+            dict["displayFingerprint"] = OMEMODeviceInfo.formatFingerprint(device.fingerprint)
+        }
         return encode(dict)
     }
 
@@ -708,6 +717,10 @@ struct JSONFormatter: CLIFormatter {
             "deviceID": "\(deviceID)",
             "trust": trustLevel.rawValue
         ])
+    }
+
+    func formatOMEMOSessionReset(_ report: OMEMOSessionResetReport) -> String {
+        encode(OMEMOSessionResetOutput(report: report))
     }
 
     func formatProfile(_ profile: ProfileInfo) -> String {
@@ -828,5 +841,52 @@ private struct TLSInfoOutput: Encodable {
         try container.encodeIfPresent(info.certificateIssuer, forKey: .issuer)
         try container.encodeIfPresent(expires, forKey: .expires)
         try container.encodeIfPresent(info.certificateSHA256, forKey: .sha256)
+    }
+}
+
+/// Each device's outcome with the raw and display fingerprints of a changed key, so JSON consumers compare keys without
+/// parsing text.
+private struct OMEMOSessionResetOutput: Encodable {
+    let report: OMEMOSessionResetReport
+
+    private enum CodingKeys: String, CodingKey {
+        case type, jid, devices
+    }
+
+    private enum DeviceKeys: String, CodingKey {
+        case deviceID, outcome, needsTrusting, previousFingerprint, previousDisplayFingerprint, newFingerprint, newDisplayFingerprint, error
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode("omemo_session_reset", forKey: .type)
+        try container.encode(report.peerJID, forKey: .jid)
+        var devices = container.nestedUnkeyedContainer(forKey: .devices)
+        for device in report.devices {
+            var entry = devices.nestedContainer(keyedBy: DeviceKeys.self)
+            try entry.encode("\(device.deviceID)", forKey: .deviceID)
+            switch device.outcome {
+            case let .rebuilt(needsTrusting):
+                try entry.encode("rebuilt", forKey: .outcome)
+                try entry.encode(needsTrusting ? "true" : "false", forKey: .needsTrusting)
+            case .discarded:
+                try entry.encode("discarded", forKey: .outcome)
+            case let .keyChanged(previousFingerprint, newFingerprint):
+                try entry.encode("key_changed", forKey: .outcome)
+                if !previousFingerprint.isEmpty {
+                    try entry.encode(previousFingerprint, forKey: .previousFingerprint)
+                    try entry.encode(OMEMODeviceInfo.formatFingerprint(previousFingerprint), forKey: .previousDisplayFingerprint)
+                }
+                try entry.encode(newFingerprint, forKey: .newFingerprint)
+                try entry.encode(OMEMODeviceInfo.formatFingerprint(newFingerprint), forKey: .newDisplayFingerprint)
+            case .noBundle:
+                try entry.encode("no_bundle", forKey: .outcome)
+            case .notListed:
+                try entry.encode("not_listed", forKey: .outcome)
+            case let .failed(reason):
+                try entry.encode("failed", forKey: .outcome)
+                try entry.encode(reason, forKey: .error)
+            }
+        }
     }
 }

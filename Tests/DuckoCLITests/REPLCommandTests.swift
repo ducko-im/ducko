@@ -9,7 +9,7 @@ struct REPLCommandTests {
     }
 
     @Test(arguments: [
-        "", "send", "/send a hi", "Send a hi", "/add", "/reply", "/remove", "/approve", "/deny", "/block", "/unblock", "/edit", "/retract", "/search", "/searchall", "/encrypt", "/pref", "/directed-presence",
+        "", "send", "/send a hi", "Send a hi", "/add", "/reply", "/remove", "/approve", "/deny", "/block", "/unblock", "/edit", "/retract", "/search", "/searchall", "/encrypt", "/omemo-reset", "/pref", "/directed-presence",
         "/roster extra", "/who extra", "/profile extra", "/blocklist extra", "/transfers extra", "/connection-info extra", "/unregister-account extra", "help extra", "quit extra", "exit extra",
         "/joiner room", "/join\troom", "send\ta hi", "/pm\nAlice hi", "/unknown"
     ])
@@ -25,7 +25,7 @@ struct REPLCommandTests {
         ("/approve alice@example.com", .approve), ("/deny alice@example.com", .deny),
         ("/block alice@example.com/laptop", .block), ("/unblock alice@example.com", .unblock), ("/blocklist", .blocklist),
         ("/directed-presence alice@example.com", .directedPresence),
-        ("/encrypt alice@example.com on", .encrypt), ("/pref chatstates off", .pref)
+        ("/encrypt alice@example.com on", .encrypt), ("/omemo-reset alice@example.com 7", .omemoReset), ("/pref chatstates off", .pref)
     ])
     func `argument requiring commands retain their grammar`(input: String, expected: REPLCommand.Kind) {
         #expect(REPLCommand(input).kind == expected)
@@ -121,6 +121,7 @@ Commands:
   /avatar [jid]            View avatar info (own or contact's)
   /connection-info         Show TLS connection info
   /encrypt <jid> on|off    Toggle OMEMO encryption for a conversation
+  /omemo-reset <jid> [id]  Reset OMEMO sessions with a contact's or your other devices
   /pref chatstates on|off  Toggle chat state notifications
   /pref markers on|off      Toggle displayed markers (read receipts)
   help                     Show this help

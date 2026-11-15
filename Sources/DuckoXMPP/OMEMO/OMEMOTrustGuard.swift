@@ -5,6 +5,14 @@ package func omemoFingerprint(of identityKey: some Sequence<UInt8>) -> String {
     hexString(identityKey)
 }
 
+/// The form XEP-0384 shows a fingerprint in: the identity key converted to Curve25519, in lowercase hex split into eight
+/// space-separated groups of eight. A stored fingerprint that is empty or does not convert is returned unchanged.
+package func omemoDisplayFingerprint(ofStoredFingerprint hex: String) -> String {
+    guard let identityKey = decodeHex(hex.utf8), let curveKey = OMEMOCurveConversion.ed25519ToX25519(identityKey) else { return hex }
+    let digits = Array(hexString(curveKey))
+    return stride(from: 0, to: digits.count, by: 8).map { String(digits[$0 ..< $0 + 8]) }.joined(separator: " ")
+}
+
 /// One account's record of whose sessions it accepts, kept for the life of the process, so it outlasts each
 /// connection's `OMEMOModule`. For each device it holds the identity key, pinned on first use when nothing named one,
 /// and whether the device is marked untrusted. It also holds the one-time pre-keys that key exchanges used up. Each
@@ -151,15 +159,7 @@ package final class OMEMOTrustGuard: Sendable {
 
     /// Refuses the device at once, before the distrust is saved. Returns the decision to pass to `distrustSaved`.
     package func applyDistrust(peer: BareJID, deviceID: UInt32) -> UInt64 {
-        state.withLock { state in
-            let key = SessionKey(jid: peer, deviceID: deviceID)
-            var entry = state.entry(key)
-            entry.isRefused = true
-            entry.hasPendingDistrust = true
-            entry.decisionRevision += 1
-            state.record(entry, for: key)
-            return entry.decisionRevision
-        }
+        distrust(SessionKey(jid: peer, deviceID: deviceID), holding: nil)
     }
 
     /// Lets stored rows decide the device again once the distrust of `decision` is saved, unless a later decision was
@@ -203,9 +203,36 @@ package final class OMEMOTrustGuard: Sendable {
         }
     }
 
+    /// Holds `fingerprint` for the device in place of the key held so far, and refuses the device until the user trusts
+    /// the new key. The only way a held key is ever replaced, for a session reset that found the device's key changed.
+    /// Returns the decision to pass to `distrustSaved` once the new key is stored as untrusted.
+    package func replaceHeldKey(peer: BareJID, deviceID: UInt32, fingerprint: String) -> UInt64 {
+        distrust(SessionKey(jid: peer, deviceID: deviceID), holding: fingerprint)
+    }
+
+    /// Refuses the device until its distrust is saved, holding `fingerprint` in place of its key when one is given.
+    private func distrust(_ key: SessionKey, holding fingerprint: String?) -> UInt64 {
+        state.withLock { state in
+            var entry = state.entry(key)
+            if let fingerprint {
+                entry.fingerprint = fingerprint
+            }
+            entry.isRefused = true
+            entry.hasPendingDistrust = true
+            entry.decisionRevision += 1
+            state.record(entry, for: key)
+            return entry.decisionRevision
+        }
+    }
+
     /// Empty while none is held.
     package func heldFingerprint(peer: BareJID, deviceID: UInt32) -> String {
         state.withLock { $0.entry(SessionKey(jid: peer, deviceID: deviceID)).fingerprint }
+    }
+
+    /// Whether the device is marked untrusted, including by a distrust whose save has not succeeded yet.
+    package func refuses(peer: BareJID, deviceID: UInt32) -> Bool {
+        refuses(SessionKey(jid: peer, deviceID: deviceID))
     }
 
     /// The pre-keys of the device `ownDeviceID` that key exchanges used up in this process.
@@ -243,6 +270,11 @@ package final class OMEMOTrustGuard: Sendable {
             }
             return .accepted
         }
+    }
+
+    /// Whether the device is marked untrusted.
+    func refuses(_ device: SessionKey) -> Bool {
+        state.withLock { $0.entry(device).isRefused }
     }
 
     /// Whether a message from `device` may be decrypted through a session whose key is `identityKey`. It may not when the

@@ -48,23 +48,51 @@ extension OMEMOModule {
         receive(message)
     }
 
-    /// Nil when there is nothing to show: an error bounce, which returns a message this device sent, a replay, or a
-    /// message that carries only key material.
-    private func receive(_ message: XMPPMessage) -> OMEMOReceiveOutcome? {
+    /// Reads an OMEMO message an archive returned (XEP-0313). A room message, or a room's private message when
+    /// `isRoomPrivateMessage`, is decrypted with the session of `sender`, the real JID the archive recorded for its
+    /// author, never with the live occupant list, and shows as hidden without one. Any other message is decrypted with
+    /// its stanza's sender, as live. A key exchange is taken up only when `allowsKeyExchange`, and even then never in
+    /// place of a session this connection built or took up live. Nil when there is nothing to show.
+    public func receiveArchivedMessage(
+        _ message: XMPPMessage, sender: BareJID?, isRoomPrivateMessage: Bool, allowsKeyExchange: Bool
+    ) -> OMEMOReceiveOutcome? {
+        receive(message, as: .archived(sender: sender, isRoomPrivateMessage: isRoomPrivateMessage, allowsKeyExchange: allowsKeyExchange))
+    }
+
+    /// How a message reached this device.
+    private enum Arrival {
+        /// Live, or forwarded by a carbon.
+        case live
+        /// Returned by an archive, which recorded `sender` as its author's real JID.
+        case archived(sender: BareJID?, isRoomPrivateMessage: Bool, allowsKeyExchange: Bool)
+
+        var keyExchanges: KeyExchangePolicy {
+            switch self {
+            case .live: .accept
+            case let .archived(_, _, allowsKeyExchange): allowsKeyExchange ? .acceptUnlessLive : .refuse
+            }
+        }
+    }
+
+    /// Nil when there is nothing to show: an error bounce, which returns a message this device sent, a replay, a key
+    /// exchange `arrival` does not take up, or a message that carries only key material.
+    private func receive(_ message: XMPPMessage, as arrival: Arrival = .live) -> OMEMOReceiveOutcome? {
         guard message.messageType != .error,
               let encrypted = message.element.child(named: "encrypted", namespace: XMPPNamespaces.omemo)
         else { return nil }
         let hasPayload = encrypted.child(named: "payload") != nil
         let ownJID = state.withLock { $0.context?.connectedJID()?.bareJID }
-        guard let sender = encryptingSender(of: message, ownJID: ownJID) else {
+        guard let sender = decryptingSender(of: message, ownJID: ownJID, arrival: arrival) else {
             return hasPayload ? .undecryptable(.senderHidden) : nil
         }
         let result: DecryptionResult
         do {
-            result = try decryptIncomingMessage(encrypted, from: .bare(sender))
+            result = try decryptIncomingMessage(encrypted, from: .bare(sender), keyExchanges: arrival.keyExchanges)
         } catch OMEMOModuleError.replayedKeyExchange {
             // XEP-0384: a copy of a message already read is ignored, so it shows no undecryptable row either.
             log.warning("OMEMO key exchange ignored: it repeats one already taken up")
+            return nil
+        } catch is KeyExchangeRefusal {
             return nil
         } catch {
             let reason = undecryptableReason(for: error, from: sender)
@@ -81,13 +109,16 @@ extension OMEMOModule {
         // XEP-0384 requires the envelope of a message sent through a room, as a room message or a room's private
         // message, to name its recipient, so a server cannot pass it off as a 1:1 message or the other way round. An
         // affix that is there has to match.
-        guard envelope.to.map({ $0 == envelopeRecipient(of: message, ownJID: ownJID) }) ?? !isSentThroughRoom(message),
+        guard envelope.to.map({ $0 == envelopeRecipient(of: message, ownJID: ownJID) }) ?? !isSentThroughRoom(message, arrival: arrival),
               envelope.from.map({ $0 == sender }) ?? true
         else {
             log.warning("OMEMO envelope names other parties than its stanza")
             return .undecryptable(.mismatchedEnvelope)
         }
-        return .decrypted(OMEMODecryptedMessage(message: rebuiltMessage(message, content: envelope.content), sentTime: envelope.time))
+        return .decrypted(OMEMODecryptedMessage(
+            message: rebuiltMessage(message, content: envelope.content), sentTime: envelope.time, senderJID: sender,
+            senderDeviceID: result.senderDeviceID
+        ))
     }
 
     /// Why a message from `sender` that failed to decrypt shows a notice. Logs every failure but one not encrypted for
@@ -113,8 +144,18 @@ extension OMEMOModule {
         }
     }
 
-    /// Whose session decrypts `message`: for a room message or a room's private message the occupant's real address,
-    /// else the sender's. Nil when the room does not reveal the occupant's address.
+    /// Whose session decrypts `message`: for a live room message or room private message the occupant's real address,
+    /// for an archived one the address the archive recorded, else the stanza's sender. Nil when the room or its archive
+    /// does not reveal the occupant's address.
+    private func decryptingSender(of message: XMPPMessage, ownJID: BareJID?, arrival: Arrival) -> BareJID? {
+        switch arrival {
+        case .live:
+            encryptingSender(of: message, ownJID: ownJID)
+        case let .archived(sender, isRoomPrivateMessage, _):
+            message.messageType == .groupchat || isRoomPrivateMessage ? sender : message.from?.bareJID ?? ownJID
+        }
+    }
+
     private func encryptingSender(of message: XMPPMessage, ownJID: BareJID?) -> BareJID? {
         guard let from = message.from else { return ownJID }
         let isGroupchat = message.messageType == .groupchat
@@ -124,9 +165,11 @@ extension OMEMOModule {
         return mucModule?.realJID(ofOccupant: occupant.resourcePart, in: occupant.bareJID)
     }
 
-    /// Whether `message` is a room message or a room's private message, to or from an occupant.
-    private func isSentThroughRoom(_ message: XMPPMessage) -> Bool {
-        message.messageType == .groupchat || [message.from, message.to].contains { jid in
+    /// Whether `message` is a room message or a room's private message, to or from an occupant. An archived message's
+    /// caller tells a private message apart, since its room may not be joined.
+    private func isSentThroughRoom(_ message: XMPPMessage, arrival: Arrival) -> Bool {
+        if case let .archived(_, isRoomPrivateMessage, _) = arrival { return message.messageType == .groupchat || isRoomPrivateMessage }
+        return message.messageType == .groupchat || [message.from, message.to].contains { jid in
             guard case let .full(occupant) = jid else { return false }
             return mucModule?.isInRoom(occupant.bareJID) == true
         }
@@ -137,25 +180,48 @@ extension OMEMOModule {
         message.messageType == .groupchat ? message.from?.bareJID : message.to?.bareJID ?? ownJID
     }
 
-    /// The message as its sender wrote it: the stanza's attributes, with the envelope's content as its children. A
-    /// stanza-id is the server's to assign, and an occupant id the room's, so one inside the envelope is dropped.
+    /// The message as its sender wrote it: the stanza's attributes, with the envelope's content as its children, less
+    /// the elements the envelope may not carry.
     private func rebuiltMessage(_ message: XMPPMessage, content: [XMLElement]) -> XMPPMessage {
         var element = XMLElement(name: message.element.name, namespace: message.element.namespace, attributes: message.element.attributes)
-        for child in content where !Self.isAssignedByServer(child) {
+        for child in content where !Self.isForbiddenInEnvelope(child) {
             element.addChild(child)
         }
         return XMPPMessage(element: element)
     }
 
-    private static func isAssignedByServer(_ child: XMLElement) -> Bool {
-        (child.name == "stanza-id" && child.namespace == XMPPNamespaces.stanzaID)
-            || (child.name == "occupant-id" && child.namespace == XMPPNamespaces.occupantID)
+    /// XEP-0420 has the recipient discard the elements a server acts on, which it cannot read inside the envelope:
+    /// processing hints, a stanza-id, extended addressing and an encryption hint. An occupant id is the room's to
+    /// assign, so one inside the envelope is dropped too.
+    private static func isForbiddenInEnvelope(_ child: XMLElement) -> Bool {
+        switch child.namespace {
+        case XMPPNamespaces.processingHints, XMPPNamespaces.addresses, XMPPNamespaces.eme: true
+        case XMPPNamespaces.stanzaID: child.name == "stanza-id"
+        case XMPPNamespaces.occupantID: child.name == "occupant-id"
+        default: false
+        }
     }
 
     // MARK: - Decryption
 
-    func decryptIncomingMessage(_ encrypted: XMLElement, from: JID) throws -> DecryptionResult {
+    /// Which key exchanges a read takes up.
+    enum KeyExchangePolicy {
+        /// Every one, as for a live message or a carbon.
+        case accept
+        /// Every one but one that would replace a session this connection built or took up live, as for an archived
+        /// message read at catch-up. A session it builds does not count as live.
+        case acceptUnlessLive
+        /// None, as for an older archived message read back in scrollback.
+        case refuse
+    }
+
+    /// A key exchange the read's `KeyExchangePolicy` does not take up.
+    private struct KeyExchangeRefusal: Error {}
+
+    func decryptIncomingMessage(_ encrypted: XMLElement, from: JID, keyExchanges: KeyExchangePolicy = .accept) throws -> DecryptionResult {
         let header = try parseHeader(encrypted)
+        // Checked before decrypting, since a message from a device without a session fails to decrypt yet matters most.
+        refreshDeviceListIfUnannounced(sender: from.bareJID, deviceID: header.sid)
         let identity = try requireOwnIdentity()
         guard let keyElement = findKeyElement(
             header.element, jid: identity.connectedJID.bareJID, rid: identity.deviceID.value
@@ -164,6 +230,7 @@ extension OMEMOModule {
         }
         // An XML Schema boolean.
         let isKex = ["true", "1"].contains(keyElement.attribute("kex"))
+        if isKex, keyExchanges == .refuse { throw KeyExchangeRefusal() }
         guard let keyText = keyElement.textContent,
               let keyData = Base64.decode(keyText)
         else {
@@ -171,7 +238,7 @@ extension OMEMOModule {
         }
         let sessionKey = SessionKey(jid: from.bareJID, deviceID: header.sid)
         let transport = if isKex {
-            try decryptKexKey(keyData, sessionKey: sessionKey)
+            try decryptKexKey(keyData, sessionKey: sessionKey, isLive: keyExchanges == .accept)
         } else {
             try decryptExistingSessionKey(keyData, sessionKey: sessionKey)
         }
@@ -189,30 +256,16 @@ extension OMEMOModule {
     // MARK: - Empty Messages
 
     /// Sends the device behind `sessionKey` an OMEMO message without a payload, which confirms a session it started or
-    /// answers its run of messages. The session advances under one lock, so a message decrypted meanwhile cannot undo it.
+    /// answers its run of messages.
     private func sendEmptyMessage(to sessionKey: SessionKey) {
-        let identity: OwnIdentity
-        let built: (data: [UInt8], isKex: Bool)
+        let built: (message: XMPPMessage, context: ModuleContext)?
         do {
-            identity = try requireOwnIdentity()
-            built = try state.withLock { state in
-                guard var session = state.sessions[sessionKey] else { throw OMEMOModuleError.noSession }
-                let built = try session.encryptKey(Self.emptyMessageKey)
-                state.sessions[sessionKey] = session
-                return built
-            }
+            built = try buildEmptyMessage(to: sessionKey)
         } catch {
             log.warning("OMEMO empty message could not be encrypted: \(error)")
             return
         }
-        guard let context = state.withLock({ $0.context }) else { return }
-        let key = buildKeyElement(deviceID: sessionKey.deviceID, data: built.data, isKex: built.isKex)
-        var message = XMPPMessage(type: .chat, to: .bare(sessionKey.jid), id: context.generateID())
-        message.element.addChild(buildEncryptedElement(
-            keys: [(jid: sessionKey.jid, key: key)], payload: nil, senderDeviceID: identity.deviceID.value
-        ))
-        message.element.addChild(XMLElement(name: "store", namespace: XMPPNamespaces.processingHints))
-        context.emitEvent(.omemoSessionAdvanced(jid: sessionKey.jid, deviceID: sessionKey.deviceID))
+        guard let (message, context) = built else { return }
         Task {
             do {
                 try await context.sendStanza(message)
@@ -220,5 +273,33 @@ extension OMEMOModule {
                 log.warning("OMEMO empty message could not be sent: \(error)")
             }
         }
+    }
+
+    /// Sends the device behind `sessionKey` an OMEMO message without a payload, and returns once the client took it.
+    func sendEmptyMessageAwaiting(to sessionKey: SessionKey) async throws {
+        guard let (message, context) = try buildEmptyMessage(to: sessionKey) else { throw OMEMOModuleError.notSetUp }
+        try await context.sendStanza(message)
+    }
+
+    /// The OMEMO message without a payload for the device behind `sessionKey`, and the context to send it through. Nil
+    /// when the module has no context; a missing identity throws. The session advances under one lock, so a message
+    /// decrypted meanwhile cannot undo it.
+    private func buildEmptyMessage(to sessionKey: SessionKey) throws -> (message: XMPPMessage, context: ModuleContext)? {
+        let identity = try requireOwnIdentity()
+        let built = try state.withLock { state in
+            guard var session = state.sessions[sessionKey] else { throw OMEMOModuleError.noSession }
+            let built = try session.encryptKey(Self.emptyMessageKey)
+            state.sessions[sessionKey] = session
+            return built
+        }
+        guard let context = state.withLock({ $0.context }) else { return nil }
+        let key = buildKeyElement(deviceID: sessionKey.deviceID, data: built.data, isKex: built.isKex)
+        var message = XMPPMessage(type: .chat, to: .bare(sessionKey.jid), id: context.generateID())
+        message.element.addChild(buildEncryptedElement(
+            keys: [(jid: sessionKey.jid, key: key)], payload: nil, senderDeviceID: identity.deviceID.value
+        ))
+        message.element.addChild(XMLElement(name: "store", namespace: XMPPNamespaces.processingHints))
+        context.emitEvent(.omemoSessionAdvanced(jid: sessionKey.jid, deviceID: sessionKey.deviceID))
+        return (message, context)
     }
 }

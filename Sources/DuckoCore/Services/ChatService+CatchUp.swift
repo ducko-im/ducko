@@ -126,7 +126,9 @@ extension ChatService {
         defer { roomCatchUpsInProgress.remove(room.id) }
         do {
             let isRead = try await readArchive(of: room.jid, from: start, session: session) { page in
-                try await ingestArchivePage(page, in: room, roomSupportsOccupantIDs: roomSupportsOccupantIDs, session: session)
+                var read = ArchiveRead(roomSupportsOccupantIDs: roomSupportsOccupantIDs, isCatchUp: true)
+                read.decrypted = await decryptedEntries(of: page, in: room, read: read, accountID: accountID) { isCurrent(session) }
+                return try await ingestArchivePage(page, in: room, read: read, session: session)
             }
             if isRead, isCurrent(session) {
                 catchUpStarts[accountID]?.rooms[room.id] = nil
@@ -198,11 +200,18 @@ extension ChatService {
     }
 
     /// Files each entry of a page of the account's own archive in its chat among the account's `conversations`, and
-    /// stores it there.
+    /// stores it there. Its encrypted entries are decrypted first, in archive order, including those that only carry
+    /// key material and so belong in no chat.
     private func ingestAccountArchivePage(_ page: [ArchivedMessage], among conversations: [Conversation], session: CatchUpSession) async throws {
         var filedIn: [Conversation] = []
         var entries: [UUID: [ArchivedMessage]] = [:]
+        var decrypted: [String: EncryptedContent] = [:]
         for entry in page {
+            if entry.forwarded.message.isOMEMOEncrypted, isCurrent(session) {
+                decrypted[entry.messageID] = await decryptedAccountArchiveEntry(
+                    entry, among: conversations, accountJID: session.accountJID, accountID: session.accountID
+                )
+            }
             guard let conversation = try await catchUpConversation(for: entry.forwarded.message, among: conversations, session: session) else {
                 continue
             }
@@ -218,9 +227,8 @@ extension ChatService {
             } else {
                 nil
             }
-            try await ingestArchivePage(
-                entries[conversation.id] ?? [], in: conversation, roomSupportsOccupantIDs: roomSupportsOccupantIDs, session: session
-            )
+            let read = ArchiveRead(roomSupportsOccupantIDs: roomSupportsOccupantIDs, isCatchUp: true, decrypted: decrypted)
+            try await ingestArchivePage(entries[conversation.id] ?? [], in: conversation, read: read, session: session)
         }
     }
 
@@ -263,16 +271,14 @@ extension ChatService {
         return message.body != nil || !InboundMessageMetadata(message).attachments.isEmpty || message.isEncrypted
     }
 
-    /// Stores an archive page's new messages in `conversation` and applies its corrections and retractions, telling
-    /// their senders apart by `roomSupportsOccupantIDs`. Returns false when the conversation was deleted meanwhile, so
-    /// nothing more is read into it.
+    /// Stores an archive page's new messages in `conversation` and applies its corrections and retractions, as `read`
+    /// tells. Returns false when the conversation was deleted meanwhile, so nothing more is read into it.
     @discardableResult
     private func ingestArchivePage(
-        _ page: [ArchivedMessage], in conversation: Conversation, roomSupportsOccupantIDs: Bool?, session: CatchUpSession
+        _ page: [ArchivedMessage], in conversation: Conversation, read: ArchiveRead, session: CatchUpSession
     ) async throws -> Bool {
         let (newMessages, amendments) = try await convertAndDedup(
-            archived: page, conversation: conversation, roomSupportsOccupantIDs: roomSupportsOccupantIDs,
-            accountJID: session.accountJID, accountID: session.accountID
+            archived: page, conversation: conversation, read: read, accountJID: session.accountJID, accountID: session.accountID
         )
         await applyArchivedAmendments(amendments, in: conversation, accountID: session.accountID)
         // `convertAndDedup` appended the archived rows to the transcript across several awaits. If the conversation was

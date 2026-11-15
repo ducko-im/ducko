@@ -33,6 +33,13 @@ struct OMEMOTrustGuardTests {
         trustGuard.admitSession(with: SessionKey(jid: peer, deviceID: 1), identityKey: key)
     }
 
+    // MARK: - Display
+
+    @Test(arguments: ["", "abcd", String(repeating: "zz", count: 32), "01" + String(repeating: "00", count: 31)])
+    func `A stored fingerprint that is empty or has no Curve25519 form displays unchanged`(stored: String) {
+        #expect(omemoDisplayFingerprint(ofStoredFingerprint: stored) == stored)
+    }
+
     // MARK: - Admission
 
     enum Held: Sendable {
@@ -91,6 +98,7 @@ struct OMEMOTrustGuardTests {
 
         _ = trustGuard.applyDistrust(peer: peer, deviceID: 1)
         #expect(admitSession(keyA) == .untrusted)
+        #expect(trustGuard.heldFingerprint(peer: peer, deviceID: 1) == fingerprintA)
     }
 
     // MARK: - Stored Trust
@@ -202,13 +210,16 @@ struct OMEMOTrustGuardTests {
 
     @Test func `A distrust is not loosened by stored rows until it is saved`() {
         mergeRow(fingerprint: fingerprintA, decision: .granted)
+        #expect(!trustGuard.refuses(peer: peer, deviceID: 1))
         let decision = trustGuard.applyDistrust(peer: peer, deviceID: 1)
 
         mergeRow(fingerprint: fingerprintA, decision: .granted)
+        #expect(trustGuard.refuses(peer: peer, deviceID: 1))
         #expect(admitSession(keyA) == .untrusted)
 
         trustGuard.distrustSaved(peer: peer, deviceID: 1, decision: decision)
         mergeRow(fingerprint: fingerprintA, decision: .granted)
+        #expect(!trustGuard.refuses(peer: peer, deviceID: 1))
         #expect(admitSession(keyA) == .accepted)
     }
 
@@ -270,5 +281,27 @@ struct OMEMOTrustGuardTests {
 
         trustGuard.applyGrant(peer: peer, deviceID: 1, decision: grant.decision)
         #expect(trustGuard.heldFingerprint(peer: peer, deviceID: 1) == fingerprintA)
+    }
+
+    /// A session reset that found the device's key changed. The store write of the new key may fail, leaving the
+    /// distrust pending.
+    @Test(arguments: [true, false])
+    func `A replaced key refuses the device under the new key, a stored grant of the old one does not lift that, and a grant of the new one does`(
+        isSaved: Bool
+    ) throws {
+        mergeRow(fingerprint: fingerprintA, decision: .granted)
+        let decision = trustGuard.replaceHeldKey(peer: peer, deviceID: 1, fingerprint: fingerprintB)
+        if isSaved {
+            trustGuard.distrustSaved(peer: peer, deviceID: 1, decision: decision)
+        }
+
+        mergeRow(fingerprint: fingerprintA, decision: .granted)
+
+        #expect(trustGuard.heldFingerprint(peer: peer, deviceID: 1) == fingerprintB)
+        #expect(admitSession(keyB) == .untrusted)
+        #expect(trustGuard.prepareGrant(peer: peer, deviceID: 1, fingerprint: fingerprintA) == nil)
+        let grant = try #require(trustGuard.prepareGrant(peer: peer, deviceID: 1, fingerprint: fingerprintB))
+        trustGuard.applyGrant(peer: peer, deviceID: 1, decision: grant.decision)
+        #expect(admitSession(keyB) == .accepted)
     }
 }

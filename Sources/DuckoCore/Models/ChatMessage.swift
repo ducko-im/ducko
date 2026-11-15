@@ -32,6 +32,8 @@ public struct ChatMessage: Sendable, Identifiable, Equatable {
     public var isUndecryptable: Bool
     /// Why an undecryptable message could not be decrypted, when more is known than that it failed.
     public var undecryptableReason: UndecryptableReason?
+    /// A decrypted message from a device the user has not trusted for encryption.
+    public var isFromUntrustedDevice: Bool
     public var attachments: [Attachment]
 
     public init(
@@ -59,6 +61,7 @@ public struct ChatMessage: Sendable, Identifiable, Equatable {
         isEncrypted: Bool = false,
         isUndecryptable: Bool = false,
         undecryptableReason: UndecryptableReason? = nil,
+        isFromUntrustedDevice: Bool = false,
         attachments: [Attachment] = []
     ) {
         self.id = id
@@ -85,6 +88,7 @@ public struct ChatMessage: Sendable, Identifiable, Equatable {
         self.isEncrypted = isEncrypted
         self.isUndecryptable = isUndecryptable
         self.undecryptableReason = undecryptableReason
+        self.isFromUntrustedDevice = isFromUntrustedDevice
         self.attachments = attachments
     }
 

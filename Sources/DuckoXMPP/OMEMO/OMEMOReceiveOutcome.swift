@@ -11,10 +11,15 @@ public struct OMEMODecryptedMessage: Sendable {
     public let message: XMPPMessage
     /// The envelope's `time` affix, for the receiver to check against the time the message was sent (XEP-0420).
     public let sentTime: String?
+    /// Whose session read the message: the sender's address, or a room occupant's real one.
+    public let senderJID: BareJID
+    public let senderDeviceID: UInt32
 
-    public init(message: XMPPMessage, sentTime: String?) {
+    public init(message: XMPPMessage, sentTime: String?, senderJID: BareJID, senderDeviceID: UInt32) {
         self.message = message
         self.sentTime = sentTime
+        self.senderJID = senderJID
+        self.senderDeviceID = senderDeviceID
     }
 }
 

@@ -125,9 +125,10 @@ extension OMEMOModuleTests {
         @Test func `A sender repeats its key exchange until a message from the device confirms the session`() async throws {
             let recipient = recipient
             let senderModule = try makeInstalledModule(
-                identity: makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1]).data, peer: StubPEPPeer(account: peerJID) { _ in bundleItems(for: recipient) }
+                identity: makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1]).data,
+                peer: StubPEPPeer(account: peerJID) { iq in deviceListItems([200], answering: iq) ?? bundleItems(for: recipient) }
             )
-            let recipientModule = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
+            let recipientModule = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer { iq in deviceListItems([100], answering: iq) })
             func send(_ plaintext: String) async throws -> XMLElement {
                 try await senderModule.encryptMessage(plaintext: plaintext, to: recipientJID, recipientDeviceIDs: [200], ownDeviceIDs: []).encrypted
             }
@@ -478,6 +479,121 @@ extension OMEMOModuleTests {
         }
     }
 
+    /// A manual reset discards a device's session, and builds a new one only while the device's bundle carries the key
+    /// known for it and the device is not marked untrusted.
+    struct SessionResetTests {
+        private let sender: TestOMEMOIdentity
+        private let recipient: TestOMEMOIdentity
+
+        init() throws {
+            self.sender = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
+            self.recipient = try makeTestOMEMOIdentity(deviceID: 200, preKeyIDs: [7])
+        }
+
+        /// The sessions a module of the sender holds once it sent the recipient's device a message.
+        private func sessionEntries() async throws -> [OMEMOModule.StoredSessionEntry] {
+            let recipient = recipient
+            let earlier = makeInstalledModule(identity: sender.data, peer: StubPEPPeer { _ in bundleItems(for: recipient) })
+            _ = try await earlier.encryptMessage(plaintext: "one", to: recipientJID, recipientDeviceIDs: [200], ownDeviceIDs: [])
+            return earlier.allSessionEntries()
+        }
+
+        @Test func `A reset builds a new session and sends the device an empty key exchange it reads`() async throws {
+            let recipient = recipient
+            let restored = try await sessionEntries()
+            let peer = StubPEPPeer { _ in bundleItems(for: recipient) }
+            let module = makeInstalledModule(identity: sender.data, peer: peer)
+            module.restoreSessions(restored)
+
+            #expect(try await module.resetSession(jid: recipientJID, deviceID: 200) == .rebuilt)
+
+            #expect(module.allSessionEntries().count == 1)
+            #expect(module.allSessionEntries().map(\.sessionData) != restored.map(\.sessionData))
+            #expect(peer.stanzas.count == 1)
+            let encrypted = try #require(peer.stanzas.first?.child(named: "encrypted", namespace: XMPPNamespaces.omemo))
+            #expect(isKeyExchange(encrypted))
+            #expect(encrypted.child(named: "payload") == nil)
+            let reader = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
+            let read = try reader.decryptIncomingMessage(encrypted, from: .full(peerJID))
+            #expect(read.envelope == nil)
+            #expect(reader.allSessionEntries().count == 1)
+        }
+
+        @Test func `A reset whose empty message cannot be sent throws instead of reporting a new session`() async throws {
+            let recipient = recipient
+            let peer = StubPEPPeer(refusesStanzas: true) { _ in bundleItems(for: recipient) }
+            let module = makeInstalledModule(identity: sender.data, peer: peer)
+
+            await #expect(throws: XMPPClientError.self) { _ = try await module.resetSession(jid: recipientJID, deviceID: 200) }
+        }
+
+        @Test(arguments: [true, false])
+        func `A reset of a device without a bundle only discards its session`(isItemNotFound: Bool) async throws {
+            let peer = StubPEPPeer { _ in
+                if isItemNotFound { throw XMPPStanzaError(errorType: .cancel, condition: .itemNotFound) }
+                return nil
+            }
+            let module = makeInstalledModule(identity: sender.data, peer: peer)
+            try await module.restoreSessions(sessionEntries())
+
+            #expect(try await module.resetSession(jid: recipientJID, deviceID: 200) == .noBundle)
+
+            #expect(module.allSessionEntries().isEmpty)
+            #expect(peer.stanzas.isEmpty)
+        }
+
+        @Test func `A reset of a device marked untrusted only discards its session`() async throws {
+            let recipient = recipient
+            let trustGuard = OMEMOTrustGuard()
+            let peer = StubPEPPeer { _ in bundleItems(for: recipient) }
+            let module = makeInstalledModule(identity: sender.data, peer: peer, trustGuard: trustGuard)
+            try await module.restoreSessions(sessionEntries())
+            _ = trustGuard.applyDistrust(peer: recipientJID, deviceID: 200)
+
+            #expect(try await module.resetSession(jid: recipientJID, deviceID: 200) == .discarded)
+
+            #expect(module.allSessionEntries().isEmpty)
+            #expect(peer.stanzas.isEmpty)
+        }
+
+        @Test func `A reset of a device whose bundle carries another key than the one held only discards its session`() async throws {
+            let recipient = recipient
+            let held = unrelatedFingerprint()
+            let trustGuard = OMEMOTrustGuard()
+            trustGuard.mergeRow(peer: recipientJID, deviceID: 200, fingerprint: held, decision: .granted)
+            let peer = StubPEPPeer { _ in bundleItems(for: recipient) }
+            let module = makeInstalledModule(identity: sender.data, peer: peer, trustGuard: trustGuard)
+
+            let outcome = try await module.resetSession(jid: recipientJID, deviceID: 200)
+
+            #expect(outcome == .keyChanged(previousFingerprint: held, newIdentityKey: recipient.identityKeyPair.publicKeyBytes))
+            #expect(module.allSessionEntries().isEmpty)
+            #expect(peer.stanzas.isEmpty)
+        }
+
+        /// With no key held, a restored session's key is the known one. One whose key cannot be read counts as another.
+        @Test(arguments: [true, false])
+        func `A reset of a restored session whose device's bundle carries another key reports the change`(isReadable: Bool) async throws {
+            let impostor = try makeTestOMEMOIdentity(deviceID: 200, preKeyIDs: [7])
+            let restored = try await sessionEntries()
+            let peer = StubPEPPeer { _ in bundleItems(for: impostor) }
+            let module = makeInstalledModule(identity: sender.data, peer: peer)
+            module.restoreSessions(restored.map { entry in
+                OMEMOModule.StoredSessionEntry(
+                    jid: entry.jid, deviceID: entry.deviceID, sessionData: entry.sessionData,
+                    associatedData: isReadable ? entry.associatedData : Array(entry.associatedData.dropLast())
+                )
+            })
+
+            let outcome = try await module.resetSession(jid: recipientJID, deviceID: 200)
+
+            let previous = isReadable ? omemoFingerprint(of: recipient.identityKeyPair.publicKeyBytes) : ""
+            #expect(outcome == .keyChanged(previousFingerprint: previous, newIdentityKey: impostor.identityKeyPair.publicKeyBytes))
+            #expect(module.allSessionEntries().isEmpty)
+            #expect(peer.stanzas.isEmpty)
+        }
+    }
+
     /// The published bundle follows the pre-keys this device can hand out, and publishes never overlap.
     struct BundleUpkeepTests {
         private let identity: TestOMEMOIdentity
@@ -514,6 +630,30 @@ extension OMEMOModuleTests {
 
             failing.withLock { $0 = false }
             try await module.republishBundle()
+            #expect(!module.bundleNeedsPublish)
+        }
+
+        @Test func `A new signed pre-key leaves the bundle needing a publish until one carrying it succeeds`() async throws {
+            let failing = OSAllocatedUnfairLock(initialState: false)
+            let peer = StubPEPPeer { _ in
+                if failing.withLock({ $0 }) { throw XMPPStanzaError(errorType: .wait, condition: .resourceConstraint) }
+                return nil
+            }
+            let module = makeInstalledModule(identity: identity.data, peer: peer)
+            try await module.republishBundle()
+            let rotated = try OMEMOPreKeyManager.generateSignedPreKey(keyID: 4_000_000_000, identityKey: identity.identityKeyPair)
+
+            try module.installSignedPreKeys(current: rotated.identityData, retained: [identity.signedPreKey.identityData])
+            #expect(module.ownIdentityData?.retainedSignedPreKeys.map(\.keyID) == [identity.signedPreKey.keyID])
+            #expect(module.bundleNeedsPublish)
+            failing.withLock { $0 = true }
+            await #expect(throws: XMPPStanzaError.self) { try await module.republishBundle() }
+            #expect(module.bundleNeedsPublish)
+
+            failing.withLock { $0 = false }
+            try await module.republishBundle()
+            let bundle = try #require(peer.bundlePublishes.last)
+            #expect(publishedSignedPreKeyID(in: bundle) == "4000000000")
             #expect(!module.bundleNeedsPublish)
         }
 
@@ -648,21 +788,32 @@ private let peerJID = FullJID.parse("peer@example.com/i")!
 private final class StubPEPPeer: Sendable {
     private struct Recorded {
         var iqs: [XMLElement] = []
+        var stanzas: [XMLElement] = []
         var events: [XMPPEvent] = []
     }
 
     private let recorded = OSAllocatedUnfairLock(initialState: Recorded())
     private let account: FullJID
+    private let refusesStanzas: Bool
     private let answer: @Sendable (XMLElement) async throws -> XMLElement?
 
-    /// `account` is the JID the module is signed in as.
-    init(account: FullJID = FullJID.parse("user@example.com/res")!, answer: @escaping @Sendable (XMLElement) async throws -> XMLElement? = { _ in nil }) {
+    /// `account` is the JID the module is signed in as. With `refusesStanzas`, every stanza but an IQ fails to send.
+    init(
+        account: FullJID = FullJID.parse("user@example.com/res")!, refusesStanzas: Bool = false,
+        answer: @escaping @Sendable (XMLElement) async throws -> XMLElement? = { _ in nil }
+    ) {
         self.account = account
+        self.refusesStanzas = refusesStanzas
         self.answer = answer
     }
 
     var context: ModuleContext {
         makeStubModuleContext(
+            sendStanza: { [recorded, refusesStanzas] stanza, onAccepted in
+                if refusesStanzas { throw XMPPClientError.sendFailed("The connection was closed") }
+                recorded.withLock { $0.stanzas.append(stanza.element) }
+                onAccepted?()
+            },
             sendIQ: { [recorded, answer] iq, _ in
                 recorded.withLock { $0.iqs.append(iq.element) }
                 return try await answer(iq.element)
@@ -674,6 +825,10 @@ private final class StubPEPPeer: Sendable {
 
     var iqs: [XMLElement] {
         recorded.withLock { $0.iqs }
+    }
+
+    var stanzas: [XMLElement] {
+        recorded.withLock { $0.stanzas }
     }
 
     var bundlePublishes: [XMLElement] {
@@ -754,6 +909,8 @@ private func makeRepeatingKEXMessages(to recipient: TestOMEMOIdentity, plaintext
     let sender = OMEMOModule(pepModule: pepModule)
     let (client, _) = try await makeConnectedClient(mock: mock, omemoModule: sender, pepModule: pepModule)
     let deviceIDs = [recipient.data.deviceID]
+    // The sender signs in as the recipient's account, whose list the connect cached, so that list has to hold the device.
+    sender.state.withLock { $0.deviceLists[recipientJID, default: []] += deviceIDs }
     let first = Task {
         try await sender.encryptMessage(plaintext: plaintexts[0], to: recipientJID, recipientDeviceIDs: deviceIDs, ownDeviceIDs: [])
     }
@@ -813,6 +970,11 @@ private func publishedPreKeyIDs(in publish: XMLElement) -> [String] {
     let bundle = publish.child(named: "pubsub")?.child(named: "publish")?.child(named: "item")?.child(named: "bundle")
     let preKeys = bundle?.child(named: "prekeys")?.children(named: "pk") ?? []
     return preKeys.compactMap { $0.attribute("id") }.sorted()
+}
+
+/// The signed pre-key id a bundle publish carries.
+private func publishedSignedPreKeyID(in publish: XMLElement) -> String? {
+    publish.child(named: "pubsub")?.child(named: "publish")?.child(named: "item")?.child(named: "bundle")?.child(named: "spk")?.attribute("id")
 }
 
 private extension OMEMOModule.OMEMOIdentityData {

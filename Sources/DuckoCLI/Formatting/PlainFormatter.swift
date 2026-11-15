@@ -19,6 +19,9 @@ struct PlainFormatter: CLIFormatter {
         if message.isEncrypted {
             line += " [encrypted]"
         }
+        if message.isFromUntrustedDevice {
+            line += " [untrusted device]"
+        }
         if message.isEdited {
             line += " [edited]"
         }
@@ -474,6 +477,10 @@ struct PlainFormatter: CLIFormatter {
 
     func formatOMEMOTrustChange(jid: String, deviceID: UInt32, trustLevel: OMEMOTrustLevel) -> String {
         omemoTrustChangeText(jid: jid, deviceID: deviceID, trustLevel: trustLevel)
+    }
+
+    func formatOMEMOSessionReset(_ report: OMEMOSessionResetReport) -> String {
+        ([omemoSessionResetHeading(report)] + report.devices.map { "  \($0.summary)" }).joined(separator: "\n")
     }
 
     func formatProfile(_ profile: ProfileInfo) -> String {

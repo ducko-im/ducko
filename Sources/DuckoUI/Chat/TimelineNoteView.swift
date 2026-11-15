@@ -24,7 +24,9 @@ struct TimelineNoteView: View {
 
     private var symbolName: String {
         switch note.kind {
-        case .encryptionEnabledByContact: "lock.fill"
+        case .encryptionEnabledByContact, .encryptionResumedByContact: "lock.fill"
+        case .plaintextRequested: "lock.open.fill"
+        case .sessionsReset: "lock.rotation"
         }
     }
 }

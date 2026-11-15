@@ -62,8 +62,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// resume on the MainActor out of order.
     private var lockSequenceByPeer: [UUID: [BareJID: UInt64]] = [:]
     private var nextInboundLockSequence: UInt64 = 0
-    /// Chats whose encryption a contact's message is switching on right now.
-    private var encryptionSwitchesInFlight: Set<UUID> = []
+    /// Chats whose encryption a contact's message is switching on, or back from a request for unencrypted messages,
+    /// right now.
+    var encryptionSwitchesInFlight: Set<UUID> = []
+    /// Conversations whose contact's request for unencrypted messages is being recorded right now.
+    var plaintextRequestsInFlight: Set<UUID> = []
     /// The message each conversation's last displayed marker named, so looking at an unchanged chat again does not
     /// send the contact the same marker again.
     private var lastDisplayedMarkerSent: [UUID: UUID] = [:]
@@ -291,6 +294,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     func trustedDeviceIDsForSend(
         jid: BareJID, accountID: UUID, conversation: Conversation
     ) async throws -> [UInt32]? {
+        try refuseWhilePlaintextRequested(in: conversation)
         let resolution = await resolveEncryption(
             jid: jid, accountID: accountID,
             conversationEncryptionEnabled: conversation.encryptionEnabled
@@ -300,6 +304,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         case .userDisabled: return nil
         case .noLocalDevicesForPeer: throw ChatServiceError.omemoNoLocalDevices(conversationJID: jid)
         case .noTrustedDevicesForPeer: throw ChatServiceError.omemoNoTrustedDevices(conversationJID: jid)
+        case .deviceListUnavailable: throw ChatServiceError.omemoDeviceListUnavailable(conversationJID: jid)
         case .serviceUnavailable: throw ChatServiceError.omemoServiceUnavailable(conversationJID: jid)
         }
     }
@@ -383,40 +388,52 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         return try await openConversation(for: jid, accountID: accountID)
     }
 
-    /// The user's own switch. Switching it off also keeps a contact's encrypted message from switching it back on.
+    /// The user's own switch. Switching it off also keeps a contact's encrypted message from switching it back on, and
+    /// answers a contact's request for unencrypted messages. Switching it on drops that request.
     public func setEncryptionEnabled(_ enabled: Bool, for conversationID: UUID, accountID: UUID) async throws {
         try await mutateConversation(conversationID, accountID: accountID) {
             $0.encryptionEnabled = enabled
             $0.encryptionOptedOut = !enabled
+            if enabled {
+                $0.plaintextRequest = nil
+            } else {
+                $0.plaintextRequest?.isConfirmed = true
+            }
         }
     }
 
     /// Switches a 1:1 chat's encryption on because the contact sent an encrypted message, so the reply is not sent in
-    /// the clear. Leaves a note in the timeline saying so, and does nothing once the user has switched it off.
-    func enableEncryptionForContact(in conversationID: UUID, accountID: UUID) async {
+    /// the clear. Leaves a note in the timeline saying so, and does nothing once the user has switched it off or while
+    /// the contact's request for unencrypted messages is held.
+    func enableEncryptionForContact(in conversation: Conversation, accountID: UUID) async {
+        let conversationID = conversation.id
+        // Catch-up loads the account's conversations only once its whole archive is read, so a chat it found or made
+        // may not be loaded yet. The passed copy then stands in.
+        let conversation = current(conversation)
         // Each event runs in its own task, so the messages of a burst can all get here before the first one's switch is
         // stored. Only the first goes on: the rest would each leave a note of their own.
-        guard let conversation = openConversations.first(where: { $0.id == conversationID }),
-              conversation.isDirectChat, !conversation.encryptionEnabled, !conversation.encryptionOptedOut,
+        guard conversation.isDirectChat, !conversation.encryptionEnabled, !conversation.encryptionOptedOut, conversation.plaintextRequest == nil,
               encryptionSwitchesInFlight.insert(conversationID).inserted else { return }
         defer { encryptionSwitchesInFlight.remove(conversationID) }
         do {
             // Decided again on the row as it is stored: the copy above can be older than a switch-off the user made a
             // moment ago, and that one holds.
             let stored = try await store.updateConversation(conversationID) {
-                guard !$0.encryptionEnabled, !$0.encryptionOptedOut else { return }
+                guard !$0.encryptionEnabled, !$0.encryptionOptedOut, $0.plaintextRequest == nil else { return }
                 $0.encryptionEnabled = true
             }
             try await setConversations(store.fetchConversations(for: accountID), for: accountID)
             guard let stored, stored.encryptionEnabled, !stored.encryptionOptedOut else { return }
         } catch {
-            log.warning("Could not switch encryption on after an encrypted message: \(error)")
+            log.warning("Could not switch encryption on after an encrypted message")
+            log.debug("Could not switch encryption on after an encrypted message: \(error)")
             return
         }
         do {
             try await transcripts.appendNote(TimelineNote(conversationID: conversationID, kind: .encryptionEnabledByContact))
         } catch {
-            log.warning("Could not note that encryption was switched on: \(error)")
+            log.warning("Could not note that encryption was switched on")
+            log.debug("Could not note that encryption was switched on: \(error)")
         }
         bumpRevision(for: conversationID)
     }
@@ -830,20 +847,27 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         /// The archive answered with a page it marks unstable (XEP-0313), whose entries may still change, so none was
         /// stored.
         case unstableArchive
-        /// Conversation has encryption enabled but the local trust store has
-        /// no devices for the peer (no `+notify`, peer has no OMEMO, fresh
-        /// install). Surfaced to the UI so the composer text is retained
-        /// instead of silently downgrading to plaintext.
+        /// Conversation has encryption enabled but the peer's device list holds no devices: the peer has no OMEMO, or
+        /// lists none. Surfaced to the UI so the composer text is retained instead of silently downgrading to
+        /// plaintext.
         case omemoNoLocalDevices(conversationJID: BareJID)
-        /// Conversation has encryption enabled and peer devices exist
-        /// locally, but none are trusted.
+        /// Conversation has encryption enabled and the peer lists devices, but none of them is trusted.
         case omemoNoTrustedDevices(conversationJID: BareJID)
+        /// Encryption enabled but the device list of the peer, or of one room member, could not be read.
+        case omemoDeviceListUnavailable(conversationJID: BareJID)
         /// Encryption enabled but OMEMO service unavailable (not connected, module rebuild in progress).
         /// Thrown from both 1:1 and group send paths; the parameter is `conversationJID` (peer or room).
         case omemoServiceUnavailable(conversationJID: BareJID)
         /// Group conversation has encryption enabled but every occupant
         /// resolves to `omemoNoLocalDevices` or `omemoNoTrustedDevices`.
         case omemoNoTrustedDevicesInRoom(roomJID: BareJID, untrustedJIDs: [BareJID])
+        /// Room encryption enabled, but the room is not known to show its members' real addresses (XEP-0384).
+        case omemoRoomNotNonAnonymous(roomJID: BareJID)
+        /// Room encryption enabled, but the room's owner, admin or member list could not be read.
+        case roomMemberListUnavailable(roomJID: BareJID)
+        /// Encryption enabled, but `requester` asked for unencrypted messages (XEP-0384 §5.7) and the user has not
+        /// switched encryption off since.
+        case plaintextRequested(requester: String, reason: String?)
 
         public var errorDescription: String? {
             switch self {
@@ -860,13 +884,21 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             case .archiveNotReady: "The archive isn't ready to read yet. Try again shortly."
             case .unstableArchive: "The server's archive is still settling. Try again shortly."
             case .omemoNoLocalDevices:
-                "Cannot send: no OMEMO devices known for this contact. The contact may not have OMEMO set up, or you have not received their device list yet."
+                "Cannot send: the contact has no OMEMO devices on their device list. They may not have OMEMO set up."
             case .omemoNoTrustedDevices:
                 "Cannot send: no trusted devices for this contact. Verify a device fingerprint first."
+            case .omemoDeviceListUnavailable:
+                "Cannot send: the list of devices to encrypt for could not be read. Try again shortly."
             case .omemoServiceUnavailable:
                 "Cannot send: encryption service unavailable. Try reconnecting."
             case .omemoNoTrustedDevicesInRoom:
                 "Cannot send: room has no occupants with trusted devices."
+            case .omemoRoomNotNonAnonymous:
+                "Cannot send: the room hides its members' addresses, so the message cannot be encrypted for them."
+            case .roomMemberListUnavailable:
+                "Cannot send: the room doesn't let you see its members, so the message cannot be encrypted for all of them."
+            case let .plaintextRequested(requester, reason):
+                "Cannot send: \(PlaintextRequest.summary(requester: requester, reason: reason)). Switch encryption off to send unencrypted."
             }
         }
     }
@@ -1366,9 +1398,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         let additionalElements: [DuckoXMPP.XMLElement]
     }
 
-    /// Resolves OMEMO for a group message and prepares the wire payload without sending. Fail-closed when the
-    /// service is unwired or every occupant resolves to no-local/no-trusted. Partial trust → encrypt to the
-    /// trusted subset (OMEMOService emits `.omemoRecipientsPartial` for the dropped occupants).
+    /// Resolves OMEMO for a group message and prepares the wire payload without sending. Fail-closed while a member's
+    /// request for unencrypted messages is unanswered, when the service is unwired, the room is not known to be
+    /// non-anonymous, its member lists or one member's device list cannot be read, or no member but the user has a
+    /// trusted device. The message is encrypted to the trusted devices of the members that have any, and members
+    /// without one receive nothing.
     private func prepareGroupMessage(
         room: BareJID, body: String,
         conversation: Conversation, additionalElements: [DuckoXMPP.XMLElement]
@@ -1376,49 +1410,62 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         guard conversation.encryptionEnabled, let accountID = conversation.accountID else {
             return PreparedGroupMessage(isEncrypted: false, body: body, additionalElements: additionalElements)
         }
+        try refuseWhilePlaintextRequested(in: conversation)
         guard let omemoService else {
             throw ChatServiceError.omemoServiceUnavailable(conversationJID: room)
+        }
+        guard await roomAdvertisesAskingIfUnknown(XMPPNamespaces.mucNonAnonymous, room: room, accountID: accountID) else {
+            throw ChatServiceError.omemoRoomNotNonAnonymous(roomJID: room)
         }
 
         let memberJIDs = try await roomMemberJIDs(roomJIDString: room.description, accountID: accountID)
         guard !memberJIDs.isEmpty else {
             throw ChatServiceError.encryptionFailed("no room members with known JIDs")
         }
-
-        // Pre-check per occupant: if every member resolves to no-local or
-        // no-trusted devices, throw before the encryptGroupMessage call
-        // (which would otherwise throw OMEMOServiceError.noTrustedRecipients
-        // — surface a more specific error so the UI can react).
-        var untrustedJIDs: [BareJID] = []
-        var anyEncryptable = false
-        for member in memberJIDs {
-            let resolution = await omemoService.shouldEncrypt(
-                jid: member, accountID: accountID, conversationEncryptionEnabled: true
-            )
-            switch resolution {
-            case .proceed:
-                anyEncryptable = true
-            case .noLocalDevicesForPeer, .noTrustedDevicesForPeer:
-                untrustedJIDs.append(member)
-            case .userDisabled, .serviceUnavailable:
-                // `userDisabled` is unreachable here (we already gated on
-                // `conversation.encryptionEnabled`). `serviceUnavailable` is
-                // unreachable too because `omemoService` is non-nil at this
-                // point (guarded above before entering the loop). Bucket
-                // both into the encryptable side for the gate decision.
-                anyEncryptable = true
-            }
-        }
-        guard anyEncryptable else {
-            throw ChatServiceError.omemoNoTrustedDevicesInRoom(
-                roomJID: room, untrustedJIDs: untrustedJIDs
-            )
-        }
-
+        let recipients = try await groupRecipients(among: memberJIDs, in: room, omemoService: omemoService, accountID: accountID)
         let elements = try await omemoService.encryptGroupMessage(
-            content: Self.envelopeContent(body: body, additionalElements, isMarkable: true), roomJID: room, memberJIDs: memberJIDs, accountID: accountID
+            content: Self.envelopeContent(body: body, additionalElements, isMarkable: true), roomJID: room, recipients: recipients, accountID: accountID
         )
         return PreparedGroupMessage(isEncrypted: true, body: nil, additionalElements: elements.stanzaElements)
+    }
+
+    /// The trusted devices of each of `memberJIDs` but the account itself, whose own devices are encrypted to
+    /// separately. Members without a trusted device are left out, and none having one throws, naming them.
+    private func groupRecipients(
+        among memberJIDs: [BareJID], in room: BareJID, omemoService: OMEMOService, accountID: UUID
+    ) async throws -> [(jid: BareJID, deviceIDs: [UInt32])] {
+        let ownJID = resolvedAccountJID(for: accountID)
+        let members = memberJIDs.filter { $0 != ownJID }
+        let resolutions = await withTaskGroup(of: (BareJID, OMEMOService.EncryptionResolution).self) { group in
+            for member in members {
+                group.addTask { await (member, omemoService.shouldEncrypt(jid: member, accountID: accountID, conversationEncryptionEnabled: true)) }
+            }
+            var resolutions: [BareJID: OMEMOService.EncryptionResolution] = [:]
+            for await (member, resolution) in group {
+                resolutions[member] = resolution
+            }
+            return resolutions
+        }
+        var recipients: [(jid: BareJID, deviceIDs: [UInt32])] = []
+        var untrustedJIDs: [BareJID] = []
+        for member in members {
+            guard let resolution = resolutions[member] else { continue }
+            switch resolution {
+            case let .proceed(deviceIDs):
+                recipients.append((jid: member, deviceIDs: deviceIDs))
+            case .noLocalDevicesForPeer, .noTrustedDevicesForPeer:
+                untrustedJIDs.append(member)
+            case .deviceListUnavailable:
+                throw ChatServiceError.omemoDeviceListUnavailable(conversationJID: member)
+            case .userDisabled, .serviceUnavailable:
+                // Neither is reached: encryption was asked for, and the service is wired.
+                throw ChatServiceError.omemoServiceUnavailable(conversationJID: room)
+            }
+        }
+        guard !recipients.isEmpty else {
+            throw ChatServiceError.omemoNoTrustedDevicesInRoom(roomJID: room, untrustedJIDs: untrustedJIDs)
+        }
+        return recipients
     }
 
     /// Sends a prepared group payload. The only step that touches the transport — kept separate so callers
@@ -1455,7 +1502,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         }
     }
 
-    private func bumpRevision(for conversationID: UUID) {
+    func bumpRevision(for conversationID: UUID) {
         messagesRevisions[conversationID, default: 0] &+= 1
     }
 
@@ -1952,9 +1999,12 @@ public final class ChatService { // swiftlint:disable:this type_body_length
                 MAMModule.Query(to: to, with: with, end: endISO, before: page, max: limit)
             )
             guard fin.isStable else { throw ChatServiceError.unstableArchive }
+            var read = ArchiveRead(roomSupportsOccupantIDs: roomSupportsOccupantIDs, isCatchUp: false)
+            read.decrypted = await decryptedEntries(of: archived, in: conversation, read: read, accountID: accountID) { [weak accountService] in
+                accountService?.connectedClient(for: accountID) === client
+            }
             let converted = try await convertAndDedup(
-                archived: archived, conversation: conversation, roomSupportsOccupantIDs: roomSupportsOccupantIDs,
-                accountJID: accountJID, accountID: accountID
+                archived: archived, conversation: conversation, read: read, accountJID: accountJID, accountID: accountID
             )
             added = converted.messages + added
             try await recordLastMessage(of: converted.messages, in: conversation.id)
@@ -2015,12 +2065,11 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     }
 
     /// Stores the new messages among `archived`, read from `conversation`'s archive, and returns them with the archive's
-    /// corrections and retractions. Their senders are told apart by `roomSupportsOccupantIDs`, whether the room, or the
-    /// room of a private chat, advertised occupant ids when its features were read for this archive read.
+    /// corrections and retractions. Their senders are told apart, and their encrypted entries stored, as `read` tells.
     func convertAndDedup(
         archived: [ArchivedMessage],
         conversation: Conversation,
-        roomSupportsOccupantIDs: Bool?,
+        read: ArchiveRead,
         accountJID: BareJID,
         accountID: UUID
     ) async throws -> (messages: [ChatMessage], amendments: [MessageAmendment]) {
@@ -2028,7 +2077,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         var amendments: [MessageAmendment] = []
         // The user's own entries in a room are told apart by the user's identity, read once for the whole read. A room
         // whose features are unknown is never read, so it has none to tell apart.
-        let ownRoomIdentity: OwnRoomIdentity? = if conversation.type == .groupchat, let roomSupportsOccupantIDs {
+        let ownRoomIdentity: OwnRoomIdentity? = if conversation.type == .groupchat, let roomSupportsOccupantIDs = read.roomSupportsOccupantIDs {
             await ownRoomIdentity(in: conversation.jid, supportsOccupantIDs: roomSupportsOccupantIDs, accountID: accountID)
         } else {
             nil
@@ -2036,7 +2085,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
         for entry in archived {
             let forwarded = entry.forwarded
-            let roomAuthor = archivedRoomAuthor(of: forwarded.message, in: conversation, roomSupportsOccupantIDs: roomSupportsOccupantIDs, accountID: accountID)
+            let roomAuthor = archivedRoomAuthor(of: forwarded.message, in: conversation, roomSupportsOccupantIDs: read.roomSupportsOccupantIDs, accountID: accountID)
             if MessageAmendment.isCarried(by: forwarded.message) {
                 if let amendment = MessageAmendment(forwarded.message, timestamp: forwarded.sentTime, roomAuthor: roomAuthor, in: conversation) {
                     amendments.append(amendment)
@@ -2056,13 +2105,15 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             // Every entry is known by the archive's id for it, which is the stanza-id the archive stamped (XEP-0313), so
             // reading a range again adds nothing.
             if isEncrypted {
-                // The archive is not decrypted yet. One without an OMEMO payload shows its notice.
+                // One that did not decrypt, or has no OMEMO payload, shows its notice.
                 let archivedEntry = ArchivedEntry(
                     forwarded: forwarded, body: "", isEncrypted: true, meta: meta, roomSender: roomSender,
                     serverID: entry.messageID, metadata: metadata,
                     undecryptableReason: forwarded.message.unreadableEncryption
                 )
-                if let message = try await storeArchivedEncryptedMessage(archivedEntry, in: conversation, accountJID: accountJID) {
+                if let message = try await storeArchivedEncryptedEntry(
+                    archivedEntry, read: read, in: conversation, accountJID: accountJID, accountID: accountID
+                ) {
                     newMessages.append(message)
                 }
                 continue
@@ -2083,33 +2134,20 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         return (newMessages.sorted { $0.timestamp < $1.timestamp }, amendments)
     }
 
-    /// Stores an archived encrypted entry unless a copy of it is stored already, and returns it when this call stored it.
-    /// A copy stored without a server id, such as the user's own message stored before it was sent, gets the archive's
-    /// id recorded rather than a second row.
-    private func storeArchivedEncryptedMessage(
-        _ entry: ArchivedEntry, in conversation: Conversation, accountJID: BareJID
-    ) async throws -> ChatMessage? {
-        if try await recordArchiveID(onCopyOf: entry, in: conversation) { return nil }
-        let message = await makeArchivedMessage(entry, in: conversation, accountJID: accountJID)
-        guard try await transcripts.storeEncryptedMessage(message, fromArchive: true) == .inserted else { return nil }
-        return message
-    }
-
     /// Whether a plaintext archive entry is stored already: under the archive's id for it, or as a copy stored without a
     /// server id, which then gets the archive's id recorded.
     private func archivedPlaintextExists(_ entry: ArchivedEntry, in conversation: Conversation) async throws -> Bool {
         if try await transcripts.messageExists(serverID: entry.serverID, conversationID: conversation.id) {
             return true
         }
-        return try await recordArchiveID(onCopyOf: entry, in: conversation)
+        return try await recordArchiveID(onCopyOf: entry, in: conversation) != nil
     }
 
-    /// Records the archive's id for `entry` on the copy of it stored without a server id, and returns whether there was
-    /// one. The user's own room message is stored before it is sent and keeps no server id while its live echo was
-    /// missed, so it is found as its echo would find it. Any other copy lacks one when it came while its server's
-    /// stanza-ids were not trusted. That copy is matched by message id, in the entry's direction, and by the entry's
-    /// sender when received.
-    private func recordArchiveID(onCopyOf entry: ArchivedEntry, in conversation: Conversation) async throws -> Bool {
+    /// Records the archive's id for `entry` on the copy of it stored without a server id, and returns that copy. The
+    /// user's own room message is stored before it is sent and keeps no server id while its live echo was missed, so it
+    /// is found as its echo would find it. Any other copy lacks one when it came while its server's stanza-ids were not
+    /// trusted. That copy is matched by message id, in the entry's direction, and by the entry's sender when received.
+    func recordArchiveID(onCopyOf entry: ArchivedEntry, in conversation: Conversation) async throws -> ChatMessage? {
         let stored: ChatMessage? = if conversation.type == .groupchat, entry.meta.isOutgoing {
             try await ownRow(echoedBy: entry.metadata, ofEncrypted: entry.isEncrypted, body: entry.body, conversationID: conversation.id)
         } else if let stanzaID = entry.metadata.stanzaID {
@@ -2120,13 +2158,13 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         } else {
             nil
         }
-        guard let stored else { return false }
+        guard let stored else { return nil }
         try await recordServerID(entry.serverID, on: stored)
-        return true
+        return stored
     }
 
     /// Per-entry inputs for building an archived `ChatMessage`.
-    private struct ArchivedEntry {
+    struct ArchivedEntry {
         let forwarded: ForwardedMessage
         let body: String
         let isEncrypted: Bool
@@ -2142,9 +2180,9 @@ public final class ChatService { // swiftlint:disable:this type_body_length
     /// through the live paths' styling and mention filters, so a backfilled message renders like a live one. The
     /// archive-path flags leave its body as the raw archived `body` that `convertAndDedup`'s checks compared.
     ///
-    /// An archived encrypted entry is stored as undecryptable with an empty body, since the archive path does not
-    /// decrypt, and takes no reply or file from outside its encryption (XEP-0420).
-    private func makeArchivedMessage(_ entry: ArchivedEntry, in conversation: Conversation, accountJID: BareJID) async -> ChatMessage {
+    /// An archived encrypted entry is built as an undecryptable row with an empty body, which `decryptedRow` fills when
+    /// the entry decrypted. It takes no reply or file from outside its encryption (XEP-0420).
+    func makeArchivedMessage(_ entry: ArchivedEntry, in conversation: Conversation, accountJID: BareJID) async -> ChatMessage {
         let filterDirection: FilterDirection = entry.meta.isOutgoing ? .outgoing : .incoming
         let cleartext = entry.isEncrypted ? nil : entry.metadata
         let replyFallbackRange = cleartext?.replyFallbackRange(in: entry.forwarded.message.body)
@@ -2181,7 +2219,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
         )
     }
 
-    private struct MessageMeta {
+    struct MessageMeta {
         let fromJID: String
         let isOutgoing: Bool
         let messageType: String

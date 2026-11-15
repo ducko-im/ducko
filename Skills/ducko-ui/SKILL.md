@@ -198,15 +198,20 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `confirm-password-field` | Confirm password field | Change Password |
 | `encrypted-indicator` | Lock icon on encrypted messages | Chat |
 | `undecryptable-indicator` | Warning lock on an encrypted message that could not be decrypted, shown instead of `encrypted-indicator` | Chat |
+| `untrusted-encrypted-indicator` | Orange warning shield on a message decrypted from a device that is not trusted, shown instead of `encrypted-indicator`. Its label and tooltip read "Sent from a device you haven't trusted" | Chat |
 | `delivered-indicator` | One checkmark on a sent message that reached the contact | Chat |
 | `read-indicator` | Two checkmarks on a sent message the contact has read, shown instead of `delivered-indicator` | Chat |
-| `timeline-note` | Note between messages, such as encryption having been switched on by a contact's encrypted message | Chat, Chat History |
+| `timeline-note` | Note between messages, such as encryption having been switched on by a contact's encrypted message, a contact asking for unencrypted messages or resuming encryption, or what a session reset did with each device | Chat, Chat History |
 | `encryption-menu` | Encryption menu button in chat header. A room's private chat has one only while its encryption is on, offering just Disable Encryption | Chat |
+| `reset-sessions-button` | "Reset Encryption Sessions" in the encryption menu of a one-to-one chat, disabled while offline. Find it by its title, as `ducko-omemo-reset.sh all` does | Chat |
+| `send-unencrypted-button` | "Send Unencrypted" in the banner above the message field, shown while a contact's request for unencrypted messages blocks the last send, and absent when that send was an edit. It switches encryption off and sends the blocked message | Chat |
 | `device-fingerprints-sheet` | Device fingerprints sheet | Chat |
-| `device-row-{deviceID}` | Individual device row | Device Fingerprints |
+| `device-row-{deviceID}` | Individual device row, under Contact's Devices or, for the account's other devices, under Your Other Devices (shown only when the account has other devices). Both sections carry the same buttons. The row is an accessibility container, so its buttons are found by their own identifiers | Device Fingerprints |
 | `trust-button-{deviceID}` | Trust device button | Device Fingerprints |
 | `untrust-button-{deviceID}` | Untrust device button | Device Fingerprints |
 | `verify-button-{deviceID}` | Verify device button, shown for a trusted device once its fingerprint is known | Device Fingerprints |
+| `reset-session-button-{deviceID}` | Reset Session button, on every device row. A device marked untrusted only has its session discarded. Resetting one of the account's other devices adds no `timeline-note` | Device Fingerprints |
+| `reset-status-{deviceID}` | Caption saying what a device's last Reset Session did, or why it failed (orange when the device needs attention). It sits under the device's row, or above the sections when the reset device is no longer listed. Cleared by the next action in the sheet | Device Fingerprints |
 | `encryptByDefaultToggle` | Encrypt by default preference toggle | Preferences (Chat) |
 | `tofuToggle` | Trust on first use preference toggle | Preferences (Chat) |
 | `file-transfer-banner` | Incoming file offer banner, one row per offer | Chat |
@@ -326,7 +331,9 @@ Right-click a participant in the chat window sidebar:
 | `ducko-reveal.sh` | Reveal a message's saved files in Finder via context menu | `[TEXT]` (optional, matches message containing TEXT; default: last message) |
 | `ducko-copy-code-block.sh` | Copy a code block through its "Copy Code" accessibility action and print what the clipboard then holds. Fails when the clipboard does not change. Targets `DUCKO_PID` when set, else the running `DuckoUITest` | `[TEXT]` (optional, matches the first code block whose code contains TEXT; default: last code block) |
 | `ducko-encrypt.sh` | Open encryption menu, optionally toggle or open fingerprints | `[on\|off\|fingerprints]` (optional) |
-| `ducko-device-trust.sh` | Trust/untrust/verify an OMEMO device. On macOS 27 it fails with "button not found", because the device row's identifier (`device-row-{deviceID}`) masks its buttons'. Trust or untrust with the copy's CLI instead: `vm gui 'DUCKO_PROFILE=<profile> /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko omemo trust CONTACT_JID DEVICE_ID'` (or `omemo untrust`), with the profile `uitest` unless the run set one. The CLI has no verify, so press the row's "Verify" button with a scratch AX helper scoped to `device-row-{deviceID}` | `DEVICE_ID ACTION` (`ACTION`: trust\|untrust\|verify) |
+| `ducko-device-trust.sh` | Trust/untrust/verify an OMEMO device in the open fingerprints sheet | `DEVICE_ID ACTION` (`ACTION`: trust\|untrust\|verify) |
+| `ducko-omemo-reset.sh` | Reset OMEMO sessions. `all` chooses Reset Encryption Sessions in the encryption menu of the active one-to-one chat and fails while the item is disabled (offline). `device` presses a row's Reset Session in the open fingerprints sheet, under Contact's Devices or Your Other Devices. A reset with the contact's devices adds a `timeline-note` saying what it did, and a reset of one of the account's other devices adds none. `all` for a contact with no OMEMO devices shows "… has no encryption devices to reset" in the send-error banner instead | `<all\|device> [DEVICE_ID]` (`DEVICE_ID` only, and required, for `device`) |
+| `ducko-send-unencrypted.sh` | Press Send Unencrypted (`send-unencrypted-button`) in the active chat. Ducko never sends a request for unencrypted messages itself, so staging one takes another client | none |
 | `ducko-attach.sh` | Attach a file via the attachment button in chat. `ducko-file-panel.swift` fills the Open panel by posting key events to the panel's service process. The script succeeds only once the panel has closed. A panel still open after the wait is cancelled, and the script fails | `FILE_PATH` |
 | `ducko-send-method.sh` | Print or choose how the queued files are sent | `[upload\|direct]` (optional) |
 | `ducko-change-nickname.sh` | Change MUC nickname via participant sidebar context menu. Succeeds once the sidebar lists the new nickname | `NICKNAME` |
@@ -761,16 +768,22 @@ vm ui ducko-screenshot.sh "device-fingerprints.png"
 
 # 4. Verify a device (replace DEVICE_ID with actual ID from screenshot). With Trust On First Use on, the
 #    default, a new device already shows as Trusted with Untrust. Verify appears once its fingerprint is known,
-#    after a session with it. Trust appears only after Untrust, or with `tofuToggle` off. On macOS 27
-#    ducko-device-trust.sh fails (see its row): trust or untrust through the copy's CLI, and press Verify with a
-#    scratch AX helper scoped to the device's row.
+#    after a session with it. Trust appears only after Untrust, or with `tofuToggle` off.
 # vm ui ducko-device-trust.sh 12345 verify
-# vm gui 'DUCKO_PROFILE=uitest /Users/lume/work/ducko/.build/ducko-ui/DuckoUITest.app/Contents/Resources/ducko omemo trust CHAT_PARTNER_JID 12345'
 # vm ui ducko-screenshot.sh "device-verified.png"
 
-# 5. Cleanup
+# 5. Close the fingerprints sheet (Done, or Escape), then reset the sessions with every device of the contact
+#    (needs the account connected). The chat then shows a timeline note with what the reset did. To reset one
+#    device instead, run `ducko-omemo-reset.sh device DEVICE_ID` while the fingerprints sheet is still open.
+vm gui 'osascript -e "tell application \"System Events\" to tell process \"DuckoUITest\" to key code 53"'
+vm ui ducko-omemo-reset.sh all
+vm ui ducko-screenshot.sh "sessions-reset.png"
+
+# 6. Cleanup
 vm ui ducko-stop.sh
 ```
+
+To see the untrusted-device marker, turn Trust On First Use off in the profile and stop the app, which reads the setting only at launch: `vm sh 'defaults write im.ducko.dev.uitest omemoTrustOnFirstUse -bool false'`, then `vm ui ducko-stop.sh`. While the app is offline, have a device of the contact that this profile has not trusted or verified send the account an encrypted message, such as the contact's persisted CLI profile on the host. Avoid a fresh profile, whose first sign-in publishes a new device to the contact's device list; deleting and re-adding the account in an existing profile keeps its OMEMO keys, so that gives no new device either. Relaunch with `ducko-launch.sh`: archive catch-up shows the message with `untrusted-encrypted-indicator`. Chat windows are not restored after a relaunch, so `ducko-chat-tabs.sh select` reports "chat window not found"; open the chat with `ducko-new-chat.sh`. Afterwards run `vm sh 'defaults delete im.ducko.dev.uitest omemoTrustOnFirstUse'`.
 
 ### Room management test
 

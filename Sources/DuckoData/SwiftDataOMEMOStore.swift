@@ -107,31 +107,24 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
 
     // MARK: - Signed Pre-Key
 
-    public func loadSignedPreKey(for accountJID: String) throws -> OMEMOStoredSignedPreKey? {
-        var descriptor = FetchDescriptor<OMEMOSignedPreKeyRecord>(
-            predicate: #Predicate { $0.accountJID == accountJID }
+    public func loadSignedPreKeys(for accountJID: String) throws -> [OMEMOStoredSignedPreKey] {
+        let descriptor = FetchDescriptor<OMEMOSignedPreKeyRecord>(
+            predicate: #Predicate { $0.accountJID == accountJID },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
-        descriptor.fetchLimit = 1
-        guard let record = try modelContext.fetch(descriptor).first else { return nil }
-        return OMEMOStoredSignedPreKey(
-            accountJID: record.accountJID,
-            keyID: UInt32(record.keyID),
-            keyData: record.keyData,
-            signature: record.signature,
-            timestamp: record.timestamp
-        )
+        return try modelContext.fetch(descriptor).map(OMEMOStoredSignedPreKey.init)
     }
 
     public func saveSignedPreKey(_ key: OMEMOStoredSignedPreKey) throws {
         try write {
             let accountJID = key.accountJID
+            let keyID = Int64(key.keyID)
             var descriptor = FetchDescriptor<OMEMOSignedPreKeyRecord>(
-                predicate: #Predicate { $0.accountJID == accountJID }
+                predicate: #Predicate { $0.accountJID == accountJID && $0.keyID == keyID }
             )
             descriptor.fetchLimit = 1
 
             if let existing = try modelContext.fetch(descriptor).first {
-                existing.keyID = Int64(key.keyID)
                 existing.keyData = key.keyData
                 existing.signature = key.signature
                 existing.timestamp = key.timestamp
@@ -139,12 +132,23 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
                 let record = OMEMOSignedPreKeyRecord(
                     id: UUID(),
                     accountJID: key.accountJID,
-                    keyID: Int64(key.keyID),
+                    keyID: keyID,
                     keyData: key.keyData,
                     signature: key.signature,
                     timestamp: key.timestamp
                 )
                 modelContext.insert(record)
+            }
+        }
+    }
+
+    public func deleteSignedPreKeys(for accountJID: String, olderThan date: Date) throws {
+        try write {
+            let descriptor = FetchDescriptor<OMEMOSignedPreKeyRecord>(
+                predicate: #Predicate { $0.accountJID == accountJID && $0.timestamp < date }
+            )
+            for record in try modelContext.fetch(descriptor) {
+                modelContext.delete(record)
             }
         }
     }
@@ -392,6 +396,18 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
                 modelContext.delete(record)
             }
         }
+    }
+}
+
+private extension OMEMOStoredSignedPreKey {
+    init(_ record: OMEMOSignedPreKeyRecord) {
+        self.init(
+            accountJID: record.accountJID,
+            keyID: UInt32(record.keyID),
+            keyData: record.keyData,
+            signature: record.signature,
+            timestamp: record.timestamp
+        )
     }
 }
 

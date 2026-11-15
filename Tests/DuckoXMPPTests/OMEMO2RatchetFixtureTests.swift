@@ -130,6 +130,27 @@ extension OMEMO2FixtureTests {
             #expect(conversation.events.contains { $0.party == "bob" && $0.action == "receive" })
         }
 
+        @Test func `bob decrypts alice's key exchange through the signed pre-key he kept after rotating it`() throws {
+            let alice = try OMEMO2Fixtures.device("alice")
+            let bob = try OMEMO2Fixtures.device("bob")
+            let message = try #require(OMEMO2Fixtures.conversation().messages.first { $0.sender == "alice" && $0.keyExchange != nil && $0.payload != nil })
+            let rotated = try OMEMOPreKeyManager.generateSignedPreKey(keyID: bob.signedPreKey.id + 1, identityKey: bob.restoredIdentityKey())
+            let fixture = bob.identityData
+            let module = try makeInstalledOMEMOModule(
+                identity: OMEMOModule.OMEMOIdentityData(
+                    deviceID: fixture.deviceID, identityKeyRaw: fixture.identityKeyRaw, signedPreKeyID: rotated.keyID,
+                    signedPreKeyRaw: rotated.rawRepresentation, signedPreKeySignature: rotated.signature, preKeys: fixture.preKeys,
+                    retainedSignedPreKeys: [bob.restoredSignedPreKey().identityData]
+                ),
+                context: makeStubModuleContext(connectedJID: FullJID.parse("\(bob.jid)/desktop"))
+            )
+            let sender = try #require(FullJID.parse("\(alice.jid)/phone"))
+
+            let result = try module.decryptIncomingMessage(stanza(message.encrypted), from: .full(sender))
+
+            #expect(try result.body == expectedBody(of: message))
+        }
+
         private func storedSession(in module: OMEMOModule, with peer: OMEMO2Fixtures.Device) throws -> OMEMOSession? {
             let jid = try #require(BareJID.parse(peer.jid))
             return try module.exportSession(jid: jid, deviceID: peer.deviceID).map {

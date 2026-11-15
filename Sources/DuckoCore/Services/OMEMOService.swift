@@ -7,7 +7,7 @@ private let log = Logger(label: "im.ducko.core.omemo")
 
 @MainActor @Observable
 public final class OMEMOService {
-    private let omemoStore: any OMEMOStore
+    let omemoStore: any OMEMOStore
     private(set) weak var accountService: AccountService?
     private(set) weak var chatService: ChatService?
     /// Per-account seen-device classification cache (canonical home).
@@ -41,9 +41,12 @@ public final class OMEMOService {
     /// UI-supplied confirmation closure before the emergency-retract path publishes a singleton devicelist.
     /// Default `nil` preserves the pre-feature bail behavior. `@Sendable`; callers hop to `MainActor` inside.
     public var emergencyRetractConfirmation: (@Sendable (_ deviceCount: Int, _ ownDeviceID: UInt32) async -> Bool)?
+    /// Whether the user trusts a device on first use, read at each decision so a change applies to the next send.
+    let trustOnFirstUse: @MainActor () -> Bool
 
-    public init(omemoStore: any OMEMOStore) {
+    public init(omemoStore: any OMEMOStore, trustOnFirstUse: @escaping @MainActor () -> Bool = { OMEMOPreferences.shared.trustOnFirstUse }) {
         self.omemoStore = omemoStore
+        self.trustOnFirstUse = trustOnFirstUse
     }
 
     /// Test-only: pre-populates `accountID → accountJID` so provider methods work without driving `buildModule`.
@@ -121,15 +124,16 @@ public final class OMEMOService {
         return module
     }
 
-    /// The stored identity with its unused pre-keys and its signed pre-key, or nil for a new installation. A pre-key
-    /// counts as used when the store or the trust guard records it so. A signed pre-key that is missing is replaced for
-    /// the same device, and stored before anything publishes it.
+    /// The stored identity with its unused pre-keys and its signed pre-keys, the newest as current, or nil for a new
+    /// installation. A pre-key counts as used when the store or the trust guard records it so. A signed pre-key that is
+    /// missing is replaced for the same device, and stored before anything publishes it.
     private func loadStoredIdentity(accountJID: String) async throws -> OMEMOModule.OMEMOIdentityData? {
         guard let stored = try await omemoStore.loadIdentity(for: accountJID) else { return nil }
         let preKeys = try await omemoStore.loadPreKeys(for: accountJID)
         let consumed = trustGuard(forAccountJID: accountJID).consumedPreKeyIDs(ownDeviceID: stored.deviceID)
-        let signedPreKey = if let loaded = try await omemoStore.loadSignedPreKey(for: accountJID) {
-            loaded
+        let signedPreKeys = try await omemoStore.loadSignedPreKeys(for: accountJID)
+        let signedPreKey = if let newest = signedPreKeys.first {
+            newest
         } else {
             try await replaceSignedPreKey(identityKeyData: stored.identityKeyData, accountJID: accountJID)
         }
@@ -141,7 +145,8 @@ public final class OMEMOService {
             signedPreKeySignature: Array(signedPreKey.signature),
             preKeys: preKeys.filter { !$0.isUsed && !consumed.contains($0.keyID) }.map {
                 OMEMOModule.OMEMOIdentityData.PreKeyData(keyID: $0.keyID, keyRaw: Array($0.keyData))
-            }
+            },
+            retainedSignedPreKeys: signedPreKeys.dropFirst().map(\.identityData)
         )
     }
 
@@ -162,7 +167,7 @@ public final class OMEMOService {
     func handleEvent(_ event: XMPPEvent, accountID: UUID) async {
         switch event {
         case let .omemoDeviceListReceived(jid, devices):
-            await handleDeviceListReceived(jid: jid, devices: devices, accountID: accountID)
+            await seedUndecidedTrust(for: jid, devices: devices, accountID: accountID)
         case let .omemoEncryptedMessageReceived(message, outcome, roomAuthor):
             await handleEncryptedMessageReceived(message, outcome: outcome, roomAuthor: roomAuthor, accountID: accountID)
         case let .omemoSessionEstablished(jid, deviceID, identityKey, consumedPreKeyID):
@@ -206,42 +211,6 @@ public final class OMEMOService {
 
     // MARK: - Encryption
 
-    /// Resolution from `shouldEncrypt`. Names describe what the *local trust store* says, not the peer's actual state
-    /// (the peer's devicelist may not have been received yet). Callers fail-closed on the three "don't encrypt" cases
-    /// when the conversation has encryption enabled.
-    public enum EncryptionResolution: Sendable {
-        /// Encryption authorized; encrypt to these recipient device IDs.
-        case proceed(trustedDeviceIDs: [UInt32])
-        /// Conversation has encryption disabled by the user; plaintext is
-        /// intentional.
-        case userDisabled
-        /// Local trust store has no devices for this peer. Possible causes:
-        /// `+notify` not received yet, peer has no OMEMO, fresh install.
-        case noLocalDevicesForPeer
-        /// Local trust store has peer devices but none are trusted.
-        case noTrustedDevicesForPeer
-        /// Service not wired (tests only; production wires at app start). Distinct from `.proceed` so callers throw `omemoServiceUnavailable` without a nil check.
-        case serviceUnavailable
-    }
-
-    /// Resolves encryption for a 1:1 send. Callers treat `.noLocalDevicesForPeer` / `.noTrustedDevicesForPeer` as throw conditions when the conversation has encryption enabled.
-    func shouldEncrypt(jid: BareJID, accountID: UUID, conversationEncryptionEnabled: Bool) async -> EncryptionResolution {
-        guard conversationEncryptionEnabled else { return .userDisabled }
-        guard let accountJID = accountJIDString(for: accountID) else {
-            return .noLocalDevicesForPeer
-        }
-        let allDevices = await loadAllDevicesMergingTrust(for: jid.description, accountJID: accountJID)
-        if allDevices.isEmpty {
-            return .noLocalDevicesForPeer
-        }
-        let tofu = OMEMOPreferences.shared.trustOnFirstUse
-        let trusted = allDevices.filter { $0.trustLevel.isTrustedForEncryption(trustOnFirstUse: tofu) }.map(\.deviceID)
-        if trusted.isEmpty {
-            return .noTrustedDevicesForPeer
-        }
-        return .proceed(trustedDeviceIDs: trusted)
-    }
-
     /// Encrypts a 1:1 message's `content`, the elements its envelope carries.
     func encryptMessage(
         content: [DuckoXMPP.XMLElement],
@@ -270,24 +239,9 @@ public final class OMEMOService {
         return elements
     }
 
-    private func trustedDeviceIDs(for jid: BareJID, accountID: UUID) async -> [UInt32] {
-        guard let accountJID = accountJIDString(for: accountID) else { return [] }
-        let allDevices = await loadAllDevicesMergingTrust(for: jid.description, accountJID: accountJID)
-        let tofu = OMEMOPreferences.shared.trustOnFirstUse
-        return allDevices.filter { $0.trustLevel.isTrustedForEncryption(trustOnFirstUse: tofu) }.map(\.deviceID)
-    }
-
-    private func trustedOwnDeviceIDs(accountID: UUID) async -> [UInt32] {
-        guard let ownJID = accountService?.accounts.first(where: { $0.id == accountID })?.jid, let accountJID = accountJIDString(for: accountID) else { return [] }
-        // Own devices always use TOFU semantics — refusing to encrypt to your
-        // own undecided devices breaks multi-device message sync.
-        let allDevices = await loadAllDevicesMergingTrust(for: ownJID.description, accountJID: accountJID)
-        return allDevices.filter { $0.trustLevel.isTrustedForEncryption(trustOnFirstUse: true) }.map(\.deviceID)
-    }
-
     /// The peer's stored trust rows, which the account's guard takes in, so a decision made in another process over the
     /// same store reaches the next send. A read that fails yields no rows.
-    private func loadAllDevicesMergingTrust(for peerJID: String, accountJID: String) async -> [OMEMOTrust] {
+    func loadAllDevicesMergingTrust(for peerJID: String, accountJID: String) async -> [OMEMOTrust] {
         let stamp = trustGuard(forAccountJID: accountJID).currentStamp()
         let rows = await (try? omemoStore.loadAllDevices(for: peerJID, accountJID: accountJID)) ?? []
         mergeStoredTrust(rows, accountJID: accountJID, loadedAfter: stamp)
@@ -339,10 +293,18 @@ public final class OMEMOService {
         await ownDeviceInfo(accountID: accountID)?.fingerprint
     }
 
-    /// Returns device info for all known devices of a peer, suitable for UI display.
+    /// The peer's stored devices with their trust, for display: those on its device list as last fetched or notified,
+    /// as sends use, or every stored one when the list cannot be read, as without a connection. For the account's own
+    /// JID this device is included when it has a row.
     public func deviceInfoList(for peerJID: String, accountID: UUID) async -> [OMEMODeviceInfo] {
         guard let accountJID = accountJIDString(for: accountID), let peer = BareJID.parse(peerJID) else { return [] }
-        let devices = await (try? omemoStore.loadAllDevices(for: peer.description, accountJID: accountJID)) ?? []
+        let devices: [OMEMOTrust]
+        do {
+            devices = try await listedDevices(of: peer, accountID: accountID, accountJID: accountJID)
+        } catch {
+            log.debug("OMEMO device list of \(peer) could not be read; showing every stored device: \(error)")
+            devices = await loadAllDevicesMergingTrust(for: peer.description, accountJID: accountJID)
+        }
         return devices.map {
             OMEMODeviceInfo(
                 peerJID: $0.peerJID, deviceID: $0.deviceID,
@@ -365,11 +327,12 @@ public final class OMEMOService {
 
     // MARK: - Group Chat Encryption
 
-    /// Encrypts a room message's `content` for all members of the room.
+    /// Encrypts a room message's `content` for `recipients`, each a member and their devices that `shouldEncrypt`
+    /// resolved, and for the account's other trusted devices.
     func encryptGroupMessage(
         content: [DuckoXMPP.XMLElement],
         roomJID: BareJID,
-        memberJIDs: [BareJID],
+        recipients: [(jid: BareJID, deviceIDs: [UInt32])],
         accountID: UUID
     ) async throws -> OMEMOModule.EncryptedMessageElements {
         guard let client = accountService?.connectedClient(for: accountID) else {
@@ -377,11 +340,6 @@ public final class OMEMOService {
         }
         guard let omemoModule = await client.module(ofType: OMEMOModule.self) else {
             throw OMEMOServiceError.omemoNotAvailable
-        }
-
-        let recipients = await buildGroupRecipients(memberJIDs: memberJIDs, accountID: accountID)
-        guard !recipients.isEmpty else {
-            throw OMEMOServiceError.noTrustedRecipients
         }
 
         let ownDeviceIDs = await trustedOwnDeviceIDs(accountID: accountID)
@@ -393,31 +351,10 @@ public final class OMEMOService {
         return elements
     }
 
-    private func buildGroupRecipients(
-        memberJIDs: [BareJID],
-        accountID: UUID
-    ) async -> [(jid: BareJID, deviceIDs: [UInt32])] {
-        // Exclude own JID — encryptGroupMessage encrypts for own devices separately
-        let ownJID = accountService?.accounts.first(where: { $0.id == accountID })?.jid
-        let filtered = memberJIDs.filter { $0 != ownJID }
-        return await withTaskGroup(of: (BareJID, [UInt32]).self) { group in
-            for jid in filtered {
-                group.addTask {
-                    let deviceIDs = await self.trustedDeviceIDs(for: jid, accountID: accountID)
-                    return (jid, deviceIDs)
-                }
-            }
-            var recipients: [(jid: BareJID, deviceIDs: [UInt32])] = []
-            for await (jid, deviceIDs) in group where !deviceIDs.isEmpty {
-                recipients.append((jid: jid, deviceIDs: deviceIDs))
-            }
-            return recipients
-        }
-    }
-
     // MARK: - Private Event Handlers
 
-    private func handleDeviceListReceived(jid: BareJID, devices: [UInt32], accountID: UUID) async {
+    /// Gives each of `jid`'s listed devices without a trust row an undecided one.
+    func seedUndecidedTrust(for jid: BareJID, devices: [UInt32], accountID: UUID) async {
         guard let accountJID = accountJIDString(for: accountID) else { return }
         for deviceID in devices {
             let trust = OMEMOTrust(
@@ -470,11 +407,11 @@ public final class OMEMOService {
     }
 
     /// First-time identity persistence. Extracted so tests can drive the polling/persistence branches via a stub
-    /// `OMEMOIdentityProviding` and a short `pollTimeout` (bypassing the 5s real wait).
+    /// `OMEMOIdentityProviding` and a short `pollTimeout` (bypassing the 40 s real wait).
     package func handleConnectedFirstTimePersistence(
         provider: any OMEMOIdentityProviding,
         accountJID: String,
-        pollTimeout: Duration = .seconds(5)
+        pollTimeout: Duration = .seconds(40)
     ) async {
         // Only a first-time identity needs persisting. A stored one is handed to the module, which installs it when the
         // session is established. Skip both the readiness poll and the persistence writes. A store that could not be
@@ -489,11 +426,12 @@ public final class OMEMOService {
         }
         if existingIdentity == nil {
             // `.connected` is yielded before `OMEMOModule.handleConnect` runs,
-            // so `ownIdentityData` may still be `nil` on first-time generation.
-            // Poll up to `pollTimeout` (default ~5 s — two IQ round-trips:
-            // publish device list + bundle). Capture the identity inside the
-            // closure to avoid a re-read race with `handleDisconnect` nil'ing
-            // `ownIdentity`.
+            // so `ownIdentityData` may still be `nil` on first-time generation,
+            // which waits on reading the account's device list. Poll up to
+            // `pollTimeout`, which outlasts that read's 30 s IQ timeout, so a
+            // slow server cannot leave a published identity unstored. Capture
+            // the identity inside the closure to avoid a re-read race with
+            // `handleDisconnect` nil'ing `ownIdentity`.
             var captured: OMEMOModule.OMEMOIdentityData?
             _ = await pollUntil(
                 {
@@ -577,8 +515,9 @@ public final class OMEMOService {
         }
     }
 
-    /// Records used pre-keys, tops the pre-keys up when they run low, and republishes the bundle when it lags behind.
-    /// Failures are logged, and the next trigger retries: the store and the module are read afresh each run.
+    /// Records used pre-keys, keeps the signed pre-keys in step with the store and rotates them, tops the pre-keys up
+    /// when they run low, and republishes the bundle when it lags behind. Failures are logged, and the next trigger
+    /// retries: the store and the module are read afresh each run.
     /// `awaitReady` holds the publish until the server has seen this resource's caps (XEP-0163 §3.3.2).
     package func maintainPreKeys(
         accountJID: String,
@@ -616,6 +555,7 @@ public final class OMEMOService {
         }
 
         guard let module, let identityData = module.ownIdentityData else { return }
+        await maintainSignedPreKeys(accountJID: accountJID, module: module, identityData: identityData)
         // A module built while an earlier connection's run was still recording a key holds that key as unused.
         module.retirePreKeys(Set(stored.filter(\.isUsed).map(\.keyID)).union(eventPreKeyIDs).union(guardedIDs))
         if unusedIDs.count < OMEMOPreKeyManager.minimumPreKeyCount {
@@ -691,7 +631,7 @@ public final class OMEMOService {
         trustGuard.applyGrant(peer: peer, deviceID: deviceID, decision: grant.decision)
     }
 
-    private func accountJIDString(for accountID: UUID) -> String? {
+    func accountJIDString(for accountID: UUID) -> String? {
         accountService?.accounts.first(where: { $0.id == accountID })?.jid.description
     }
 }
@@ -863,6 +803,7 @@ enum OMEMOServiceError: Error, LocalizedError {
     case identityKeyMismatch
     case conflictingFingerprints
     case noFingerprintToVerify
+    case thisDeviceNotResettable
 
     var errorDescription: String? {
         switch self {
@@ -872,6 +813,7 @@ enum OMEMOServiceError: Error, LocalizedError {
         case .identityKeyMismatch: "The fingerprint does not match the key in use for this device"
         case .conflictingFingerprints: "This device has more than one fingerprint, so it cannot be trusted"
         case .noFingerprintToVerify: "The device's fingerprint is not known yet, so it cannot be verified"
+        case .thisDeviceNotResettable: "This device has no encryption session with itself to reset"
         }
     }
 }

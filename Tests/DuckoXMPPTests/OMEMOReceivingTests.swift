@@ -67,6 +67,7 @@ struct OMEMOReceivingTests {
         #expect(parties.bobRecorder.outcomes.map(\.reason) == [.mismatchedEnvelope])
     }
 
+    /// The decrypted message names that address and device, not the room, so its sender's trust can be looked up.
     @Test(arguments: [true, false])
     func `a room message decrypts with the session of the occupant's real address, which its envelope names`(revealsJIDs: Bool) async throws {
         let room = try #require(BareJID.parse("room@conference.example.com"))
@@ -82,6 +83,8 @@ struct OMEMOReceivingTests {
         if revealsJIDs {
             #expect(parties.bobRecorder.decryptedEvents.map(\.message.body) == ["hello room"])
             #expect(parties.bobRecorder.decryptedEvents.first?.message.from?.description == "\(room)/alice")
+            #expect(parties.bobRecorder.decryptedEvents.first?.senderJID == parties.aliceJID)
+            #expect(parties.bobRecorder.decryptedEvents.first?.senderDeviceID == 100)
         } else {
             #expect(parties.bobRecorder.outcomes.map(\.reason) == [.senderHidden])
         }
@@ -111,6 +114,25 @@ struct OMEMOReceivingTests {
         #expect(roomAuthors.map(\.occupantID) == ["alice-id"])
     }
 
+    /// XEP-0420 has the recipient discard the elements a server acts on, since inside the envelope the server never saw
+    /// them.
+    @Test func `processing hints, extended addressing and an encryption hint inside the envelope are dropped`() async throws {
+        let message = try await parties.aliceSends([
+            bodyElement("hi"),
+            XMLElement(name: "encryption", namespace: XMPPNamespaces.eme, attributes: ["namespace": XMPPNamespaces.omemo]),
+            XMLElement(name: "store", namespace: XMPPNamespaces.processingHints),
+            XMLElement(name: "addresses", namespace: XMPPNamespaces.addresses)
+        ], id: "m1")
+
+        try parties.bob.handleMessage(message)
+
+        let decrypted = try #require(parties.bobRecorder.decryptedEvents.first)
+        #expect(decrypted.message.body == "hi")
+        #expect(decrypted.message.element.child(named: "encryption", namespace: XMPPNamespaces.eme) == nil)
+        #expect(decrypted.message.element.child(named: "store", namespace: XMPPNamespaces.processingHints) == nil)
+        #expect(decrypted.message.element.child(named: "addresses", namespace: XMPPNamespaces.addresses) == nil)
+    }
+
     @Test func `a room's private message decrypts with the session of the occupant's real address`() async throws {
         let room = try #require(BareJID.parse("room@conference.example.com"))
         try await parties.bobJoins(room, aliceRevealed: true)
@@ -120,6 +142,65 @@ struct OMEMOReceivingTests {
         try parties.bob.handleMessage(message)
 
         #expect(parties.bobRecorder.decryptedEvents.map(\.message.body) == ["psst"])
+    }
+
+    enum ArchivedRoomAuthor: CaseIterable {
+        /// The archive names alice, who is no longer in the room.
+        case departed
+        /// The archive names alice, whose nickname now belongs to carol.
+        case nicknameTaken
+        /// The archive names no one.
+        case unrecorded
+    }
+
+    /// The occupant list tells who holds a nickname now, which need not be who held it when the archive stored the entry.
+    @Test(arguments: ArchivedRoomAuthor.allCases)
+    func `an archived room message decrypts with the session of the real JID its archive records, never the live occupant's`(
+        author: ArchivedRoomAuthor
+    ) async throws {
+        let room = try #require(BareJID.parse("room@conference.example.com"))
+        if author == .nicknameTaken {
+            _ = try await parties.mucModule.joinRoom(room, nickname: "bob")
+            try parties.mucModule.handlePresence(XMPPPresence(element: stanza(
+                "<presence from='\(room)/alice'><x xmlns='\(XMPPNamespaces.mucUser)'><item affiliation='member' role='participant' jid='carol@example.com/x'/></x></presence>"
+            )))
+        }
+        let encrypted = try await parties.alice.encryptGroupMessage(
+            content: [bodyElement("hello room")], time: testEnvelopeTime, roomJID: room, recipients: [(parties.bobJID, [200])], ownDeviceIDs: []
+        ).encrypted
+        var message = XMLElement(name: "message", attributes: ["from": "\(room)/alice", "to": "bob@example.com/laptop", "type": "groupchat", "id": "g1"])
+        message.addChild(encrypted)
+
+        let outcome = parties.bob.receiveArchivedMessage(
+            XMPPMessage(element: message), sender: author == .unrecorded ? nil : parties.aliceJID, isRoomPrivateMessage: false, allowsKeyExchange: true
+        )
+
+        switch author {
+        case .departed, .nicknameTaken:
+            guard case let .decrypted(decrypted)? = outcome else {
+                Issue.record("Expected a decrypted message, got \(String(describing: outcome))")
+                return
+            }
+            #expect(decrypted.message.body == "hello room")
+            #expect(decrypted.senderJID == parties.aliceJID)
+        case .unrecorded:
+            #expect(outcome?.reason == .senderHidden)
+        }
+    }
+
+    /// An archived key exchange can be older than a session this connection built or took up live, and must not replace
+    /// it. With no such session, catch-up takes it up.
+    @Test(arguments: [true, false])
+    func `an archived key exchange is taken up unless this connection built the device's session live`(bobStartedSession: Bool) async throws {
+        if bobStartedSession {
+            _ = try await parties.bob.encryptMessage(plaintext: "first", to: parties.aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: [])
+        }
+        let message = try await parties.aliceSends([bodyElement("hi")], id: "m1")
+
+        let outcome = parties.bob.receiveArchivedMessage(message, sender: nil, isRoomPrivateMessage: false, allowsKeyExchange: true)
+
+        let body: String? = if case let .decrypted(decrypted)? = outcome { decrypted.message.body } else { nil }
+        #expect(body == (bobStartedSession ? nil : "hi"))
     }
 
     /// Only what the encryption covers counts: a receipt, marker or chat state next to the payload could be anyone's.
@@ -369,6 +450,47 @@ struct OMEMOReceivingTests {
         #expect(parties.bobRecorder.sessionAdvances == 1)
     }
 
+    /// The fetch lets the device be trusted and encrypted to. Each sender's list is fetched once, so devices that stay off
+    /// it, or made-up device ids, cost one fetch, not one per message or per device.
+    @Test func `messages from devices their sender's list leaves out fetch that list once`() async throws {
+        let bobIdentity = parties.bobIdentity
+        let tabletRecorder = try Recorder(account: #require(FullJID.parse("alice@example.com/tablet"))) { _ in bundleItems(for: bobIdentity) }
+        let tablet = try tabletRecorder.installedModule(identity: makeTestOMEMOIdentity(deviceID: 101, preKeyIDs: [1]).data)
+        let encrypted = try await tablet.encryptMessage(
+            content: [bodyElement("m3")], time: testEnvelopeTime, to: parties.bobJID, recipientDeviceIDs: [200], ownDeviceIDs: []
+        ).encrypted
+        var fromTablet = XMLElement(name: "message", attributes: ["from": "alice@example.com/tablet", "to": "bob@example.com/laptop", "type": "chat", "id": "m3"])
+        fromTablet.addChild(encrypted)
+
+        for id in ["m1", "m2"] {
+            try await parties.bob.handleMessage(parties.aliceSends([bodyElement(id)], id: id))
+        }
+        let recorder = parties.bobRecorder
+        try await eventually { recorder.deviceListFetches == ["alice@example.com"] }
+        try parties.bob.handleMessage(XMPPMessage(element: fromTablet))
+
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(recorder.deviceListFetches == ["alice@example.com"])
+    }
+
+    @Test func `a message from an unlisted device without a session fetches its sender's list, though it cannot be decrypted`() async throws {
+        try await parties.bob.handleMessage(parties.aliceSends([bodyElement("one")], id: "m1"))
+        let bobRecorder = parties.bobRecorder
+        try await eventually { !bobRecorder.sentMessages.isEmpty }
+        var reply = try #require(bobRecorder.sentMessages.first)
+        reply.attributes["from"] = "bob@example.com/laptop"
+        try parties.alice.handleMessage(XMPPMessage(element: reply))
+        let confirmed = try await parties.aliceSends([bodyElement("two")], id: "m2")
+        let recorder = try Recorder(account: #require(FullJID.parse("bob@example.com/laptop")))
+        let freshBob = recorder.installedModule(identity: parties.bobIdentity.data)
+
+        try freshBob.handleMessage(confirmed)
+
+        #expect(try !isKeyExchange(#require(confirmed.element.child(named: "encrypted"))))
+        #expect(recorder.outcomes.map(\.reason) == [.decryptionFailed])
+        try await eventually { recorder.deviceListFetches == ["alice@example.com"] }
+    }
+
     @Test(arguments: [true, false])
     func `a message not encrypted for this device is reported when it has a payload`(hasPayload: Bool) async throws {
         var message = try await parties.aliceSends([bodyElement("hi")], id: "m1", deviceIDs: [999])
@@ -456,6 +578,7 @@ private final class Recorder: Sendable {
     private struct Recorded {
         var events: [XMPPEvent] = []
         var sent: [XMLElement] = []
+        var iqs: [XMLElement] = []
         var dispatched: [XMPPMessage] = []
         var forwardTo: [any XMPPModule] = []
         var bundles: [String: XMLElement] = [:]
@@ -477,6 +600,7 @@ private final class Recorder: Sendable {
                 recorded.withLock { $0.sent.append(stanza.element) }
             },
             sendIQ: { [recorded, answer] iq, _ in
+                recorded.withLock { $0.iqs.append(iq.element) }
                 let item = iq.element.child(named: "pubsub")?.child(named: "items")?.child(named: "item")?.attribute("id")
                 if let bundle = recorded.withLock({ recorded in item.flatMap { recorded.bundles.removeValue(forKey: $0) } }) {
                     return bundle
@@ -518,6 +642,14 @@ private final class Recorder: Sendable {
         recorded.withLock { $0.dispatched }
     }
 
+    /// Whose device lists the module fetched, in order.
+    var deviceListFetches: [String] {
+        recorded.withLock { recorded in
+            recorded.iqs.filter { $0.child(named: "pubsub")?.child(named: "items")?.attribute("node") == XMPPNamespaces.omemoDevices }
+                .map { $0.attribute("to") ?? "" }
+        }
+    }
+
     /// How often the module reported a session moved on: once for each empty message it sends, as it encrypts it,
     /// and once for each it receives.
     var sessionAdvances: Int {
@@ -552,7 +684,9 @@ private struct Parties {
     static func make() async throws -> Parties {
         let aliceIdentity = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
         let bobIdentity = try makeTestOMEMOIdentity(deviceID: 200, preKeyIDs: [7])
-        let aliceRecorder = try Recorder(account: #require(FullJID.parse("alice@example.com/phone"))) { _ in bundleItems(for: bobIdentity) }
+        let aliceRecorder = try Recorder(account: #require(FullJID.parse("alice@example.com/phone"))) { iq in
+            deviceListItems([200], answering: iq) ?? bundleItems(for: bobIdentity)
+        }
         let bobRecorder = try Recorder(account: #require(FullJID.parse("bob@example.com/laptop"))) { _ in bundleItems(for: aliceIdentity) }
         let mucModule = MUCModule()
         mucModule.setUp(bobRecorder.context)

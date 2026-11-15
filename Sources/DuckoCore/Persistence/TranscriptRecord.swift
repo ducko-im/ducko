@@ -22,6 +22,8 @@ enum TranscriptRecord: Codable {
         /// Optional so records written before the flag existed decode. Those carry no key at all.
         var isUndecryptable: Bool?
         var undecryptableReason: UndecryptableReason?
+        /// Optional so records written before the flag existed decode.
+        var isFromUntrustedDevice: Bool?
         var messageType: String
         var replyToID: String?
         var replyToJID: String?
@@ -43,6 +45,7 @@ enum TranscriptRecord: Codable {
         var replyToID: String?
         var replyToJID: String?
         var attachments: [Attachment]?
+        var isFromUntrustedDevice: Bool?
         var errorText: String?
         var serverID: String?
     }
@@ -53,6 +56,9 @@ enum TranscriptRecord: Codable {
         var id: UUID
         var timestamp: Date
         var kind: TimelineNote.Kind
+        /// Optional so records written before the field existed decode.
+        var subject: String?
+        var detail: String?
     }
 
     // MARK: - Codable
@@ -109,6 +115,7 @@ enum TranscriptRecord: Codable {
             isEncrypted: message.isEncrypted,
             isUndecryptable: message.isUndecryptable,
             undecryptableReason: message.undecryptableReason,
+            isFromUntrustedDevice: message.isFromUntrustedDevice,
             messageType: message.type,
             replyToID: message.replyToID,
             replyToJID: message.replyToJID,
@@ -130,13 +137,14 @@ enum TranscriptRecord: Codable {
             replyToID: amendment.replyToID,
             replyToJID: amendment.replyToJID,
             attachments: amendment.attachments,
+            isFromUntrustedDevice: amendment.isFromUntrustedDevice,
             errorText: amendment.errorText,
             serverID: amendment.serverID
         ))
     }
 
     static func from(_ note: TimelineNote) -> TranscriptRecord {
-        .note(NoteEntry(id: note.id, timestamp: note.timestamp, kind: note.kind))
+        .note(NoteEntry(id: note.id, timestamp: note.timestamp, kind: note.kind, subject: note.subject, detail: note.detail))
     }
 
     /// What a failed decrypt was recorded as before the flag existed: an encrypted message with this sentence as its
@@ -166,13 +174,16 @@ enum TranscriptRecord: Codable {
             isEncrypted: entry.isEncrypted,
             isUndecryptable: isUndecryptable,
             undecryptableReason: entry.undecryptableReason,
+            isFromUntrustedDevice: entry.isFromUntrustedDevice ?? false,
             attachments: entry.attachments
         )
     }
 
     func toNote(conversationID: UUID) -> TimelineNote? {
         guard case let .note(entry) = self else { return nil }
-        return TimelineNote(id: entry.id, conversationID: conversationID, timestamp: entry.timestamp, kind: entry.kind)
+        return TimelineNote(
+            id: entry.id, conversationID: conversationID, timestamp: entry.timestamp, kind: entry.kind, subject: entry.subject, detail: entry.detail
+        )
     }
 
     func toAmendment() -> TranscriptAmendment? {
@@ -189,6 +200,7 @@ enum TranscriptRecord: Codable {
             replyToID: entry.replyToID,
             replyToJID: entry.replyToJID,
             attachments: entry.attachments,
+            isFromUntrustedDevice: entry.isFromUntrustedDevice,
             errorText: entry.errorText,
             serverID: entry.serverID
         )

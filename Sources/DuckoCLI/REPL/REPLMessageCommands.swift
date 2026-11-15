@@ -232,6 +232,32 @@ func handleEncryptREPLCommand(_ arguments: String, context: REPLContext) async {
     }
 }
 
+func handleOMEMOResetREPLCommand(_ arguments: String, context: REPLContext) async {
+    let parts = arguments.split(separator: " ")
+    guard (1 ... 2).contains(parts.count) else {
+        print("Usage: /omemo-reset <jid> [device-id]")
+        return
+    }
+    let deviceID: UInt32?
+    if parts.count == 2 {
+        guard let parsed = UInt32(parts[1]) else {
+            print("Usage: /omemo-reset <jid> [device-id]")
+            return
+        }
+        deviceID = parsed
+    } else {
+        deviceID = nil
+    }
+    do {
+        let report = try await context.environment.omemoService.resetSessions(
+            peerJID: String(parts[0]), deviceID: deviceID, accountID: context.accountID
+        )
+        print(context.formatter.formatOMEMOSessionReset(report))
+    } catch {
+        print(context.formatter.formatError(error))
+    }
+}
+
 /// The conversation `address` names: the private chat with the occupant `room@service/nick`, or the chat or room
 /// with a bare address.
 private func namedConversation(_ address: String, context: REPLContext) async throws -> Conversation {

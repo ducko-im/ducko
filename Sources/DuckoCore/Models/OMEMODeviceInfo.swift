@@ -1,3 +1,5 @@
+import DuckoXMPP
+
 public struct OMEMODeviceInfo: Sendable, Identifiable {
     public var id: String {
         "\(peerJID)-\(deviceID)"
@@ -15,15 +17,8 @@ public struct OMEMODeviceInfo: Sendable, Identifiable {
         self.trustLevel = trustLevel
     }
 
-    /// Formats a hex fingerprint with spaces every 8 characters for readability.
+    /// Formats a stored fingerprint in the form the user compares: the Curve25519 key in eight groups of eight hex digits.
     public static func formatFingerprint(_ hex: String) -> String {
-        var result = ""
-        for (index, char) in hex.enumerated() {
-            if index > 0, index.isMultiple(of: 8) {
-                result += " "
-            }
-            result.append(char)
-        }
-        return result
+        omemoDisplayFingerprint(ofStoredFingerprint: hex)
     }
 }
