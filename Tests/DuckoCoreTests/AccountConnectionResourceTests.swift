@@ -155,7 +155,7 @@ struct AccountConnectionResourceTests {
         #expect(request.resume == nil)
         await service.disconnect(accountID: id)
         await release.signal()
-        try await waitForEvent(request.disconnections) { _ in true }
+        try await eventually { await redirected.disconnectCount >= 1 }
         #expect(service.client(for: id) == nil)
         #expect(await redirected.connectedHost == nil)
         _ = await connection.result

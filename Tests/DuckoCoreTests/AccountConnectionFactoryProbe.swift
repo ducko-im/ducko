@@ -11,7 +11,6 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
         let resume: StreamResumeContext?
         let requireTLS: Bool?
         let allowsPLAIN: Bool
-        let disconnections: AsyncStream<Void>
     }
 
     private let transports: [MockTransport]
@@ -49,8 +48,7 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
         let transport = index < transports.count ? transports[index] : MockTransport(connectError: Failure.connect)
         let sm = StreamManagementModule(previousState: resuming?.streamManagement ?? (index == 0 ? initialResume : nil))
         var builder = XMPPClientBuilder(domain: account.jid.domainPart, username: account.jid.localPart ?? "", password: password)
-        let observed = AccountConnectionTransport(mock: transport)
-        builder.withTransport(observed)
+        builder.withTransport(transport)
         builder.withRequireTLS(requireTLSOverride ?? false)
         builder.withAllowsPLAIN(allowsPLAIN ?? account.allowsPLAIN)
         builder.withModule(sm)
@@ -69,8 +67,7 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
         await transport.ackSyncRequests(from: sm)
         let client = await builder.build()
         requests.continuation.yield(Request(
-            password: password, resume: resuming, requireTLS: requireTLSOverride, allowsPLAIN: allowsPLAIN ?? account.allowsPLAIN,
-            disconnections: observed.disconnections
+            password: password, resume: resuming, requireTLS: requireTLSOverride, allowsPLAIN: allowsPLAIN ?? account.allowsPLAIN
         ))
         if index == 0 { await firstRelease?.wait() } else { await laterRelease?.wait() }
         return (client, sm)
@@ -89,57 +86,6 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
             }
             return try #require(await group.next()!)
         }
-    }
-}
-
-actor AccountConnectionTransport: XMPPTransport {
-    nonisolated let mock: MockTransport
-    nonisolated var receivedData: AsyncStream<[UInt8]> {
-        mock.receivedData
-    }
-
-    nonisolated let disconnections: AsyncStream<Void>
-    private let disconnected: AsyncStream<Void>.Continuation
-
-    init(mock: MockTransport) {
-        self.mock = mock
-        let signal = AsyncStream.makeStream(of: Void.self)
-        self.disconnections = signal.stream
-        self.disconnected = signal.continuation
-    }
-
-    func connect(host: String, port: UInt16) async throws {
-        try await mock.connect(host: host, port: port)
-    }
-
-    func connectWithTLS(host: String, port: UInt16, serverName: String) async throws {
-        try await mock.connectWithTLS(host: host, port: port, serverName: serverName)
-    }
-
-    func stopReceiving() async {
-        await mock.stopReceiving()
-    }
-
-    func upgradeTLS(serverName: String) async throws -> AsyncStream<[UInt8]> {
-        try await mock.upgradeTLS(serverName: serverName)
-    }
-
-    func send(_ bytes: [UInt8]) async throws {
-        try await mock.send(bytes)
-    }
-
-    func disconnect() async {
-        await mock.disconnect()
-        disconnected.yield(())
-        disconnected.finish()
-    }
-
-    var tlsInfo: TLSInfo? {
-        get async { await mock.tlsInfo }
-    }
-
-    func channelBindings() async -> [ChannelBindingType: [UInt8]] {
-        await mock.channelBindings()
     }
 }
 

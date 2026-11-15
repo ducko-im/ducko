@@ -324,25 +324,17 @@ func withIQOperation<Result: Sendable>(
     }
 }
 
-/// Waits for the intended client request without clearing history or sending a response.
-func awaitOutgoingIQ(
+/// Returns the first sent stanza that satisfies `predicate`, including one sent before the call, and throws
+/// `XMPPClientError.timeout` if none is sent within `timeout`.
+@discardableResult
+func awaitSent(
     on mock: MockTransport,
-    type: XMPPIQ.IQType,
-    namespace: String,
     timeout: Duration = .seconds(2),
     matching predicate: @escaping @Sendable (String) -> Bool
-) async throws -> (xml: String, id: String) {
-    let xml = try await withThrowingTaskGroup(of: String?.self) { group in
+) async throws -> String {
+    try await withThrowingTaskGroup(of: String?.self) { group in
         defer { group.cancelAll() }
-        group.addTask {
-            await mock.waitForSent { stanza in
-                guard stanza.hasPrefix("<iq "), let end = stanza.firstIndex(of: ">") else { return false }
-                let opening = stanza[..<end]
-                let matchesType = opening.contains("type=\"\(type.rawValue)\"") || opening.contains("type='\(type.rawValue)'")
-                let matchesNamespace = stanza.contains("xmlns=\"\(namespace)\"") || stanza.contains("xmlns='\(namespace)'")
-                return matchesType && matchesNamespace && predicate(stanza)
-            }
-        }
+        group.addTask { await mock.waitForSent(matching: predicate) }
         group.addTask {
             try await Task.sleep(for: timeout)
             throw XMPPClientError.timeout
@@ -351,6 +343,23 @@ func awaitOutgoingIQ(
         try Task.checkCancellation()
         guard let result else { throw XMPPClientError.timeout }
         return result
+    }
+}
+
+/// Waits for the intended client request without clearing history or sending a response.
+func awaitOutgoingIQ(
+    on mock: MockTransport,
+    type: XMPPIQ.IQType,
+    namespace: String,
+    timeout: Duration = .seconds(2),
+    matching predicate: @escaping @Sendable (String) -> Bool
+) async throws -> (xml: String, id: String) {
+    let xml = try await awaitSent(on: mock, timeout: timeout) { stanza in
+        guard stanza.hasPrefix("<iq "), let end = stanza.firstIndex(of: ">") else { return false }
+        let opening = stanza[..<end]
+        let matchesType = opening.contains("type=\"\(type.rawValue)\"") || opening.contains("type='\(type.rawValue)'")
+        let matchesNamespace = stanza.contains("xmlns=\"\(namespace)\"") || stanza.contains("xmlns='\(namespace)'")
+        return matchesType && matchesNamespace && predicate(stanza)
     }
     let opening = String(xml.prefix { $0 != ">" })
     guard let id = extractIQID(from: opening), !id.isEmpty else {
@@ -376,23 +385,9 @@ func awaitSentResponse(
     timeout: Duration = .seconds(2)
 ) async -> String? {
     await mock.clearSentBytes()
-
-    return await withTaskGroup(of: String?.self) { group in
-        group.addTask { await mock.waitForSent(matching: predicate) }
-        // simulateReceive runs after the waiter task is scheduled; waitForSent scans the
-        // already-sent buffer when it registers, so a reply that lands before the task
-        // starts is still caught (no lost wakeup).
-        await mock.simulateReceive(stanza)
-        group.addTask {
-            try? await Task.sleep(for: timeout)
-            return nil
-        }
-        for await result in group {
-            group.cancelAll()
-            return result
-        }
-        return nil
-    }
+    // Receiving before waiting is safe: `awaitSent` also matches a reply sent before it starts.
+    await mock.simulateReceive(stanza)
+    return try? await awaitSent(on: mock, timeout: timeout, matching: predicate)
 }
 
 // MARK: - SOCKS5 Greeting Probe

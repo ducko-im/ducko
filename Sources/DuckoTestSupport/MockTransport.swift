@@ -13,6 +13,11 @@ public actor MockTransport: XMPPTransport {
     private var isReceivingStopped = false
     public private(set) var sentBytes: [[UInt8]] = []
     public private(set) var isConnected = false
+    /// Every `connect`/`connectWithTLS` attempt, including those that throw.
+    public private(set) var connectCount = 0
+    /// Completed `disconnect()` calls, counted once any disconnect gate releases. Calls on a mock that never connected
+    /// count too.
+    public private(set) var disconnectCount = 0
     public private(set) var isTLSUpgraded = false
     public private(set) var connectedHost: String?
     public private(set) var connectedPort: UInt16?
@@ -23,7 +28,7 @@ public actor MockTransport: XMPPTransport {
     private var storedTLSInfo: TLSInfo?
     private var disconnectGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
     private let connectError: (any Error)?
-    private var nextConnectError: (any Error)?
+    private var nextConnectError: (error: any Error, afterOpening: Bool)?
     private var matchingSendFailure: (fragment: String, error: any Error)?
     private var sendFailure: (any Error)?
     private var sentWaiters: [Int: CheckedContinuation<Void, Never>] = [:]
@@ -38,6 +43,9 @@ public actor MockTransport: XMPPTransport {
     private var blockedSends: [CheckedContinuation<Void, any Error>] = []
     private var blockedSendWaiters: [CheckedContinuation<Void, Never>] = []
     private var blockedReleased = false
+    /// Whether the sending task was cancelled by the time `releaseBlockedSends()` let its held send through, for the
+    /// latest such send. It is set before the send is recorded, so it is current once `waitForSent` returns that send.
+    public private(set) var lastBlockedSendWasCancelled: Bool?
     private var autoReplies: [@Sendable (String) -> String?] = []
 
     /// A connected server answers the client's `</stream:stream>` with its own (RFC 6120 §4.4), so the mock does
@@ -53,40 +61,43 @@ public actor MockTransport: XMPPTransport {
     }
 
     public func connect(host: String, port: UInt16) async throws {
-        if let error = takeConnectError() {
-            throw error
-        }
-        guard !isConnected else {
-            throw XMPPClientError.alreadyConnected
-        }
+        let failureAfterOpening = try beginConnect()
         isConnected = true
         connectedHost = host
         connectedPort = port
+        if let failureAfterOpening {
+            throw failureAfterOpening
+        }
     }
 
     public func connectWithTLS(host: String, port: UInt16, serverName: String) async throws {
-        if let error = takeConnectError() {
-            throw error
-        }
-        guard !isConnected else {
-            throw XMPPClientError.alreadyConnected
-        }
+        let failureAfterOpening = try beginConnect()
         isConnected = true
         isTLSUpgraded = true
         connectedHost = host
         connectedPort = port
         tlsServerName = serverName
+        if let failureAfterOpening {
+            throw failureAfterOpening
+        }
     }
 
-    /// Resolves the error (if any) the current connect attempt should throw. The permanent
-    /// `init(connectError:)` error takes precedence and is never consumed.
-    private func takeConnectError() -> (any Error)? {
+    /// Counts the attempt and throws any error due before the connection opens. Returns the error due once it is open.
+    /// The permanent `init(connectError:)` error takes precedence, throws before opening, and is never consumed.
+    private func beginConnect() throws -> (any Error)? {
+        connectCount += 1
         if let connectError {
-            return connectError
+            throw connectError
         }
         let next = nextConnectError
         nextConnectError = nil
-        return next
+        if let next, !next.afterOpening {
+            throw next.error
+        }
+        guard !isConnected else {
+            throw XMPPClientError.alreadyConnected
+        }
+        return next?.error
     }
 
     /// Bytes simulated before the next `upgradeTLS` are dropped, standing in for bytes left unread in the socket.
@@ -131,6 +142,7 @@ public actor MockTransport: XMPPTransport {
                     waiter.resume()
                 }
             }
+            lastBlockedSendWasCancelled = Task.isCancelled
         }
         sentBytes.append(bytes)
         if let waiter = sentWaiters.removeValue(forKey: sentBytes.count) {
@@ -154,6 +166,7 @@ public actor MockTransport: XMPPTransport {
         }
         isConnected = false
         receivedContinuation.finish()
+        disconnectCount += 1
     }
 
     public func installDisconnectGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
@@ -180,11 +193,13 @@ public actor MockTransport: XMPPTransport {
         storedTLSInfo = info
     }
 
-    /// Makes the next `connect`/`connectWithTLS` throw `error`; the following attempt succeeds. Lets a test drive
-    /// a same-instance reconnect: the failed attempt throws before `isConnected` is set, so the transport stays
-    /// not-connected and its `receivedData` stream is left untouched for the next connect.
-    public func failNextConnect(_ error: any Error) {
-        nextConnectError = error
+    /// Makes the next `connect`/`connectWithTLS` throw `error`, unless a permanent `init(connectError:)` error overrides
+    /// it. By default the attempt throws before `isConnected` is set, so the transport stays not-connected and its
+    /// `receivedData` stream is left untouched for a same-instance reconnect. With `afterOpening`, the attempt opens the
+    /// connection and then throws, leaving it open as a transport that does not close its own failed connect would.
+    /// The caller must then `disconnect()` it.
+    public func failNextConnect(_ error: any Error, afterOpening: Bool = false) {
+        nextConnectError = (error, afterOpening)
     }
 
     /// Suspends until `sentBytes.count >= count`. Returns immediately if already met.
