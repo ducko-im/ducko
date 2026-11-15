@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-15
+
 ### Added
 
 - Sign in with SCRAM-SHA-512 and SCRAM-SHA3-512 when the server offers them, preferring the strongest sign-in the server supports
@@ -509,7 +511,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release.
 
-[Unreleased]: https://github.com/ducko-im/ducko/compare/0.11.0...HEAD
+[Unreleased]: https://github.com/ducko-im/ducko/compare/0.12.0...HEAD
+[0.12.0]: https://github.com/ducko-im/ducko/compare/0.11.0...0.12.0
 [0.11.0]: https://github.com/ducko-im/ducko/compare/0.10.0...0.11.0
 [0.10.0]: https://github.com/ducko-im/ducko/compare/0.9.0...0.10.0
 [0.9.0]: https://github.com/ducko-im/ducko/compare/0.8.0...0.9.0
