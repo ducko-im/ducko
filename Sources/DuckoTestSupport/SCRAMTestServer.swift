@@ -29,7 +29,7 @@ public struct SCRAMTestServer {
     private let hash: Hash
     private let attributes: [Attribute]
     private let salt = Array("ducko-test-salt".utf8)
-    private let iterations = 4096
+    private let iterations: Int
     private var clientFirstMessageBare = ""
     private var serverFirstMessage = ""
     /// The GS2 header the client's final message bound to, decoded from its `c=`.
@@ -37,11 +37,12 @@ public struct SCRAMTestServer {
     /// The bytes the client's `c=` carried after its GS2 header: the channel-binding data, if it bound.
     public private(set) var clientBindingData: [UInt8]?
 
-    /// `mechanism` picks the hash, with or without `-PLUS`. `attributes` follow `r`, `s` and `i` in the server-first
-    /// message, which the server signs over as it sent it.
-    public init(password: String, mechanism: String = Self.mechanism, attributes: [Attribute] = []) {
+    /// `mechanism` picks the hash, with or without `-PLUS`, and `iterations` sets `i`. `attributes` follow `r`, `s` and
+    /// `i` in the server-first message, which the server signs over as it sent it.
+    public init(password: String, mechanism: String = Self.mechanism, iterations: Int = 4096, attributes: [Attribute] = []) {
         self.password = password
         self.hash = Hash(mechanism: mechanism)
+        self.iterations = iterations
         self.attributes = attributes
     }
 

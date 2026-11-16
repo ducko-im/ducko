@@ -190,6 +190,8 @@ enum XMPPClientSASLUpgradeTests {
 
         @Test(arguments: [
             (saltTaskData(iterations: 4095), SASLAuthError.iterationCountTooLow(4095)),
+            (saltTaskData(iterations: 1_000_000_000), .iterationCountTooHigh(1_000_000_000)),
+            (saltTaskData(iterations: 600_001), .iterationCountTooHigh(600_001)),
             ("<task-data xmlns='urn:xmpp:sasl:2'/>", .malformedUpgradeTask)
         ])
         func `A salt that can't be used gets no hash`(taskData: String, error: SASLAuthError) async throws {

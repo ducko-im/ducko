@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Let a server that still stores only a SCRAM-SHA-1 password upgrade it to a stronger hash during sign-in (XEP-0480), so later sign-ins use SCRAM-SHA-256 or stronger. Ducko helps only on sign-ins bound to the encrypted connection, and only once the server has proved it knows the password
 
+### Changed
+
+- Explain why a server refused a sign-in partway through: a rejected password or unknown account reads "Incorrect username or password" and is handled like any wrong password, a busy server is tried again later, and a mismatch in the connection's security details warns that the connection may be tampered with. The CLI's JSON `authentication_failed` record carries the server's reason as `condition`
+
+### Security
+
+- Refuse a sign-in when the server asks Ducko to hash the password more than 600,000 times (1,400,000 for SCRAM-SHA-1), so a hostile server can't keep Ducko busy for hours
+
 ## [0.12.0] - 2026-11-15
 
 ### Added

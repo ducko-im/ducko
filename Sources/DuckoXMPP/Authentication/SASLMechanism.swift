@@ -19,7 +19,8 @@ enum SASLAuthError: Error, Equatable {
     case serverProofMissing
     case serverSignatureMismatch
     case serverFailure(condition: String, text: String?)
-    /// The server ends SCRAM with an RFC 5802 `e=` error value, which only the debug log shows.
+    /// The server ends SCRAM with an RFC 5802 §7 `server-error-value`. An unrecognized value reads as `other-error`,
+    /// and the raw value reaches `AuthenticationFailure.serverCondition`.
     case scramServerError(String)
     /// A reply arrives before sign-in starts, or a SCRAM step arrives out of order.
     case unexpectedReply
@@ -28,6 +29,9 @@ enum SASLAuthError: Error, Equatable {
     case accountAddressMissing
     case unrequestedResume
     case iterationCountTooLow(Int)
+    /// The server asks for more PBKDF2 iterations than this client derives a key with, which RFC 5802 §9 warns can
+    /// tie up the client.
+    case iterationCountTooHigh(Int)
     /// `-PLUS` is offered over SASL2 without any channel-binding type listed (XEP-0440 rule 4).
     case channelBindingTypesMissing
     /// Channel-binding types are listed without any `-PLUS` mechanism (XEP-0440 rule 5).
@@ -58,12 +62,13 @@ enum SASLAuthError: Error, Equatable {
         case .serverSignatureMismatch: "The server could not prove it knows the password"
         case let .serverFailure(condition, text):
             if let text, !text.allSatisfy(\.isWhitespace) { text } else { Condition(rawValue: condition)?.displayText ?? "The server refused the sign-in" }
-        case .scramServerError: "The server refused the sign-in"
+        case let .scramServerError(value): SCRAMErrorValue(serverValue: value).displayText
         case .unexpectedReply: "The server sent a sign-in reply out of order"
         case .unknownReply: "The server sent an unknown sign-in reply"
         case .accountAddressMissing: "The server's sign-in confirmation has no valid account address"
         case .unrequestedResume: "The server resumed a session that was not requested"
         case let .iterationCountTooLow(count): "The server's password hashing is too weak (\(count) iterations)"
+        case let .iterationCountTooHigh(count): "The server asks for more password hashing than this client allows (\(count) iterations)"
         case .channelBindingTypesMissing:
             "The server's sign-in options are missing required security information, which can mean the connection is being tampered with"
         case .channelBindingMechanismMissing:
@@ -117,6 +122,51 @@ enum SASLAuthError: Error, Equatable {
             case .mechanismTooWeak: "The server requires a stronger authentication mechanism"
             case .notAuthorized: "Incorrect username or password"
             case .temporaryAuthFailure: "Temporary server failure, try again later"
+            }
+        }
+    }
+
+    /// SCRAM server error values per RFC 5802 §7.
+    enum SCRAMErrorValue: String {
+        case invalidEncoding = "invalid-encoding"
+        case extensionsNotSupported = "extensions-not-supported"
+        case invalidProof = "invalid-proof"
+        case channelBindingsDontMatch = "channel-bindings-dont-match"
+        case serverDoesSupportChannelBinding = "server-does-support-channel-binding"
+        case channelBindingNotSupported = "channel-binding-not-supported"
+        case unsupportedChannelBindingType = "unsupported-channel-binding-type"
+        case unknownUser = "unknown-user"
+        case invalidUsernameEncoding = "invalid-username-encoding"
+        case noResources = "no-resources"
+        case otherError = "other-error"
+
+        /// Reads an unrecognized value as `other-error`, as RFC 5802 §7 says.
+        init(serverValue: String) {
+            self = Self(rawValue: serverValue) ?? .otherError
+        }
+
+        /// The SASL condition (RFC 6120 §6.5) that means the same, if any.
+        var condition: Condition? {
+            switch self {
+            case .invalidProof, .unknownUser: .notAuthorized
+            case .noResources: .temporaryAuthFailure
+            case .invalidEncoding, .invalidUsernameEncoding: .malformedRequest
+            case .extensionsNotSupported, .channelBindingsDontMatch, .serverDoesSupportChannelBinding, .channelBindingNotSupported,
+                 .unsupportedChannelBindingType, .otherError: nil
+            }
+        }
+
+        var displayText: String {
+            switch self {
+            case .invalidProof, .unknownUser, .noResources, .invalidEncoding, .invalidUsernameEncoding, .otherError:
+                condition?.displayText ?? "The server refused the sign-in"
+            case .extensionsNotSupported: "The server does not support a required sign-in extension"
+            case .channelBindingNotSupported, .unsupportedChannelBindingType:
+                "The server does not support the sign-in protection this client used"
+            case .channelBindingsDontMatch:
+                "The server saw different connection security details than this client sent, which can mean the connection is being tampered with"
+            case .serverDoesSupportChannelBinding:
+                "The server supports sign-in protection that its sign-in options did not offer, which can mean the connection is being tampered with"
             }
         }
     }

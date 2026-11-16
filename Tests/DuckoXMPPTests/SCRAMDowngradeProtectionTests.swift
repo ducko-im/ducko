@@ -24,12 +24,11 @@ private struct SignInRun {
     let error: (any Error)?
 }
 
-/// Signs in on `mock` over SASL1 or SASL2 against `server`, offering `features`. A sign-in the server accepts then fails,
-/// so every connect ends once the server has answered. Over SASL1 it fails at binding, and over SASL2 at its success,
-/// which names no session.
-private func signIn(
+/// Starts a sign-in on `mock` over SASL1 or SASL2, offering `features`, and answers the client's first sign-in element
+/// with `server`'s challenge. Returns the connect and that first element.
+private func challenge(
     _ client: XMPPClient, on mock: MockTransport, server: inout SCRAMTestServer, features: String, sasl2: Bool
-) async throws -> SignInRun {
+) async throws -> (connect: Task<Void, any Error>, start: String) {
     let connect = Task {
         if sasl2 {
             try await client.connectWithTLS(host: "example.com", port: 5223)
@@ -44,6 +43,16 @@ private func signIn(
     let first = try server.serverFirst(answering: #require(SCRAMTestServer.payload(in: start)))
     let namespace = sasl2 ? XMPPNamespaces.sasl2 : saslNamespace
     await mock.simulateReceive("<challenge xmlns='\(namespace)'>\(first)</challenge>")
+    return (connect, start)
+}
+
+/// Signs in on `mock` over SASL1 or SASL2 against `server`, offering `features`. A sign-in the server accepts then fails,
+/// so every connect ends once the server has answered. Over SASL1 it fails at binding, and over SASL2 at its success,
+/// which names no session.
+private func signIn(
+    _ client: XMPPClient, on mock: MockTransport, server: inout SCRAMTestServer, features: String, sasl2: Bool
+) async throws -> SignInRun {
+    let (connect, start) = try await challenge(client, on: mock, server: &server, features: features, sasl2: sasl2)
     let response = await nextSent(mock, before: connect, matching: { $0.hasPrefix("<response ") })
     if let response {
         let verifier = try server.serverFinal(answering: #require(SCRAMTestServer.payload(in: response)))
@@ -273,6 +282,26 @@ enum SCRAMDowngradeProtectionTests {
 
             #expect(failureMessage(run.error) == SASLAuthError.serverSignatureMismatch.displayText)
             #expect(await !sent(mock, "<abort"))
+        }
+    }
+
+    struct IterationCap {
+        /// Deriving a key with this count takes over half an hour, so a client that hashes before refusing overruns
+        /// `boundedFailure`'s bound. `signIn` waits for a `<response>` until the connect ends, so this test stops at
+        /// `challenge`.
+        private static let iterations = 1_000_000_000
+
+        @Test(arguments: [false, true])
+        func `A server-first asking for more than the cap fails before the proof goes out`(sasl2: Bool) async throws {
+            let mock = MockTransport()
+            let client = makeClient(mock)
+            var server = SCRAMTestServer(password: "pencil", mechanism: "SCRAM-SHA-1", iterations: Self.iterations)
+
+            let (connect, _) = try await challenge(client, on: mock, server: &server, features: offer(["SCRAM-SHA-1"]), sasl2: sasl2)
+
+            #expect(try await failureMessage(boundedFailure(of: connect)) == SASLAuthError.iterationCountTooHigh(Self.iterations).displayText)
+            #expect(await !sent(mock, "<response"))
+            #expect(await sent(mock, "<abort") == sasl2)
         }
     }
 

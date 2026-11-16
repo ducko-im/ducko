@@ -11,7 +11,7 @@ enum ChannelBindingMode {
 }
 
 /// Generic SCRAM state machine per RFC 5802.
-struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
+struct SCRAMState<H: SCRAMHashFunction>: SCRAMSession where H.Digest: Sendable {
     private var phase: Phase = .initial
     private var password = ""
     private var clientNonce = ""
@@ -69,8 +69,8 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
             return .failure(error)
         }
 
-        guard iterations >= scramMinimumIterationCount else {
-            return .failure(.iterationCountTooLow(iterations))
+        if let error = H.scramHash.iterationCountError(iterations) {
+            return .failure(error)
         }
 
         guard let salt = Base64.decode(saltB64) else {

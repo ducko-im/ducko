@@ -325,3 +325,53 @@ struct SCRAMSHA256Tests {
         }
     }
 }
+
+// MARK: - SCRAM Iteration Bounds Tests (RFC 5802 §5.1, §9)
+
+struct SCRAMIterationBoundsTests {
+    @Test(arguments: [
+        (SCRAMMechanismName.sha3_512, 600_000), (SCRAMMechanismName.sha512, 600_000),
+        (SCRAMMechanismName.sha256, 600_000), (SCRAMMechanismName.sha1, 1_400_000)
+    ])
+    func `Each mechanism accepts 4096 through its own hash's cap`(mechanism: String, cap: Int) throws {
+        // The salt isn't base64, so a count within the bounds fails on the salt before any key is derived.
+        let cases: [(Int, SASLAuthError)] = [
+            (4095, .iterationCountTooLow(4095)), (4096, .invalidBase64), (cap, .invalidBase64), (cap + 1, .iterationCountTooHigh(cap + 1))
+        ]
+        for (iterations, error) in cases {
+            var session = try #require(makeSCRAMSession(mechanism, channelBinding: .none, downgradeContext: .empty))
+            let nonce = try #require(session.clientFirstMessage(authcid: "user", password: "pencil").components(separatedBy: ",r=").last)
+            let result = session.clientFinalMessage(serverFirstMessage: "r=\(nonce)srv,s=!!!,i=\(iterations)")
+            #expect(throws: error) { try result.get() }
+        }
+    }
+}
+
+// MARK: - SCRAM Server Error Tests (RFC 5802 §7)
+
+struct SCRAMServerErrorTests {
+    private static let tampering = ", which can mean the connection is being tampered with"
+
+    @Test(arguments: [
+        ("invalid-proof", AuthenticationFailure.Kind.credentialsRejected, "Incorrect username or password"),
+        ("unknown-user", .credentialsRejected, "Incorrect username or password"),
+        ("no-resources", .temporary, "Temporary server failure, try again later"),
+        ("invalid-encoding", .other, "The server rejected a malformed authentication request"),
+        ("invalid-username-encoding", .other, "The server rejected a malformed authentication request"),
+        ("extensions-not-supported", .other, "The server does not support a required sign-in extension"),
+        ("channel-binding-not-supported", .other, "The server does not support the sign-in protection this client used"),
+        ("unsupported-channel-binding-type", .other, "The server does not support the sign-in protection this client used"),
+        ("channel-bindings-dont-match", .other, "The server saw different connection security details than this client sent" + tampering),
+        ("server-does-support-channel-binding", .other, "The server supports sign-in protection that its sign-in options did not offer" + tampering),
+        ("other-error", .other, "The server refused the sign-in"),
+        ("x-unknown", .other, "The server refused the sign-in")
+    ])
+    func `Each server error value has its kind and reason, and keeps the raw value`(
+        value: String, kind: AuthenticationFailure.Kind, message: String
+    ) {
+        let failure = AuthenticationFailure(SASLAuthError.scramServerError(value))
+        #expect(failure.kind == kind)
+        #expect(failure.message == message)
+        #expect(failure.serverCondition == value)
+    }
+}

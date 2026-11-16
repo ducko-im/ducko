@@ -166,7 +166,7 @@ Add a new XMPP account. By default it connects to verify credentials and saves t
 
 When authentication fails, the command exits 1 and prints `Error: Authentication failed: <reason>`, where the reason is readable text such as "Incorrect username or password".
 
-`account add` has no `--output` option, so to observe that failure as JSON, add the account with `--no-connect` and run a connecting subcommand with `--output json`, such as `profile`. It uses the first account unless `--account <uuid>` is passed. It emits `{"account":"<uuid>","condition":"not-authorized","kind":"credentials_rejected","message":"<reason>","type":"authentication_failed"}`. `kind` is `credentials_rejected` for a rejected password, `temporary` for a server failure that can clear by itself, and `other` for anything else. `condition` is the server's raw SASL condition and is absent when the server sent none.
+`account add` has no `--output` option, so to observe that failure as JSON, add the account with `--no-connect` and run a connecting subcommand with `--output json`, such as `profile`. It uses the first account unless `--account <uuid>` is passed. It emits `{"account":"<uuid>","condition":"not-authorized","kind":"credentials_rejected","message":"<reason>","type":"authentication_failed"}`. `kind` is `credentials_rejected` for a rejected password, `temporary` for a server failure that can clear by itself, and `other` for anything else. `condition` is the server's raw failure condition, either a SASL `<failure>` condition such as `not-authorized` or a SCRAM `e=` value such as `invalid-proof`. It is absent when the server sent neither.
 
 ```
 ducko account add alice@example.com

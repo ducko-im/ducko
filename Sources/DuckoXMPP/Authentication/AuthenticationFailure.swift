@@ -10,7 +10,8 @@ public struct AuthenticationFailure: Sendable, Equatable {
 
     public let kind: Kind
     public let message: String
-    /// The raw SASL failure condition, such as `not-authorized`.
+    /// The server's raw failure condition: a SASL `<failure>` condition such as `not-authorized`, or a SCRAM `e=` value
+    /// such as `invalid-proof`.
     public let serverCondition: String?
 
     public init(kind: Kind, message: String, serverCondition: String? = nil) {
@@ -21,8 +22,19 @@ public struct AuthenticationFailure: Sendable, Equatable {
 
     /// Classified from the condition alone, never from the server's text.
     init(_ error: SASLAuthError) {
-        let condition: String? = if case let .serverFailure(condition, _) = error { condition } else { nil }
-        let kind: Kind = switch condition.flatMap(SASLAuthError.Condition.init(rawValue:)) {
+        let condition: String?
+        let saslCondition: SASLAuthError.Condition?
+        if case let .serverFailure(failureCondition, _) = error {
+            condition = failureCondition
+            saslCondition = SASLAuthError.Condition(rawValue: failureCondition)
+        } else if case let .scramServerError(value) = error {
+            condition = value
+            saslCondition = SASLAuthError.SCRAMErrorValue(serverValue: value).condition
+        } else {
+            condition = nil
+            saslCondition = nil
+        }
+        let kind: Kind = switch saslCondition {
         case .notAuthorized: .credentialsRejected
         case .temporaryAuthFailure: .temporary
         case .aborted, .accountDisabled, .credentialsExpired, .encryptionRequired, .incorrectEncoding, .invalidAuthzid,

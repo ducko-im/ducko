@@ -12,10 +12,6 @@ enum SCRAMMechanismName {
     static let sha1Plus = "SCRAM-SHA-1-PLUS"
 }
 
-/// The lowest PBKDF2 iteration count this client accepts, for every hash and for an upgrade's salt. RFC 5802 §5.1 asks
-/// servers for at least 4096.
-let scramMinimumIterationCount = 4096
-
 /// One SCRAM exchange (RFC 5802), whatever hash its mechanism uses.
 protocol SCRAMSession: Sendable {
     mutating func clientFirstMessage(authcid: String, password: String) -> String
@@ -55,6 +51,27 @@ enum SCRAMHash: CaseIterable {
         }
     }
 
+    /// The lowest PBKDF2 iteration count this client accepts, for every hash. RFC 5802 §5.1 asks servers for at least
+    /// 4096.
+    static let minimumIterationCount = 4096
+
+    /// The highest PBKDF2 iteration count this client derives a key with, so a server can't keep a sign-in hashing for
+    /// hours (RFC 5802 §9). SHA-1's and SHA-256's are the work factors OWASP's Password Storage Cheat Sheet recommends
+    /// for PBKDF2. SHA-512 and SHA3-512 take SHA-256's because some servers use one count for every hash, so a lower
+    /// cap would refuse the hash this client prefers. At that count they still hash for less time than SHA-1 at its cap.
+    var maximumIterationCount: Int {
+        switch self {
+        case .sha3_512, .sha512, .sha256: 600_000
+        case .sha1: 1_400_000
+        }
+    }
+
+    func iterationCountError(_ iterations: Int) -> SASLAuthError? {
+        if iterations < Self.minimumIterationCount { return .iterationCountTooLow(iterations) }
+        if iterations > maximumIterationCount { return .iterationCountTooHigh(iterations) }
+        return nil
+    }
+
     /// The RFC 5802 SaltedPassword for this hash.
     func saltedPassword(password: [UInt8], salt: [UInt8], iterations: Int) -> [UInt8] {
         switch self {
@@ -63,6 +80,35 @@ enum SCRAMHash: CaseIterable {
         case .sha256: pbkdf2(SHA256.self, password: password, salt: salt, iterations: iterations)
         case .sha1: pbkdf2(Insecure.SHA1.self, password: password, salt: salt, iterations: iterations)
         }
+    }
+}
+
+/// A CryptoKit hash a SCRAM mechanism uses, which names its ``SCRAMHash``.
+protocol SCRAMHashFunction: HashFunction {
+    static var scramHash: SCRAMHash { get }
+}
+
+extension SHA3_512: SCRAMHashFunction {
+    static var scramHash: SCRAMHash {
+        .sha3_512
+    }
+}
+
+extension SHA512: SCRAMHashFunction {
+    static var scramHash: SCRAMHash {
+        .sha512
+    }
+}
+
+extension SHA256: SCRAMHashFunction {
+    static var scramHash: SCRAMHash {
+        .sha256
+    }
+}
+
+extension Insecure.SHA1: SCRAMHashFunction {
+    static var scramHash: SCRAMHash {
+        .sha1
     }
 }
 

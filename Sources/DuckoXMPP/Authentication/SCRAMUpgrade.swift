@@ -20,16 +20,17 @@ func selectSCRAMUpgrade(offered: Set<String>, selectedMechanism: String, channel
     return SCRAMHash.allCases.prefix { $0 != selected }.first { offered.contains($0.upgradeTaskName) }
 }
 
-/// The salt and iteration count of the server's `<task-data>` (XEP-0480 §3), or why they can't be used.
-func parseSCRAMUpgradeSalt(_ taskData: XMLElement) -> Result<(salt: [UInt8], iterations: Int), SASLAuthError> {
+/// The salt and iteration count of the server's `<task-data>` (XEP-0480 §3), or why they can't be used to derive the
+/// SaltedPassword for `hash`.
+func parseSCRAMUpgradeSalt(_ taskData: XMLElement, hash: SCRAMHash) -> Result<(salt: [UInt8], iterations: Int), SASLAuthError> {
     guard let saltElement = taskData.child(named: "salt", namespace: XMPPNamespaces.scramUpgrade),
           let encoded = saltElement.textContent,
           let iterations = saltElement.attribute("iterations").flatMap({ Int($0) })
     else {
         return .failure(.malformedUpgradeTask)
     }
-    guard iterations >= scramMinimumIterationCount else {
-        return .failure(.iterationCountTooLow(iterations))
+    if let error = hash.iterationCountError(iterations) {
+        return .failure(error)
     }
     guard let salt = Base64.decode(encoded) else {
         return .failure(.invalidBase64)

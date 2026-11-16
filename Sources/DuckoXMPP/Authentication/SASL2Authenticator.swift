@@ -264,7 +264,7 @@ struct SASL2Authenticator {
         guard case let .started(hash, password) = upgrade else {
             return .failure(.unexpectedReply)
         }
-        switch parseSCRAMUpgradeSalt(stanza) {
+        switch parseSCRAMUpgradeSalt(stanza, hash: hash) {
         case let .success(parsed):
             upgrade = .notRequested
             let saltedPassword = hash.saltedPassword(password: Array(password.utf8), salt: parsed.salt, iterations: parsed.iterations)

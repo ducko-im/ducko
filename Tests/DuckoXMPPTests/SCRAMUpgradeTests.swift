@@ -33,7 +33,7 @@ enum SCRAMUpgradeTests {
         func `The salt and iteration count are read, with whitespace around the base64`() throws {
             let parsed = try parseSCRAMUpgradeSalt(taskData(
                 "<salt xmlns='urn:xmpp:scram-upgrade:0' iterations='4096'>\n  \(capturedUpgradeSalt)\n</salt>"
-            )).get()
+            ), hash: .sha256).get()
             #expect(parsed.salt == Base64.decode(capturedUpgradeSalt))
             #expect(parsed.iterations == 4096)
         }
@@ -45,11 +45,12 @@ enum SCRAMUpgradeTests {
             ("<salt xmlns='urn:xmpp:scram-upgrade:0'>\(capturedUpgradeSalt)</salt>", .malformedUpgradeTask),
             ("<salt xmlns='urn:xmpp:scram-upgrade:0' iterations='many'>\(capturedUpgradeSalt)</salt>", .malformedUpgradeTask),
             ("<salt xmlns='urn:xmpp:scram-upgrade:0' iterations='4095'>\(capturedUpgradeSalt)</salt>", .iterationCountTooLow(4095)),
+            ("<salt xmlns='urn:xmpp:scram-upgrade:0' iterations='600001'>\(capturedUpgradeSalt)</salt>", .iterationCountTooHigh(600_001)),
             ("<salt xmlns='urn:xmpp:scram-upgrade:0' iterations='4096'>not base64!</salt>", .invalidBase64)
         ])
         func `A salt that can't be used fails`(salt: String, error: SASLAuthError) throws {
             let element = try taskData(salt)
-            #expect(throws: error) { try parseSCRAMUpgradeSalt(element).get() }
+            #expect(throws: error) { try parseSCRAMUpgradeSalt(element, hash: .sha256).get() }
         }
     }
 

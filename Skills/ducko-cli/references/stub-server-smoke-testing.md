@@ -31,7 +31,7 @@ A rejection only means something when a control that differs in the dimension un
 
 In place of a fresh stub per scenario, one stub that serves repeated connections on one port can pick each sign-in scenario by the `to` domain of the client's stream header, with one account per domain (`user@<scenario>.test`). Add each with `--host 127.0.0.1 --port <port> --no-connect`, then `account set <jid> --no-require-tls`, adding `--allow-plain` for a PLAIN scenario. Offer only the mechanism under test in `<mechanisms>`, without `<starttls>`.
 
-A SCRAM scenario decodes the client-first-message from `<auth>` and starts the server nonce with its `r=` value, with `i=` at least 4096. Otherwise the client fails on the nonce or iteration check before reaching the case under test.
+A SCRAM scenario decodes the client-first-message from `<auth>` and starts the server nonce with its `r=` value. Its `i=` is at least 4096 and at most the hash's cap, which is 1,400,000 for SHA-1 and 600,000 for SHA-256, SHA-512 and SHA3-512. Otherwise the client fails on the nonce or iteration check before reaching the case under test.
 
 Drive each account with `profile --account <uuid> --output json`, which prints the `authentication_failed` record. A server `<failure><not-authorized/></failure>` is the control and reads "Incorrect username or password". To see the raw error behind a message, run `defaults write im.ducko.dev.<unique> advancedLogLevel debug` and read the profile's `ducko.log` for `The sign-in failed with …`.
 
