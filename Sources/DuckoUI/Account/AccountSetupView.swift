@@ -16,10 +16,9 @@ struct AccountSetupView: View {
     @State private var errorMessage: String?
     /// Whether the login's first sign-in was refused because the server offers only PLAIN.
     @State private var isPLAINRefused = false
-    /// A registration whose server asked for more than the username, password and email, holding its connection open.
-    @State private var pendingRegistration: PendingRegistration?
-    /// The server's form for `pendingRegistration`, as the user fills it in.
-    @State private var serverForm: RegistrationFormInfo?
+    /// A registration whose server asked for more than the username, password and email, shown in a sheet while it
+    /// holds its connection open.
+    @State private var pendingRegistration: PendingRegistrationSheet.Item?
 
     private enum SetupMode: String, CaseIterable {
         case importAdium = "Import"
@@ -69,11 +68,7 @@ struct AccountSetupView: View {
                     case .login:
                         loginFields
                     case .register:
-                        if let serverForm {
-                            serverFormFields(serverFormBinding(showing: serverForm))
-                        } else {
-                            registerFields
-                        }
+                        registerFields
                     }
                 }
 
@@ -92,13 +87,6 @@ struct AccountSetupView: View {
                     }
 
                     HStack {
-                        if serverForm != nil {
-                            Button("Cancel") {
-                                cancelPendingRegistration()
-                            }
-                            .accessibilityIdentifier("register-cancel-button")
-                        }
-
                         Button {
                             Task {
                                 switch mode {
@@ -128,15 +116,17 @@ struct AccountSetupView: View {
         }
         .padding(40)
         .frame(minWidth: 400, minHeight: 300)
-        .onChange(of: mode) { cancelPendingRegistration() }
-        .onDisappear { cancelPendingRegistration() }
+        .sheet(item: $pendingRegistration) { item in
+            PendingRegistrationSheet(pending: item.pending) { failure in
+                errorMessage = failure
+            }
+        }
     }
 
     /// Stable height reserved for the mode-dependent content below the picker.
     /// Sized to comfortably fit the tallest fixed layout (Register: four fields
     /// plus the action button and an error line) so toggling between modes does
-    /// not move anything above it. The server's registration form fills the
-    /// same space and whatever a taller window adds, and scrolls within it.
+    /// not move anything above it.
     private let reservedContentHeight: CGFloat = 220
 
     // MARK: - Fields
@@ -176,25 +166,6 @@ struct AccountSetupView: View {
             .accessibilityIdentifier("register-email-field")
     }
 
-    /// The server's fields, filled in with what was typed before.
-    private func serverFormFields(_ form: Binding<RegistrationFormInfo>) -> some View {
-        Form {
-            RegistrationFormFields(form: form)
-        }
-        .formStyle(.grouped)
-        .accessibilityIdentifier("register-server-form")
-    }
-
-    /// Binds the server's form, falling back to `shown` once the registration has ended. The fields can still write
-    /// while they leave the window, so force-unwrapping `serverForm` would crash. Edits made then are dropped.
-    private func serverFormBinding(showing shown: RegistrationFormInfo) -> Binding<RegistrationFormInfo> {
-        Binding {
-            serverForm ?? shown
-        } set: { form in
-            if serverForm != nil { serverForm = form }
-        }
-    }
-
     // MARK: - Computed
 
     private var subtitleText: String {
@@ -202,9 +173,7 @@ struct AccountSetupView: View {
         case .importAdium:
             "Import your accounts and chat history from Adium."
         case .login, .register:
-            serverForm == nil
-                ? "Enter your XMPP account details to get started."
-                : "The server asks for a few more details."
+            "Enter your XMPP account details to get started."
         }
     }
 
@@ -216,7 +185,6 @@ struct AccountSetupView: View {
         case .login:
             return jidString.isEmpty || password.isEmpty
         case .register:
-            if let serverForm { return !serverForm.canSubmit }
             return serverDomain.isEmpty || username.isEmpty || password.isEmpty
         }
     }
@@ -242,10 +210,6 @@ struct AccountSetupView: View {
         errorMessage = nil
         defer { isConnecting = false }
 
-        if let pendingRegistration, let serverForm {
-            await submit(serverForm, to: pendingRegistration)
-            return
-        }
         do {
             let outcome = try await environment.accountService.registerAccount(
                 domain: serverDomain,
@@ -257,29 +221,10 @@ struct AccountSetupView: View {
             case .registered:
                 break
             case let .needsMoreFields(pending):
-                pendingRegistration = pending
-                serverForm = pending.form
+                pendingRegistration = PendingRegistrationSheet.Item(pending: pending)
             }
         } catch {
             errorMessage = error.localizedDescription
         }
-    }
-
-    /// Whether it succeeds or fails, the registration's connection is closed, so a failure returns to the server,
-    /// username, password and email fields.
-    private func submit(_ form: RegistrationFormInfo, to pending: PendingRegistration) async {
-        do {
-            _ = try await pending.submit(form)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        cancelPendingRegistration()
-    }
-
-    private func cancelPendingRegistration() {
-        guard let pendingRegistration else { return }
-        self.pendingRegistration = nil
-        serverForm = nil
-        Task { await pendingRegistration.cancel() }
     }
 }

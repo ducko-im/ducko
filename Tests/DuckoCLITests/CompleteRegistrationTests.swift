@@ -14,8 +14,11 @@ struct CompleteRegistrationTests {
             formType: .legacy, instructions: nil, isRegistered: false, legacyFields: [], redirectURL: "https://example.com/register"
         )
         let pending = PendingRegistration(
-            form: RegistrationFormInfo(from: form), session: session, typedUsername: "juliet", typedPassword: "secret"
-        ) { _, _ in
+            form: RegistrationFormInfo(from: form), session: session, typedUsername: "juliet", typedPassword: "secret",
+            rejection: nil
+        ) { _, error in
+            throw error
+        } finish: { _, _ in
             Issue.record("A redirected registration signed in")
             return UUID()
         }
@@ -24,19 +27,65 @@ struct CompleteRegistrationTests {
 
         #expect(await server.isConnected == false)
     }
+
+    @Test(.timeLimit(.minutes(1)))
+    func `A registration whose automatic submission was refused gets two more submissions`() async throws {
+        let form = await RegistrationFormInfo(from: RegistrationModule.RegistrationForm(
+            formType: .dataForm, instructions: nil, isRegistered: false,
+            dataForm: DataForm(fields: [
+                DataFormField(variable: "challenge", type: "hidden", values: ["123"]),
+                DataFormField(variable: "from", type: "hidden", values: ["example.com"]),
+                DataFormField(variable: "SHA-256", type: "text-single", label: "a1", isRequired: true)
+            ])
+        )).answeringProofOfWork(prefixFallback: "example.com", allowsSkippingImage: true)
+        let reopenings = Counter()
+
+        @MainActor func refusedRegistration(rejection: any Error) async throws -> PendingRegistration {
+            let session = try await RegistrationSession.open(
+                domain: "example.com", host: "example.com", port: 5222, transport: RegistrationStreamServer(refusesRegistration: true)
+            )
+            return PendingRegistration(
+                form: form, session: session, typedUsername: "juliet", typedPassword: "secret", rejection: rejection
+            ) { _, error in
+                await reopenings.increment()
+                return try await refusedRegistration(rejection: error)
+            } finish: { _, _ in
+                Issue.record("A refused registration signed in")
+                return UUID()
+            }
+        }
+
+        let pending = try await refusedRegistration(rejection: XMPPRegistrationClient.RegistrationClientError.registrationFailed("Wrong answer"))
+
+        let error = await #expect(throws: (any Error).self) { try await completeRegistration(pending, formatter: PlainFormatter()) }
+        #expect(error.map(AccountService.isRegistrationRejected) == true)
+        #expect(await reopenings.value == 1)
+    }
 }
 
-/// A server's side of a registration stream: it offers STARTTLS, proceeds, and answers the stream's close.
+private actor Counter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
+    }
+}
+
+/// A server's side of a registration stream: it offers STARTTLS, proceeds, answers the stream's close, and, when told
+/// to, refuses a submitted registration.
 private actor RegistrationStreamServer: XMPPTransport {
     nonisolated let receivedData: AsyncStream<[UInt8]>
     private var received: AsyncStream<[UInt8]>.Continuation
     private var openings = 0
     private(set) var isConnected = false
+    /// Whether the server answers a submitted registration with an error.
+    private let refusesRegistration: Bool
 
-    init() {
+    init(refusesRegistration: Bool = false) {
         let (stream, continuation) = AsyncStream.makeStream(of: [UInt8].self)
         self.receivedData = stream
         self.received = continuation
+        self.refusesRegistration = refusesRegistration
     }
 
     func connect(host _: String, port _: UInt16) {
@@ -68,6 +117,8 @@ private actor RegistrationStreamServer: XMPPTransport {
             reply("<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
         } else if sent.hasPrefix("</stream:stream>") {
             reply("</stream:stream>")
+        } else if refusesRegistration, sent.contains("type=\"set\""), let id = sent.firstMatch(of: /id="([^"]+)"/)?.1 {
+            reply("<iq type='error' id='\(id)'><error type='modify'><not-acceptable xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>")
         }
     }
 

@@ -106,7 +106,7 @@ extension DuckoIntegrationTests.CLILayer {
                 #expect(output.terminationReason == .exit)
 
                 // On any non-`result` response (including registration-disabled), the pre-auth
-                // `retrieveForm` throws the generic `unexpectedResponse`, which `CheckRegistration.run`
+                // `fetchForm` throws the generic `unexpectedResponse`, which `CheckRegistration.run`
                 // lets propagate to ArgumentParser → an "Error:" stderr prefix regardless of --output.
                 let formAnchor = format == "json" ? "registration_form" : "Registration Form"
                 let succeeded = output.exitCode == 0 && output.stdout.contains(formAnchor)

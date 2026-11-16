@@ -1,8 +1,8 @@
 import Darwin
 import Dispatch
 
-/// Process-global SIGINT/SIGTERM trap that bridges signal delivery into an `AsyncStream<Int32>` yielding the
-/// signal number (so the consumer can distinguish `130` from `143`).
+/// Process-global trap of the terminating signals (`trappableTerminatingSignals()`) that bridges signal delivery into
+/// an `AsyncStream<Int32>` yielding the signal number (so the consumer can exit with `130`, `143` or `129`).
 ///
 /// Intended only for the single foreground `presence` hold — there is no nested use. The returned stream is
 /// **single-consumer**: the hold's arbiter is its sole reader for the whole lifetime; do not spin up a second
@@ -14,7 +14,7 @@ struct InterruptMonitor {
     static func install() -> InterruptMonitor {
         let (stream, continuation) = AsyncStream<Int32>.makeStream()
         let queue = DispatchQueue(label: "im.ducko.cli.interrupt-monitor")
-        let sources = [SIGINT, SIGTERM].map { signo -> any DispatchSourceProtocol in
+        let sources = trappableTerminatingSignals().map { signo -> any DispatchSourceProtocol in
             // Ignore the default disposition so the signal feeds the dispatch source instead of terminating the
             // process (matches CLIBootstrap's SIGPIPE handling).
             signal(signo, SIG_IGN)

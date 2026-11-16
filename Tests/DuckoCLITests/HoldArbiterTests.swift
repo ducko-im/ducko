@@ -69,6 +69,15 @@ struct HoldArbiterTests {
         #expect(await arbiter.recordSignal(SIGTERM) == true)
     }
 
+    @Test func `the repeat SIGHUP of a closing terminal lets teardown finish, and Ctrl-C still hard-exits`() async {
+        let arbiter = HoldArbiter()
+        _ = await arbiter.recordSignal(SIGHUP)
+        await arbiter.beginTeardown()
+
+        #expect(await arbiter.recordSignal(SIGHUP) == false)
+        #expect(await arbiter.recordSignal(SIGINT) == true)
+    }
+
     @Test func `only the first outcome is yielded`() async {
         let arbiter = HoldArbiter()
         _ = await arbiter.recordSignal(SIGINT)

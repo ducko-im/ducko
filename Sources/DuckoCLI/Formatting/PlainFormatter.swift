@@ -434,7 +434,7 @@ struct PlainFormatter: CLIFormatter {
         let kindLabel = form.formKind == .dataForm ? "Data Form" : "Legacy"
         lines.append("Registration Form (\(kindLabel))")
         lines.append("Status: \(form.isRegistered ? "Registered" : "Not registered")")
-        if let instructions = form.instructions, !instructions.isEmpty {
+        if let instructions = form.shownInstructions {
             lines.append("Instructions: \(instructions)")
         }
         if let redirectURL = form.redirectURL {
@@ -450,7 +450,22 @@ struct PlainFormatter: CLIFormatter {
         case .dataForm:
             lines.append(formatDataForm(form.dataForm))
         }
+        if let captcha = form.captcha {
+            lines.append(contentsOf: captchaLines(captcha, in: form))
+        }
         return lines.joined(separator: "\n")
+    }
+
+    private func captchaLines(_ captcha: RegistrationCaptcha, in form: RegistrationFormInfo) -> [String] {
+        var lines = ["CAPTCHA" + (captcha.answersRequired.map { " (answer \($0))" } ?? "") + ":"]
+        for challenge in captcha.challenges {
+            let notes = captchaChallengeNotes(challenge)
+            lines.append("  \(captchaChallengeLabel(challenge, in: form))\(notes.isEmpty ? "" : ": " + notes.joined(separator: "; "))")
+        }
+        if let fallbackText = captcha.fallbackText { lines.append("  \(fallbackText)") }
+        if let fallback = captcha.fallbackLink?.absoluteString ?? captcha.fallbackURLText { lines.append("  \(captcha.fallbackLabel): \(fallback)") }
+        if captcha.isUnanswerable { lines.append("  \(captchaUnanswerableNote)") }
+        return lines
     }
 
     func formatSearchedChannel(_ channel: SearchedChannel) -> String {

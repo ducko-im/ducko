@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import DuckoXMPP
 
@@ -41,6 +42,42 @@ struct RegistrationModuleTests {
         let form = RegistrationModule.parseForm(query)
         #expect(form.redirectURL == "https://example.com/register")
         #expect(form.legacyFields.isEmpty)
+    }
+
+    @Test
+    func `A data form reply's inline Bits of Binary data is read`() throws {
+        let query = try stanza("""
+        <query xmlns='jabber:iq:register'><x xmlns='jabber:x:data' type='form'/>\
+        <data xmlns='urn:xmpp:bob' cid='sha1+abc@bob.xmpp.org' type='image/png'>iVBORw==</data></query>
+        """)
+
+        let form = RegistrationModule.parseForm(query)
+
+        #expect(form.bitsOfBinary == [BitsOfBinaryData(cid: "sha1+abc@bob.xmpp.org", type: "image/png", bytes: [0x89, 0x50, 0x4E, 0x47])])
+    }
+
+    @Test(arguments: [
+        "<data xmlns='urn:xmpp:bob' cid='a@bob.xmpp.org' type='image/png'>iVBO Rw==</data>",
+        "<data xmlns='urn:xmpp:bob' cid='a@bob.xmpp.org' type='image/png'>\(String(repeating: "A", count: BitsOfBinaryData.maxBytes / 3 * 4 + 8))</data>",
+        "<data xmlns='urn:xmpp:bob' type='image/png'>iVBORw==</data>",
+        "<data xmlns='urn:xmpp:other' cid='a@bob.xmpp.org' type='image/png'>iVBORw==</data>"
+    ])
+    func `Bits of Binary data that is malformed or over the cap is skipped`(data: String) throws {
+        let query = try stanza("<query xmlns='jabber:iq:register'><x xmlns='jabber:x:data' type='form'/>\(data)</query>")
+
+        #expect(RegistrationModule.parseForm(query).bitsOfBinary.isEmpty)
+    }
+
+    /// Both sizes encode to the longest text the cap lets through to decoding.
+    @Test(arguments: [(BitsOfBinaryData.maxBytes, true), (BitsOfBinaryData.maxBytes + 1, false)])
+    func `Bits of Binary data up to the cap is read, and one byte more is skipped`(byteCount: Int, isRead: Bool) throws {
+        let base64 = Data(count: byteCount).base64EncodedString()
+        let query = try stanza("""
+        <query xmlns='jabber:iq:register'><x xmlns='jabber:x:data' type='form'/>\
+        <data xmlns='urn:xmpp:bob' cid='a@bob.xmpp.org' type='image/png'>\(base64)</data></query>
+        """)
+
+        #expect(RegistrationModule.parseForm(query).bitsOfBinary.map(\.bytes.count) == (isRead ? [byteCount] : []))
     }
 
     @Test

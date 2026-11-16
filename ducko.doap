@@ -145,6 +145,13 @@
         </implements>
         <implements>
             <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0158.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Ducko answers CAPTCHAs only in registration forms: images sent with the form, text questions, and the SHA-256 proof of work up to five hex digits. On a form that requires only the image and the proof of work, the proof of work is answered in place of the image. An image hosted on the web opens in the browser. Challenges sent with a message or a room join are not answered, and audio and video challenges are not played</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0163.html"/>
                 <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
@@ -188,8 +195,22 @@
         </implements>
         <implements>
             <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0221.html"/>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Media is read in every form but shown only in registration forms</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0223.html"/>
                 <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0231.html"/>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">Ducko reads data sent inline in registration form replies. It does not ask for data it lacks, and holds none of its own to serve</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>

@@ -17,6 +17,8 @@ public struct RegistrationFormInfo: Sendable {
     /// Where the server sends the user to register instead.
     public let redirectURL: URL?
     public var dataForm: DataFormInfo
+    /// The form's CAPTCHA. Its proof of work and fallback page live here instead of among the form's fields.
+    public private(set) var captcha: RegistrationCaptcha?
 
     public init(from form: RegistrationModule.RegistrationForm) {
         self.formKind = form.formType == .dataForm ? .dataForm : .legacy
@@ -25,6 +27,50 @@ public struct RegistrationFormInfo: Sendable {
         self.legacyFields = form.legacyFields.map { RegistrationField(name: $0.name, value: $0.value) }
         self.redirectURL = form.redirectURL.flatMap(URL.init(string:))
         self.dataForm = DataFormInfo(from: form.dataForm)
+        self.captcha = RegistrationCaptcha(form: form.dataForm, bitsOfBinary: form.bitsOfBinary)
+        if captcha != nil {
+            let shownByCaptcha: Set = [
+                RegistrationCaptcha.proofOfWorkVariable, RegistrationCaptcha.fallbackTextVariable, RegistrationCaptcha.fallbackURLVariable
+            ]
+            dataForm.fields.removeAll { $0.variable.map(shownByCaptcha.contains) ?? false }
+        }
+    }
+
+    /// The form with its proof of work answered. When `allowsSkippingImage` and the answer replaces the image, the
+    /// image challenge's field goes too. The answer starts with the form's `from` JID, else `prefixFallback`, the JID
+    /// the form was fetched from.
+    public func answeringProofOfWork(prefixFallback: String, allowsSkippingImage: Bool) async -> RegistrationFormInfo {
+        guard var captcha else { return self }
+        let skipped = await captcha.answerProofOfWork(prefixFallback: prefixFallback, allowsSkippingImage: allowsSkippingImage)
+        var form = self
+        form.captcha = captcha
+        form.dataForm.fields.removeAll { $0.variable.map(skipped.contains) ?? false }
+        return form
+    }
+
+    /// This form with the values typed into `rejected` carried over, except every challenge's answer, which a fresh
+    /// form asks for again.
+    func carryingValues(from rejected: RegistrationFormInfo) -> RegistrationFormInfo {
+        var form = self
+        for index in form.legacyFields.indices {
+            if let value = rejected.legacyFields.first(where: { $0.name == form.legacyFields[index].name })?.value {
+                form.legacyFields[index].value = value
+            }
+        }
+        for index in form.dataForm.fields.indices where form.dataForm.fields[index].isUserEditable {
+            guard let variable = form.dataForm.fields[index].variable, !RegistrationCaptcha.challengeVariables.contains(variable),
+                  let typed = rejected.dataForm.fields.first(where: { $0.variable == variable && $0.isUserEditable })
+            else { continue }
+            form.dataForm.fields[index].values = typed.values
+        }
+        return form
+    }
+
+    /// The instructions to show: a legacy form's. A data form carries its own, and the reply's are for clients that
+    /// can't fill in the data form (XEP-0077 §6).
+    public var shownInstructions: String? {
+        guard formKind == .legacy, let instructions, !instructions.isBlank else { return nil }
+        return instructions
     }
 
     /// The redirect as a link the user may open, which only a web address is.
@@ -40,17 +86,25 @@ public struct RegistrationFormInfo: Sendable {
         }
     }
 
+    /// Whether the form can go out: it has values for all it needs, and something to send, which a solved proof of work
+    /// is even on a form with no field left to fill in.
     public var canSubmit: Bool {
-        hasFields && hasRequiredValues
+        hasRequiredValues && (hasFields || captcha?.proofOfWork?.answer != nil)
     }
 
     /// Whether every field that needs a value has one: every element of a legacy form, since the server needs all
-    /// it asked for (XEP-0077 §3.1), and a data form's required fields.
+    /// it asked for (XEP-0077 §3.1), and a data form's required fields and its CAPTCHA.
     var hasRequiredValues: Bool {
         switch formKind {
         case .legacy: !legacyFields.contains(where: \.isMissingValue)
-        case .dataForm: dataForm.hasRequiredValues
+        case .dataForm: dataForm.hasRequiredValues && captchaIsSatisfied
         }
+    }
+
+    private var captchaIsSatisfied: Bool {
+        guard let captcha else { return true }
+        let answered = dataForm.fields.filter { $0.values.contains { !$0.isBlank } }.compactMap(\.variable)
+        return captcha.isSatisfied(answered: Set(answered))
     }
 
     /// The value the form holds for the field of that name, nil when the form has no such field.
@@ -92,8 +146,25 @@ public struct RegistrationFormInfo: Sendable {
     var submission: RegistrationModule.Submission {
         switch formKind {
         case .legacy: .legacy(legacyFields.map { RegistrationModule.LegacyField(name: $0.name, value: $0.value) })
-        case .dataForm: .dataForm(dataForm.fields.map { $0.toDataFormField() })
+        case .dataForm:
+            .dataForm(dataForm.fields.map { $0.toDataFormField() } + [proofOfWorkField].compactMap(\.self))
         }
+    }
+
+    /// Whether the submission holds a password: a legacy `password` element, or a data form's `password` or
+    /// text-private field, with a value.
+    var carriesPassword: Bool {
+        switch formKind {
+        case .legacy:
+            legacyFields.contains { $0.isSecret && !$0.value.isEmpty }
+        case .dataForm:
+            dataForm.fields.contains { ($0.variable == "password" || $0.type == "text-private") && $0.values.contains { !$0.isEmpty } }
+        }
+    }
+
+    /// The solved proof of work's field, which the form shows nowhere.
+    private var proofOfWorkField: DataFormField? {
+        captcha?.proofOfWork?.answer.map { DataFormField(variable: RegistrationCaptcha.proofOfWorkVariable, values: [$0]) }
     }
 }
 
@@ -156,11 +227,39 @@ public enum RegistrationOutcome: Sendable {
 public struct PendingRegistration: Sendable {
     /// The server's form, with the account details typed so far filled in.
     public let form: RegistrationFormInfo
+    /// The server's refusal of the previous registration, which this form replaces. Nil for a first form.
+    public let rejection: (any Error)?
     let session: RegistrationSession
     let typedUsername: String
     let typedPassword: String
+    private let reopenAfter: @MainActor @Sendable (_ rejected: RegistrationFormInfo, _ error: any Error) async throws -> PendingRegistration
     /// Creates and signs in to the account once the server has accepted the registration.
     let finish: @MainActor @Sendable (_ username: String, _ password: String) async throws -> UUID
+
+    init(
+        form: RegistrationFormInfo,
+        session: RegistrationSession,
+        typedUsername: String,
+        typedPassword: String,
+        rejection: (any Error)?,
+        reopen: @escaping @MainActor @Sendable (_ rejected: RegistrationFormInfo, _ error: any Error) async throws -> PendingRegistration,
+        finish: @escaping @MainActor @Sendable (_ username: String, _ password: String) async throws -> UUID
+    ) {
+        self.form = form
+        self.rejection = rejection
+        self.session = session
+        self.typedUsername = typedUsername
+        self.typedPassword = typedPassword
+        self.reopenAfter = reopen
+        self.finish = finish
+    }
+
+    /// Fetches a fresh form on a new connection after the server refused `rejected` with `error`. It keeps what was
+    /// typed except the challenge answers, asks for any image again, and carries `error` as its `rejection`. This
+    /// registration's connection is already closed, since `submit` closes it either way.
+    public func reopen(after rejected: RegistrationFormInfo, error: any Error) async throws -> PendingRegistration {
+        try await reopenAfter(rejected, error)
+    }
 
     /// Submits the completed form, then signs in to the new account with the username and password it carries,
     /// or the ones typed before when it has none. The connection closes either way.

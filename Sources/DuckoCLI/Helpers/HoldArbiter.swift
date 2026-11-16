@@ -13,7 +13,8 @@ enum PresenceHoldLifetime {
     case keepAlive
 }
 
-/// Process exit code (POSIX 128 + signal number) for a trapped interrupt signal — e.g. SIGINT→130, SIGTERM→143.
+/// Process exit code (POSIX 128 + signal number) for a trapped interrupt signal — e.g. SIGINT→130, SIGTERM→143,
+/// SIGHUP→129.
 func exitCode(forSignal signo: Int32) -> Int32 {
     128 + signo
 }
@@ -21,10 +22,10 @@ func exitCode(forSignal signo: Int32) -> Int32 {
 /// Single state holder arbitrating a presence hold's end across the connect/apply/hold/teardown phases.
 ///
 /// Whichever happens first — a trapped signal, the hold work ending naturally, or the work failing — is
-/// yielded once on `ends`. A second SIGINT/SIGTERM arriving *during* teardown flips to `aborting` and tells the
+/// yielded once on `ends`. A SIGINT or SIGTERM arriving *during* teardown flips to `aborting` and tells the
 /// consumer to hard-exit immediately. The "second signal" is detected via this state, never by counting handler
 /// invocations, because `DispatchSourceSignal` coalesces repeats. `beginTeardown()` on the natural-end path also
-/// flips out of `holding`, so a signal during that teardown likewise hard-exits on its next fire.
+/// flips out of `holding`, so a SIGINT or SIGTERM during that teardown likewise hard-exits on its next fire.
 actor HoldArbiter {
     private enum Phase {
         case holding
@@ -43,13 +44,15 @@ actor HoldArbiter {
     }
 
     /// Records a trapped signal. Returns `true` when the caller must perform the immediate `Foundation.exit`
-    /// hard abort (a second signal after teardown began).
+    /// hard abort (a second signal after teardown began). A closing terminal sends SIGHUP more than once, from the
+    /// shell and again from the kernel, so a SIGHUP during teardown leaves it running.
     func recordSignal(_ signo: Int32) -> Bool {
         switch phase {
         case .holding:
             record(.interrupted(signo))
             return false
         case .tearingDown:
+            guard signo != SIGHUP else { return false }
             phase = .aborting
             return true
         case .aborting:
@@ -67,7 +70,7 @@ actor HoldArbiter {
         record(.workFailed)
     }
 
-    /// Marks teardown as started so any further signal forces a hard exit. Idempotent. `record()` owns
+    /// Marks teardown as started so a further SIGINT or SIGTERM forces a hard exit. Idempotent. `record()` owns
     /// finishing the `ends` stream, so this only flips the phase.
     func beginTeardown() {
         if case .holding = phase { phase = .tearingDown }

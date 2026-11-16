@@ -32,15 +32,7 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
         builder.withModule(presenceModule)
         builder.withModule(ServiceDiscoveryModule(resuming: resuming?.accountInfo))
         builder.withModule(capsModule)
-        builder.withModule(VCardModule())
-        builder.withModule(ReceiptsModule())
-        builder.withModule(ChatStatesModule())
-        builder.withModule(CarbonsModule())
-        builder.withModule(MAMModule())
-        builder.withModule(PingModule())
         builder.withModule(mucModule)
-        builder.withModule(HTTPUploadModule())
-        builder.withModule(JingleModule())
         let pepModule = PEPModule()
         pepModule.registerNotifyInterest(XMPPNamespaces.bookmarks2)
         pepModule.registerNotifyInterest(XMPPNamespaces.avatarMetadata)
@@ -52,12 +44,14 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
             OMEMOModule(pepModule: pepModule, mucModule: mucModule)
         }
         builder.withModule(omemoModule)
-        builder.withModule(BlockingModule())
-        builder.withModule(StylingModule())
-        builder.withModule(ChannelSearchModule())
-        builder.withModule(RegistrationModule())
-        builder.withModule(OOBModule())
-        builder.withModule(CSIModule())
+        let standaloneModules: [any XMPPModule] = [
+            VCardModule(), ReceiptsModule(), ChatStatesModule(), CarbonsModule(), MAMModule(), PingModule(), HTTPUploadModule(),
+            JingleModule(), BlockingModule(), StylingModule(), ChannelSearchModule(), RegistrationModule(), BitsOfBinaryModule(),
+            OOBModule(), CSIModule()
+        ]
+        for module in standaloneModules {
+            builder.withModule(module)
+        }
         let sm = StreamManagementModule(previousState: resuming?.streamManagement)
         builder.withModule(sm)
         builder.withInterceptor(sm)

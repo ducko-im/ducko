@@ -11,6 +11,13 @@ protocol LoopbackIQResponder: Sendable {
     mutating func reply(to element: DuckoXMPP.XMLElement, id: String) -> String?
 }
 
+/// Leaves every IQ to the server's default answer.
+struct NoReplies: LoopbackIQResponder {
+    func reply(to _: DuckoXMPP.XMLElement, id _: String) -> String? {
+        nil
+    }
+}
+
 /// A plaintext XMPP server on a loopback port that signs in any PLAIN credentials and binds `alice@example.com/fixture`.
 /// It confirms other sets, bounces other gets with `service-unavailable`, and lets `responder` answer first.
 actor LoopbackXMPPServer<Responder: LoopbackIQResponder> {
@@ -24,6 +31,11 @@ actor LoopbackXMPPServer<Responder: LoopbackIQResponder> {
 
     init(responder: Responder) {
         self.responder = responder
+    }
+
+    /// The responder as its replies so far left it.
+    var currentResponder: Responder {
+        responder
     }
 
     func start() async throws -> UInt16 {

@@ -10,29 +10,6 @@ public enum XMPPRegistrationClient {
         case connectionClosed
     }
 
-    /// Retrieves the registration form from a server without authenticating.
-    public static func retrieveForm(
-        domain: String,
-        host: String? = nil,
-        port: UInt16 = 5222
-    ) async throws -> RegistrationModule.RegistrationForm {
-        try await retrieveForm(domain: domain, host: host, port: port, transport: makeDefaultXMPPTransport())
-    }
-
-    static func retrieveForm(
-        domain: String, host: String? = nil, port: UInt16 = 5222, transport: any XMPPTransport
-    ) async throws -> RegistrationModule.RegistrationForm {
-        let session = try await RegistrationSession.open(domain: domain, host: host, port: port, transport: transport)
-        do {
-            let form = try await session.fetchForm()
-            await session.close()
-            return form
-        } catch {
-            await session.close()
-            throw error
-        }
-    }
-
     /// Readable reason for a rejected registration: the server's non-blank text, else a phrase for the condition. A
     /// `conflict` reads as the username being taken (XEP-0077 §3.1).
     static func registrationFailureText(_ error: XMPPStanzaError?) -> String {

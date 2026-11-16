@@ -26,6 +26,7 @@ enum CLIError: Error, LocalizedError {
     case unlistedOption(String)
     case notYesOrNo(String)
     case registrationRedirected
+    case captchaUnanswerable
     case inputEnded(field: String)
 
     var errorDescription: String? {
@@ -78,6 +79,8 @@ enum CLIError: Error, LocalizedError {
             "\(value) is not yes or no."
         case .registrationRedirected:
             "The server registers accounts only on the web page shown above."
+        case .captchaUnanswerable:
+            "Nothing was submitted, since the challenge shown above can't be answered."
         case let .inputEnded(field):
             "Input ended before \(field) had a value."
         }

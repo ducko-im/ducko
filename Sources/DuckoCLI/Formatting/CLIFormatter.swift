@@ -108,6 +108,27 @@ func hidesDataFormValue(_ field: RoomConfigField) -> Bool {
 /// Shown in place of a text-private field's value or a legacy registration password.
 let obscuredDataFormValue = "********"
 
+/// The label of a CAPTCHA challenge's field: its question or instruction, else its type.
+func captchaChallengeLabel(_ challenge: CaptchaChallenge, in form: RegistrationFormInfo) -> String {
+    form.dataForm.fields.first { $0.id == challenge.fieldID }?.displayLabel ?? challenge.variable
+}
+
+/// What output says about a CAPTCHA challenge beyond its field: where its image is, and whether Ducko can play it.
+func captchaChallengeNotes(_ challenge: CaptchaChallenge) -> [String] {
+    var notes: [String] = []
+    switch challenge.image {
+    case .inline: notes.append("image sent with the form")
+    case let .link(url): notes.append("image at \(url.absoluteString)")
+    case .unavailable: notes.append("Ducko couldn't display the image")
+    case nil: break
+    }
+    if !challenge.isPlayable { notes.append("Ducko can't play this challenge, use the web page") }
+    return notes
+}
+
+/// Shown when Ducko can't answer the server's CAPTCHA.
+let captchaUnanswerableNote = "Ducko can't answer this server's challenge."
+
 /// A legacy registration field's value as output shows it, with the password obscured.
 func registrationFieldValueText(_ field: RegistrationField) -> String {
     field.isSecret && !field.value.isEmpty ? obscuredDataFormValue : field.value

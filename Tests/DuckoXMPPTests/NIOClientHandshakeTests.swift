@@ -103,13 +103,13 @@ private func exerciseTLSRegistration(mode: String, useDefault: Bool) async throw
             do {
                 let form: RegistrationModule.RegistrationForm
                 if useDefault {
-                    form = try await XMPPRegistrationClient.retrieveForm(
+                    form = try await fetchRegistrationForm(
                         domain: mode == "registration-direct" ? "registration.ducko.test" : "localhost",
                         host: mode == "registration-direct" ? nil : "127.0.0.1", port: peer.port
                     )
                 } else {
                     let transport = NIOTransport(group: group, trustRoots: [Array(peer.anchor)])
-                    form = try await XMPPRegistrationClient.retrieveForm(domain: "localhost", host: "127.0.0.1", port: peer.port, transport: transport)
+                    form = try await fetchRegistrationForm(domain: "localhost", host: "127.0.0.1", port: peer.port, transport: transport)
                 }
                 #expect(mode == "registration" || mode == "registration-direct")
                 #expect(form.legacyFields.map(\.name) == ["username", "password", "email"])

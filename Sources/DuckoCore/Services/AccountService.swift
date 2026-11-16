@@ -94,6 +94,7 @@ public final class AccountService {
         case noStoredPassword(String)
         case notConnected(UUID)
         case moduleNotAvailable(UUID)
+        case unencryptedConnection
 
         public var errorDescription: String? {
             switch self {
@@ -103,6 +104,7 @@ public final class AccountService {
             case let .noStoredPassword(jid): "No stored password for \(jid)"
             case .notConnected: notConnectedDescription
             case let .moduleNotAvailable(id): "Module not available: \(id)"
+            case .unencryptedConnection: "Sending a password needs an encrypted connection"
             }
         }
     }
@@ -389,47 +391,10 @@ public final class AccountService {
         return failure.kind == .credentialsRejected
     }
 
-    /// Registers a new account on a server via XEP-0077 pre-auth registration. The server's form is fetched first, on
-    /// the connection the registration goes out on. When it asks for nothing beyond the username, password and email,
-    /// and each was typed, they are submitted and the account is created and signed in to. Otherwise the form comes
-    /// back to be completed. The account is created allowing PLAIN, because the registration already gave this server the
-    /// password over TLS, so PLAIN reveals nothing more. Its first verified SCRAM sign-in turns that off.
-    public func registerAccount(
-        domain: String,
-        username: String,
-        password: String,
-        email: String? = nil,
-        host: String? = nil,
-        port: UInt16 = 5222,
-        afterConnect: ((UUID) async throws -> Void)? = nil
-    ) async throws -> RegistrationOutcome {
-        let session = try await openRegistrationSession(domain, host, port)
-        let form: RegistrationFormInfo
-        do {
-            form = try await RegistrationFormInfo(from: session.fetchForm()).filling(username: username, password: password, email: email)
-        } catch {
-            await session.close()
-            throw error
-        }
-        let pending = PendingRegistration(
-            form: form, session: session, typedUsername: username, typedPassword: password
-        ) { username, password in
-            try await self.createAndConnect(
-                jidString: "\(username)@\(domain)",
-                password: password,
-                host: host,
-                port: host == nil ? nil : Int(port),
-                allowsPLAIN: true,
-                afterConnect: afterConnect
-            )
-        }
-        guard form.asksOnlyForAccountDetails else { return .needsMoreFields(pending) }
-        return try await .registered(pending.submit(form))
-    }
-
-    /// Changes the password for a connected account via XEP-0077.
+    /// Changes the password for a connected account via XEP-0077, only over an encrypted stream.
     public func changePassword(accountID: UUID, newPassword: String) async throws {
         let regModule = try await registrationModule(for: accountID)
+        try requireEncryptedStream(accountID: accountID)
         try await regModule.changePassword(newPassword: newPassword)
         connectionResources[accountID]?.password = newPassword
         await savePassword(accountID: accountID)
@@ -441,27 +406,6 @@ public final class AccountService {
         try await regModule.cancelRegistration()
     }
 
-    /// Retrieves a registration form from a server without authenticating (XEP-0077).
-    public func retrieveRegistrationForm(
-        domain: String, host: String? = nil, port: UInt16 = 5222
-    ) async throws -> RegistrationFormInfo {
-        let form = try await XMPPRegistrationClient.retrieveForm(domain: domain, host: host, port: port)
-        return RegistrationFormInfo(from: form)
-    }
-
-    /// Retrieves a registration form from a connected server or component (XEP-0077).
-    public func retrieveRegistrationForm(accountID: UUID, from jid: String? = nil) async throws -> RegistrationFormInfo {
-        let regModule = try await registrationModule(for: accountID)
-        let form = try await regModule.retrieveForm(from: parseOptionalJID(jid))
-        return RegistrationFormInfo(from: form)
-    }
-
-    /// Submits a completed registration form to a connected server or component (XEP-0077).
-    public func submitRegistration(accountID: UUID, form: RegistrationFormInfo, to jid: String? = nil) async throws {
-        let regModule = try await registrationModule(for: accountID)
-        try await regModule.submit(form.submission, to: parseOptionalJID(jid))
-    }
-
     // MARK: - Wiring
 
     func setOMEMOService(_ service: OMEMOService) {
@@ -470,7 +414,7 @@ public final class AccountService {
 
     // MARK: - Client Access
 
-    private func registrationModule(for accountID: UUID) async throws -> RegistrationModule {
+    func registrationModule(for accountID: UUID) async throws -> RegistrationModule {
         guard let client = connectionResources[accountID]?.client else {
             throw AccountServiceError.notConnected(accountID)
         }
@@ -480,7 +424,7 @@ public final class AccountService {
         return module
     }
 
-    private func parseOptionalJID(_ jid: String?) -> JID? {
+    func parseOptionalJID(_ jid: String?) -> JID? {
         jid.flatMap { JID.parse($0) }
     }
 

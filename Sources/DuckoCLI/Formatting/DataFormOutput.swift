@@ -54,6 +54,7 @@ struct RegistrationFormOutput: Encodable {
         case redirectURL = "redirect_url"
         case fields
         case form
+        case captcha
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -68,6 +69,63 @@ struct RegistrationFormOutput: Encodable {
             try container.encode(form.legacyFields.map(LegacyFieldOutput.init), forKey: .fields)
         case .dataForm:
             try container.encode(DataFormOutput(type: nil, form: form.dataForm), forKey: .form)
+        }
+        try container.encodeIfPresent(form.captcha.map(CaptchaOutput.init), forKey: .captcha)
+    }
+
+    private struct CaptchaOutput: Encodable {
+        let captcha: RegistrationCaptcha
+
+        private enum CodingKeys: String, CodingKey {
+            case challenges, answers
+            case proofOfWorkSolved = "proof_of_work_solved"
+            case fallbackText = "fallback_text"
+            case fallbackURL = "fallback_url"
+            case fallbackURLText = "fallback_url_text"
+            case unanswerable
+        }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(captcha.challenges.map(ChallengeOutput.init), forKey: .challenges)
+            try container.encodeIfPresent(captcha.answersRequired.map(String.init), forKey: .answers)
+            if let proofOfWork = captcha.proofOfWork {
+                try container.encode(proofOfWork.answer == nil ? "false" : "true", forKey: .proofOfWorkSolved)
+            }
+            try container.encodeIfPresent(captcha.fallbackText, forKey: .fallbackText)
+            try container.encodeIfPresent(captcha.fallbackLink?.absoluteString, forKey: .fallbackURL)
+            if captcha.fallbackLink == nil {
+                try container.encodeIfPresent(captcha.fallbackURLText, forKey: .fallbackURLText)
+            }
+            try container.encode(captcha.isUnanswerable ? "true" : "false", forKey: .unanswerable)
+        }
+    }
+
+    private struct ChallengeOutput: Encodable {
+        let challenge: CaptchaChallenge
+
+        private enum CodingKeys: String, CodingKey {
+            case variable = "var"
+            case required, playable
+            case imageType = "image_type"
+            case imageURL = "image_url"
+        }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(challenge.variable, forKey: .variable)
+            try container.encode(challenge.isRequired ? "true" : "false", forKey: .required)
+            try container.encode(challenge.isPlayable ? "true" : "false", forKey: .playable)
+            switch challenge.image {
+            case let .inline(_, format):
+                try container.encode(format.mimeType, forKey: .imageType)
+            case let .link(url):
+                try container.encode(url.absoluteString, forKey: .imageURL)
+            case .unavailable:
+                try container.encode("unavailable", forKey: .imageType)
+            case nil:
+                break
+            }
         }
     }
 

@@ -119,8 +119,21 @@ struct RegistrationFormSheet: View {
                 isSubmitting = false
             } catch {
                 errorMessage = error.localizedDescription
+                if AccountService.isRegistrationRejected(error) {
+                    await reloadForm(after: formInfo)
+                }
                 isSubmitting = false
             }
         }
+    }
+
+    /// Fetches a fresh form after the server refused `rejected`, keeping what was typed and asking for any CAPTCHA
+    /// image again. The refusal stays shown.
+    private func reloadForm(after rejected: RegistrationFormInfo) async {
+        guard let fresh = try? await environment.accountService.reopenRegistrationForm(accountID: accountID, after: rejected) else {
+            return
+        }
+        formInfo = fresh
+        AccessibilityNotification.Announcement("The server sent a new form").post()
     }
 }

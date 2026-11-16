@@ -477,7 +477,7 @@ struct ANSIFormatter: CLIFormatter {
         lines.append("\(Color.bold)Registration Form (\(kindLabel))\(Color.reset)")
         let statusColor = form.isRegistered ? Color.green : Color.dim
         lines.append("\(Color.bold)Status:\(Color.reset) \(statusColor)\(form.isRegistered ? "Registered" : "Not registered")\(Color.reset)")
-        if let instructions = form.instructions, !instructions.isEmpty {
+        if let instructions = form.shownInstructions {
             lines.append("\(Color.bold)Instructions:\(Color.reset) \(instructions)")
         }
         if let redirectURL = form.redirectURL {
@@ -494,7 +494,26 @@ struct ANSIFormatter: CLIFormatter {
         case .dataForm:
             lines.append(formatDataForm(form.dataForm))
         }
+        if let captcha = form.captcha {
+            lines.append(contentsOf: captchaLines(captcha, in: form))
+        }
         return lines.joined(separator: "\n")
+    }
+
+    private func captchaLines(_ captcha: RegistrationCaptcha, in form: RegistrationFormInfo) -> [String] {
+        let count = captcha.answersRequired.map { " \(Color.yellow)(answer \($0))\(Color.reset)" } ?? ""
+        var lines = ["\(Color.bold)CAPTCHA\(Color.reset)\(count)\(Color.bold):\(Color.reset)"]
+        for challenge in captcha.challenges {
+            let notes = captchaChallengeNotes(challenge)
+            let shownNotes = notes.isEmpty ? "" : ": \(Color.dim)\(notes.joined(separator: "; "))\(Color.reset)"
+            lines.append("  \(Color.cyan)\(captchaChallengeLabel(challenge, in: form))\(Color.reset)\(shownNotes)")
+        }
+        if let fallbackText = captcha.fallbackText { lines.append("  \(Color.dim)\(fallbackText)\(Color.reset)") }
+        if let fallback = captcha.fallbackLink?.absoluteString ?? captcha.fallbackURLText {
+            lines.append("  \(Color.bold)\(captcha.fallbackLabel):\(Color.reset) \(fallback)")
+        }
+        if captcha.isUnanswerable { lines.append("  \(Color.red)\(captchaUnanswerableNote)\(Color.reset)") }
+        return lines
     }
 
     func formatSearchedChannel(_ channel: SearchedChannel) -> String {

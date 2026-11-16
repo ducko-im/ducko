@@ -91,9 +91,3 @@ struct SignInSecurityProcessTests {
         try await store.setAllowsPLAIN(false, accountID: account.id)
     }
 }
-
-private struct NoReplies: LoopbackIQResponder {
-    func reply(to _: DuckoXMPP.XMLElement, id _: String) -> String? {
-        nil
-    }
-}

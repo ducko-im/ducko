@@ -168,7 +168,7 @@ struct XMPPRegistrationClientTests {
     ) -> Task<RegistrationModule.RegistrationForm?, any Error> {
         Task {
             guard register else {
-                return try await XMPPRegistrationClient.retrieveForm(domain: domain, host: "example.com", transport: transport)
+                return try await fetchRegistrationForm(domain: domain, host: "example.com", transport: transport)
             }
             let session = try await openSession(on: transport, domain: domain)
             do {
@@ -309,7 +309,7 @@ struct XMPPRegistrationClientTests {
     func `Retrieving a form for a domain with no A-label fails closed`() async {
         // The IDNA guard throws before any network I/O (a space is not LDH, so no A-label).
         await #expect(throws: XMPPRegistrationClient.RegistrationClientError.self) {
-            _ = try await XMPPRegistrationClient.retrieveForm(domain: "bad domain.example")
+            _ = try await fetchRegistrationForm(domain: "bad domain.example")
         }
     }
 }

@@ -21,6 +21,8 @@ public struct DataFormField: Sendable {
     public let isRequired: Bool
     public var values: [String]
     public let options: [(label: String?, value: String)]
+    /// The URIs of the field's XEP-0221 media, in document order.
+    public let media: [DataFormMediaURI]
 
     public init(
         variable: String?,
@@ -29,7 +31,8 @@ public struct DataFormField: Sendable {
         description: String? = nil,
         isRequired: Bool = false,
         values: [String] = [],
-        options: [(label: String?, value: String)] = []
+        options: [(label: String?, value: String)] = [],
+        media: [DataFormMediaURI] = []
     ) {
         self.variable = variable
         self.type = type
@@ -38,6 +41,7 @@ public struct DataFormField: Sendable {
         self.isRequired = isRequired
         self.values = values
         self.options = options
+        self.media = media
     }
 
     /// XEP-0004 §3.2 FORM_TYPE header for a `pubsub#publish-options` submit form.
@@ -50,6 +54,17 @@ public struct DataFormField: Sendable {
         type: "hidden",
         values: [XMPPNamespaces.pubsubPublishOptions]
     )
+}
+
+/// One `<uri>` of a data form field's XEP-0221 media: where the media is, and its MIME type.
+public struct DataFormMediaURI: Sendable, Equatable {
+    public let type: String
+    public let uri: String
+
+    public init(type: String, uri: String) {
+        self.type = type
+        self.uri = uri
+    }
 }
 
 /// Parses a `<x xmlns='jabber:x:data'>` element into a ``DataForm``.
@@ -70,7 +85,8 @@ func parseDataForm(_ element: XMLElement) -> DataForm {
             description: field.childText(named: "desc"),
             isRequired: field.child(named: "required") != nil,
             values: field.children(named: "value").compactMap(\.textContent),
-            options: options
+            options: options,
+            media: parseMediaURIs(of: field)
         )
     }
 
@@ -79,6 +95,21 @@ func parseDataForm(_ element: XMLElement) -> DataForm {
         instructions: element.children(named: "instructions").compactMap(\.textContent),
         fields: fields
     )
+}
+
+/// The URIs of every XEP-0221 `<media>` child of a field, skipping a `<uri>` without a type or text.
+private func parseMediaURIs(of field: XMLElement) -> [DataFormMediaURI] {
+    field.children(named: "media")
+        .filter { $0.namespace == XMPPNamespaces.mediaElement }
+        .flatMap { $0.children(named: "uri") }
+        .compactMap { uri in
+            guard let type = uri.attribute("type"), let text = uri.textContent else { return nil }
+            var trimmed = String(text.drop(while: \.isWhitespace))
+            while trimmed.last?.isWhitespace == true {
+                trimmed.removeLast()
+            }
+            return trimmed.isEmpty ? nil : DataFormMediaURI(type: type, uri: trimmed)
+        }
 }
 
 /// Builds a `<x type='submit'>` element from an array of ``DataFormField``,

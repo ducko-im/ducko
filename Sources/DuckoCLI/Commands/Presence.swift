@@ -111,9 +111,10 @@ private struct PresenceHoldContext {
 
 /// Holds a broadcast presence open for an explicit lifetime so subscribers observe it as durable state, then
 /// clean-disconnects (which sends `unavailable`). The interrupt arbiter/consumer is started *before* `connect`,
-/// and the hold work runs as an *unstructured* task so a SIGINT/SIGTERM during a slow or wedged connect triggers
-/// the bounded clean-teardown immediately rather than waiting for the connect to unblock. Natural `--for` expiry
-/// exits `0`; an interrupt throws `ExitCode(130|143)` after the bounded clean disconnect so normal unwinding runs.
+/// and the hold work runs as an *unstructured* task so a trapped signal (SIGINT, SIGTERM, or SIGHUP when the terminal
+/// closes) during a slow or wedged connect triggers the bounded clean-teardown immediately rather than waiting for the
+/// connect to unblock. Natural `--for` expiry exits `0`; an interrupt throws `ExitCode(130|143|129)` after the bounded
+/// clean disconnect so normal unwinding runs.
 private func runPresenceHold(
     lifetime: PresenceHoldLifetime,
     context: PresenceHoldContext,
@@ -162,7 +163,8 @@ private func runPresenceHold(
     case .workFailed:
         try await workTask.value // rethrows the original error (connect/apply failure)
     case let .interrupted(signo):
-        printToStandardError("Interrupted, disconnecting…")
+        // A closed terminal has nowhere to show the message.
+        if signo != SIGHUP { printToStandardError("Interrupted, disconnecting…") }
         throw ExitCode(exitCode(forSignal: signo))
     }
 }

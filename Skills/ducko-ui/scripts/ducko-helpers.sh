@@ -435,9 +435,10 @@ ducko_as_click_button_by_label() {
 EOF
 }
 
-# Wait for a Register press in the Welcome window to settle. Returns "ok" once the window has closed, since the
-# account is then registered and signed in, or the error the window shows. With form_shown_result, returns that
-# once the window shows the server's registration form instead.
+# Wait for a Register press in the Welcome window or its registration sheet to settle. Returns "ok" once the window
+# has closed, since the account is then registered and signed in, or the error the window shows. With
+# form_shown_result, returns that once the sheet shows the server's registration form. Without it, also returns the
+# error the sheet shows, such as the server's refusal.
 # Args: proc_var window_var [form_shown_result]
 ducko_as_await_registration() {
     local proc_var="$1"
@@ -453,6 +454,9 @@ ducko_as_await_registration() {
 EOF
     if [[ -n "$form_shown_result" ]]; then
         echo "            if (my findByAttr(${window_var}, \"AXIdentifier\", \"register-server-form\", 0, 30)) is not missing value then return \"${form_shown_result}\""
+    else
+        echo "            set formError to my findInSheets(${window_var}, \"register-server-form-error\")"
+        echo "            if formError is not missing value then return \"ERROR: \" & (value of formError)"
     fi
     cat << 'EOF'
         end repeat

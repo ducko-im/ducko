@@ -2,7 +2,7 @@ import DuckoCore
 import Foundation
 
 /// Prompts for every field of a data form the user can edit, printing its fixed text on the way.
-/// Pressing Enter keeps a field's current values.
+/// Pressing Enter keeps a field's current values. Input that ends at a field's prompt throws.
 func promptForDataFormValues(_ fields: inout [RoomConfigField], formatter: any CLIFormatter) throws {
     for index in fields.indices where fields[index].isDisplayed {
         if fields[index].isFixed {
@@ -53,10 +53,7 @@ private func promptForValues(of field: inout RoomConfigField, formatter: any CLI
         print("Options: \(options.joined(separator: ", "))")
     }
     while true {
-        guard let lines = try readValues(for: field) else {
-            if field.isMissingRequiredValue { throw CLIError.inputEnded(field: field.displayLabel) }
-            return
-        }
+        guard let lines = try readValues(for: field) else { return }
         do {
             if let values = try dataFormValues(typed: lines, for: field) {
                 field.values = values
@@ -71,8 +68,8 @@ private func promptForValues(of field: inout RoomConfigField, formatter: any CLI
 }
 
 /// Reads what the user types for one field: a hidden line for text-private, lines up to an empty one for the
-/// multi-line types, else one line. Returns nil when input ends before anything is typed, or for a hidden line when
-/// there is no terminal. A hidden field that still needs a required value throws instead.
+/// multi-line types, else one line. Returns nil for a hidden line when there is no terminal, unless the field still
+/// needs a required value. Input that ends before anything is typed throws, so a prompt loop can't go on forever.
 private func readValues(for field: RoomConfigField) throws -> [String]? {
     let marker = field.isRequired ? " (required)" : ""
     if field.type == "text-private" {
@@ -91,10 +88,12 @@ private func readValues(for field: RoomConfigField) throws -> [String]? {
             if line.isEmpty { return lines }
             lines.append(line)
         }
-        return lines.isEmpty ? nil : lines
+        guard !lines.isEmpty else { throw CLIError.inputEnded(field: field.displayLabel) }
+        return lines
     default:
         print("\(field.displayLabel)\(marker) [\(current)]: ", terminator: "")
-        return readLine().map { [$0] }
+        guard let line = readLine() else { throw CLIError.inputEnded(field: field.displayLabel) }
+        return [line]
     }
 }
 

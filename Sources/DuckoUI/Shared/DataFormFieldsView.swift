@@ -1,12 +1,21 @@
 import DuckoCore
 import SwiftUI
 
-/// An XMPP data form as one form section: its title as the header, then its instructions and the fields a user sees.
-struct DataFormFieldsView: View {
+/// An XMPP data form as one form section: its title as the header, then its instructions and the fields a user sees,
+/// each between the views `above` and `below` give it.
+struct DataFormFieldsView<Above: View, Below: View>: View {
     @Binding var form: DataFormInfo
+    private let above: (RoomConfigField) -> Above
+    private let below: (RoomConfigField) -> Below
 
     private var displayedFields: [RoomConfigField] {
         form.fields.filter(\.isDisplayed)
+    }
+
+    init(form: Binding<DataFormInfo>, @ContentBuilder above: @escaping (RoomConfigField) -> Above, @ContentBuilder below: @escaping (RoomConfigField) -> Below) {
+        self._form = form
+        self.above = above
+        self.below = below
     }
 
     var body: some View {
@@ -17,8 +26,10 @@ struct DataFormFieldsView: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(displayedFields) { field in
+                above(field)
                 fieldRow(for: field)
                     .accessibilityIdentifier("data-form-field-\(field.variable ?? "")")
+                below(field)
             }
         } header: {
             if let title = form.title {
@@ -141,5 +152,11 @@ struct DataFormFieldsView: View {
         if let index = form.fields.firstIndex(where: { $0.id == id }) {
             form.fields[index].values = [value]
         }
+    }
+}
+
+extension DataFormFieldsView where Above == EmptyView, Below == EmptyView {
+    init(form: Binding<DataFormInfo>) {
+        self.init(form: form) { _ in EmptyView() } below: { _ in EmptyView() }
     }
 }

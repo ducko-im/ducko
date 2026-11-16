@@ -6,7 +6,7 @@
 # macOS 26. The segmented Picker exposes each segment label via AXDescription
 # (AXTitle/name is empty there), so the Register segment is matched on that.
 # Waits for the outcome: the account registered and signed in, the server's own form shown because it asks for
-# more (continue with ducko-register-fields.sh), or the error the window shows.
+# more or refused the registration (continue with ducko-register-fields.sh), or the error the window shows.
 # Usage: ducko-register.sh SERVER USERNAME PASSWORD [EMAIL]
 #   SERVER:   The XMPP server domain (e.g., xmpp.example.com)
 #   USERNAME: Desired username (local part)
@@ -83,6 +83,6 @@ APPLESCRIPT
 
 case "$RESULT" in
     ok)   echo "Registered $USERNAME@$SERVER" ;;
-    MORE) echo "The server asks for more details: fill them with ducko-register-fields.sh fill, or read its web page with ducko-register-fields.sh redirect" ;;
+    MORE) echo "The server asks for more details or refused the registration: fill its form with ducko-register-fields.sh fill, or read its web page with ducko-register-fields.sh redirect" ;;
     *)    echo "$RESULT" >&2; exit 1 ;;
 esac

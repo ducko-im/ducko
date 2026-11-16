@@ -24,6 +24,19 @@ struct RegistrationFormInfoTests {
     }
 
     @Test
+    func `The reply's instructions show for a legacy form, and a data form shows its own instead`() {
+        let legacy = RegistrationModule.RegistrationForm(formType: .legacy, instructions: "Pick a name", isRegistered: false)
+        let data = RegistrationModule.RegistrationForm(
+            formType: .dataForm, instructions: "You need a client that supports x:data", isRegistered: false,
+            dataForm: DataForm(instructions: ["Choose a username and password"])
+        )
+
+        #expect(RegistrationFormInfo(from: legacy).shownInstructions == "Pick a name")
+        #expect(RegistrationFormInfo(from: data).shownInstructions == nil)
+        #expect(RegistrationFormInfo(from: data).dataForm.instructions == ["Choose a username and password"])
+    }
+
+    @Test
     func `A legacy form needs a value for every element it asks for`() {
         var form = RegistrationFormInfo(from: legacyForm(["username", "password", "nick"]))
             .filling(username: "juliet", password: "secret", email: nil)
@@ -53,6 +66,17 @@ struct RegistrationFormInfoTests {
 
         #expect(form.hasRequiredValues)
         #expect(!form.canSubmit)
+    }
+
+    @Test
+    func `A fresh legacy form keeps what was typed into each element it still asks for`() {
+        var rejected = RegistrationFormInfo(from: legacyForm(["username", "password", "nick"]))
+        rejected.legacyFields[0].value = "romeo"
+        rejected.legacyFields[2].value = "jules"
+
+        let fresh = RegistrationFormInfo(from: legacyForm(["username", "nick", "email"])).carryingValues(from: rejected)
+
+        #expect(fresh.legacyFields.map(\.value) == ["romeo", "jules", ""])
     }
 
     @Test
@@ -94,8 +118,12 @@ struct PendingRegistrationTests {
         let session = try await openSession(on: transport)
         let pending = PendingRegistration(
             form: RegistrationFormInfo(from: legacyForm(["username", "password", "nick"])),
-            session: session, typedUsername: "juliet", typedPassword: "secret"
-        ) { _, _ in UUID() }
+            session: session, typedUsername: "juliet", typedPassword: "secret", rejection: nil
+        ) { _, error in
+            throw error
+        } finish: { _, _ in
+            UUID()
+        }
 
         await pending.cancel()
 
@@ -112,8 +140,10 @@ struct PendingRegistrationTests {
         form.legacyFields[0].value = "romeo"
         form.legacyFields[2].value = "jules"
         let pending = PendingRegistration(
-            form: form, session: session, typedUsername: "juliet", typedPassword: "secret"
-        ) { username, password in
+            form: form, session: session, typedUsername: "juliet", typedPassword: "secret", rejection: nil
+        ) { _, error in
+            throw error
+        } finish: { username, password in
             await signedIn.record(username, password)
             return UUID()
         }

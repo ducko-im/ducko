@@ -58,9 +58,31 @@ enum DataFormParserTests {
             #expect(!nick.isRequired)
             #expect(nick.description == nil)
         }
+
+        @Test
+        func `Reads every media URI of a field in document order, trimmed, skipping one without a type`() throws {
+            let form = try parseDataForm(stanza(captchaForm))
+
+            let ocr = try #require(form.fields.first { $0.variable == "ocr" })
+            #expect(ocr.media == [
+                DataFormMediaURI(type: "image/png", uri: "cid:sha1+abc@bob.xmpp.org"),
+                DataFormMediaURI(type: "image/jpeg", uri: "https://example.com/captcha.jpg")
+            ])
+            #expect(form.fields.first { $0.variable == "FORM_TYPE" }?.media == [])
+        }
     }
 
     struct Building {
+        @Test
+        func `A submit form sends no media`() throws {
+            let fields = try parseDataForm(stanza(captchaForm)).fields
+
+            let submitted = buildSubmitForm(fields).children(named: "field")
+
+            #expect(submitted.map { $0.attribute("var") } == ["FORM_TYPE", "ocr"])
+            #expect(!submitted.contains { $0.child(named: "media") != nil })
+        }
+
         @Test
         func `Builds submit form from fields`() {
             let fields = [
@@ -113,6 +135,22 @@ enum DataFormParserTests {
 }
 
 // MARK: - Helpers
+
+/// An ejabberd-shaped CAPTCHA field with two media: the first lists a URI padded with whitespace and one without a
+/// type, the second an image on the web.
+private let captchaForm = """
+<x xmlns='jabber:x:data' type='form'>\
+<field var='FORM_TYPE' type='hidden'><value>jabber:iq:register</value></field>\
+<field var='ocr' type='text-single' label='Enter the text you see'><required/>\
+<media xmlns='urn:xmpp:media-element' height='60' width='180'>\
+<uri type='image/png'>
+  cid:sha1+abc@bob.xmpp.org
+</uri>\
+<uri>cid:untyped@bob.xmpp.org</uri>\
+</media>\
+<media xmlns='urn:xmpp:media-element'><uri type='image/jpeg'>https://example.com/captcha.jpg</uri></media>\
+</field></x>
+"""
 
 private func buildSampleForm() -> XMLElement {
     var form = XMLElement(name: "x", namespace: XMPPNamespaces.dataForms, attributes: ["type": "form"])

@@ -38,16 +38,11 @@ func handleCheckRegistrationREPLCommand(_ arguments: String, context: REPLContex
 func handleSubmitRegistrationREPLCommand(_ arguments: String, context: REPLContext) async {
     let jid = arguments.isEmpty ? nil : arguments
     do {
-        var form = try await context.environment.accountService.retrieveRegistrationForm(
-            accountID: context.accountID, from: jid
-        )
-        print(context.formatter.formatRegistrationForm(form))
-        guard form.hasFields else { throw CLIError.registrationRedirected }
-
-        print("\nEnter registration details (press Enter to keep a value):")
-        try promptForRegistrationValues(&form, formatter: context.formatter)
-        try await context.environment.accountService.submitRegistration(
-            accountID: context.accountID, form: form, to: jid
+        let accountService = await MainActor.run { context.environment.accountService }
+        let form = try await accountService.retrieveRegistrationForm(accountID: context.accountID, from: jid)
+        let registration = SignedInRegistration(form: form, accountService: accountService, accountID: context.accountID, jid: jid)
+        try await promptAndSubmitRegistration(
+            registration, submissionsMade: 0, intro: "\nEnter registration details (press Enter to keep a value):", formatter: context.formatter
         )
         print("Registration submitted successfully.")
     } catch {

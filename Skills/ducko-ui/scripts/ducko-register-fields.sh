@@ -1,24 +1,31 @@
 #!/bin/bash
-# Complete the server's registration form in the Welcome window, shown after ducko-register.sh reported that the
-# server asks for more, or print the web page the server sends the user to instead.
+# Complete the server's registration form in the Welcome window's sheet, shown after ducko-register.sh reported that
+# the server asks for more or refused the registration, or print the web page the server sends the user to instead.
 # Usage: ducko-register-fields.sh fill [NAME VALUE]...
 #        ducko-register-fields.sh redirect
+#        ducko-register-fields.sh captcha [VAR]
 #   fill:      type each VALUE into the text field NAME (a legacy element such as nick, or a data form field var), press
-#              Register and wait for the account to be registered and signed in, or for the error the window shows
+#              the sheet's Register and wait for the account to be registered and signed in, the server's refusal over
+#              a fresh form, or the error the window shows
 #   redirect:  print the address of the registration page the server names
+#   captcha:   print, for the CAPTCHA image, its web link, the fallback link, the unanswerable note and the answer
+#              field of challenge VAR (default ocr), whether each is shown and its vertical position, then the image's
+#              role, description and title
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/ducko-helpers.sh"
 ducko_require_vm_or_host_opt_in
 
-USAGE="Usage: ducko-register-fields.sh fill [NAME VALUE]... | redirect"
+USAGE="Usage: ducko-register-fields.sh fill [NAME VALUE]... | redirect | captcha [VAR]"
 ACTION="${1:-}"
 case "$ACTION" in
     fill)
         if (( ($# - 1) % 2 != 0 )); then echo "$USAGE" >&2; exit 1; fi ;;
     redirect)
         if (( $# != 1 )); then echo "$USAGE" >&2; exit 1; fi ;;
+    captcha)
+        if (( $# > 2 )); then echo "$USAGE" >&2; exit 1; fi ;;
     *)
         echo "$USAGE" >&2; exit 1 ;;
 esac
@@ -60,6 +67,31 @@ on run argv
             return "URL:" & pageAddress
         end if
 
+        if fieldAction is "captcha" then
+            set challengeVar to "ocr"
+            if (count of argv) > 1 then set challengeVar to item 2 of argv
+            set report to ""
+            repeat with elementId in {"registration-captcha-image", "registration-captcha-image-link", "registration-captcha-fallback-link", "registration-captcha-unanswerable", "data-form-field-" & challengeVar}
+                set captchaElement to my findByAttr(win, "AXIdentifier", elementId as text, 0, 30)
+                if captchaElement is missing value then
+                    set report to report & elementId & ": absent" & linefeed
+                else
+                    set report to report & elementId & ": y=" & (item 2 of (position of captchaElement as list)) & linefeed
+                end if
+            end repeat
+            set captchaImage to my findByAttr(win, "AXIdentifier", "registration-captcha-image", 0, 30)
+            if captchaImage is not missing value then
+                repeat with attributeName in {"AXRole", "AXDescription", "AXTitle"}
+                    set attributeValue to "none"
+                    try
+                        set attributeValue to (value of attribute (attributeName as text) of captchaImage) as text
+                    end try
+                    set report to report & "image " & attributeName & ": " & attributeValue & linefeed
+                end repeat
+            end if
+            return "REPORT:" & report
+        end if
+
         repeat with i from 2 to (count of argv) by 2
             set fieldName to item i of argv
             set fieldValue to item (i + 1) of argv
@@ -68,8 +100,8 @@ on run argv
             end if
         end repeat
 
-        set registerBtn to my findByAttr(win, "AXIdentifier", "register-button", 0, 30)
-        if registerBtn is missing value then return "ERROR: register-button not found"
+        set registerBtn to my findByAttr(win, "AXIdentifier", "register-server-form-submit", 0, 30)
+        if registerBtn is missing value then return "ERROR: register-server-form-submit not found"
         click registerBtn
 $(ducko_as_await_registration proc win)
     end tell
@@ -79,6 +111,7 @@ APPLESCRIPT
 
 case "$RESULT" in
     URL:*) echo "${RESULT#URL:}" ;;
+    REPORT:*) printf '%s' "${RESULT#REPORT:}" ;;
     ok)    echo "Registered" ;;
     *)     echo "$RESULT" >&2; exit 1 ;;
 esac

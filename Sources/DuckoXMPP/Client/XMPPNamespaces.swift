@@ -35,6 +35,8 @@ public enum XMPPNamespaces {
     public static let occupantID = "urn:xmpp:occupant-id:0"
     public static let httpUpload = "urn:xmpp:http:upload:0"
     public static let dataForms = "jabber:x:data"
+    public static let mediaElement = "urn:xmpp:media-element"
+    public static let bitsOfBinary = "urn:xmpp:bob"
     public static let jingle = "urn:xmpp:jingle:1"
     public static let jingleFileTransfer = "urn:xmpp:jingle:apps:file-transfer:5"
     public static let jingleS5B = "urn:xmpp:jingle:transports:s5b:1"

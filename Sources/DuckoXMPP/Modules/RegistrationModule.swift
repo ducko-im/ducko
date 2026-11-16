@@ -34,6 +34,8 @@ public final class RegistrationModule: XMPPModule, Sendable {
         public let redirectURL: String?
         /// The server's `jabber:x:data` form, empty for a legacy form.
         public let dataForm: DataForm
+        /// The XEP-0231 data the reply carried inline, such as a CAPTCHA image its form's media names.
+        public let bitsOfBinary: [BitsOfBinaryData]
 
         public init(
             formType: FormType,
@@ -41,7 +43,8 @@ public final class RegistrationModule: XMPPModule, Sendable {
             isRegistered: Bool,
             legacyFields: [LegacyField] = [],
             redirectURL: String? = nil,
-            dataForm: DataForm = DataForm()
+            dataForm: DataForm = DataForm(),
+            bitsOfBinary: [BitsOfBinaryData] = []
         ) {
             self.formType = formType
             self.instructions = instructions
@@ -49,6 +52,7 @@ public final class RegistrationModule: XMPPModule, Sendable {
             self.legacyFields = legacyFields
             self.redirectURL = redirectURL
             self.dataForm = dataForm
+            self.bitsOfBinary = bitsOfBinary
         }
     }
 
@@ -172,7 +176,8 @@ public final class RegistrationModule: XMPPModule, Sendable {
                 instructions: instructions,
                 isRegistered: isRegistered,
                 redirectURL: redirectURL,
-                dataForm: parseDataForm(formElement)
+                dataForm: parseDataForm(formElement),
+                bitsOfBinary: element.children(named: "data").compactMap(BitsOfBinaryData.parse)
             )
         }
 

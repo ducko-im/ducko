@@ -827,3 +827,23 @@ let endPointBinding: [UInt8] = Array(repeating: 0xCD, count: 32)
 let exporterBinding: [UInt8] = Array(repeating: 0xEF, count: 32)
 /// What TLS 1.3 computes: both binding types.
 let tls13Bindings: [ChannelBindingType: [UInt8]] = [.tlsServerEndPoint: endPointBinding, .tlsExporter: exporterBinding]
+
+/// Fetches a server's registration form on a session of its own, closed on every exit, over `transport` or, without
+/// one, the default transport.
+func fetchRegistrationForm(
+    domain: String, host: String? = nil, port: UInt16 = 5222, transport: (any XMPPTransport)? = nil
+) async throws -> RegistrationModule.RegistrationForm {
+    let session = if let transport {
+        try await RegistrationSession.open(domain: domain, host: host, port: port, transport: transport)
+    } else {
+        try await RegistrationSession.open(domain: domain, host: host, port: port)
+    }
+    do {
+        let form = try await session.fetchForm()
+        await session.close()
+        return form
+    } catch {
+        await session.close()
+        throw error
+    }
+}
