@@ -104,7 +104,13 @@ It is skipped by default and requires all four `DUCKO_TEST_*` credential pairs.
 DUCKO_TEST_REGISTRATION=1 swift test --package-path IntegrationTests --filter CLIAccount
 ```
 
-`TestHarness` runs a bootstrap probe before the first test executes and auto-runs the OMEMO reset when any account's PEP devicelist crosses `autoResetDevicelistThreshold` (32 entries). The env-gated suite remains useful for non-OMEMO drift (roster subscription baselines, the dave-empty invariant) since the auto-reset only touches the OMEMO devicelist path.
+`SASLUpgradeTests` checks the XEP-0480 SCRAM upgrade against a second server. It runs only when `DUCKO_TEST_SASL_UPGRADE_JID`, `DUCKO_TEST_SASL_UPGRADE_PASSWORD`, `DUCKO_TEST_SASL_UPGRADE_PORT` and `DUCKO_TEST_SASL_UPGRADE_RESET_COMMAND` are all set. The server must offer `UPGR-SCRAM-SHA-256` while the account holds only a SCRAM-SHA-1 credential. The test runs the reset command first. That command must remove the account's SCRAM-SHA-256 credential so that the server offers the upgrade again. Run the suite with:
+
+```
+swift test --package-path IntegrationTests --filter SASLUpgradeTests
+```
+
+`TestHarness` runs a bootstrap probe before the first test executes and auto-runs the OMEMO reset when any account's PEP devicelist crosses `autoResetDevicelistThreshold` (32 entries). `ResetTestServerState` remains useful for non-OMEMO drift (roster subscription baselines, the dave-empty invariant) since the auto-reset only touches the OMEMO devicelist path.
 
 ## Packaging
 

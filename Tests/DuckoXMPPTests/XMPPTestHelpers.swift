@@ -121,6 +121,12 @@ func stanza(_ xml: String) throws -> XMLElement {
     throw XMPPClientError.unexpectedStreamState("No stanza in \(xml)")
 }
 
+/// The top-level elements the client sent, parsed, so a check matches by name and namespace rather than by how the
+/// serializer happens to quote them. The stream header parses to none.
+func sentElements(on mock: MockTransport) async -> [XMLElement] {
+    await mock.sentBytes.compactMap { try? stanza(String(decoding: $0, as: UTF8.self)) }
+}
+
 // MARK: - Stub Module Context
 
 /// A `ModuleContext` with inert dependencies for driving a module without a client; pass only the ones a test observes.
@@ -302,6 +308,58 @@ func simulateSASL2Handshake(
 /// Simulates a SASL2 + Bind 2 connect handshake using PLAIN mechanism.
 func simulateSASL2Connect(_ mock: MockTransport) async {
     await simulateSASL2Handshake(mock, features: testFeaturesSASL2, replies: [testSASL2SuccessWithBind])
+}
+
+// MARK: - Sign-In
+
+/// The message a sign-in that failed with `error` reports.
+func failureMessage(_ error: (any Error)?) -> String? {
+    guard case let .authenticationFailed(failure) = error as? XMPPClientError else { return nil }
+    return failure.message
+}
+
+/// Stream features offering `mechanisms` over SASL1 and, with Bind 2, `sasl2Mechanisms` (by default the same) over
+/// SASL2. The SASL2 offer lists the upgrade tasks `upgrades`, and `types` go in `<sasl-channel-binding>` when given.
+func offer(_ mechanisms: [String], sasl2Mechanisms: [String]? = nil, types: [String]? = nil, upgrades: [String] = []) -> String {
+    let names = { (mechanisms: [String]) in mechanisms.map { "<mechanism>\($0)</mechanism>" }.joined() }
+    let binding = types.map { types in
+        "<sasl-channel-binding xmlns='urn:xmpp:sasl-cb:0'>"
+            + types.map { "<channel-binding type='\($0)'/>" }.joined() + "</sasl-channel-binding>"
+    } ?? ""
+    let upgradeTasks = upgrades.map { "<upgrade xmlns='urn:xmpp:sasl:upgrade:0'>\($0)</upgrade>" }.joined()
+    return """
+    <features xmlns='http://etherx.jabber.org/streams'>\
+    <mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>\(names(mechanisms))</mechanisms>\
+    <authentication xmlns='urn:xmpp:sasl:2'>\(upgradeTasks)\(names(sasl2Mechanisms ?? mechanisms))<inline><bind xmlns='urn:xmpp:bind:0'/></inline></authentication>\
+    \(binding)</features>
+    """
+}
+
+/// The salt ejabberd sent in a captured XEP-0480 upgrade.
+let capturedUpgradeSalt = "7wdCPeyqtCe6el/JshPQuw=="
+
+/// Python's `hashlib.pbkdf2_hmac` SHA-256 SaltedPassword for the password `pencil`, `capturedUpgradeSalt` and 4096
+/// iterations.
+let capturedUpgradeSHA256Hash = "McvlDgcSSz3ZXdcRHP9SCzjvEGtf56O5FjRSpnVhosw="
+
+/// The next stanza `mock` sends that matches `predicate`, or `nil` once `connect` ends without one.
+func nextSent(
+    _ mock: MockTransport, before connect: Task<Void, any Error>, matching predicate: @escaping @Sendable (String) -> Bool
+) async -> String? {
+    let (stream, continuation) = AsyncStream.makeStream(of: String?.self)
+    let watcher = Task { await continuation.yield(mock.waitForSent(matching: predicate)) }
+    let finisher = Task {
+        _ = await connect.result
+        continuation.yield(nil)
+    }
+    defer {
+        watcher.cancel()
+        finisher.cancel()
+    }
+    for await stanza in stream {
+        return stanza
+    }
+    return nil
 }
 
 // MARK: - Sent-Response Waiting

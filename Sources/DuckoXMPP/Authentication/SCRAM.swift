@@ -12,11 +12,58 @@ enum SCRAMMechanismName {
     static let sha1Plus = "SCRAM-SHA-1-PLUS"
 }
 
+/// The lowest PBKDF2 iteration count this client accepts, for every hash and for an upgrade's salt. RFC 5802 §5.1 asks
+/// servers for at least 4096.
+let scramMinimumIterationCount = 4096
+
 /// One SCRAM exchange (RFC 5802), whatever hash its mechanism uses.
 protocol SCRAMSession: Sendable {
     mutating func clientFirstMessage(authcid: String, password: String) -> String
     mutating func clientFinalMessage(serverFirstMessage: String) -> Result<String, SASLAuthError>
     mutating func verifyServerFinal(serverFinalMessage: String) -> Result<Void, SASLAuthError>
+}
+
+/// The hash a SCRAM mechanism uses, strongest first.
+enum SCRAMHash: CaseIterable {
+    case sha3_512, sha512, sha256, sha1
+
+    /// Matches `name` with or without `-PLUS`, and fails for a mechanism this client does not implement.
+    init?(mechanism name: String) {
+        guard let hash = Self.allCases.first(where: { name == $0.mechanismName || name == $0.plusMechanismName }) else {
+            return nil
+        }
+        self = hash
+    }
+
+    /// The mechanism's name without `-PLUS`.
+    var mechanismName: String {
+        switch self {
+        case .sha3_512: SCRAMMechanismName.sha3_512
+        case .sha512: SCRAMMechanismName.sha512
+        case .sha256: SCRAMMechanismName.sha256
+        case .sha1: SCRAMMechanismName.sha1
+        }
+    }
+
+    /// The mechanism's name with `-PLUS`, which binds to the TLS channel.
+    var plusMechanismName: String {
+        switch self {
+        case .sha3_512: SCRAMMechanismName.sha3_512Plus
+        case .sha512: SCRAMMechanismName.sha512Plus
+        case .sha256: SCRAMMechanismName.sha256Plus
+        case .sha1: SCRAMMechanismName.sha1Plus
+        }
+    }
+
+    /// The RFC 5802 SaltedPassword for this hash.
+    func saltedPassword(password: [UInt8], salt: [UInt8], iterations: Int) -> [UInt8] {
+        switch self {
+        case .sha3_512: pbkdf2(SHA3_512.self, password: password, salt: salt, iterations: iterations)
+        case .sha512: pbkdf2(SHA512.self, password: password, salt: salt, iterations: iterations)
+        case .sha256: pbkdf2(SHA256.self, password: password, salt: salt, iterations: iterations)
+        case .sha1: pbkdf2(Insecure.SHA1.self, password: password, salt: salt, iterations: iterations)
+        }
+    }
 }
 
 /// The SCRAM exchange for the mechanism `name`, or nil when `name` is not a SCRAM mechanism. A `-PLUS` mechanism takes
@@ -26,16 +73,16 @@ func makeSCRAMSession(
     channelBinding: ChannelBindingMode,
     downgradeContext: SCRAMDowngradeContext
 ) -> (any SCRAMSession)? {
-    switch name {
-    case SCRAMMechanismName.sha3_512Plus, SCRAMMechanismName.sha3_512:
+    switch SCRAMHash(mechanism: name) {
+    case .sha3_512:
         SCRAMState<SHA3_512>(channelBindingMode: channelBinding, downgradeContext: downgradeContext)
-    case SCRAMMechanismName.sha512Plus, SCRAMMechanismName.sha512:
+    case .sha512:
         SCRAMState<SHA512>(channelBindingMode: channelBinding, downgradeContext: downgradeContext)
-    case SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha256:
+    case .sha256:
         SCRAMState<SHA256>(channelBindingMode: channelBinding, downgradeContext: downgradeContext)
-    case SCRAMMechanismName.sha1Plus, SCRAMMechanismName.sha1:
+    case .sha1:
         SCRAMState<Insecure.SHA1>(channelBindingMode: channelBinding, downgradeContext: downgradeContext)
-    default:
+    case nil:
         nil
     }
 }

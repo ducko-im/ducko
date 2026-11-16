@@ -21,11 +21,6 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
     private let channelBindingMode: ChannelBindingMode
     private let downgradeContext: SCRAMDowngradeContext
 
-    /// Minimum PBKDF2 iteration count per RFC 5802 §5.1.
-    static var minimumIterationCount: Int {
-        4096
-    }
-
     init(
         channelBindingMode: ChannelBindingMode = .none,
         downgradeContext: SCRAMDowngradeContext = .empty,
@@ -74,7 +69,7 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
             return .failure(error)
         }
 
-        guard iterations >= Self.minimumIterationCount else {
+        guard iterations >= scramMinimumIterationCount else {
             return .failure(.iterationCountTooLow(iterations))
         }
 
@@ -83,10 +78,10 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
         }
 
         // Derive keys via PBKDF2
-        let saltedPassword = pbkdf2(password: Array(password.utf8), salt: salt, iterations: iterations)
-        let clientKey = hmac(key: saltedPassword, data: Array("Client Key".utf8))
+        let saltedPassword = pbkdf2(H.self, password: Array(password.utf8), salt: salt, iterations: iterations)
+        let clientKey = hmac(H.self, key: saltedPassword, data: Array("Client Key".utf8))
         let storedKey = Array(H.hash(data: clientKey))
-        let serverKey = hmac(key: saltedPassword, data: Array("Server Key".utf8))
+        let serverKey = hmac(H.self, key: saltedPassword, data: Array("Server Key".utf8))
 
         // Build auth message with channel binding per RFC 5802 §7
         let gs2HeaderBytes = Array(gs2Header.utf8)
@@ -99,11 +94,11 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
         let authMessage = "\(clientFirstMessageBare),\(serverFirstMessage),\(clientFinalWithoutProof)"
 
         // Client signature and proof
-        let clientSignature = hmac(key: storedKey, data: Array(authMessage.utf8))
+        let clientSignature = hmac(H.self, key: storedKey, data: Array(authMessage.utf8))
         let clientProof = zip(clientKey, clientSignature).map { $0 ^ $1 }
 
         // Server signature for later verification
-        serverSignature = hmac(key: serverKey, data: Array(authMessage.utf8))
+        serverSignature = hmac(H.self, key: serverKey, data: Array(authMessage.utf8))
 
         phase = .waitingForServerFinal
 
@@ -166,32 +161,6 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
         case completed
     }
 
-    /// PBKDF2 using HMAC<H>.
-    private func pbkdf2(password: [UInt8], salt: [UInt8], iterations: Int) -> [UInt8] {
-        // U1 = HMAC(password, salt || INT(1))
-        var saltPlusOne = salt
-        saltPlusOne.append(contentsOf: [0, 0, 0, 1])
-
-        var u = hmac(key: password, data: saltPlusOne)
-        var result = u
-
-        for _ in 1 ..< iterations {
-            u = hmac(key: password, data: u)
-            for j in 0 ..< result.count {
-                result[j] ^= u[j]
-            }
-        }
-
-        return result
-    }
-
-    /// HMAC<H> producing raw bytes.
-    private func hmac(key: [UInt8], data: [UInt8]) -> [UInt8] {
-        let symmetricKey = SymmetricKey(data: key)
-        let mac = HMAC<H>.authenticationCode(for: data, using: symmetricKey)
-        return Array(mac)
-    }
-
     /// Parses comma-separated `key=value` attributes from a SCRAM message.
     ///
     /// SCRAM attribute values don't contain unescaped commas, so a simple split works.
@@ -223,4 +192,29 @@ struct SCRAMState<H: HashFunction>: SCRAMSession where H.Digest: Sendable {
     static func randomNonce() -> String {
         Base64.encode((0 ..< 24).map { _ in UInt8.random(in: 0 ... 255) })
     }
+}
+
+/// RFC 5802's Hi() (§2.2): PBKDF2 with HMAC over `hash`, one block long.
+func pbkdf2(_ hash: (some HashFunction).Type, password: [UInt8], salt: [UInt8], iterations: Int) -> [UInt8] {
+    // U1 = HMAC(password, salt || INT(1))
+    var saltPlusOne = salt
+    saltPlusOne.append(contentsOf: [0, 0, 0, 1])
+
+    var u = hmac(hash, key: password, data: saltPlusOne)
+    var result = u
+
+    for _ in 1 ..< iterations {
+        u = hmac(hash, key: password, data: u)
+        for j in 0 ..< result.count {
+            result[j] ^= u[j]
+        }
+    }
+
+    return result
+}
+
+func hmac<H: HashFunction>(_: H.Type, key: [UInt8], data: [UInt8]) -> [UInt8] {
+    let symmetricKey = SymmetricKey(data: key)
+    let mac = HMAC<H>.authenticationCode(for: data, using: symmetricKey)
+    return Array(mac)
 }

@@ -197,6 +197,8 @@ ducko account set alice@example.com --no-require-tls --allow-plain
 
 To stage a refusal against the stub server, which offers only PLAIN, add its account as [references/stub-server-smoke-testing.md](references/stub-server-smoke-testing.md) shows, but leave PLAIN off with `ducko account set <jid> --no-require-tls --no-allow-plain`.
 
+To check which SCRAM mechanism a sign-in verified, for example that a server-requested credential upgrade moved the account to a stronger hash on its next sign-in, read `DUCKO_PROFILE=<unique> .build/debug/DuckoCLI logs show --lines 300` for `Signed in with <mechanism>, so a sign-in offering only PLAIN is refused from now on`. A sign-in that verifies a SCRAM server signature logs that info line once it has turned PLAIN off, or `Could not record that the account no longer sends its password to a server offering only PLAIN` when saving that fails. A PLAIN sign-in logs neither.
+
 ### `roster list`
 
 List an authoritative, locally saved snapshot for the selected account, grouped with current presence indicators. Waits up to 15 seconds for the identified full roster response to be saved. An empty snapshot completes successfully; JSON emits a `roster_empty` record.

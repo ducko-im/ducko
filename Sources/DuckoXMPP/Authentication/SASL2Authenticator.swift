@@ -6,6 +6,8 @@ struct SASL2Features {
     let supportsSM: Bool
     /// The features Bind 2 can enable inline (XEP-0386 §3.1).
     let bind2InlineFeatures: Set<String>
+    /// The upgrade tasks the server offers (XEP-0480 §2.1), uppercased.
+    let upgrades: Set<String>
 }
 
 /// The `<user-agent/>` a SASL2 `<authenticate/>` carries (XEP-0388 §2.3). It has no id, so the server gives every
@@ -36,7 +38,9 @@ public struct SASL2UserAgent: Sendable {
 /// Negotiation coordinator for SASL2 authentication (XEP-0388).
 ///
 /// Drives the `<authenticate>` → `<challenge>` → `<response>` → `<success>` exchange
-/// using the SASL2 namespace with inline Bind 2 (XEP-0386) feature negotiation.
+/// using the SASL2 namespace with inline Bind 2 (XEP-0386) feature negotiation. When `<authenticate>` asks for a SCRAM
+/// upgrade (XEP-0480), the server may answer the proof with `<continue>`. The `<next>` → `<task-data>` → `<task-data>`
+/// exchange then runs before `<success>`.
 struct SASL2Authenticator {
     /// Result of a successful SASL2 authentication.
     enum AuthResult {
@@ -54,8 +58,9 @@ struct SASL2Authenticator {
 
     private var activeMechanism: ActiveMechanism?
     private var mechanismName: String?
-    /// The SCRAM mechanism whose server signature checked out, even when the rest of the success reply then failed.
+    /// The SCRAM mechanism whose server signature checked out, even when the sign-in then failed.
     private(set) var verifiedSCRAMMechanism: String?
+    private var upgrade = UpgradeState.notRequested
 
     // MARK: - Feature Parsing
 
@@ -73,18 +78,24 @@ struct SASL2Authenticator {
         let bind2InlineFeatures = Set(
             bind2?.child(named: "inline")?.children(named: "feature").compactMap { $0.attribute("var") } ?? []
         )
+        let upgrades = Set(
+            auth.children(named: "upgrade").filter { $0.namespace == XMPPNamespaces.saslUpgrade }
+                .compactMap { $0.textContent?.uppercased() }
+        )
 
         return SASL2Features(
             mechanisms: mechanisms,
             supportsBind2: bind2 != nil,
             supportsSM: inline?.child(named: "sm", namespace: XMPPNamespaces.sm) != nil,
-            bind2InlineFeatures: bind2InlineFeatures
+            bind2InlineFeatures: bind2InlineFeatures,
+            upgrades: upgrades
         )
     }
 
     // MARK: - Negotiation
 
     /// Selects the strongest mechanism and produces the `<authenticate>` element.
+    /// A channel-bound SCRAM sign-in asks for the strongest offered upgrade to a stronger hash.
     /// The `inlinePayloads` are added as children (e.g., Bind 2 request). Unless `allowsPLAIN`, an offer that leaves
     /// only PLAIN is refused. `tlsVersion` is the negotiated TLS version's wire code, which a SCRAM server may confirm
     /// (XEP-0515).
@@ -129,6 +140,15 @@ struct SASL2Authenticator {
             attributes: ["mechanism": selected]
         )
 
+        if let hash = selectSCRAMUpgrade(
+            offered: sasl2Features.upgrades, selectedMechanism: selected, channelBinding: channelBinding
+        ) {
+            var request = XMLElement(name: "upgrade", namespace: XMPPNamespaces.saslUpgrade)
+            request.addText(hash.upgradeTaskName)
+            authenticate.addChild(request)
+            upgrade = .requested(hash, password: password)
+        }
+
         var initialResponse = XMLElement(name: "initial-response")
         initialResponse.addText(Base64.encode(initialPayload))
         authenticate.addChild(initialResponse)
@@ -141,7 +161,7 @@ struct SASL2Authenticator {
         return authenticate
     }
 
-    /// Dispatches a received stanza (`<challenge>`, `<success>`, or `<failure>`) to the active mechanism.
+    /// Handles the server's next SASL2 element.
     mutating func receive(_ stanza: XMLElement) -> Response {
         guard var mechanism = activeMechanism else {
             return .failure(.unexpectedReply)
@@ -155,7 +175,9 @@ struct SASL2Authenticator {
         case "failure":
             .failure(.parse(failure: stanza))
         case "continue":
-            .failure(.unsupportedSignInStep)
+            handleContinue(stanza, mechanism: &mechanism)
+        case "task-data":
+            handleTaskData(stanza)
         default:
             .failure(.unknownReply(element: stanza.name))
         }
@@ -206,17 +228,50 @@ struct SASL2Authenticator {
     }
 
     private mutating func handleSuccess(_ stanza: XMLElement, mechanism: inout ActiveMechanism) -> Response {
-        // Verify SCRAM server signature from <additional-data> (required for SCRAM mechanisms)
+        // A SCRAM success must carry the server signature in <additional-data>, unless a <continue> before it
+        // already did.
         switch mechanism {
-        case var .scram(scram):
-            if let error = verifyScramSignature(stanza, scram: &scram) { return error }
-            mechanism = .scram(scram)
-            verifiedSCRAMMechanism = mechanismName
+        case let .scram(scram):
+            guard verifiedSCRAMMechanism == nil else { break }
+            if let error = verifyScramSignature(stanza, scram: scram, mechanism: &mechanism) { return error }
         case .plain:
             break
         }
 
         return parseSuccess(stanza)
+    }
+
+    /// Answers the `<continue>` that follows a requested SCRAM upgrade with `<next>` (XEP-0480 §2.2). Any other
+    /// `<continue>`, such as one asking for a second factor, is not supported.
+    ///
+    /// The server signature is checked before the task is answered, because the hash the task returns is
+    /// password-equivalent. XEP-0480 does not require this order.
+    private mutating func handleContinue(_ stanza: XMLElement, mechanism: inout ActiveMechanism) -> Response {
+        guard case let .scram(scram) = mechanism, case let .requested(hash, password) = upgrade else {
+            return .failure(.unsupportedSignInStep)
+        }
+        if let error = verifyScramSignature(stanza, scram: scram, mechanism: &mechanism) { return error }
+
+        let tasks = stanza.child(named: "tasks")?.children(named: "task").map(\.textContent)
+        guard tasks == [hash.upgradeTaskName] else { return .failure(.unsupportedSignInStep) }
+        upgrade = .started(hash, password: password)
+        return .continueWith(XMLElement(name: "next", namespace: XMPPNamespaces.sasl2, attributes: ["task": hash.upgradeTaskName]))
+    }
+
+    /// Returns the SaltedPassword for the upgraded hash that the server's salt asks for (XEP-0480 §3). Only a verified
+    /// `<continue>` starts the upgrade, so a `<task-data>` that comes before or instead of one gets no hash.
+    private mutating func handleTaskData(_ stanza: XMLElement) -> Response {
+        guard case let .started(hash, password) = upgrade else {
+            return .failure(.unexpectedReply)
+        }
+        switch parseSCRAMUpgradeSalt(stanza) {
+        case let .success(parsed):
+            upgrade = .notRequested
+            let saltedPassword = hash.saltedPassword(password: Array(password.utf8), salt: parsed.salt, iterations: parsed.iterations)
+            return .continueWith(scramUpgradeHashElement(saltedPassword))
+        case let .failure(error):
+            return .failure(error)
+        }
     }
 
     /// Processes a SCRAM challenge and produces the response element.
@@ -231,17 +286,21 @@ struct SASL2Authenticator {
         }
     }
 
-    /// Verifies the SCRAM server signature from `<additional-data>`.
-    /// Returns an error response if verification fails, `nil` on success.
-    private func verifyScramSignature(_ stanza: XMLElement, scram: inout any SCRAMSession) -> Response? {
+    /// Verifies the SCRAM server signature from `<additional-data>`, returning the failure response or `nil` on success.
+    /// On success it stores the completed exchange in `mechanism` and records the mechanism as verified.
+    private mutating func verifyScramSignature(
+        _ stanza: XMLElement, scram: any SCRAMSession, mechanism: inout ActiveMechanism
+    ) -> Response? {
         guard let additionalData = stanza.childText(named: "additional-data") else {
             return .failure(.serverProofMissing)
         }
         guard let decoded = Base64.decodeString(additionalData) else {
             return .failure(.invalidBase64)
         }
-        let result = scram.verifyServerFinal(serverFinalMessage: decoded)
-        if case let .failure(error) = result { return .failure(error) }
+        var scram = scram
+        if case let .failure(error) = scram.verifyServerFinal(serverFinalMessage: decoded) { return .failure(error) }
+        mechanism = .scram(scram)
+        verifiedSCRAMMechanism = mechanismName
         return nil
     }
 
@@ -264,6 +323,17 @@ struct SASL2Authenticator {
     private enum ActiveMechanism {
         case scram(any SCRAMSession)
         case plain
+    }
+
+    // MARK: - SCRAM Upgrade
+
+    /// Where a requested SCRAM upgrade stands.
+    private enum UpgradeState {
+        case notRequested
+        /// `<authenticate>` asked for the upgrade to this hash.
+        case requested(SCRAMHash, password: String)
+        /// A verified `<continue>` was answered with `<next>`, so the server's salt is due.
+        case started(SCRAMHash, password: String)
     }
 }
 

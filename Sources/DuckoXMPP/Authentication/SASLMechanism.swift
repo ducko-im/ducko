@@ -40,6 +40,9 @@ enum SASLAuthError: Error, Equatable {
     /// The server's XEP-0515 TLS version does not match the one negotiated.
     case tlsVersionTampered
     case unsupportedSignInStep
+    /// The server's `<task-data>` for the SCRAM upgrade has no salt, an empty one, or no numeric iteration count
+    /// (XEP-0480 §3).
+    case malformedUpgradeTask
     /// The server offers only PLAIN, which sends the password itself, to an account that does not allow it.
     case plainRefused
 
@@ -69,6 +72,7 @@ enum SASLAuthError: Error, Equatable {
         case .mechanismListTampered: "The server's sign-in options were changed on the way, which can mean the connection is being tampered with"
         case .tlsVersionTampered: "The connection's encryption version was changed on the way, which can mean the connection is being tampered with"
         case .unsupportedSignInStep: "The server asked for an extra authentication step that is not supported"
+        case .malformedUpgradeTask: "The server sent an incomplete request to upgrade how it stores the password"
         case .plainRefused: "The server offers only a sign-in that sends the password, which this account does not allow"
         }
     }
@@ -125,9 +129,7 @@ func parseChannelBindingTypes(_ features: XMLElement) -> Set<String> {
 }
 
 /// The `-PLUS` mechanisms this client can bind with, strongest first.
-private let scramPlusPreferenceOrder = [
-    SCRAMMechanismName.sha3_512Plus, SCRAMMechanismName.sha512Plus, SCRAMMechanismName.sha256Plus, SCRAMMechanismName.sha1Plus
-]
+private let scramPlusPreferenceOrder = SCRAMHash.allCases.map(\.plusMechanismName)
 
 private let implementedPlusMechanisms = Set(scramPlusPreferenceOrder)
 
@@ -185,7 +187,7 @@ func buildSASLPreferenceOrder(channelBinding: ChannelBindingMode, allowsPLAIN: B
     case .bound:
         scramPlusPreferenceOrder
     case .none, .clientSupportsButNotUsed:
-        [SCRAMMechanismName.sha3_512, SCRAMMechanismName.sha512, SCRAMMechanismName.sha256, SCRAMMechanismName.sha1]
+        SCRAMHash.allCases.map(\.mechanismName)
             + (allowsPLAIN ? [SASLPlain.mechanismName] : [])
     }
 }

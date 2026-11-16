@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Let a server that still stores only a SCRAM-SHA-1 password upgrade it to a stronger hash during sign-in (XEP-0480), so later sign-ins use SCRAM-SHA-256 or stronger. Ducko helps only on sign-ins bound to the encrypted connection, and only once the server has proved it knows the password
+
 ## [0.12.0] - 2026-11-15
 
 ### Added

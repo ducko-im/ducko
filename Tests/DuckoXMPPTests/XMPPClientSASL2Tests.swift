@@ -19,12 +19,6 @@ private func makeClient(
     return (client, sm)
 }
 
-/// The top-level elements the client sent, parsed, so a check matches by name and namespace rather than by how the
-/// serializer happens to quote them. The stream header parses to none.
-private func sentElements(on mock: MockTransport) async -> [XMLElement] {
-    await mock.sentBytes.compactMap { try? stanza(String(decoding: $0, as: UTF8.self)) }
-}
-
 private func sentAuthenticate(on mock: MockTransport) async throws -> XMLElement {
     try #require(await sentElements(on: mock).first { $0.name == "authenticate" && $0.namespace == XMPPNamespaces.sasl2 })
 }

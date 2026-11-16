@@ -6,22 +6,6 @@ import Testing
 
 // MARK: - Helpers
 
-/// Stream features offering `mechanisms` over SASL1 and, with Bind 2, `sasl2Mechanisms` (by default the same) over
-/// SASL2, plus `types` in `<sasl-channel-binding>` when given.
-private func offer(_ mechanisms: [String], sasl2Mechanisms: [String]? = nil, types: [String]? = nil) -> String {
-    let names = { (mechanisms: [String]) in mechanisms.map { "<mechanism>\($0)</mechanism>" }.joined() }
-    let binding = types.map { types in
-        "<sasl-channel-binding xmlns='urn:xmpp:sasl-cb:0'>"
-            + types.map { "<channel-binding type='\($0)'/>" }.joined() + "</sasl-channel-binding>"
-    } ?? ""
-    return """
-    <features xmlns='http://etherx.jabber.org/streams'>\
-    <mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>\(names(mechanisms))</mechanisms>\
-    <authentication xmlns='urn:xmpp:sasl:2'>\(names(sasl2Mechanisms ?? mechanisms))<inline><bind xmlns='urn:xmpp:bind:0'/></inline></authentication>\
-    \(binding)</features>
-    """
-}
-
 private func makeClient(_ mock: MockTransport, allowsPLAIN: Bool = false) -> XMPPClient {
     XMPPClient(
         domain: "example.com", credentials: .init(username: "user", password: "pencil"), transport: mock, requireTLS: false,
@@ -33,37 +17,11 @@ private func sent(_ mock: MockTransport, _ prefix: String) async -> Bool {
     await mock.sentBytes.contains { String(decoding: $0, as: UTF8.self).hasPrefix(prefix) }
 }
 
-/// The message a sign-in that failed with `error` reports.
-private func failureMessage(_ error: (any Error)?) -> String? {
-    guard case let .authenticationFailed(failure) = error as? XMPPClientError else { return nil }
-    return failure.message
-}
-
 /// What a sign-in run sent first, whether the client sent its proof, and what its connect threw.
 private struct SignInRun {
     let start: String
     let sentProof: Bool
     let error: (any Error)?
-}
-
-/// The next stanza `mock` sends that matches `predicate`, or `nil` once `connect` ends without one.
-private func nextSent(
-    _ mock: MockTransport, before connect: Task<Void, any Error>, matching predicate: @escaping @Sendable (String) -> Bool
-) async -> String? {
-    let (stream, continuation) = AsyncStream.makeStream(of: String?.self)
-    let watcher = Task { await continuation.yield(mock.waitForSent(matching: predicate)) }
-    let finisher = Task {
-        _ = await connect.result
-        continuation.yield(nil)
-    }
-    defer {
-        watcher.cancel()
-        finisher.cancel()
-    }
-    for await stanza in stream {
-        return stanza
-    }
-    return nil
 }
 
 /// Signs in on `mock` over SASL1 or SASL2 against `server`, offering `features`. A sign-in the server accepts then fails,

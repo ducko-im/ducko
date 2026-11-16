@@ -211,6 +211,46 @@ enum SASL2AuthenticatorTests {
         }
     }
 
+    struct UpgradeRequest {
+        /// The `<authenticate>` for an offer of SCRAM-SHA-1, SCRAM-SHA-1-PLUS and `mechanisms` that lists
+        /// `UPGR-SCRAM-SHA-256`: its first child, and its `<upgrade>` children.
+        private static func upgradeRequests(
+            mechanisms: [String] = [], channelBindings: [ChannelBindingType: [UInt8]]
+        ) throws -> (firstChild: XMLElement?, all: [XMLElement]) {
+            var auth = SASL2Authenticator()
+            let element = try auth.begin(
+                features: stanza(offer(
+                    ["SCRAM-SHA-1", "SCRAM-SHA-1-PLUS"] + mechanisms, types: ["tls-exporter"], upgrades: ["UPGR-SCRAM-SHA-256"]
+                )),
+                authcid: "user",
+                password: "pencil",
+                inlinePayloads: [],
+                channelBindings: channelBindings
+            )
+            guard case let .element(first) = element.children.first else { return (nil, []) }
+            return (first, element.children(named: "upgrade"))
+        }
+
+        @Test
+        func `A bound sign-in asks for the offered upgrade before its initial response`() throws {
+            let requests = try Self.upgradeRequests(channelBindings: tls13Bindings)
+            #expect(requests.all.count == 1)
+            #expect(requests.firstChild?.name == "upgrade")
+            #expect(requests.firstChild?.namespace == XMPPNamespaces.saslUpgrade)
+            #expect(requests.firstChild?.textContent == "UPGR-SCRAM-SHA-256")
+        }
+
+        @Test
+        func `An unbound sign-in asks for no upgrade`() throws {
+            #expect(try Self.upgradeRequests(channelBindings: [:]).all.isEmpty)
+        }
+
+        @Test
+        func `A sign-in already using the offered hash asks for no upgrade`() throws {
+            #expect(try Self.upgradeRequests(mechanisms: ["SCRAM-SHA-256-PLUS"], channelBindings: tls13Bindings).all.isEmpty)
+        }
+    }
+
     struct PLAINFlow {
         @Test
         func `Full PLAIN flow with SASL2 framing`() throws {

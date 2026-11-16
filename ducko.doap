@@ -323,7 +323,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0388.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">SASL2 is used only when the server also offers Bind 2, and further sign-in tasks such as a second factor are not supported. A SASL2 offer removed in transit leads to the SASL1 sign-in</xmpp:note>
+                <xmpp:note xml:lang="en">SASL2 is used only when the server also offers Bind 2. The only further sign-in task supported is the XEP-0480 SCRAM upgrade, so a sign-in fails when the server asks for another, such as a second factor. A SASL2 offer removed in transit leads to the SASL1 sign-in</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -419,6 +419,13 @@
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0474.html"/>
                 <xmpp:status>complete</xmpp:status>
                 <xmpp:note xml:lang="en">Ducko does not apply the section 7 relaxation of XEP-0440 rule 6, so a matching hash never allows an unbound sign-in. The hash shows only that the offer arrived unchanged. An interceptor holding a trusted certificate can still pick a TLS version on which the listed binding type cannot be computed, such as TLS 1.2 for tls-exporter, and then relay the unbound sign-in</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0480.html"/>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">Ducko requests one upgrade per sign-in, to the strongest offered SCRAM hash that is stronger than the one it signs in with. Because the returned hash is password-equivalent, it asks only on sign-ins bound to the TLS channel, and answers the task only after the server has proved it knows the password</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>

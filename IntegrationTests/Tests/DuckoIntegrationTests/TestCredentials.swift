@@ -47,19 +47,19 @@ enum TestCredentials {
     /// Dave is a newer addition; requiring him here would skip every existing
     /// integration test in environments that have only the three-account baseline.
     static var isAvailable: Bool {
-        env("DUCKO_TEST_ALICE_JID") != nil
-            && env("DUCKO_TEST_ALICE_PASSWORD") != nil
-            && env("DUCKO_TEST_BOB_JID") != nil
-            && env("DUCKO_TEST_BOB_PASSWORD") != nil
-            && env("DUCKO_TEST_CAROL_JID") != nil
-            && env("DUCKO_TEST_CAROL_PASSWORD") != nil
+        isSet("DUCKO_TEST_ALICE_JID")
+            && isSet("DUCKO_TEST_ALICE_PASSWORD")
+            && isSet("DUCKO_TEST_BOB_JID")
+            && isSet("DUCKO_TEST_BOB_PASSWORD")
+            && isSet("DUCKO_TEST_CAROL_JID")
+            && isSet("DUCKO_TEST_CAROL_PASSWORD")
     }
 
     /// Narrower gate applied only to roster subscription/denial tests that
     /// depend on Dave's clean-roster baseline.
     static var isDaveAvailable: Bool {
-        env("DUCKO_TEST_DAVE_JID") != nil
-            && env("DUCKO_TEST_DAVE_PASSWORD") != nil
+        isSet("DUCKO_TEST_DAVE_JID")
+            && isSet("DUCKO_TEST_DAVE_PASSWORD")
     }
 
     /// Opt-in gate for the destructive `account register`/`unregister`
@@ -68,6 +68,15 @@ enum TestCredentials {
     /// against a server whose XEP-0077 in-band registration is known-good.
     static var isRegistrationTestingEnabled: Bool {
         env("DUCKO_TEST_REGISTRATION") == "1"
+    }
+
+    /// Opt-in gate for `SASLUpgradeTests`, which needs an account on a server that offers the XEP-0480 upgrade to
+    /// SCRAM-SHA-256, and a command that makes it offer the upgrade again.
+    static var isSASLUpgradeTestingEnabled: Bool {
+        isSet("DUCKO_TEST_SASL_UPGRADE_JID")
+            && isSet("DUCKO_TEST_SASL_UPGRADE_PASSWORD")
+            && isSet("DUCKO_TEST_SASL_UPGRADE_RESET_COMMAND")
+            && saslUpgradePort != nil
     }
 
     /// High-entropy ephemeral username for the destructive registration
@@ -94,8 +103,29 @@ enum TestCredentials {
         credential(jidVar: "DUCKO_TEST_DAVE_JID", passwordVar: "DUCKO_TEST_DAVE_PASSWORD", label: "dave")
     }
 
+    static var saslUpgrade: Credential {
+        credential(jidVar: "DUCKO_TEST_SASL_UPGRADE_JID", passwordVar: "DUCKO_TEST_SASL_UPGRADE_PASSWORD", label: "sasl-upgrade")
+    }
+
+    /// The client port of the `saslUpgrade` account's server.
+    static var saslUpgradePort: UInt16? {
+        env("DUCKO_TEST_SASL_UPGRADE_PORT").flatMap { UInt16($0) }
+    }
+
+    /// The shell command that removes the `saslUpgrade` account's SCRAM-SHA-256 credential, so its server offers
+    /// the upgrade again.
+    static var saslUpgradeResetCommand: String {
+        env("DUCKO_TEST_SASL_UPGRADE_RESET_COMMAND") ?? ""
+    }
+
     private static func credential(jidVar: String, passwordVar: String, label: String) -> Credential {
         Credential(jid: env(jidVar) ?? "", password: env(passwordVar) ?? "", label: label)
+    }
+
+    /// Whether `key` holds a non-empty value. A `.env.test` copied from the example leaves some keys empty, and their
+    /// suites should skip rather than fail at sign-in.
+    private static func isSet(_ key: String) -> Bool {
+        !(env(key) ?? "").isEmpty
     }
 
     private static func env(_ key: String) -> String? {
