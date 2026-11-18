@@ -63,7 +63,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0045.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">No voice requests, room registration or mediated invitations</xmpp:note>
+                <xmpp:note xml:lang="en">No warning when a room's configuration later changes to logged or non-anonymous (status codes 170 and 172). No voice requests, room registration, or sending of mediated invitations</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -83,7 +83,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0059.html"/>
                 <xmpp:status>complete</xmpp:status>
-                <xmpp:note xml:lang="en">Used for MAM paging</xmpp:note>
+                <xmpp:note xml:lang="en">Used for MAM and channel search paging</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -109,6 +109,12 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0077.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0082.html"/>
                 <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
@@ -197,7 +203,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0221.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Media is read in every form but shown only in registration forms</xmpp:note>
+                <xmpp:note xml:lang="en">Media is read in every form but shown only as images on CAPTCHA challenges in registration forms</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -267,8 +273,8 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0300.html"/>
-                <xmpp:status>complete</xmpp:status>
-                <xmpp:note xml:lang="en">Advertises SHA-256, which file checksums are verified with; Entity Capabilities 2.0 also uses SHA-512</xmpp:note>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Advertises only SHA-256, which file checksums are verified with. Entity Capabilities 2.0 also computes and verifies SHA-512 hashes without advertising that algorithm</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -287,7 +293,8 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0333.html"/>
-                <xmpp:status>complete</xmpp:status>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">In group chats and their private chats, a received marker is matched by the message's own id rather than the stanza id the group chat assigned</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -318,7 +325,8 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0368.html"/>
-                <xmpp:status>complete</xmpp:status>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">When the _xmpps-client record's target is "." and no _xmpp-client record is found, Ducko falls back to the domain's address records on port 5222, which the spec forbids</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -331,7 +339,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0384.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Room member lists are fetched before each encrypted message rather than on join, and affiliation changes are not tracked. A request for unencrypted messages from a device that is not trusted is ignored</xmpp:note>
+                <xmpp:note xml:lang="en">Room member lists are fetched before each encrypted message rather than on join, and affiliation changes are not tracked. A request for unencrypted messages from a device that is not trusted is ignored. Trust On First Use is on by default, so messages are encrypted to a contact's new device without asking</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -343,8 +351,8 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0388.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">SASL2 is used only when the server also offers Bind 2. The only further sign-in task supported is the XEP-0480 SCRAM upgrade, so a sign-in fails when the server asks for another, such as a second factor. A SASL2 offer removed in transit leads to the SASL1 sign-in</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">SASL2 is used only when the server also offers Bind 2. The only further sign-in task supported is the XEP-0480 SCRAM upgrade, so a sign-in fails when the server asks for another, such as a second factor. A SASL2 or Bind 2 offer removed in transit leads to the SASL1 sign-in</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -363,7 +371,8 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0393.html"/>
-                <xmpp:status>complete</xmpp:status>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">A block quote starts only at "&gt; " with a space, so "&gt;&gt;" does not nest and "&gt;text" is not a quote. A preformatted block starts only at a line of exactly three backticks, and an unclosed one is shown as plain text</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -407,6 +416,12 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0425.html"/>
+                <xmpp:status>complete</xmpp:status>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0426.html"/>
                 <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
