@@ -463,7 +463,7 @@ enum CapsModuleTests {
         @Test
         func `A hash set whose first algorithm is unsupported verifies with the next`() async throws {
             let input = Caps2Hash.generateHashInput(identities: [Self.identity], features: ["urn:xmpp:ping"])
-            let value = Base64.encode(Caps2HashAlgorithm.sha256.hash(input))
+            let value = Base64.encode(HashAlgorithm.sha256.hash(input))
             let peer = CapsPeer.make { CapsPeer.result(to: $0, query: Self.identityXML + "<feature var='urn:xmpp:ping'/>") }
 
             try peer.receive("""
@@ -501,7 +501,7 @@ enum CapsModuleTests {
         func `An identity in a reply whose iq carries xml:lang is hashed with it`() async throws {
             let identity = ServiceDiscoveryModule.Identity(category: "client", type: "pc", lang: "en", name: "Peer")
             let input = Caps2Hash.generateHashInput(identities: [identity], features: ["urn:xmpp:ping"])
-            let value = Base64.encode(Caps2HashAlgorithm.sha256.hash(input))
+            let value = Base64.encode(HashAlgorithm.sha256.hash(input))
             let peer = CapsPeer.make { iq in
                 Result {
                     try XMPPIQ(element: stanza(
@@ -525,7 +525,7 @@ enum CapsModuleTests {
         @Test
         func `An identity in a reply without xml:lang on it, its query or its iq is hashed with the stream's`() async throws {
             let identity = ServiceDiscoveryModule.Identity(category: "client", type: "pc", lang: "de", name: "Peer")
-            let value = Base64.encode(Caps2HashAlgorithm.sha256.hash(Caps2Hash.generateHashInput(identities: [identity], features: ["urn:xmpp:ping"])))
+            let value = Base64.encode(HashAlgorithm.sha256.hash(Caps2Hash.generateHashInput(identities: [identity], features: ["urn:xmpp:ping"])))
             let transport = MockTransport()
             let client = XMPPClient(domain: "example.com", credentials: .init(username: "user", password: "unused"), transport: transport, requireTLS: false, allowsPLAIN: true)
             let caps = CapsModule()
@@ -692,10 +692,10 @@ enum CapsModuleTests {
             let capsInput = try #require(info.capsInput)
             #expect(CapsModule.generateVerificationString(identities: capsInput.identities, features: capsInput.features, forms: capsInput.forms) == ver)
             let sha256 = advertised.first { $0.namespace == XMPPNamespaces.caps2 }?
-                .children(named: "hash").first { $0.attribute("algo") == Caps2HashAlgorithm.sha256.rawValue }?.textContent
+                .children(named: "hash").first { $0.attribute("algo") == HashAlgorithm.sha256.rawValue }?.textContent
             let caps2Input = try #require(info.caps2Input)
             let caps2Bytes = Caps2Hash.generateHashInput(identities: caps2Input.identities, features: caps2Input.features, forms: caps2Input.forms)
-            #expect(Base64.encode(Caps2HashAlgorithm.sha256.hash(caps2Bytes)) == sha256)
+            #expect(Base64.encode(HashAlgorithm.sha256.hash(caps2Bytes)) == sha256)
         }
     }
 }

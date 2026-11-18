@@ -273,8 +273,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0300.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Advertises only SHA-256, which file checksums are verified with. Entity Capabilities 2.0 also computes and verifies SHA-512 hashes without advertising that algorithm</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>

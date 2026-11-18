@@ -156,6 +156,17 @@ enum JingleTypesTests {
         }
 
         @Test
+        func `Takes the strongest supported hash an offer lists`() throws {
+            var sha1 = XMLElement(name: "hash", namespace: XMPPNamespaces.hashes2, attributes: ["algo": "sha-1"])
+            sha1.addText("weak")
+            var sha256 = XMLElement(name: "hash", namespace: XMPPNamespaces.hashes2, attributes: ["algo": "sha-256"])
+            sha256.addText("strong")
+            let parsed = try #require(JingleFileDescription(from: description(fileChildren: [sha1, sha256])))
+            #expect(parsed.hash == "strong")
+            #expect(parsed.hashAlgo == "sha-256")
+        }
+
+        @Test
         func `hash-used is false when absent`() throws {
             let parsed = try #require(JingleFileDescription(from: description(fileChildren: [])))
             #expect(!parsed.hashUsed)

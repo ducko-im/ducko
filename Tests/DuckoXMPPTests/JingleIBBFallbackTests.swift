@@ -817,7 +817,7 @@ enum JingleIBBFallbackTests {
         @Test
         func `An offer hash in an unsupported algorithm completes unverified`() async throws {
             let harness = JingleInitiatorHarness()
-            let file = JingleFileDescription(name: "test.txt", size: 3, hash: "wronghash==", hashAlgo: "sha-512")
+            let file = JingleFileDescription(name: "test.txt", size: 3, hash: "wronghash==", hashAlgo: "sha3-256")
             try await Self.deliverFullStream(harness, content: JingleInitiatorHarness.fileContent(file))
 
             #expect(try await harness.module.receiveFileData(sid: "sid-1") == [1, 2, 3])

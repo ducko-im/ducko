@@ -1,18 +1,3 @@
-import CryptoKit
-
-/// Hash algorithms supported by XEP-0390 Entity Capabilities 2.0.
-enum Caps2HashAlgorithm: String, CaseIterable {
-    case sha256 = "sha-256"
-    case sha512 = "sha-512"
-
-    func hash(_ data: [UInt8]) -> [UInt8] {
-        switch self {
-        case .sha256: Array(SHA256.hash(data: data))
-        case .sha512: Array(SHA512.hash(data: data))
-        }
-    }
-}
-
 extension String {
     /// Whether the string sorts before `other` in the i;octet collation (RFC 4790 §9.3), which both caps hashes sort
     /// by. It compares UTF-8 bytes, where `String`'s `<` compares normalized Unicode scalars.

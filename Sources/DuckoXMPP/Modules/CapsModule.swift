@@ -13,7 +13,7 @@ public final class CapsModule: XMPPModule, Sendable {
         /// An XEP-0115 `ver` hashed with SHA-1.
         case caps(ver: String)
         /// One hash of an XEP-0390 hash set.
-        case caps2(Caps2HashAlgorithm, value: String)
+        case caps2(HashAlgorithm, value: String)
     }
 
     private enum CacheEntry {
@@ -114,11 +114,10 @@ public final class CapsModule: XMPPModule, Sendable {
     }
 
     /// The XEP-0390 hashes this module can check, in the order the presence lists them.
-    private static func caps2Hashes(in presence: XMPPPresence) -> [(algorithm: Caps2HashAlgorithm, value: String)] {
+    private static func caps2Hashes(in presence: XMPPPresence) -> [(algorithm: HashAlgorithm, value: String)] {
         guard let caps2Child = presence.element.child(named: "c", namespace: XMPPNamespaces.caps2) else { return [] }
-        return caps2Child.children(named: "hash").compactMap { hash in
-            guard hash.namespace == XMPPNamespaces.hashes2,
-                  let algorithm = hash.attribute("algo").flatMap(Caps2HashAlgorithm.init(rawValue:)),
+        return HashAlgorithm.hashElements(in: caps2Child).compactMap { hash in
+            guard let algorithm = hash.attribute("algo").flatMap(HashAlgorithm.init(rawValue:)),
                   let value = hash.textContent else { return nil }
             return (algorithm, value)
         }
@@ -309,7 +308,7 @@ public final class CapsModule: XMPPModule, Sendable {
         var caps2Element = XMLElement(name: "c", namespace: XMPPNamespaces.caps2)
         let hashInput = Caps2Hash.generateHashInput(identities: [identity], features: allFeatures)
 
-        for algo in Caps2HashAlgorithm.allCases {
+        for algo in HashAlgorithm.allCases {
             let digest = algo.hash(hashInput)
             var hashChild = XMLElement(
                 name: "hash",

@@ -203,7 +203,7 @@ public struct JingleFileDescription: Sendable, Hashable {
             range = nil
         }
 
-        let hashElement = file.child(named: "hash", namespace: XMPPNamespaces.hashes2)
+        let hashElement = HashAlgorithm.preferredHash(in: file)
         self.name = Self.sanitizeFileName(name)
         self.size = size
         self.mediaType = file.childText(named: "media-type")
@@ -235,7 +235,7 @@ public struct JingleFileDescription: Sendable, Hashable {
             file.setChildText(named: "media-type", to: mediaType)
         }
         if let hash {
-            var hashElement = XMLElement(name: "hash", namespace: XMPPNamespaces.hashes2, attributes: ["algo": hashAlgo ?? "sha-256"])
+            var hashElement = XMLElement(name: "hash", namespace: XMPPNamespaces.hashes2, attributes: ["algo": hashAlgo ?? HashAlgorithm.sha256.rawValue])
             hashElement.addText(hash)
             file.addChild(hashElement)
         }

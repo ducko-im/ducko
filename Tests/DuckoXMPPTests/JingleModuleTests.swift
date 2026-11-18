@@ -821,9 +821,27 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
         }
 
         @Test
-        func `verifyChecksum returns unsupportedAlgorithm for non-sha256`() {
-            let result = JingleModule.verifyChecksum(Self.info("sha-512", "somehash=="), data: [1, 2, 3])
-            #expect(result == .unsupportedAlgorithm("sha-512"))
+        func `verifyChecksum verifies a sha-512 checksum`() {
+            let result = JingleModule.verifyChecksum(
+                Self.info("sha-512", "J4ZMxSGalRp6blK4yN3faYHQmNoWWNliWMhwssiN+8tRhBrqFyoouvpqeXMRZVhGdwZgRclZ7Q+ZKWiNBN78KQ=="),
+                data: [1, 2, 3]
+            )
+            #expect(result == .verified)
+        }
+
+        @Test
+        func `verifyChecksum returns unsupportedAlgorithm for an algorithm it does not compute`() {
+            let result = JingleModule.verifyChecksum(Self.info("sha-1", "somehash=="), data: [1, 2, 3])
+            #expect(result == .unsupportedAlgorithm("sha-1"))
+        }
+
+        @Test
+        func `Advertises every hash algorithm it verifies`() {
+            let features = JingleModule().features
+            #expect(features.contains(XMPPNamespaces.hashes2))
+            for algorithm in HashAlgorithm.allCases {
+                #expect(features.contains("urn:xmpp:hash-function-text-names:\(algorithm.rawValue)"))
+            }
         }
 
         @Test

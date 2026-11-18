@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - Style messages the way XEP-0393 defines it, in the app and the CLI. A quote starts at any line beginning with `>`, and `>>` nests one quote in another. A code block may name its language after its opening backticks, and one with no closing line stays code. Styling never runs across a line break, and a run such as `***` or a word such as ``foo`bar` `` stays as typed
+- Check a directly received file with the strongest checksum the sender lists, SHA-512 included, so a file the sender checksummed with SHA-512 is no longer accepted unverified
 - Stop connecting to a domain's own address when its DNS says it offers no XMPP service. The sign-in then fails with "The domain does not offer an XMPP service"
 
 ### Fixed

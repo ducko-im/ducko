@@ -234,44 +234,6 @@ enum Caps2HashTests {
         }
     }
 
-    struct HashAlgorithm {
-        @Test
-        func `SHA-256 produces 32-byte digest`() {
-            let data = Array("test".utf8)
-            let digest = Caps2HashAlgorithm.sha256.hash(data)
-            #expect(digest.count == 32)
-        }
-
-        @Test
-        func `SHA-512 produces 64-byte digest`() {
-            let data = Array("test".utf8)
-            let digest = Caps2HashAlgorithm.sha512.hash(data)
-            #expect(digest.count == 64)
-        }
-
-        @Test
-        func `Same input produces same hash`() {
-            let data = Array("deterministic".utf8)
-            let hash1 = Caps2HashAlgorithm.sha256.hash(data)
-            let hash2 = Caps2HashAlgorithm.sha256.hash(data)
-            #expect(hash1 == hash2)
-        }
-
-        @Test
-        func `Different algorithms produce different hashes`() {
-            let data = Array("test data".utf8)
-            let sha256 = Caps2HashAlgorithm.sha256.hash(data)
-            let sha512 = Caps2HashAlgorithm.sha512.hash(data)
-            #expect(sha256.count != sha512.count)
-        }
-
-        @Test
-        func `Raw values match XEP-0300 algorithm names`() {
-            #expect(Caps2HashAlgorithm.sha256.rawValue == "sha-256")
-            #expect(Caps2HashAlgorithm.sha512.rawValue == "sha-512")
-        }
-    }
-
     struct PresenceBroadcast {
         @Test
         func `initial presence carries both XEP-0115 and XEP-0390 caps`() async throws {

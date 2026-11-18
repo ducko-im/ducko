@@ -72,7 +72,6 @@ public enum XMPPNamespaces {
     public static let register = "jabber:iq:register"
     public static let caps2 = "urn:xmpp:caps"
     public static let hashes2 = "urn:xmpp:hashes:2"
-    public static let hashFunctionSHA256 = "urn:xmpp:hash-function-text-names:sha-256"
     public static let sasl2 = "urn:xmpp:sasl:2"
     public static let saslUpgrade = "urn:xmpp:sasl:upgrade:0"
     public static let scramUpgrade = "urn:xmpp:scram-upgrade:0"

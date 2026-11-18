@@ -133,7 +133,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
             let description = content.description
             self.expectedSize = description.size
             self.offeredChecksum = description.hash.map {
-                JingleChecksumInfo(contentName: content.name, algo: description.hashAlgo ?? "sha-256", hash: $0)
+                JingleChecksumInfo(contentName: content.name, algo: description.hashAlgo ?? "", hash: $0)
             }
             self.checksumPromised = description.hashUsed
         }
@@ -298,7 +298,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     public var features: [String] {
         [XMPPNamespaces.jingle, XMPPNamespaces.jingleFileTransfer,
          XMPPNamespaces.jingleS5B, XMPPNamespaces.jingleIBB,
-         XMPPNamespaces.hashes2, XMPPNamespaces.hashFunctionSHA256]
+         XMPPNamespaces.hashes2] + HashAlgorithm.allCases.map(\.feature)
     }
 
     /// - Parameter offersDirectCandidates: When `false`, no session offers this host's addresses as candidates. A
@@ -565,7 +565,7 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
         if let checksum = jingle.child(named: "checksum", namespace: XMPPNamespaces.jingleFileTransfer) {
             let contentName = checksum.attribute("name") ?? ""
             guard let file = checksum.child(named: "file"),
-                  let hashElement = file.child(named: "hash", namespace: XMPPNamespaces.hashes2),
+                  let hashElement = HashAlgorithm.preferredHash(in: file),
                   let algo = hashElement.attribute("algo"),
                   let hashValue = hashElement.textContent else {
                 log.warning("session-info checksum: malformed element for sid: \(sid)")
@@ -1734,8 +1734,8 @@ public final class JingleModule: XMPPModule, Sendable { // swiftlint:disable:thi
     }
 
     static func verifyChecksum(_ info: JingleChecksumInfo, data: [UInt8]) -> ChecksumResult {
-        guard info.algo == "sha-256" else { return .unsupportedAlgorithm(info.algo) }
-        let computed = JingleFileDescription.sha256Hash(of: data)
+        guard let algorithm = HashAlgorithm(rawValue: info.algo) else { return .unsupportedAlgorithm(info.algo) }
+        let computed = Base64.encode(algorithm.hash(data))
         return computed == info.hash ? .verified : .mismatch(expected: info.hash, computed: computed)
     }
 
