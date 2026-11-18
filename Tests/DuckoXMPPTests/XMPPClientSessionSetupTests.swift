@@ -174,12 +174,18 @@ struct XMPPClientSessionSetupTests {
     @Test
     func `A setup the server stops answering ends the session at the deadline`() async throws {
         let mock = MockTransport()
-        let (client, _) = await makeSetupClient(mock: mock, signInTimeout: .milliseconds(300))
+        // Long enough for the handshake to reach the SM <enable> under a loaded test run, so the deadline falls in setup
+        // rather than sign-in.
+        let (client, _) = await makeSetupClient(mock: mock, signInTimeout: .milliseconds(1500))
         let events = Task { try await collectEvents(from: client) { _ in false } }
 
         let connect = Task { try await client.connect(host: "example.com", port: 5222) }
         await simulateNoTLSConnect(mock, postAuthFeatures: testFeaturesBindWithSM)
-        await mock.waitForSent(count: 5) // SM <enable>, never answered
+        let enableSent = Task { await mock.waitForSent { $0.hasPrefix("<enable ") } } // never answered
+        if try await boundedOutcome(of: { _ = await enableSent.value }) == nil {
+            enableSent.cancel()
+            Issue.record("The SM <enable> was never sent")
+        }
 
         #expect(try await boundedFailure(of: connect) != nil)
         let disconnects = try await events.value.compactMap { if case let .disconnected(reason) = $0 { reason } else { nil } }
