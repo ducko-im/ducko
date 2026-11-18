@@ -1,7 +1,7 @@
 // XEP-0393 Message Styling AST types and parser.
 //
 // Two-stage parsing: block-level first (code blocks, block quotes, plain),
-// then inline left-to-right lazy matching within plain blocks.
+// then inline left-to-right lazy matching within each line of a plain block.
 
 // MARK: - AST
 
@@ -22,38 +22,38 @@ public enum StyledBlock: Sendable, Equatable {
 // MARK: - Parser
 
 public enum MessageStylingParser {
+    /// Quotes nested deeper than this read as plain text, so a body of many `>` cannot exhaust the stack.
+    static let maxQuoteDepth = 32
+
     public static func parse(_ text: String) -> [StyledBlock] {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        return parseBlocks(lines: lines)
+        return parseBlocks(lines: lines, quoteDepth: 0)
     }
 
     // MARK: - Block-Level Parsing
 
-    private static func parseBlocks(lines: [String]) -> [StyledBlock] {
+    private static func parseBlocks(lines: [String], quoteDepth: Int) -> [StyledBlock] {
         var blocks: [StyledBlock] = []
         var index = 0
 
         while index < lines.count {
             let line = lines[index]
 
-            // Code block: line is exactly "```" (with optional leading/trailing whitespace)
-            if line.trimmingCharacters(in: .whitespaces) == "```" {
+            if opensCodeBlock(line) {
                 let (codeBlock, nextIndex) = parseCodeBlock(lines: lines, startIndex: index)
                 blocks.append(codeBlock)
                 index = nextIndex
                 continue
             }
 
-            // Block quote: line starts with "> "
-            if line.hasPrefix("> ") {
-                let (quoteBlock, nextIndex) = parseBlockQuote(lines: lines, startIndex: index)
+            if opensBlockQuote(line, quoteDepth: quoteDepth) {
+                let (quoteBlock, nextIndex) = parseBlockQuote(lines: lines, startIndex: index, quoteDepth: quoteDepth)
                 blocks.append(quoteBlock)
                 index = nextIndex
                 continue
             }
 
-            // Plain block: collect consecutive non-special lines
-            let (plainBlock, nextIndex) = parsePlainBlock(lines: lines, startIndex: index)
+            let (plainBlock, nextIndex) = parsePlainBlock(lines: lines, startIndex: index, quoteDepth: quoteDepth)
             blocks.append(plainBlock)
             index = nextIndex
         }
@@ -61,198 +61,115 @@ public enum MessageStylingParser {
         return blocks
     }
 
-    private static func parseCodeBlock(lines: [String], startIndex: Int) -> (StyledBlock, Int) {
-        var codeLines: [String] = []
-        var index = startIndex + 1
-
-        while index < lines.count {
-            let line = lines[index]
-            if line.trimmingCharacters(in: .whitespaces) == "```" {
-                return (.codeBlock(codeLines.joined(separator: "\n")), index + 1)
-            }
-            codeLines.append(line)
-            index += 1
-        }
-
-        // Unterminated code block — treat opening ``` as plain text
-        let openingLine = lines[startIndex]
-        return (.plain(parseInline(openingLine)), startIndex + 1)
+    private static func opensCodeBlock(_ line: String) -> Bool {
+        line.hasPrefix("```")
     }
 
-    private static func parseBlockQuote(lines: [String], startIndex: Int) -> (StyledBlock, Int) {
+    private static func opensBlockQuote(_ line: String, quoteDepth: Int) -> Bool {
+        quoteDepth < maxQuoteDepth && line.hasPrefix(">")
+    }
+
+    /// Runs to a line of exactly three backticks, or to the end of the parent block when there is none.
+    private static func parseCodeBlock(lines: [String], startIndex: Int) -> (StyledBlock, Int) {
+        let contentStart = startIndex + 1
+        let closingIndex = lines[contentStart...].firstIndex(of: "```")
+        let contentEnd = closingIndex ?? lines.endIndex
+        let code = lines[contentStart ..< contentEnd].joined(separator: "\n")
+        return (.codeBlock(code), closingIndex.map { $0 + 1 } ?? lines.endIndex)
+    }
+
+    private static func parseBlockQuote(lines: [String], startIndex: Int, quoteDepth: Int) -> (StyledBlock, Int) {
         var quoteLines: [String] = []
         var index = startIndex
 
-        while index < lines.count, lines[index].hasPrefix("> ") {
-            quoteLines.append(String(lines[index].dropFirst(2)))
+        while index < lines.count, opensBlockQuote(lines[index], quoteDepth: quoteDepth) {
+            var content = lines[index].dropFirst()
+            if content.first?.isWhitespace == true {
+                content = content.dropFirst()
+            }
+            quoteLines.append(String(content))
             index += 1
         }
 
-        let innerBlocks = parseBlocks(lines: quoteLines)
+        let innerBlocks = parseBlocks(lines: quoteLines, quoteDepth: quoteDepth + 1)
         return (.blockQuote(innerBlocks), index)
     }
 
-    private static func parsePlainBlock(lines: [String], startIndex: Int) -> (StyledBlock, Int) {
-        var plainLines: [String] = []
+    private static func parsePlainBlock(lines: [String], startIndex: Int, quoteDepth: Int) -> (StyledBlock, Int) {
         var index = startIndex
-
-        while index < lines.count {
-            let line = lines[index]
-            if line.trimmingCharacters(in: .whitespaces) == "```" || line.hasPrefix("> ") {
-                break
-            }
-            plainLines.append(line)
+        while index < lines.count, !opensCodeBlock(lines[index]), !opensBlockQuote(lines[index], quoteDepth: quoteDepth) {
             index += 1
         }
-
-        let text = plainLines.joined(separator: "\n")
+        let text = lines[startIndex ..< index].joined(separator: "\n")
         return (.plain(parseInline(text)), index)
     }
 
     // MARK: - Inline Parsing
 
-    static func parseInline(_ text: String) -> [StyledSpan] {
-        var spans: [StyledSpan] = []
-        var remaining = text[text.startIndex...]
-
-        while !remaining.isEmpty {
-            // Try backtick span first (no nesting)
-            if remaining.first == "`" {
-                if let (codeSpan, afterIndex) = parseCodeSpan(remaining) {
-                    spans.append(codeSpan)
-                    remaining = text[afterIndex...]
-                    continue
-                }
-            }
-
-            // Try styled spans: * _ ~
-            if let marker = styledMarker(remaining.first), isBoundaryStart(remaining, in: text) {
-                if let (styledSpan, afterIndex) = parseStyledSpan(remaining, marker: marker, in: text) {
-                    spans.append(styledSpan)
-                    remaining = text[afterIndex...]
-                    continue
-                }
-            }
-
-            remaining = text[text.index(after: remaining.startIndex)...]
-            if remaining.isEmpty {
-                // We've consumed everything character-by-character — flush
-            }
-        }
-
-        // Any remaining plain text
-        if spans.isEmpty, !text.isEmpty {
-            spans.append(.plain(text))
-        }
-
-        return coalescePlain(spans, originalText: text)
-    }
-
-    private static func parseCodeSpan(_ text: Substring) -> (StyledSpan, String.Index)? {
-        guard text.first == "`" else { return nil }
-        let afterOpen = text.index(after: text.startIndex)
-        guard afterOpen < text.endIndex else { return nil }
-
-        if let closeIndex = text[afterOpen...].firstIndex(of: "`") {
-            let content = String(text[afterOpen ..< closeIndex])
-            guard !content.isEmpty else { return nil }
-            return (.code(content), text.index(after: closeIndex))
-        }
-        return nil
-    }
-
-    private enum InlineMarker: Character {
+    private enum SpanDirective: Character {
         case bold = "*"
         case italic = "_"
         case strikethrough = "~"
+        case code = "`"
     }
 
-    private static func styledMarker(_ char: Character?) -> InlineMarker? {
-        guard let char else { return nil }
-        return InlineMarker(rawValue: char)
+    /// Parses the spans of a plain block, left to right and lazily. A span never crosses a line break.
+    private static func parseInline(_ text: String) -> [StyledSpan] {
+        let spans = parseSpans(text[...])
+        return spans.isEmpty ? [.plain("")] : spans
     }
 
-    private static func isBoundaryStart(_ text: Substring, in fullText: String) -> Bool {
-        let idx = text.startIndex
-        if idx == fullText.startIndex { return true }
-        let prev = fullText[fullText.index(before: idx)]
-        return prev == " " || prev == "\n" || prev == "\t"
-    }
+    private static func parseSpans(_ text: Substring) -> [StyledSpan] {
+        var spans: [StyledSpan] = []
+        var plainStart = text.startIndex
+        var index = text.startIndex
 
-    private static func isWhitespace(_ char: Character) -> Bool {
-        char == " " || char == "\n" || char == "\t"
-    }
-
-    private static func isValidCloseBoundary(_ text: Substring, afterClose: String.Index) -> Bool {
-        guard afterClose < text.endIndex else { return true }
-        let nextChar = text[afterClose]
-        return !nextChar.isLetter && !nextChar.isNumber
-    }
-
-    private static func parseStyledSpan(
-        _ text: Substring, marker: InlineMarker, in _: String
-    ) -> (StyledSpan, String.Index)? {
-        let markerChar = marker.rawValue
-        let afterOpen = text.index(after: text.startIndex)
-        guard afterOpen < text.endIndex, !isWhitespace(text[afterOpen]) else { return nil }
-
-        var searchFrom = afterOpen
-        while searchFrom < text.endIndex {
-            guard let closeIndex = text[searchFrom...].firstIndex(of: markerChar) else { return nil }
-            let afterClose = text.index(after: closeIndex)
-
-            guard closeIndex > afterOpen,
-                  !isWhitespace(text[text.index(before: closeIndex)]),
-                  isValidCloseBoundary(text, afterClose: afterClose) else {
-                searchFrom = afterClose
-                continue
+        while index < text.endIndex {
+            if let directive = SpanDirective(rawValue: text[index]),
+               index == text.startIndex || text[text.index(before: index)].isWhitespace,
+               let (span, end) = matchSpan(directive, openingAt: index, in: text) {
+                if plainStart < index {
+                    spans.append(.plain(String(text[plainStart ..< index])))
+                }
+                spans.append(span)
+                index = end
+                plainStart = end
+            } else {
+                index = text.index(after: index)
             }
+        }
 
-            let innerSpans = parseInline(String(text[afterOpen ..< closeIndex]))
-            let span: StyledSpan = switch marker {
-            case .bold: .bold(innerSpans)
-            case .italic: .italic(innerSpans)
-            case .strikethrough: .strikethrough(innerSpans)
+        if plainStart < text.endIndex {
+            spans.append(.plain(String(text[plainStart...])))
+        }
+        return spans
+    }
+
+    /// Matches the span an opening directive starts: it closes at the first same directive on its line that does not
+    /// follow whitespace. An opening directive followed by whitespace, or directly by its closing one, styles nothing.
+    private static func matchSpan(
+        _ directive: SpanDirective, openingAt open: Substring.Index, in text: Substring
+    ) -> (StyledSpan, Substring.Index)? {
+        let contentStart = text.index(after: open)
+        guard contentStart < text.endIndex else { return nil }
+        let first = text[contentStart]
+        guard !first.isWhitespace, first != directive.rawValue else { return nil }
+
+        let lineEnd = text[contentStart...].firstIndex(of: "\n") ?? text.endIndex
+        var searchStart = text.index(after: contentStart)
+        while let close = text[searchStart ..< lineEnd].firstIndex(of: directive.rawValue) {
+            if !text[text.index(before: close)].isWhitespace {
+                let content = text[contentStart ..< close]
+                let span: StyledSpan = switch directive {
+                case .bold: .bold(parseSpans(content))
+                case .italic: .italic(parseSpans(content))
+                case .strikethrough: .strikethrough(parseSpans(content))
+                case .code: .code(String(content))
+                }
+                return (span, text.index(after: close))
             }
-            return (span, afterClose)
+            searchStart = text.index(after: close)
         }
         return nil
-    }
-
-    /// Reconstructs plain text spans that were skipped during character-by-character scanning.
-    private static func coalescePlain(_ spans: [StyledSpan], originalText: String) -> [StyledSpan] {
-        guard !spans.isEmpty else { return [.plain(originalText)] }
-
-        // Rebuild: walk the original text and fill gaps between styled spans
-        var result: [StyledSpan] = []
-        var offset = originalText.startIndex
-
-        for span in spans {
-            let rendered = spanToString(span)
-            if let range = originalText.range(of: rendered, range: offset ..< originalText.endIndex) {
-                if offset < range.lowerBound {
-                    let plainText = String(originalText[offset ..< range.lowerBound])
-                    result.append(.plain(plainText))
-                }
-                result.append(span)
-                offset = range.upperBound
-            }
-        }
-
-        if offset < originalText.endIndex {
-            result.append(.plain(String(originalText[offset...])))
-        }
-
-        return result
-    }
-
-    private static func spanToString(_ span: StyledSpan) -> String {
-        switch span {
-        case let .plain(text): text
-        case let .bold(inner): "*\(inner.map { spanToString($0) }.joined())*"
-        case let .italic(inner): "_\(inner.map { spanToString($0) }.joined())_"
-        case let .strikethrough(inner): "~\(inner.map { spanToString($0) }.joined())~"
-        case let .code(text): "`\(text)`"
-        }
     }
 }

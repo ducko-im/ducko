@@ -371,8 +371,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0393.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">A block quote starts only at "&gt; " with a space, so "&gt;&gt;" does not nest and "&gt;text" is not a quote. A preformatted block starts only at a line of exactly three backticks, and an unclosed one is shown as plain text</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
