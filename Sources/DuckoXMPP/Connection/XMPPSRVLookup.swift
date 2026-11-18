@@ -9,6 +9,11 @@ struct SRVRecord: Comparable {
     let target: String
     let directTLS: Bool
 
+    /// A target of "." says the domain decidedly does not offer the service (RFC 2782).
+    var isServiceNotOffered: Bool {
+        target == "."
+    }
+
     static func < (lhs: SRVRecord, rhs: SRVRecord) -> Bool {
         if lhs.priority != rhs.priority {
             return lhs.priority < rhs.priority
@@ -21,7 +26,8 @@ struct SRVRecord: Comparable {
 /// DNS SRV resolution per RFC 6120 §3.2 and XEP-0368.
 ///
 /// Resolves both `_xmpp-client._tcp.{domain}` (STARTTLS) and `_xmpps-client._tcp.{domain}`
-/// (direct TLS) to get host/port records. Falls back to `domain:5222` on any failure.
+/// (direct TLS) to get host/port records. Falls back to `domain:5222` when neither lookup returns a record. Returns no
+/// record when every answer has a "." target, which says the service is not offered.
 enum XMPPSRVLookup {
     static func resolve(domain: String, timeout: Duration = .seconds(5)) async -> [SRVRecord] {
         await withTaskGroup(of: [SRVRecord]?.self) { group in
@@ -46,11 +52,21 @@ enum XMPPSRVLookup {
             }
             group.cancelAll()
 
-            if allRecords.isEmpty {
-                return fallback(domain: domain)
-            }
-            return allRecords.sorted()
+            return connectionOrder(for: allRecords, domain: domain)
         }
+    }
+
+    /// Drops "." answers and sorts the rest. A "." answer also rules out the A/AAAA fallback (RFC 6120 §3.2.1,
+    /// XEP-0368), since the domain has said it uses SRV.
+    static func connectionOrder(for records: [SRVRecord], domain: String) -> [SRVRecord] {
+        let usable = records.filter { !$0.isServiceNotOffered }
+        if !usable.isEmpty {
+            return usable.sorted()
+        }
+        if records.contains(where: \.isServiceNotOffered) {
+            return []
+        }
+        return fallback(domain: domain)
     }
 
     private static func fallback(domain: String) -> [SRVRecord] {
@@ -139,27 +155,28 @@ private func srvQuery(domain: String, directTLS: Bool) throws -> [SRVRecord] {
     return dataPtr.pointee.records
 }
 
-/// Parses a single SRV record from DNS rdata, or `nil` if the data is too short or the target is empty.
+/// Parses a single SRV record from DNS rdata, or `nil` if the rdata is too short or its target name is cut off. The root
+/// target parses as ".".
 private func srvParseSRVRecord(_ rdata: UnsafeRawPointer?, length: UInt16, directTLS: Bool) -> SRVRecord? {
     guard let rdata, length >= 7 else { return nil }
     let ptr = rdata.assumingMemoryBound(to: UInt8.self)
     let priority = UInt16(ptr[0]) << 8 | UInt16(ptr[1])
     let weight = UInt16(ptr[2]) << 8 | UInt16(ptr[3])
     let port = UInt16(ptr[4]) << 8 | UInt16(ptr[5])
-    let target = srvParseDNSName(ptr + 6, length: Int(length) - 6)
-    guard !target.isEmpty, target != "." else { return nil }
-    return SRVRecord(priority: priority, weight: weight, port: port, target: target, directTLS: directTLS)
+    guard let name = srvParseDNSName(ptr + 6, length: Int(length) - 6) else { return nil }
+    return SRVRecord(priority: priority, weight: weight, port: port, target: name.isEmpty ? "." : name, directTLS: directTLS)
 }
 
-/// Parses a DNS wire-format name (sequence of length-prefixed labels) into a dotted string.
-private func srvParseDNSName(_ ptr: UnsafePointer<UInt8>, length: Int) -> String {
+/// Parses a DNS wire-format name (sequence of length-prefixed labels) into a dotted string, empty for the root name, or
+/// `nil` when a label runs past `length`.
+private func srvParseDNSName(_ ptr: UnsafePointer<UInt8>, length: Int) -> String? {
     var labels: [String] = []
     var offset = 0
     while offset < length {
         let labelLength = Int(ptr[offset])
-        if labelLength == 0 { break }
+        if labelLength == 0 { return labels.joined(separator: ".") }
         offset += 1
-        guard offset + labelLength <= length else { break }
+        guard offset + labelLength <= length else { return nil }
         let label = String(
             decoding: UnsafeBufferPointer(start: ptr + offset, count: labelLength),
             as: UTF8.self

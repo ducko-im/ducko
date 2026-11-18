@@ -321,6 +321,25 @@ struct SRVRecordTests {
         #expect(sorted[2].target == "starttls.example.com")
     }
 
+    @Test(arguments: [true, false])
+    func `A "." answer with no usable record rules out the address fallback`(directTLS: Bool) {
+        let notOffered = SRVRecord(priority: 0, weight: 0, port: 0, target: ".", directTLS: directTLS)
+
+        let records = XMPPSRVLookup.connectionOrder(for: [notOffered], domain: "example.com")
+
+        #expect(records.isEmpty)
+    }
+
+    @Test
+    func `A "." Direct TLS answer leaves the STARTTLS records`() {
+        let notOffered = SRVRecord(priority: 0, weight: 0, port: 0, target: ".", directTLS: true)
+        let starttls = SRVRecord(priority: 10, weight: 0, port: 5222, target: "xmpp.example.com", directTLS: false)
+
+        let records = XMPPSRVLookup.connectionOrder(for: [notOffered, starttls], domain: "example.com")
+
+        #expect(records == [starttls])
+    }
+
     @Test
     func `Fallback on empty results returns domain:5222`() async {
         // Use an invalid domain that will definitely fail SRV lookup

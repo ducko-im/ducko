@@ -46,7 +46,7 @@ actor XMPPConnection {
                 lastError = error
             }
         }
-        throw lastError ?? XMPPClientError.connectionFailed("No SRV records available")
+        throw lastError ?? XMPPClientError.connectionFailed("The domain does not offer an XMPP service")
     }
 
     /// Direct connect to a specific host and port.

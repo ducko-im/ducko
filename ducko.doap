@@ -325,8 +325,7 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0368.html"/>
-                <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">When the _xmpps-client record's target is "." and no _xmpp-client record is found, Ducko falls back to the domain's address records on port 5222, which the spec forbids</xmpp:note>
+                <xmpp:status>complete</xmpp:status>
             </xmpp:SupportedXep>
         </implements>
         <implements>
