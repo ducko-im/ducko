@@ -181,11 +181,8 @@ struct XMPPClientSessionSetupTests {
 
         let connect = Task { try await client.connect(host: "example.com", port: 5222) }
         await simulateNoTLSConnect(mock, postAuthFeatures: testFeaturesBindWithSM)
-        let enableSent = Task { await mock.waitForSent { $0.hasPrefix("<enable ") } } // never answered
-        if try await boundedOutcome(of: { _ = await enableSent.value }) == nil {
-            enableSent.cancel()
-            Issue.record("The SM <enable> was never sent")
-        }
+        let enable = try? await awaitSent(on: mock) { $0.hasPrefix("<enable ") } // never answered
+        #expect(enable != nil, "The SM <enable> was never sent")
 
         #expect(try await boundedFailure(of: connect) != nil)
         let disconnects = try await events.value.compactMap { if case let .disconnected(reason) = $0 { reason } else { nil } }

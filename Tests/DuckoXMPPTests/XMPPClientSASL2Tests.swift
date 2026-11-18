@@ -23,13 +23,10 @@ private func sentAuthenticate(on mock: MockTransport) async throws -> XMLElement
     try #require(await sentElements(on: mock).first { $0.name == "authenticate" && $0.namespace == XMPPNamespaces.sasl2 })
 }
 
-/// Waits, within `boundedOutcome`'s deadline, for the client to send a stream-management `<enable/>`.
+/// Fails the test unless the client sends a stream-management `<enable/>` within `awaitSent`'s default timeout.
 private func waitForSentEnable(on mock: MockTransport) async throws {
-    let task = Task { await mock.waitForSent { $0.hasPrefix("<enable ") } }
-    if try await boundedOutcome(of: { _ = await task.value }) == nil {
-        task.cancel()
-    }
-    try #require(await task.value != nil, "No <enable/> was sent")
+    let enable = try? await awaitSent(on: mock) { $0.hasPrefix("<enable ") }
+    try #require(enable != nil, "No <enable/> was sent")
 }
 
 /// The session `sm-resume-1`, signed in as `user@example.com/ducko`, with one message the server has not yet
