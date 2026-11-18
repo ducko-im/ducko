@@ -38,10 +38,6 @@ public final class HTTPUploadModule: XMPPModule, Sendable {
 
     private let state: OSAllocatedUnfairLock<State>
 
-    public var features: [String] {
-        [XMPPNamespaces.httpUpload]
-    }
-
     public init() {
         self.state = OSAllocatedUnfairLock(initialState: State())
     }
@@ -81,7 +77,7 @@ public final class HTTPUploadModule: XMPPModule, Sendable {
                 continue
             }
             if info.features.contains(XMPPNamespaces.httpUpload) {
-                let maxFileSize = parseMaxFileSize(from: info.forms)
+                let maxFileSize = parseMaxFileSize(from: info)
                 let result = (jid: item.jid.description, maxFileSize: maxFileSize)
                 state.withLock { $0.cachedService = result }
                 log.info("Discovered an upload service, maxFileSize: \(maxFileSize.map(String.init) ?? "unlimited")")
@@ -136,15 +132,9 @@ public final class HTTPUploadModule: XMPPModule, Sendable {
 
     // MARK: - Private: Discovery
 
-    private func parseMaxFileSize(from forms: [[DataFormField]]) -> Int64? {
-        for fields in forms {
-            for field in fields where field.variable == "max-file-size" {
-                if let size = field.values.first.flatMap(Int64.init) {
-                    return size
-                }
-            }
-        }
-        return nil
+    private func parseMaxFileSize(from info: ServiceDiscoveryModule.InfoResult) -> Int64? {
+        let fields = info.form(ofType: XMPPNamespaces.httpUpload) ?? []
+        return fields.first { $0.variable == "max-file-size" }?.values.first.flatMap(Int64.init)
     }
 
     // MARK: - Private: Slot Parsing

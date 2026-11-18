@@ -37,6 +37,11 @@ public final class ServiceDiscoveryModule: XMPPModule, Sendable {
             self.features = features
             self.forms = forms
         }
+
+        /// The fields of the XEP-0128 extended-info form whose `FORM_TYPE` is `formType`.
+        public func form(ofType formType: String) -> [DataFormField]? {
+            forms.first { fields in fields.first { $0.variable == "FORM_TYPE" }?.values.first == formType }
+        }
     }
 
     /// A single disco#items item.

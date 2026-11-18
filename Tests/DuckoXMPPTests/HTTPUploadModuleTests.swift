@@ -36,7 +36,11 @@ private func respondToDiscoItems(mock: MockTransport) async throws {
 }
 
 /// Responds to the disco#info query for the upload service with the upload feature.
-private func respondToDiscoInfo(mock: MockTransport, maxFileSize: Int64? = nil) async throws {
+private func respondToDiscoInfo(
+    mock: MockTransport,
+    maxFileSize: Int64? = nil,
+    formType: String = XMPPNamespaces.httpUpload
+) async throws {
     let iqID = try await awaitOutgoingIQ(on: mock, type: .get, namespace: "http://jabber.org/protocol/disco#info") {
         $0.contains("to=\"upload.example.com\"")
     }.id
@@ -49,7 +53,7 @@ private func respondToDiscoInfo(mock: MockTransport, maxFileSize: Int64? = nil) 
     if let maxFileSize {
         xml += """
         <x xmlns='jabber:x:data' type='result'>\
-        <field var='FORM_TYPE' type='hidden'><value>urn:xmpp:http:upload:0</value></field>\
+        <field var='FORM_TYPE' type='hidden'><value>\(formType)</value></field>\
         <field var='max-file-size'><value>\(maxFileSize)</value></field>\
         </x>
         """
@@ -148,6 +152,33 @@ enum HTTPUploadModuleTests {
             #expect(maxSize == 10_485_760)
 
             await disconnectFast(client)
+        }
+
+        @Test
+        func `Ignores max-file-size from a form of another type`() async throws {
+            let mock = MockTransport()
+            let client = try await makeConnectedClient(mock: mock)
+            let module = try #require(await client.module(ofType: HTTPUploadModule.self))
+
+            await mock.clearSentBytes()
+
+            let result = try await withIQOperation(client: client, operation: {
+                try await module.discoverUploadService()
+            }, respond: {
+                try await respondToDiscoItems(mock: mock)
+                try await respondToDiscoInfo(mock: mock, maxFileSize: 10_485_760, formType: "urn:example:other")
+            })
+            #expect(result?.jid == "upload.example.com")
+            #expect(result?.maxFileSize == nil)
+
+            await disconnectFast(client)
+        }
+    }
+
+    struct Features {
+        @Test
+        func `Does not advertise itself as an upload service`() {
+            #expect(!HTTPUploadModule().features.contains(XMPPNamespaces.httpUpload))
         }
     }
 

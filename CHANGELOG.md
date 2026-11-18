@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - Fix log lines going missing or being cut short when the app and the CLI, or two CLI sessions, run on the same profile, and keep each one logging to the current file after another rotates it, so `ducko logs show` prints its lines
+- Fix the HTTP upload size limit being taken from an unrelated form the upload service lists
+- Stop presenting Ducko to other clients as a file upload service
 
 ## [0.13.0] - 2026-11-18
 

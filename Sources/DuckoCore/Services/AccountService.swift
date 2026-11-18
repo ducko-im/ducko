@@ -335,14 +335,10 @@ public final class AccountService {
 
         let info = try await disco.queryInfo(for: domainJID)
         var addresses: [ContactAddress] = []
-        for form in info.forms {
-            let formType = form.first { $0.variable == "FORM_TYPE" }?.values.first
-            guard formType == XMPPNamespaces.serverInfo else { continue }
-            for field in form {
-                guard let variable = field.variable, let type = ContactAddressType(rawValue: variable) else { continue }
-                for value in field.values {
-                    addresses.append(ContactAddress(type: type, address: value))
-                }
+        for field in info.form(ofType: XMPPNamespaces.serverInfo) ?? [] {
+            guard let variable = field.variable, let type = ContactAddressType(rawValue: variable) else { continue }
+            for value in field.values {
+                addresses.append(ContactAddress(type: type, address: value))
             }
         }
         return ServerInfo(contactAddresses: addresses)
