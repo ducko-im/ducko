@@ -45,3 +45,10 @@ identifier_name:
 
 nesting:
   type_level: 2
+
+custom_rules:
+  determinate_progress_view:
+    name: Determinate ProgressView
+    included: "Sources/.*\\.swift"
+    regex: '\bProgressView\s*\([^)\n]*\bvalue\s*:'
+    message: "A determinate ProgressView hangs the app while an accessibility client watches the window. Use ProgressBar (Sources/DuckoUI/Shared/ProgressBar.swift)."
