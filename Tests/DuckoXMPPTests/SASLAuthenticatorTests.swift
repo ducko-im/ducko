@@ -183,8 +183,8 @@ enum SASLAuthenticatorTests {
             )
 
             var failure = XMLElement(name: "failure", namespace: saslNamespace)
-            failure.addChild(XMLElement(name: "not-authorized"))
-            var text = XMLElement(name: "text")
+            failure.addChild(XMLElement(name: "not-authorized", namespace: saslNamespace))
+            var text = XMLElement(name: "text", namespace: saslNamespace)
             text.addText("Invalid credentials")
             failure.addChild(text)
 
@@ -208,7 +208,7 @@ enum SASLAuthenticatorTests {
             )
 
             var failure = XMLElement(name: "failure", namespace: saslNamespace)
-            failure.addChild(XMLElement(name: "temporary-auth-failure"))
+            failure.addChild(XMLElement(name: "temporary-auth-failure", namespace: saslNamespace))
 
             let response = auth.receive(failure)
             guard case let .failure(.serverFailure(condition, errorText)) = response else {

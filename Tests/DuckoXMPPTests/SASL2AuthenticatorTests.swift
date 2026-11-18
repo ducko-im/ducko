@@ -391,7 +391,7 @@ enum SASL2AuthenticatorTests {
             )
 
             var failure = XMLElement(name: "failure", namespace: XMPPNamespaces.sasl2)
-            failure.addChild(XMLElement(name: "not-authorized"))
+            failure.addChild(XMLElement(name: "not-authorized", namespace: saslNamespace))
 
             let response = auth.receive(failure)
             guard case let .failure(.serverFailure(condition, _)) = response else {

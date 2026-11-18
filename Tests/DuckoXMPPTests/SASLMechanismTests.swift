@@ -347,6 +347,42 @@ struct SCRAMIterationBoundsTests {
     }
 }
 
+// MARK: - SASL Failure Tests (RFC 6120 §6.5)
+
+struct SASLFailureTests {
+    @Test(arguments: [
+        ("aborted", AuthenticationFailure.Kind.other, "Aborted by the server"),
+        ("account-disabled", .other, "The account is disabled"),
+        ("credentials-expired", .other, "The password has expired"),
+        ("encryption-required", .other, "The server requires an encrypted connection"),
+        ("incorrect-encoding", .other, "The server rejected a malformed authentication request"),
+        ("invalid-authzid", .other, "The server rejected the authorization identity"),
+        ("invalid-mechanism", .other, "The server rejected the authentication mechanism"),
+        ("malformed-request", .other, "The server rejected a malformed authentication request"),
+        ("mechanism-too-weak", .other, "The server requires a stronger authentication mechanism"),
+        ("not-authorized", .credentialsRejected, "Incorrect username or password"),
+        ("temporary-auth-failure", .temporary, "Temporary server failure, try again later"),
+        ("x-unknown", .other, "The server refused the sign-in")
+    ])
+    func `Each failure condition has its kind and reason, and keeps the raw condition`(
+        condition: String, kind: AuthenticationFailure.Kind, message: String
+    ) {
+        let failure = AuthenticationFailure(SASLAuthError.serverFailure(condition: condition, text: nil))
+        #expect(failure.kind == kind)
+        #expect(failure.message == message)
+        #expect(failure.serverCondition == condition)
+    }
+
+    @Test
+    func `An application-specific child does not replace the failure condition`() {
+        var failure = XMLElement(name: "failure", namespace: XMPPNamespaces.sasl2)
+        failure.addChild(XMLElement(name: "not-authorized", namespace: "urn:ietf:params:xml:ns:xmpp-sasl"))
+        failure.addChild(XMLElement(name: "lockout", namespace: "urn:example:app"))
+
+        #expect(SASLAuthError.parse(failure: failure) == .serverFailure(condition: "not-authorized", text: nil))
+    }
+}
+
 // MARK: - SCRAM Server Error Tests (RFC 5802 §7)
 
 struct SCRAMServerErrorTests {

@@ -82,14 +82,16 @@ enum SASLAuthError: Error, Equatable {
         }
     }
 
-    /// Parses a SASL or SASL2 `<failure>` element into a `.serverFailure` error.
+    /// Parses a SASL or SASL2 `<failure>` element into a `.serverFailure` error. Both carry the RFC 6120 condition as a
+    /// child in the `urn:ietf:params:xml:ns:xmpp-sasl` namespace and the text in the failure's own namespace, so a
+    /// child in any other namespace, such as an application-specific condition, is not read as either.
     static func parse(failure: XMLElement) -> SASLAuthError {
         var condition = "unknown"
         var text: String?
         for case let .element(child) in failure.children {
-            if child.name == "text" {
+            if child.name == "text", child.namespace == failure.namespace {
                 text = child.textContent
-            } else {
+            } else if child.namespace == saslNamespace {
                 condition = child.name
             }
         }
