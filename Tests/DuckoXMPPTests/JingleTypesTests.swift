@@ -22,6 +22,7 @@ enum JingleTypesTests {
             #expect(JingleTerminateReason.success.rawValue == "success")
             #expect(JingleTerminateReason.decline.rawValue == "decline")
             #expect(JingleTerminateReason.cancel.rawValue == "cancel")
+            #expect(JingleTerminateReason.gone.rawValue == "gone")
             #expect(JingleTerminateReason.busy.rawValue == "busy")
             #expect(JingleTerminateReason.timeout.rawValue == "timeout")
             #expect(JingleTerminateReason.connectivityError.rawValue == "connectivity-error")
@@ -33,6 +34,7 @@ enum JingleTypesTests {
         @Test(arguments: [
             (JingleTransferFailureReason.decline, "The contact declined the transfer"),
             (JingleTransferFailureReason.cancel, "The transfer was canceled"),
+            (JingleTransferFailureReason.gone, "The contact went offline"),
             (JingleTransferFailureReason.busy, "The contact is busy"),
             (JingleTransferFailureReason.timeout, "The transfer timed out"),
             (JingleTransferFailureReason.connectivityError, "The contact could not be reached"),
@@ -43,7 +45,8 @@ enum JingleTypesTests {
             (JingleTransferFailureReason.transportReject, "The contact rejected the connection method"),
             (JingleTransferFailureReason.transportReplaceFailed, "Switching the connection method failed"),
             (JingleTransferFailureReason.incomplete, "The transfer ended before the whole file arrived"),
-            (JingleTransferFailureReason.checksumMismatch, "The received file is corrupted")
+            (JingleTransferFailureReason.checksumMismatch, "The received file is corrupted"),
+            (JingleTransferFailureReason.unconfirmed, "The contact did not confirm the transfer")
         ])
         func `Failure reasons have readable display text`(reason: JingleTransferFailureReason, expected: String) {
             #expect(reason.displayText == expected)
@@ -51,9 +54,10 @@ enum JingleTypesTests {
 
         @Test(arguments: [
             (JingleTransferFailureReason.incomplete, "incomplete"),
-            (JingleTransferFailureReason.checksumMismatch, "checksum-mismatch")
+            (JingleTransferFailureReason.checksumMismatch, "checksum-mismatch"),
+            (JingleTransferFailureReason.unconfirmed, "unconfirmed")
         ])
-        func `Receive failure reasons have stable raw tokens`(reason: JingleTransferFailureReason, expected: String) {
+        func `Data failure reasons have stable raw tokens`(reason: JingleTransferFailureReason, expected: String) {
             #expect(reason.rawValue == expected)
         }
     }
@@ -62,6 +66,7 @@ enum JingleTypesTests {
         @Test(arguments: [
             (JingleTerminateReason?.some(.decline), JingleTransferFailureReason?.some(.decline)),
             (JingleTerminateReason?.some(.cancel), JingleTransferFailureReason?.some(.cancel)),
+            (JingleTerminateReason?.some(.gone), JingleTransferFailureReason?.some(.gone)),
             (JingleTerminateReason?.some(.busy), JingleTransferFailureReason?.some(.busy)),
             (JingleTerminateReason?.some(.timeout), JingleTransferFailureReason?.some(.timeout)),
             (JingleTerminateReason?.some(.connectivityError), JingleTransferFailureReason?.some(.connectivityError)),
@@ -168,6 +173,14 @@ enum JingleTypesTests {
         @Test
         func `sha256Hash encodes the digest as base64`() {
             #expect(JingleFileDescription.sha256Hash(of: [1, 2, 3]) == "A5BYxvLAy0ksUzsKTRTvd8wPeKvMztUofYShogEc+4E=")
+        }
+
+        @Test
+        func `A file hashed in chunks gets the digest of the whole file`() {
+            var hasher = JingleFileHasher()
+            hasher.update([1])
+            hasher.update([2, 3])
+            #expect(hasher.finalize() == "A5BYxvLAy0ksUzsKTRTvd8wPeKvMztUofYShogEc+4E=")
         }
     }
 

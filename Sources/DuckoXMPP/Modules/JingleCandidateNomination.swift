@@ -58,10 +58,40 @@ extension JingleModule {
         }
     }
 
+    /// A SOCKS5 connection made a session's transport, for the caller to commit outside the lock.
+    struct SOCKS5Publication {
+        let type: SOCKS5Transport.CandidateType
+        let wake: CheckedContinuation<Void, Error>?
+
+        /// Names the transport in the default-level log and wakes the session's transport waiter.
+        func commit() {
+            switch type {
+            case .direct: JingleModule.logCommittedTransport(.direct)
+            case .proxy: JingleModule.logCommittedTransport(.proxy)
+            }
+            wake?.resume()
+        }
+    }
+
+    enum CommittedTransport {
+        case direct
+        case proxy
+        case inBand
+    }
+
+    /// Names the transport a transfer committed to in the default-level log.
+    static func logCommittedTransport(_ transport: CommittedTransport) {
+        switch transport {
+        case .direct: log.info("Jingle transfer is using a direct connection")
+        case .proxy: log.info("Jingle transfer is using the server's proxy")
+        case .inBand: log.info("Jingle transfer is using in-band bytestreams")
+        }
+    }
+
     /// What settling a nomination released, for the caller to act on outside the lock.
     private struct SettledNomination {
         let outcome: CandidateNomination.Outcome
-        var wake: CheckedContinuation<Void, Error>?
+        var publication: SOCKS5Publication?
         var unselected: SOCKS5Connection?
         var listener: SOCKS5Listener?
     }
@@ -93,7 +123,7 @@ extension JingleModule {
     func tryConnectCandidates(
         _ candidates: [SOCKS5Transport.Candidate],
         dstAddr: String,
-        while shouldContinue: (SOCKS5Transport.Candidate) -> Bool = { _ in true }
+        while shouldContinue: (SOCKS5Transport.Candidate) -> Bool
     ) async -> (connection: SOCKS5Connection, candidate: SOCKS5Transport.Candidate)? {
         for candidate in candidates where shouldContinue(candidate) {
             let connection = SOCKS5Connection()
@@ -110,11 +140,22 @@ extension JingleModule {
                 }
                 return (connection, candidate)
             } catch {
-                log.debug("SOCKS5 candidate \(candidate.cid) failed: \(error)")
+                log.info("A \(candidate.type.rawValue) SOCKS5 candidate failed: \(Self.socks5FailureText(error))")
+                log.debug("The failed SOCKS5 candidate is \(candidate.cid)")
                 await connection.close()
             }
         }
         return nil
+    }
+
+    /// Why a SOCKS5 dial or proxy activation failed, naming no host, port or JID. A stanza error's text is the server's own
+    /// and could name any of them, so only its condition is given.
+    static func socks5FailureText(_ error: any Error) -> String {
+        switch error {
+        case let error as SOCKS5Connection.SOCKS5Error: error.displayText
+        case let error as XMPPStanzaError: error.condition.displayText
+        default: String(describing: type(of: error))
+        }
     }
 
     /// Waits for the responder on this side's listener while dialing the responder's candidates.
@@ -130,7 +171,7 @@ extension JingleModule {
     /// Accepts the responder's connection to this side's direct candidate. It carries the file only once the nomination
     /// settles on it.
     private func acceptPeerConnection(on listener: SOCKS5Listener, sid: String, session: JingleSession, context: ModuleContext) async {
-        defer { cleanupListener(sid: sid) }
+        defer { cleanupListener(sid: sid, offerID: session.offerID) }
         do {
             let connection = try await listener.accept(expectedDstAddr: destinationAddress(in: session, candidateOfferedBy: .initiator))
             handleConnectionSuccess(sid: sid, result: (connection, Self.listenerCID), session: session, context: context)
@@ -143,7 +184,8 @@ extension JingleModule {
     /// used (XEP-0260 §2.3), reports the result, and settles the nomination with it.
     private func dialResponderCandidates(sid: String, session: JingleSession, context: ModuleContext) async {
         let candidates = state.withLock { state -> [SOCKS5Transport.Candidate]? in
-            guard let nomination = state.resources[sid]?.nomination, nomination.isDialing, nomination.own == nil else { return nil }
+            guard Self.session(sid, offerID: session.offerID, in: state) != nil, let nomination = state.resources[sid]?.nomination,
+                  nomination.isDialing, nomination.own == nil else { return nil }
             return nomination.responderCandidates
         }
         guard let candidates else { return }
@@ -214,14 +256,14 @@ extension JingleModule {
         if let listener = settled.listener {
             Task { await listener.close() }
         }
-        settled.wake?.resume()
+        settled.publication?.commit()
         switch settled.outcome {
         case .own:
             break
         case let .peer(candidate):
             usePeerCandidate(candidate, sid: sid, session: session, context: context)
         case .neither:
-            fallBackToIBB(sid: sid, context: context)
+            fallBackToIBB(sid: sid, offerID: session.offerID, context: context)
         }
     }
 
@@ -236,7 +278,7 @@ extension JingleModule {
         )
         switch candidate.type {
         case .direct:
-            settled.wake = publishSOCKS5(connection, cid: candidate.cid, sid: sid, state: &state)
+            settled.publication = publishSOCKS5(connection, type: .direct, cid: candidate.cid, sid: sid, state: &state)
         case .proxy:
             state.resources[sid]?.pendingProxy = PendingProxy(connection: connection, cid: candidate.cid)
         }

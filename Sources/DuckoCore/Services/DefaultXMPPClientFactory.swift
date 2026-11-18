@@ -46,8 +46,8 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
         builder.withModule(omemoModule)
         let standaloneModules: [any XMPPModule] = [
             VCardModule(), ReceiptsModule(), ChatStatesModule(), CarbonsModule(), MAMModule(), PingModule(), HTTPUploadModule(),
-            JingleModule(), BlockingModule(), StylingModule(), ChannelSearchModule(), RegistrationModule(), BitsOfBinaryModule(),
-            OOBModule(), CSIModule()
+            JingleModule(offersDirectCandidates: BuildEnvironment.jingleOffersDirectCandidates), BlockingModule(), StylingModule(),
+            ChannelSearchModule(), RegistrationModule(), BitsOfBinaryModule(), OOBModule(), CSIModule()
         ]
         for module in standaloneModules {
             builder.withModule(module)

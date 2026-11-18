@@ -41,13 +41,33 @@ struct FormatterEventContractTests {
                   ["type": "message_corrected", "originalID": "m1", "newBody": "fixed", "from": room.description, "message_type": "groupchat", "account": account]),
             .init(.messageModerated(originalID: "m1", moderator: "mod", room: room, reason: "reason"), "[moderated] message moderated by mod in room@conference.example.com (id: m1): reason", "\u{001B}[2m⊘ message moderated by mod in room@conference.example.com (id: m1): reason\(reset)",
                   ["type": "message_moderated", "original_id": "m1", "moderator": "mod", "room": room.description, "reason": "reason", "account": account]),
-            .init(.jingleFileTransferCompleted(sid: "transfer", transport: .ibb), "Transfer completed: transfer — IBB", "\u{001B}[32m✅ Transfer completed: transfer — IBB\(reset)",
-                  ["type": "jingle_transfer_completed", "sid": "transfer", "transport": "ibb", "account": account]),
+            .init(.jingleFileTransferCompleted(sid: "transfer", offerID: "offer", transport: .ibb), "Transfer completed: transfer — IBB", "\u{001B}[32m✅ Transfer completed: transfer — IBB\(reset)",
+                  ["type": "jingle_transfer_completed", "sid": "transfer", "offerId": "offer", "transport": "ibb", "account": account]),
             .init(.omemoDeviceListReceived(jid: peer, devices: [12, 34]), "OMEMO devices for alice@example.com: 12, 34", "\u{001B}[2mOMEMO devices for alice@example.com: 12, 34\(reset)",
                   ["type": "omemo_device_list", "jid": peer.description, "devices": "12,34", "account": account]),
             .init(.omemoSessionEstablished(jid: peer, deviceID: 12, identityKey: [0, 0xAB, 0xFF], consumedPreKeyID: 7), "OMEMO session established with alice@example.com device 12", "\u{001B}[32mOMEMO session established with alice@example.com device 12\(reset)",
                   ["type": "omemo_session_established", "jid": peer.description, "deviceID": "12", "fingerprint": "00abff", "account": account])
         ]
+        try expectFormats(cases)
+    }
+
+    @Test func `transfer progress carries the rate and time left only once they are known`() throws {
+        let account = accountID.uuidString
+        let reset = "\u{001B}[0m"
+        let bar = String(repeating: "\u{2588}", count: 10) + String(repeating: "\u{2591}", count: 10)
+        try expectFormats([
+            .init(.jingleFileTransferProgress(sid: "transfer", offerID: "offer", bytesTransferred: 5_000_000, totalBytes: 10_000_000, bytesPerSecond: nil),
+                  "transfer (10 MB): transferring 50%", "\r\u{001B}[36mtransfer\(reset) (10 MB) \u{001B}[32m\(bar)\(reset) transferring 50%",
+                  ["type": "jingle_transfer_progress", "sid": "transfer", "offerId": "offer", "progress": "50", "bytesTransferred": "5000000", "totalBytes": "10000000", "account": account]),
+            .init(.jingleFileTransferProgress(sid: "transfer", offerID: "offer", bytesTransferred: 5_000_000, totalBytes: 10_000_000, bytesPerSecond: 250_000),
+                  "transfer (10 MB): transferring 50% · 250 kB/s · 20 sec left",
+                  "\r\u{001B}[36mtransfer\(reset) (10 MB) \u{001B}[32m\(bar)\(reset) transferring 50% · 250 kB/s · 20 sec left",
+                  ["type": "jingle_transfer_progress", "sid": "transfer", "offerId": "offer", "progress": "50", "bytesTransferred": "5000000", "totalBytes": "10000000",
+                   "bytesPerSecond": "250000", "secondsRemaining": "20", "account": account])
+        ])
+    }
+
+    private func expectFormats(_ cases: [EventExpectation]) throws {
         for item in cases {
             #expect(PlainFormatter().formatEvent(item.event, accountID: accountID) == item.plain)
             #expect(ANSIFormatter().formatEvent(item.event, accountID: accountID) == item.ansi)

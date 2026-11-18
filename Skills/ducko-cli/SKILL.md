@@ -35,7 +35,7 @@ Unless noted otherwise, each subcommand connects, performs its action, and disco
 
 Send a message or file, then disconnect. At least one of `--file` or `body` is required. When both are provided, the file is uploaded first, then the body is sent as a separate caption message.
 
-`--method auto` (the default) and `http` upload the file over XEP-0363. `jingle` sends it peer-to-peer over XEP-0234 and returns only once the contact has accepted and received it, or the transfer has failed. With a full JID, `jingle` sends to that session. With a bare JID it picks one of the contact's online sessions that takes direct transfers. That needs the contact's presence to have arrived, so in this connect-send-disconnect command a full JID is the reliable form. A direct send appears in the chat's history as a sent file, marked `[delivered]` once it arrives or `[error: <reason>]` when it fails.
+`--method auto` (the default) and `http` upload the file over XEP-0363. `jingle` sends it peer-to-peer over XEP-0234 and returns only once the contact has accepted and received it, or the transfer has failed. With a full JID, `jingle` sends to that session. With a bare JID it picks one of the contact's online sessions that takes direct transfers. That needs the contact's presence to have arrived, so in this connect-send-disconnect command a full JID is the reliable form. A direct send appears in the chat's history as a sent file. It is marked `[delivered]` once the contact confirms it arrived, or `[error: <reason>]` when it fails. The contact has 30 seconds to confirm after the last bytes go out. For an in-band transfer, the 30 seconds start once the contact answers the stream's close, or once the close fails. A send left unconfirmed fails as `[error: The contact did not confirm the transfer]`.
 
 ```
 ducko send alice@example.com "Hello"
@@ -68,7 +68,8 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/senddirect <jid> <path>` — send a file straight to one of the contact's online devices (XEP-0234) instead of uploading it. The contact's devices are asked first. The command prints an error when the file is missing or is a folder, or when no device takes direct transfers. Otherwise it prints `Sending <file> to <jid> directly. Use /transfers to check progress.` and the prompt returns. A decline, or a transfer that fails once under way, is printed when it happens. A failure before that point, such as the device refusing the offer or the file's contents not being readable, prints nothing and shows only in `/transfers` and the history.
 - `/accept [id]` — accept an incoming file offer (Jingle or link) and save it to `~/Downloads`. The id is the one printed in the `[File offer]` line. Without an id, it takes this account's newest offer.
 - `/decline [id]` — decline an incoming file offer. Without an id, it takes this account's newest offer.
-- `/transfers` — list active file transfers with progress
+- `/cancel [sid]` — cancel a direct file transfer still under way, sent or received, and tell the contact. The sid is the one `/transfers` prints. Without a sid, it takes this account's newest one. Prints `Canceled file transfer: <file>` once it stopped the transfer. When there is none to stop, it prints the error `Transfer not found: <sid>`, or `No direct file transfers under way.` without a sid. A transfer that ended just as it was canceled gets the same error.
+- `/transfers` — list active file transfers with progress. A direct transfer moving bytes also shows its rate and time left once it has run for a second, e.g. `report.pdf (5 MB) [outgoing/jingle] transferring 50% · 250 kB/s · 10 sec left (sid: <sid>)`
 - `/add <jid> [name]` — add contact to roster
 - `/remove <jid>` — remove contact from roster
 - `/approve <jid>` — approve subscription request
@@ -97,7 +98,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `help` — show available commands
 - `quit` / `exit` — disconnect and exit
 
-Interactive mode also prints async events as they arrive: typing indicators, delivery receipts, read markers, message corrections, Jingle transfer state changes, and MUC lifecycle events (`[new room]`, nickname changes, room destruction). Terminal bell rings on incoming messages and file transfer offers.
+Interactive mode also prints async events as they arrive: typing indicators, delivery receipts, read markers, message corrections, Jingle transfer state changes, and MUC lifecycle events (`[new room]`, nickname changes, room destruction). Terminal bell rings on incoming messages and file transfer offers. A direct transfer's progress line names its sid. Once the transfer has run for a second, the line also shows the rate and the time left, as in plain output: `<sid> (<size>): transferring 50% · 250 kB/s · 20 sec left`.
 
 ```
 ducko interactive
@@ -496,7 +497,7 @@ ducko import adium --path ~/Library/Application\ Support/Adium\ 2.0/Users/Defaul
 
 `interactive` prints an encrypted room message as it prints a plaintext one, `<room>/<nick>: <body>`, followed by `[encrypted]`. One in a room's private chat gets the `[PM]` prefix as well.
 
-History also prints timeline notes, which are not messages, on lines of their own, such as `[<timestamp>] -- Encryption enabled because <jid> sent an encrypted message`. Other notes say that a contact asked for unencrypted messages (with any reason they gave), that they sent an encrypted message again after you switched encryption off, or that the encryption sessions with them were reset (listing the devices that need attention).
+History also prints timeline notes, which are not messages, on lines of their own, such as `[<timestamp>] -- Encryption enabled because <jid> sent an encrypted message`. Other notes say that a contact asked for unencrypted messages (with any reason they gave), that they sent an encrypted message again after you switched encryption off, or that the encryption sessions with them were reset (listing the devices that need attention). A file a contact was sending directly that did not arrive leaves the note `<file> from <contact> did not arrive: <reason>`. The reason reads, for example, `You canceled the transfer`, `The transfer was canceled`, `The contact went offline` or `The transfer stopped when you went offline`.
 
 ### ANSI
 
@@ -510,7 +511,9 @@ Same as plain with color codes (green incoming, cyan outgoing, red errors, dim t
 
 Optional keys: `"action":"true"` for a `/me` message (an outgoing one in history also carries `"actor"`, the account's address), `"attachments":"..."` (comma-separated attachment URLs, leaving out one whose URL is the whole body), `"delivered":"true"`, `"read":"true"` (with `"delivered"` also set), `"edited":"true"`, `"encrypted":"true"`, `"untrustedDevice":"true"` for one decrypted from a device that is not trusted for encryption, `"error":"..."`, and `"undecryptable":"true"` for an encrypted message that could not be decrypted (its `body` is then empty, and `"notice"` says why). An encrypted room message `interactive` prints is a `room_message` record, and one in a room's private chat a `muc_private_message` record, each with `room` and `nickname` in place of `from`. Keys are sorted alphabetically.
 
-A timeline note in history is a record of its own: `{"kind":"encryption-enabled-by-contact","text":"...","timestamp":"...","type":"note"}`. `kind` is also `plaintext-requested` (with `detail` holding the reason when one was given, and in a room `subject` holding the requesting occupant's nickname), `encryption-resumed-by-contact` or `sessions-reset` (with `detail` listing the devices that need attention, if any).
+A timeline note in history is a record of its own: `{"kind":"encryption-enabled-by-contact","text":"...","timestamp":"...","type":"note"}`. `kind` is also `plaintext-requested` (with `detail` holding the reason when one was given, and in a room `subject` holding the requesting occupant's nickname), `encryption-resumed-by-contact`, `sessions-reset` (with `detail` listing the devices that need attention, if any) or `incoming-file-failed` (with `fileName`, and `detail` holding the reason).
+
+A `jingle_transfer_progress` event carries `sid`, `offerId`, `progress`, `bytesTransferred` and `totalBytes`, and adds `bytesPerSecond` and `secondsRemaining` (whole numbers, as strings) only when they are known. `jingle_transfer_completed` and `jingle_transfer_failed` also carry `offerId`. For an incoming transfer it matches the `offerId` of its `file_offer` record. Every event of one transfer carries the same `offerId`, and a later transfer that reuses the `sid` gets a different one, so `offerId` rather than `sid` tells two transfers apart.
 
 Empty lists emit one `<kind>_empty` record instead of text: `accounts_empty`, `roster_empty`, `bookmarks_empty`, `block_list_empty`, `rooms_empty`, `room_participants_empty`, `searched_channels_empty`, `messages_empty`, `omemo_identity_empty` or `omemo_devices_empty`. Account-scoped records carry `"account"`. `omemo_devices_empty` adds `"jid"`, and `room_participants_empty` carries `"room"`. OMEMO commands emit `omemo_fingerprint` (`fingerprint` and `displayFingerprint`), `omemo_device` (`jid`, `deviceID`, `trust`, and `fingerprint` and `displayFingerprint` when known), `omemo_trust` and `omemo_session_reset` records. `fingerprint` is the raw Ed25519 hex Ducko stores; `displayFingerprint` is the grouped Curve25519 form the text output shows.
 
@@ -553,8 +556,12 @@ To stage a pending subscription request, read the requester's `roster list --out
 To check server discovery without writing to the server:
 
 - **HTTP upload**: discovery runs before the slot request. `send --file <path> --method http <jid>` with a sparse file larger than the server's limit (`mkfile -n 100g <path>`) exits 1 with `Error: The file is too large: the server accepts up to <size>`, and uploads nothing.
-- **Proxy65**: discovery runs before a Jingle offer goes out. `send --file <small file> --method jingle <contact>/<resource that does not exist>` logs `Discovered a Proxy65 streamhost` in the file log, then exits 1 with `Error: File transfer negotiation failed: The service is unavailable`, delivering nothing. Use a small file: a Jingle send reads the whole file before discovery. A profile logs at info level, so the streamhost's host and port appear only after `defaults write im.ducko.dev.<unique> advancedLogLevel debug` before the run. The same setting shows why each SOCKS5 candidate failed, but only in a transfer the contact accepts, since candidates are dialed after `session-accept`. The profile cleanup removes the setting.
+- **Proxy65**: discovery runs before a Jingle offer goes out. `send --file <small file> --method jingle <contact>/<resource that does not exist>` logs `Discovered a Proxy65 streamhost` in the file log, then exits 1 with `Error: File transfer negotiation failed: The service is unavailable`, delivering nothing. Use a small file: a Jingle send copies and hashes the whole file before discovery. A profile logs at info level, so the streamhost's host and port appear only after `defaults write im.ducko.dev.<unique> advancedLogLevel debug` before the run. The profile cleanup removes the setting.
 - **Rooms and channel search**: the test server lists no public rooms and has no channel search service, so `room list` prints an empty result and `room list --search` exits 1 with `Error: The server does not offer channel search`, whether or not discovery works.
+
+The info-level file log names the transport once it is chosen (`Jingle transfer is using a direct connection`, `… the server's proxy` or `… in-band bytestreams`). It also says why each SOCKS5 candidate failed (`A <direct|proxy> SOCKS5 candidate failed: <reason>`). Both appear only in a transfer the contact accepts, since candidates are dialed after `session-accept`. The debug setting above adds each failed candidate's cid.
+
+Two profiles on one Mac reach each other directly, so to send such a transfer through the server's proxy, prefix the sender's command with `DUCKO_JINGLE_PROXY_ONLY=1`. A debug build then offers no direct candidates. The receiver offers none of its own, so only the sender needs the variable. A release build ignores it.
 
 ## Stream-Level Smoke Testing
 

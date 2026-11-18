@@ -573,14 +573,19 @@ enum FileTranscriptStoreTests {
             }
         }
 
-        @Test
-        func `A note keeps whom it names and what it adds`() async throws {
+        @Test(arguments: [
+            TimelineNote(
+                conversationID: testConversationID, timestamp: Date(timeIntervalSince1970: 1_772_280_000), kind: .plaintextRequested,
+                subject: "carol", detail: "No OMEMO on this phone"
+            ),
+            TimelineNote(
+                conversationID: testConversationID, timestamp: Date(timeIntervalSince1970: 1_772_280_000), kind: .incomingFileFailed,
+                fileName: "report.pdf", detail: "The contact went offline"
+            )
+        ])
+        func `A note keeps whom and what it names and what it adds`(note: TimelineNote) async throws {
             try await withTemporaryDirectory { dir in
                 let store = FileTranscriptStore(baseDirectory: dir)
-                let note = TimelineNote(
-                    conversationID: testConversationID, timestamp: Date(timeIntervalSince1970: 1_772_280_000), kind: .plaintextRequested,
-                    subject: "carol", detail: "No OMEMO on this phone"
-                )
                 try await store.appendNote(note)
 
                 #expect(try await FileTranscriptStore(baseDirectory: dir).fetchNotes(for: testConversationID, since: nil, before: nil) == [note])

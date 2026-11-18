@@ -5,9 +5,10 @@ import SwiftUI
 enum DirectTransferStatus: Equatable {
     /// Waiting for the contact, as the chat names them, to accept.
     case waiting(recipient: String)
-    case sending(progress: Double)
-    /// `nil` until the first bytes arrive.
-    case receiving(progress: Double?)
+    /// `rate` is `nil` until the transfer has moved bytes long enough to tell.
+    case sending(progress: Double, rate: TransferRate?)
+    /// `progress` is `nil` until the first bytes arrive, and `rate` until they have arrived long enough to tell.
+    case receiving(progress: Double?, rate: TransferRate?)
     case failed(String)
     case sent
 
@@ -17,14 +18,41 @@ enum DirectTransferStatus: Equatable {
         if case .failed = self { nil } else { 1 }
     }
 
-    /// What the row of a file being received says.
-    static func receiving(_ transfer: FileTransferService.ActiveTransfer) -> DirectTransferStatus {
-        if case let .transferring(progress) = transfer.state { return .receiving(progress: progress) }
-        return .receiving(progress: nil)
+    /// The state as the status line shows it, which is also what VoiceOver reads as its label.
+    var text: String {
+        switch self {
+        case let .waiting(recipient): "Waiting for \(recipient) to accept…"
+        case .sending: "Sending directly…"
+        case .receiving: "Receiving…"
+        case let .failed(reason): reason
+        case .sent: "Sent directly"
+        }
     }
 
-    /// `nil` for anything but a file this account sent directly, and for one whose transfer was cut off by the app
-    /// quitting, of which nothing is known. `recipientName` is the chat's name.
+    /// How far the transfer is, and its rate and time left once known. Empty for a state that moves no bytes.
+    var accessibilityValue: String {
+        switch self {
+        case let .sending(progress, rate): Self.progressText(progress, rate: rate)
+        case let .receiving(progress, rate): progress.map { Self.progressText($0, rate: rate) } ?? ""
+        case .waiting, .failed, .sent: ""
+        }
+    }
+
+    private static func progressText(_ progress: Double, rate: TransferRate?) -> String {
+        let percent = progress.formatted(.percent.precision(.fractionLength(0)))
+        guard let rate else { return percent }
+        return "\(percent), \(rate.displayText)"
+    }
+
+    /// What the row of a file being received says.
+    static func receiving(_ transfer: FileTransferService.ActiveTransfer) -> DirectTransferStatus {
+        if case let .transferring(progress) = transfer.state { return .receiving(progress: progress, rate: transfer.rate) }
+        return .receiving(progress: nil, rate: nil)
+    }
+
+    /// `nil` for anything but a file this account sent directly, and for one whose transfer was cut off by a shutdown
+    /// with no requested disconnect, of which nothing is known. A requested disconnect, quitting included, stores that
+    /// the transfer stopped when you went offline. `recipientName` is the chat's name.
     static func resolve(
         for message: ChatMessage, transfer: FileTransferService.ActiveTransfer?, recipientName: String
     ) -> DirectTransferStatus? {
@@ -34,8 +62,8 @@ enum DirectTransferStatus: Equatable {
         if message.isDelivered { return .sent }
         switch transfer?.state {
         case .negotiating, .awaitingAcceptance: return .waiting(recipient: recipientName)
-        case .connectingTransport: return .sending(progress: 0)
-        case let .transferring(progress): return .sending(progress: progress)
+        case .connectingTransport: return .sending(progress: 0, rate: nil)
+        case let .transferring(progress): return .sending(progress: progress, rate: transfer?.rate)
         case let .failed(reason): return .failed(reason)
         case .completedTransfer: return .sent
         case .requestingSlot, .uploading, .completed, .received, nil: return nil
@@ -45,52 +73,94 @@ enum DirectTransferStatus: Equatable {
 
 struct DirectTransferStatusView: View {
     let status: DirectTransferStatus?
+    /// Stops the transfer. Without it, as in the History window, the row offers no way to.
+    var stopTransfer: (() -> Void)?
 
     /// Fits the tallest state that takes one line, the one with a progress bar, so the row keeps its height as the
     /// transfer moves from one state to the next.
     private static let lineHeight: CGFloat = 20
 
+    /// What the stop button says, or `nil` when the row shows none: without a way to stop the transfer, or once it has
+    /// ended.
+    var stopLabel: String? {
+        guard stopTransfer != nil else { return nil }
+        switch status {
+        case .waiting, .sending: return "Stop sending"
+        case .receiving: return "Stop receiving"
+        case .failed, .sent, nil: return nil
+        }
+    }
+
     var body: some View {
         if let status {
-            Group {
-                switch status {
-                case let .waiting(recipient):
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .controlSize(.mini)
-                        Text("Waiting for \(recipient) to accept…")
-                            .singleLine()
-                    }
-                case let .sending(progress):
-                    HStack(spacing: 6) {
-                        Text("Sending directly…")
-                        ProgressView(value: progress)
-                            .frame(width: 80)
-                    }
-                case let .receiving(progress):
-                    HStack(spacing: 6) {
-                        if let progress {
-                            ProgressView(value: progress)
-                                .frame(width: 80)
-                        } else {
-                            ProgressView()
-                                .controlSize(.mini)
-                        }
-                        Text("Receiving…")
-                    }
-                case let .failed(reason):
-                    Label(reason, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                case .sent:
-                    Text("Sent directly")
+            HStack(spacing: 6) {
+                statusLine(status)
+                if let stopTransfer, let stopLabel {
+                    Button(stopLabel, systemImage: "xmark.circle.fill", action: stopTransfer)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help(stopLabel)
+                        .accessibilityIdentifier("stop-direct-transfer-button")
                 }
             }
-            .font(.caption2)
-            .lineLimit(status.lineLimit)
             .frame(minHeight: Self.lineHeight)
-            .foregroundStyle(.secondary)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("direct-transfer-status")
+        }
+    }
+
+    /// The text and progress, read as one element whose label and value come from the status, so reading it never
+    /// waits on the row's own update. The stop button stays apart from it, so it can be pressed.
+    private func statusLine(_ status: DirectTransferStatus) -> some View {
+        Group {
+            switch status {
+            case .waiting:
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text(status.text)
+                        .singleLine()
+                }
+            case let .sending(progress, rate):
+                HStack(spacing: 6) {
+                    Text(status.text)
+                    ProgressBar(fraction: progress)
+                        .frame(width: 80)
+                    rateText(rate)
+                }
+            case let .receiving(progress, rate):
+                HStack(spacing: 6) {
+                    if let progress {
+                        ProgressBar(fraction: progress)
+                            .frame(width: 80)
+                    } else {
+                        ProgressView()
+                            .controlSize(.mini)
+                    }
+                    Text(status.text)
+                    rateText(rate)
+                }
+            case let .failed(reason):
+                Label(reason, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+            case .sent:
+                Text(status.text)
+            }
+        }
+        .font(.caption2)
+        .lineLimit(status.lineLimit)
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.text)
+        .accessibilityValue(status.accessibilityValue)
+        .accessibilityIdentifier("direct-transfer-status")
+    }
+
+    @ViewBuilder
+    private func rateText(_ rate: TransferRate?) -> some View {
+        if let rate {
+            Text(rate.displayText)
+                .monospacedDigit()
+                .singleLine()
         }
     }
 }

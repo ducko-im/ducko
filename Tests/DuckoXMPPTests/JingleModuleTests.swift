@@ -344,7 +344,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
             await mock.simulateReceive(sessionTerminateXML(reason: "success"))
 
             let events = try await eventsTask.value
-            guard case let .jingleFileTransferFailed(sid, reason) = events.last else {
+            guard case let .jingleFileTransferFailed(sid, _, reason) = events.last else {
                 Issue.record("Expected jingleFileTransferFailed event")
                 await disconnectFast(client)
                 return
@@ -363,7 +363,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
             var reason = XMLElement(name: "reason")
             reason.addChild(XMLElement(name: "success"))
             try harness.receive(action: "session-terminate", sid: sid, payload: [reason])
-            #expect(try await harness.event { if case .jingleFileTransferFailed(sid, .cancel) = $0 { true } else { false } } != nil)
+            #expect(try await harness.event { if case .jingleFileTransferFailed(sid, _, .cancel) = $0 { true } else { false } } != nil)
         }
     }
 
@@ -385,7 +385,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
             await mock.simulateReceive(sessionTerminateXML(reason: "cancel"))
 
             let events = try await eventsTask.value
-            guard case let .jingleFileTransferFailed(sid, reason) = events.last else {
+            guard case let .jingleFileTransferFailed(sid, _, reason) = events.last else {
                 Issue.record("Expected jingleFileTransferFailed event")
                 await disconnectFast(client)
                 return
@@ -404,7 +404,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
 
             try harness.receive(action: "session-terminate", sid: "sid-1", payload: [JingleInitiatorHarness.reason("connectivity-error")])
             let failure = try await harness.event { event in
-                if case .jingleFileTransferFailed("sid-1", .connectivityError) = event { return true }
+                if case .jingleFileTransferFailed("sid-1", _, .connectivityError) = event { return true }
                 return false
             }
             #expect(failure != nil)
@@ -489,7 +489,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
             await disconnectFast(client)
 
             let events = try await eventsTask.value
-            guard case let .jingleFileTransferFailed(sid, reason) = events.last else {
+            guard case let .jingleFileTransferFailed(sid, _, reason) = events.last else {
                 Issue.record("Expected jingleFileTransferFailed event on disconnect")
                 return
             }
@@ -839,7 +839,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
             await #expect(throws: JingleModule.JingleError.transportFailed("The received file is corrupted")) {
                 _ = try await harness.module.receiveFileData(sid: "sid-1")
             }
-            #expect(harness.eventCount { if case .jingleFileTransferFailed("sid-1", .checksumMismatch) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount { if case .jingleFileTransferFailed("sid-1", _, .checksumMismatch) = $0 { true } else { false } } == 1)
         }
     }
 
@@ -887,7 +887,8 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
             let module = JingleModule()
             await #expect(throws: JingleModule.JingleError.transportFailed("The connection is not open")) {
                 try await module.sendSOCKS5Data(
-                    sid: "sid-123", data: [1, 2, 3], connection: SOCKS5Connection(), context: makeStubModuleContext()
+                    session: ("sid-123", "offer-123"), source: InMemoryJingleFileSource([1, 2, 3]), totalBytes: 3,
+                    connection: SOCKS5Connection(), context: makeStubModuleContext()
                 )
             }
         }
@@ -897,7 +898,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
             let module = JingleModule()
             await #expect(throws: JingleModule.JingleError.transportFailed("The connection is not open")) {
                 _ = try await module.receiveSOCKS5Data(
-                    sid: "sid-123", expectedSize: 3, connection: SOCKS5Connection(), context: makeStubModuleContext()
+                    sid: "sid-123", offerID: "offer-123", expectedSize: 3, connection: SOCKS5Connection(), context: makeStubModuleContext()
                 )
             }
         }
@@ -958,7 +959,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
 
             #expect(try await harness.sentStanza(matching: JingleInitiatorHarness.isReply(to: "remove-iq", type: "result")) != nil)
             let failure = try await harness.event { event in
-                if case .jingleFileTransferFailed("sid-1", .cancel) = event { return true }
+                if case .jingleFileTransferFailed("sid-1", _, .cancel) = event { return true }
                 return false
             }
             #expect(failure != nil)
@@ -1006,7 +1007,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
 
             let legitimate = Task {
                 try await collectEvents(from: client) { event in
-                    if case .jingleFileTransferFailed("sid-123", .cancel) = event { return true }
+                    if case .jingleFileTransferFailed("sid-123", _, .cancel) = event { return true }
                     return false
                 }
             }
@@ -1068,7 +1069,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
             var reason = XMLElement(name: "reason")
             reason.addChild(XMLElement(name: "decline"))
             try harness.receive(action: "session-terminate", sid: "sid-1", payload: [reason])
-            #expect(try await harness.event { if case .jingleFileTransferFailed("sid-1", .decline) = $0 { true } else { false } } != nil)
+            #expect(try await harness.event { if case .jingleFileTransferFailed("sid-1", _, .decline) = $0 { true } else { false } } != nil)
         }
 
         /// An offer this side cannot parse is declined to the peer, so the peer stops waiting for an accept instead of
@@ -1151,7 +1152,7 @@ enum JingleModuleTests { // swiftlint:disable:this type_body_length
             try harness.deliver(JingleInitiatorHarness.ibbData([1, 2, 3], seq: 0), id: "data-0")
             try harness.deliver(JingleInitiatorHarness.ibbClose(), id: "close")
             #expect(try await harness.module.receiveFileData(sid: "sid-1") == [1, 2, 3])
-            #expect(harness.eventCount { if case .jingleFileTransferCompleted("sid-1", .ibb) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount { if case .jingleFileTransferCompleted("sid-1", _, .ibb) = $0 { true } else { false } } == 1)
         }
     }
 }

@@ -21,6 +21,8 @@ enum CLIError: Error, LocalizedError {
     case noConversation(String)
     case invalidTransferMethod(String)
     case noIncomingOffers
+    case transferNotFound(String)
+    case noDirectTransfers
     case malformedQuotedArgument(String)
     case omemoDeviceNotFound(deviceID: UInt32, jid: String)
     case unlistedOption(String)
@@ -69,6 +71,10 @@ enum CLIError: Error, LocalizedError {
             "Invalid transfer method: \(method). Valid values: auto, http, jingle"
         case .noIncomingOffers:
             "No incoming file transfer offers."
+        case let .transferNotFound(sid):
+            "Transfer not found: \(sid)"
+        case .noDirectTransfers:
+            "No direct file transfers under way."
         case let .malformedQuotedArgument(detail):
             "Invalid nickname argument: \(detail). Quote nicknames containing spaces, e.g. \"Alice Smith\"."
         case let .omemoDeviceNotFound(deviceID, jid):

@@ -157,6 +157,11 @@ public final class ChatWindowState {
         await environment.fileTransferService.refreshDirectTransferSupport(forJIDString: jidString, accountID: accountID)
     }
 
+    /// Stops a direct transfer of this chat, sent or being received, by its row's id.
+    func cancelTransfer(id: UUID) async {
+        await environment.fileTransferService.cancelTransfer(id: id)
+    }
+
     // MARK: - Groupchat
 
     var showParticipantSidebar = false

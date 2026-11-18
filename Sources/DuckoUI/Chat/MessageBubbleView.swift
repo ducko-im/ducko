@@ -43,6 +43,7 @@ struct MessageBubbleView: View {
                 actionSenderName: row.actionSenderName,
                 loadsIncomingImagesOnSight: row.loadsIncomingImagesOnSight,
                 transferStatus: row.transferStatus,
+                stopTransfer: { Task { await windowState.cancelTransfer(id: message.id) } },
                 highlight: row.searchMatch?.query,
                 header: {
                     if let replyQuote = row.replyQuote {

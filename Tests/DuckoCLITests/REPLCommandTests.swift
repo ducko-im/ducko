@@ -34,7 +34,7 @@ struct REPLCommandTests {
     @Test(arguments: [
         REPLCommand.Kind.status, .history, .checkRegistration, .submitRegistration, .join, .leave, .members, .topic,
         .nick, .destroy, .voice, .kick, .pm, .affiliations, .config, .moderate, .sendfile, .senddirect, .accept, .decline,
-        .rooms, .avatar
+        .cancel, .rooms, .avatar
     ])
     func `optional arguments and operation usage errors remain recognized`(kind: REPLCommand.Kind) {
         #expect(REPLCommand(kind.rawValue).kind == kind)
@@ -116,6 +116,7 @@ Commands:
   /senddirect <jid> <path> Send a file directly to the contact's device
   /accept [id]             Accept incoming file transfer into Downloads
   /decline [id]            Decline incoming file transfer
+  /cancel [sid]            Cancel a direct file transfer
   /transfers               List active transfers
   /rooms [service]         Discover available rooms
   /avatar [jid]            View avatar info (own or contact's)

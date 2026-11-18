@@ -182,11 +182,12 @@ struct JSONFormatterTests {
 
     @Test func `jingle transfer failed event keeps the raw reason token`() throws {
         let accountID = UUID()
-        let event = XMPPEvent.jingleFileTransferFailed(sid: "sid-789", reason: .transportReject)
+        let event = XMPPEvent.jingleFileTransferFailed(sid: "sid-789", offerID: "offer", reason: .transportReject)
         let output = try #require(formatter.formatEvent(event, accountID: accountID))
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "jingle_transfer_failed")
+        #expect(json["offerId"] == "offer")
         #expect(json["reason"] == "transport-reject")
         #expect(json["account"] == accountID.uuidString)
     }
@@ -238,6 +239,20 @@ struct JSONFormatterTests {
         #expect(json["text"] == "carol asked for unencrypted messages (No OMEMO here)")
         #expect(json["subject"] == "carol")
         #expect(json["detail"] == "No OMEMO here")
+    }
+
+    @Test func `a failed incoming file note carries the file name and why`() throws {
+        let note = TimelineNote(
+            conversationID: UUID(), timestamp: Date(timeIntervalSince1970: 1_772_280_000), kind: .incomingFileFailed,
+            fileName: "report.pdf", detail: "The transfer was canceled"
+        )
+        let output = formatter.formatNote(note, contactName: "bob@example.com")
+        let data = try #require(output.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+        #expect(json["kind"] == "incoming-file-failed")
+        #expect(json["text"] == "report.pdf from bob@example.com did not arrive: The transfer was canceled")
+        #expect(json["fileName"] == "report.pdf")
+        #expect(json["detail"] == "The transfer was canceled")
     }
 
     // MARK: - Search

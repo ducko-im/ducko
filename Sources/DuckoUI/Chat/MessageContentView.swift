@@ -12,6 +12,8 @@ struct MessageContentView<Header: View, Footer: View>: View {
     /// Whether a received remote image is fetched without the viewer asking for it.
     let loadsIncomingImagesOnSight: Bool
     let transferStatus: DirectTransferStatus?
+    /// Stops the direct transfer `transferStatus` reports on. The History window has none to give.
+    var stopTransfer: (() -> Void)?
     /// A search's text, whose occurrences in the message's text are highlighted.
     var highlight: String?
     @ViewBuilder let header: Header
@@ -86,7 +88,7 @@ struct MessageContentView<Header: View, Footer: View>: View {
                 }
             }
 
-            DirectTransferStatusView(status: transferStatus)
+            DirectTransferStatusView(status: transferStatus, stopTransfer: stopTransfer)
 
             MessageMetadataView(
                 message: message,
@@ -142,6 +144,7 @@ extension MessageContentView where Header == EmptyView, Footer == EmptyView {
         actionSenderName: String,
         loadsIncomingImagesOnSight: Bool,
         transferStatus: DirectTransferStatus?,
+        stopTransfer: (() -> Void)? = nil,
         highlight: String? = nil
     ) {
         self.init(
@@ -151,6 +154,7 @@ extension MessageContentView where Header == EmptyView, Footer == EmptyView {
             actionSenderName: actionSenderName,
             loadsIncomingImagesOnSight: loadsIncomingImagesOnSight,
             transferStatus: transferStatus,
+            stopTransfer: stopTransfer,
             highlight: highlight,
             header: { EmptyView() },
             footer: { EmptyView() }

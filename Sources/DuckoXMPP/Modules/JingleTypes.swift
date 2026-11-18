@@ -1,5 +1,3 @@
-import CryptoKit
-
 /// Jingle action per XEP-0166 §7.
 enum JingleAction: String {
     case sessionInitiate = "session-initiate"
@@ -36,6 +34,7 @@ public enum JingleTerminateReason: String, Sendable {
     case success
     case decline
     case cancel
+    case gone
     case busy
     case timeout
     case connectivityError = "connectivity-error"
@@ -45,6 +44,7 @@ public enum JingleTerminateReason: String, Sendable {
 public enum JingleTransferFailureReason: String, Sendable {
     case decline
     case cancel
+    case gone
     case busy
     case timeout
     case connectivityError = "connectivity-error"
@@ -56,11 +56,14 @@ public enum JingleTransferFailureReason: String, Sendable {
     case transportReplaceFailed = "transport-replace-failed"
     case incomplete
     case checksumMismatch = "checksum-mismatch"
+    /// The receiver never confirmed that the file arrived, so this side cannot count it as delivered.
+    case unconfirmed
 
     public var displayText: String {
         switch self {
         case .decline: "The contact declined the transfer"
         case .cancel: "The transfer was canceled"
+        case .gone: "The contact went offline"
         case .busy: "The contact is busy"
         case .timeout: "The transfer timed out"
         case .connectivityError: "The contact could not be reached"
@@ -72,6 +75,7 @@ public enum JingleTransferFailureReason: String, Sendable {
         case .transportReplaceFailed: "Switching the connection method failed"
         case .incomplete: "The transfer ended before the whole file arrived"
         case .checksumMismatch: "The received file is corrupted"
+        case .unconfirmed: "The contact did not confirm the transfer"
         }
     }
 
@@ -81,6 +85,7 @@ public enum JingleTransferFailureReason: String, Sendable {
         case .some(.success): return nil
         case .some(.decline): self = .decline
         case .some(.cancel): self = .cancel
+        case .some(.gone): self = .gone
         case .some(.busy): self = .busy
         case .some(.timeout): self = .timeout
         case .some(.connectivityError): self = .connectivityError
@@ -216,7 +221,9 @@ public struct JingleFileDescription: Sendable, Hashable {
 
     /// The base64 SHA-256 digest of `data`, as carried in a `<hash algo='sha-256'>` element.
     public static func sha256Hash(of data: [UInt8]) -> String {
-        Base64.encode(Array(SHA256.hash(data: data)))
+        var hasher = JingleFileHasher()
+        hasher.update(data)
+        return hasher.finalize()
     }
 
     /// Serializes to a `<description>` element containing a `<file>`.

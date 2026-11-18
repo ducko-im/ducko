@@ -6,7 +6,7 @@ enum JingleTransportDeadlineTests {
     private static let candidateError = JingleInitiatorHarness.socks5Info(XMLElement(name: "candidate-error"))
 
     private static func isTimeout(_ event: XMPPEvent) -> Bool {
-        if case .jingleFileTransferFailed(_, .timeout) = event { return true }
+        if case .jingleFileTransferFailed(_, _, .timeout) = event { return true }
         return false
     }
 
@@ -85,10 +85,6 @@ enum JingleTransportDeadlineTests {
                   probeError as? JingleModule.JingleError == .transportFailed("The transfer is already waiting for a connection") else {
                 Issue.record("Expected the first wait to be parked, got \(String(describing: probe))")
                 return
-            }
-            // A send that skips the wait is refused too: the IBB stream is set up but not yet the transport.
-            await #expect(throws: JingleModule.JingleError.transportFailed("No connection is open for the transfer")) {
-                try await module.sendFileData(sid: sid, data: [1, 2, 3])
             }
 
             try harness.receive(action: JingleAction.transportAccept.rawValue, sid: sid, payload: [JingleInitiatorHarness.ibbContent()])

@@ -58,6 +58,7 @@ enum TranscriptRecord: Codable {
         var kind: TimelineNote.Kind
         /// Optional so records written before the field existed decode.
         var subject: String?
+        var fileName: String?
         var detail: String?
     }
 
@@ -144,7 +145,9 @@ enum TranscriptRecord: Codable {
     }
 
     static func from(_ note: TimelineNote) -> TranscriptRecord {
-        .note(NoteEntry(id: note.id, timestamp: note.timestamp, kind: note.kind, subject: note.subject, detail: note.detail))
+        .note(NoteEntry(
+            id: note.id, timestamp: note.timestamp, kind: note.kind, subject: note.subject, fileName: note.fileName, detail: note.detail
+        ))
     }
 
     /// What a failed decrypt was recorded as before the flag existed: an encrypted message with this sentence as its
@@ -182,7 +185,8 @@ enum TranscriptRecord: Codable {
     func toNote(conversationID: UUID) -> TimelineNote? {
         guard case let .note(entry) = self else { return nil }
         return TimelineNote(
-            id: entry.id, conversationID: conversationID, timestamp: entry.timestamp, kind: entry.kind, subject: entry.subject, detail: entry.detail
+            id: entry.id, conversationID: conversationID, timestamp: entry.timestamp, kind: entry.kind, subject: entry.subject,
+            fileName: entry.fileName, detail: entry.detail
         )
     }
 

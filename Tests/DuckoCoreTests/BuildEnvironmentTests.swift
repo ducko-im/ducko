@@ -35,6 +35,17 @@ struct BuildEnvironmentTests {
         #expect(BuildEnvironment.computeUserDefaultsSuiteName(profile: "alice", isDebug: true) == "im.ducko.dev.alice")
     }
 
+    @Test func `release build offers direct Jingle candidates regardless of the proxy-only value`() {
+        #expect(BuildEnvironment.computeJingleOffersDirectCandidates(proxyOnly: nil, isDebug: false))
+        #expect(BuildEnvironment.computeJingleOffersDirectCandidates(proxyOnly: "1", isDebug: false))
+    }
+
+    @Test func `debug build withholds direct Jingle candidates only when proxy-only is 1`() {
+        #expect(BuildEnvironment.computeJingleOffersDirectCandidates(proxyOnly: nil, isDebug: true))
+        #expect(BuildEnvironment.computeJingleOffersDirectCandidates(proxyOnly: "0", isDebug: true))
+        #expect(!BuildEnvironment.computeJingleOffersDirectCandidates(proxyOnly: "1", isDebug: true))
+    }
+
     @Test func `live properties match the build configuration`() {
         // On a debug build the live properties should resolve to the dev path; on a release
         // build they should resolve to the production path. Either way they must agree with

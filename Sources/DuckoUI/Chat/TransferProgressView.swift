@@ -57,7 +57,7 @@ private struct TransferProgressRow: View {
             }
 
             if let progress = uploadProgress {
-                ProgressView(value: progress)
+                ProgressBar(fraction: progress)
                     .frame(width: 100)
             } else {
                 ProgressView()

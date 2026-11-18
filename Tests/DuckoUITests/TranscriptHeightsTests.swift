@@ -119,16 +119,20 @@ struct TranscriptHeightsTests {
         #expect(fixture.height(of: row(isOutgoing: true)) == fixture.height(of: row(isOutgoing: true, isDelivered: true)))
     }
 
-    @Test func `a file sent directly keeps its row's height from waiting to sent`() {
+    @Test func `a file sent directly keeps its row's height from waiting to sent, in a chat with its stop button as in History`() {
         let fixture = HeightsFixture()
         let file = DuckoCore.Attachment.locallySaved(id: UUID(), fileURL: URL(fileURLWithPath: "/tmp/notes.txt"))
         // A name too long for one line of a narrow list, which the waiting line must not wrap over.
         let longName = String(repeating: "a-long-name-", count: 10)
-        let heights = [DirectTransferStatus.waiting(recipient: longName), .sending(progress: 0.4), .sent].map {
-            fixture.height(of: row(isOutgoing: true, attachments: [file], transferStatus: $0), width: 300)
+        let rate = TransferRate(bytesPerSecond: 38000, bytesTransferred: 0, totalBytes: 315_000_000)
+        let statuses = [DirectTransferStatus.waiting(recipient: longName), .sending(progress: 0, rate: nil), .sending(progress: 0.4, rate: rate), .sent]
+        let heights = {
+            statuses.map { fixture.height(of: row(isOutgoing: true, attachments: [file], transferStatus: $0), width: 300) }
         }
 
-        #expect(Set(heights).count == 1)
+        #expect(Set(heights()).count == 1)
+        fixture.drawAsChat()
+        #expect(Set(heights()).count == 1)
     }
 
     @Test func `the reason a direct transfer failed runs over as many lines as it needs`() {

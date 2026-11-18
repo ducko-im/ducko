@@ -1,3 +1,4 @@
+import Darwin
 import DuckoTestSupport
 import struct os.OSAllocatedUnfairLock
 import Testing
@@ -100,6 +101,21 @@ private func transportInfoCandidateErrorXML(
     """
 }
 
+/// Serves a file from memory and records how many bytes each read asked for.
+private actor RecordingFileSource: JingleFileSource {
+    private let bytes: InMemoryJingleFileSource
+    private(set) var requestedCounts: [Int] = []
+
+    init(_ bytes: [UInt8]) {
+        self.bytes = InMemoryJingleFileSource(bytes)
+    }
+
+    func read(upTo count: Int) async -> [UInt8] {
+        requestedCounts.append(count)
+        return await bytes.read(upTo: count)
+    }
+}
+
 // MARK: - Tests
 
 enum JingleSOCKS5Tests {
@@ -156,7 +172,7 @@ enum JingleSOCKS5Tests {
             )
 
             let events = try await eventsTask.value
-            guard case let .jingleFileTransferFailed(sid, reason) = events.last else {
+            guard case let .jingleFileTransferFailed(sid, _, reason) = events.last else {
                 Issue.record("Expected jingleFileTransferFailed event")
                 await disconnectFast(client)
                 return
@@ -397,22 +413,8 @@ enum JingleSOCKS5Tests {
         private static func accept(
             _ harness: JingleInitiatorHarness, cid: String = "peer-direct"
         ) async throws -> (sid: String, peer: SOCKS5Connection) {
-            let listener = SOCKS5Listener()
-            let port = try await listener.start()
-            let peerJID = JingleInitiatorHarness.peer.description
-            let candidate = SOCKS5Transport.Candidate(cid: cid, host: "127.0.0.1", port: port, jid: peerJID, priority: 100, type: .direct)
-            let content = JingleContent(
-                name: "a-file-offer", creator: "initiator", description: JingleFileDescription(name: "test.txt", size: 3),
-                transport: .socks5(SOCKS5Transport(sid: "transport-sid", candidates: [candidate]))
-            )
-            try harness.receive(action: JingleAction.sessionInitiate.rawValue, sid: "sid-1", payload: [content.toXML()])
-            try await harness.module.acceptFileTransfer(sid: "sid-1")
-
-            let destination = SOCKS5Connection.destinationAddress(sid: "transport-sid", initiatorJID: peerJID, targetJID: "user@example.com/res")
-            let peer = try await listener.accept(expectedDstAddr: destination)
-            await listener.close()
-            try await harness.module.awaitTransportReady(sid: "sid-1")
-            return ("sid-1", peer)
+            let listener = try await harness.receiveSOCKS5Offer(cid: cid)
+            return try await ("sid-1", harness.acceptSOCKS5Offer(listener: listener))
         }
 
         /// This side's report covers only its own dial, not the responder reaching its listener. With no responder
@@ -505,12 +507,14 @@ enum JingleSOCKS5Tests {
             )
             try await harness.module.awaitTransportReady(sid: sid)
             try await harness.expectSingleReply(to: "expected-accept", type: "result", sid: sid)
-            try await harness.module.sendFileData(sid: sid, data: [1, 2, 3])
+            let module = harness.module
+            let send = Task { try await module.sendFileData(sid: sid, data: [1, 2, 3]) }
             #expect(try await harness.sentIQ { $0.child(named: "data", namespace: XMPPNamespaces.ibb) != nil } != nil)
+            _ = try await boundedOutcome { try await send.value }
         }
 
         /// The listener's accept and the peer's nomination can land in either order; the sender goes ahead only once both
-        /// are in, and a send tried before then is refused rather than written to an unchosen socket.
+        /// are in.
         @Test(arguments: [true, false])
         func `A sender waits for the peer to nominate the connection its listener accepted`(nominateFirst: Bool) async throws {
             let harness = JingleInitiatorHarness(timing: JingleTiming(senderConfirmationWait: .milliseconds(300)))
@@ -528,9 +532,6 @@ enum JingleSOCKS5Tests {
                 // Nothing may use the listener's connection before the nomination.
                 let early = try await boundedOutcome(timeout: .milliseconds(200)) { try await wait.value }
                 #expect(early == nil)
-                await #expect(throws: JingleModule.JingleError.transportFailed("No connection is open for the transfer")) {
-                    try await module.sendFileData(sid: sid, data: [1, 2, 3])
-                }
                 try harness.nominateDirectCandidate(sid: sid)
             }
             let ready = try await boundedOutcome { try await wait.value }
@@ -562,11 +563,115 @@ enum JingleSOCKS5Tests {
             _ = try await boundedOutcome { try await send.value }
         }
 
+        /// Progress is reported at most every 250 ms, not once per chunk, and the update that completes the send always is.
+        @Test
+        func `A send reports its progress at most four times a second plus its last update`() async throws {
+            let harness = JingleInitiatorHarness(timing: JingleTiming(senderConfirmationWait: .milliseconds(300)))
+            let (sid, peer) = try await Self.connect(harness)
+            let size = 1_048_576
+
+            let module = harness.module
+            let started = ContinuousClock.now
+            let send = Task { try await module.sendFileData(sid: sid, data: [UInt8](repeating: 7, count: size)) }
+            #expect(try await Self.read(size, from: peer)?.count == size)
+            let last = try await harness.event { if case .jingleFileTransferProgress(_, _, Int64(size), _, _) = $0 { true } else { false } }
+            #expect(last != nil)
+            let elapsed = ContinuousClock.now - started
+
+            let progressCount = harness.eventCount { if case .jingleFileTransferProgress = $0 { true } else { false } }
+            #expect(progressCount <= Int(elapsed / .milliseconds(250)) + 2)
+            _ = try await boundedOutcome { try await send.value }
+        }
+
+        /// A relay such as a Proxy65 can hold back the last bytes it took until the stream ends, so a send ends its half of
+        /// the stream once every byte is written, while it still waits for the receiver to confirm.
+        @Test
+        func `A send ends its half of the stream after the last byte while it waits for confirmation`() async throws {
+            let harness = JingleInitiatorHarness(timing: JingleTiming(senderConfirmationWait: .seconds(10)))
+            let (sid, peer) = try await Self.connect(harness)
+
+            let module = harness.module
+            let send = Task { try await module.sendFileData(sid: sid, data: [1, 2, 3]) }
+            #expect(try await Self.read(3, from: peer) == [1, 2, 3])
+            let end = try await boundedOutcome(timeout: .seconds(2)) { _ = try await peer.receive(1) }
+            guard case let .failure(error)? = end, case .receiveFailed("The connection was closed")? = error as? SOCKS5Connection.SOCKS5Error else {
+                Issue.record("Expected the end of the stream, got \(String(describing: end))")
+                send.cancel()
+                return
+            }
+            let pending = try await boundedOutcome(timeout: .milliseconds(100)) { try await send.value }
+            #expect(pending == nil)
+            send.cancel()
+        }
+
+        /// Only the receiver can say the file arrived. A send it never confirms fails once the confirmation wait elapses,
+        /// with one failure event, and the peer is told the send timed out rather than that it succeeded.
+        @Test
+        func `A send nothing confirms fails as unconfirmed once the confirmation wait elapses`() async throws {
+            let harness = JingleInitiatorHarness(timing: JingleTiming(senderConfirmationWait: .milliseconds(300)))
+            let (sid, peer) = try await Self.connect(harness)
+
+            let module = harness.module
+            let send = Task { try await module.sendFileData(sid: sid, data: [1, 2, 3]) }
+            #expect(try await Self.read(3, from: peer) == [1, 2, 3])
+            let outcome = try await boundedOutcome(timeout: .seconds(5)) { try await send.value }
+            guard case let .failure(error)? = outcome else {
+                Issue.record("Expected the unconfirmed send to fail, got \(String(describing: outcome))")
+                return
+            }
+            let unconfirmed = JingleTransferFailureReason.unconfirmed
+            #expect(error as? JingleModule.JingleError == .transportFailed(unconfirmed.displayText))
+            #expect(harness.eventCount { if case .jingleFileTransferFailed(sid, _, .unconfirmed) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount(matching: JingleInitiatorHarness.isFailure) == 1)
+            #expect(harness.eventCount(matching: JingleInitiatorHarness.isCompletion) == 0)
+            let terminate = try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue)
+            #expect(terminate?.child(named: "jingle")?.child(named: "reason")?.child(named: "timeout") != nil)
+            #expect(harness.sentJingleCount(action: JingleAction.sessionTerminate.rawValue) == 1)
+        }
+
+        /// A file is read a bounded chunk at a time, so a send holds no more of it in memory than one chunk.
+        @Test
+        func `A send reads its file at most 64 KiB at a time`() async throws {
+            let harness = JingleInitiatorHarness(timing: JingleTiming(senderConfirmationWait: .milliseconds(300)))
+            let (sid, peer) = try await Self.connect(harness)
+            let size = 300_000
+            let source = RecordingFileSource([UInt8](repeating: 7, count: size))
+
+            let module = harness.module
+            let send = Task { try await module.sendFileData(sid: sid, source: source, totalBytes: Int64(size)) }
+            #expect(try await Self.read(size, from: peer)?.count == size)
+            _ = try await boundedOutcome { try await send.value }
+
+            let requestedCounts = await source.requestedCounts
+            #expect(requestedCounts.count > 1)
+            #expect(requestedCounts.allSatisfy { $0 <= 65536 })
+        }
+
+        /// A file that ends before the size the offer declared cannot complete the send, which fails instead of waiting
+        /// on bytes that never come.
+        @Test
+        func `A send whose file ends early fails and ends the session`() async throws {
+            let harness = JingleInitiatorHarness(timing: JingleTiming(peerEndGrace: .milliseconds(100)))
+            let (sid, peer) = try await Self.connect(harness)
+
+            let module = harness.module
+            let outcome = try await boundedOutcome {
+                try await module.sendFileData(sid: sid, source: RecordingFileSource([1, 2, 3]), totalBytes: 5)
+            }
+            guard case let .failure(error)? = outcome else {
+                Issue.record("Expected the send to fail, got \(String(describing: outcome))")
+                return
+            }
+            #expect(error as? JingleModule.JingleError == .transportFailed("The file could not be read"))
+            #expect(try await harness.event { if case .jingleFileTransferFailed(sid, _, .incomplete) = $0 { true } else { false } } != nil)
+            withExtendedLifetime(peer) {}
+        }
+
         /// A peer that stops reading partway through a write would otherwise hold the send, and the thread its write
         /// blocks, for as long as it likes. The session ends with it, so the peer is not left waiting for the rest.
         @Test
         func `A send the peer stops reading fails once the stall wait elapses and ends the session`() async throws {
-            let harness = JingleInitiatorHarness(timing: JingleTiming(sendStallWait: .milliseconds(300)))
+            let harness = JingleInitiatorHarness(timing: JingleTiming(sendStallWait: .milliseconds(300), peerEndGrace: .milliseconds(100)))
             let (sid, peer) = try await Self.connect(harness)
 
             let module = harness.module
@@ -579,7 +684,7 @@ enum JingleSOCKS5Tests {
                 return
             }
             #expect(error as? JingleModule.JingleError == .transportFailed("The other side stopped receiving the file"))
-            #expect(try await harness.event { if case .jingleFileTransferFailed(sid, .incomplete) = $0 { true } else { false } } != nil)
+            #expect(try await harness.event { if case .jingleFileTransferFailed(sid, _, .incomplete) = $0 { true } else { false } } != nil)
             let terminate = try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue)
             #expect(terminate?.child(named: "jingle")?.child(named: "reason")?.child(named: "failed-transport") != nil)
             await #expect(throws: JingleModule.JingleError.sessionNotFound) {
@@ -591,7 +696,7 @@ enum JingleSOCKS5Tests {
         /// A peer that stops sending partway through the file would otherwise hold the receive for as long as it likes.
         @Test
         func `A receive the peer stops sending fails as incomplete once the stall wait elapses`() async throws {
-            let harness = JingleInitiatorHarness(timing: JingleTiming(receiveStallWait: .milliseconds(300)))
+            let harness = JingleInitiatorHarness(timing: JingleTiming(receiveStallWait: .milliseconds(300), peerEndGrace: .milliseconds(100)))
             let (sid, peer) = try await Self.accept(harness)
             try await peer.send([1])
 
@@ -615,7 +720,7 @@ enum JingleSOCKS5Tests {
             let peer = try await harness.connectToDirectCandidate(sid: sid)
             #expect(try await harness.sentJingle(action: JingleAction.transportInfo.rawValue) != nil)
 
-            #expect(try await harness.event { if case .jingleFileTransferFailed(sid, .timeout) = $0 { true } else { false } } != nil)
+            #expect(try await harness.event { if case .jingleFileTransferFailed(sid, _, .timeout) = $0 { true } else { false } } != nil)
             let read = try await boundedOutcome { _ = try await peer.receive(1) }
             guard case .failure? = read else {
                 Issue.record("Expected the parked connection to close, got \(String(describing: read))")
@@ -685,6 +790,65 @@ enum JingleSOCKS5Tests {
             return received.withLock { $0 }
         }
 
+        /// A stop lands while the responder dials the first of the peer's candidates, which never answers its greeting.
+        /// Once the test closes that connection the dial fails, and the responder dials none of the candidates left.
+        @Test
+        func `A responder stopped mid-dial dials none of the remaining candidates`() async throws {
+            let harness = JingleInitiatorHarness()
+            let silent = try #require(loopbackSocket(listens: true))
+            defer { Darwin.close(silent.fd) }
+            let fallback = try #require(loopbackSocket(listens: true))
+            defer { Darwin.close(fallback.fd) }
+            let candidates = [
+                SOCKS5Transport.Candidate(cid: "silent", host: "127.0.0.1", port: silent.port, jid: JingleInitiatorHarness.peer.description, priority: 200, type: .direct),
+                SOCKS5Transport.Candidate(cid: "fallback", host: "127.0.0.1", port: fallback.port, jid: JingleInitiatorHarness.peer.description, priority: 100, type: .direct)
+            ]
+            let content = JingleContent(
+                name: "a-file-offer", creator: "initiator", description: JingleFileDescription(name: "test.txt", size: 3),
+                transport: .socks5(SOCKS5Transport(sid: "transport-sid", candidates: candidates))
+            )
+            try harness.receive(action: JingleAction.sessionInitiate.rawValue, sid: "sid-1", payload: [content.toXML()])
+            try await harness.module.acceptFileTransfer(sid: "sid-1")
+
+            // Armed: the dial reached the first candidate, which never answers its greeting.
+            let accepted = try #require(try await Self.acceptConnection(on: silent.fd, withinMilliseconds: 5000))
+            try? await harness.module.terminateSession(sid: "sid-1", reason: .cancel)
+            Darwin.close(accepted)
+
+            // Any dial to the fallback, whatever became of its handshake, shows as a connection waiting on its socket.
+            let dialed = try await Self.acceptConnection(on: fallback.fd, withinMilliseconds: 1000)
+            if let dialed { Darwin.close(dialed) }
+            #expect(dialed == nil)
+        }
+
+        private struct SocketCallFailed: Error, CustomStringConvertible {
+            let code: Int32
+
+            var description: String {
+                "socket call failed with errno \(code)"
+            }
+        }
+
+        /// Accepts a connection waiting on the listening socket `listener`, or returns `nil` once `wait` passes without
+        /// one. The wait is bounded here, so a blocked accept never outlives the test. A poll or accept error throws.
+        private static func acceptConnection(on listener: Int32, withinMilliseconds wait: Int32) async throws -> Int32? {
+            try await Task.detached {
+                let deadline = ContinuousClock.now + .milliseconds(Int(wait))
+                while true {
+                    let left = deadline - ContinuousClock.now
+                    let remaining = Int32(max(0, left.components.seconds * 1000 + left.components.attoseconds / 1_000_000_000_000_000))
+                    var waiting = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+                    let ready = poll(&waiting, 1, remaining)
+                    if ready < 0, errno == EINTR { continue }
+                    guard ready >= 0 else { throw SocketCallFailed(code: errno) }
+                    guard ready > 0 else { return nil }
+                    let fd = Darwin.accept(listener, nil, nil)
+                    guard fd >= 0 else { throw SocketCallFailed(code: errno) }
+                    return fd
+                }
+            }.value
+        }
+
         /// The initiator chooses candidate ids, so one can equal any name this side uses internally. A responder reports
         /// the candidate it connected to whatever its id.
         @Test
@@ -707,7 +871,7 @@ enum JingleSOCKS5Tests {
 
             try await peer.send([1, 2, 3])
             #expect(try await harness.module.receiveFileData(sid: sid) == [1, 2, 3])
-            #expect(harness.eventCount { if case .jingleFileTransferCompleted(sid, .socks5) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount { if case .jingleFileTransferCompleted(sid, _, .socks5) = $0 { true } else { false } } == 1)
             #expect(try await harness.sentJingle(action: JingleAction.sessionInfo.rawValue)?.child(named: "jingle")?.child(named: "received") != nil)
             let terminate = try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue)
             #expect(terminate?.child(named: "jingle")?.child(named: "reason")?.child(named: "success") != nil)
@@ -733,7 +897,7 @@ enum JingleSOCKS5Tests {
 
         @Test
         func `A short EOF fails as incomplete`() async throws {
-            let harness = JingleInitiatorHarness()
+            let harness = JingleInitiatorHarness(timing: JingleTiming(peerEndGrace: .milliseconds(100)))
             let (sid, peer) = try await Self.accept(harness)
             try await peer.send([1, 2])
             await peer.close()
@@ -741,7 +905,7 @@ enum JingleSOCKS5Tests {
             await #expect(throws: Self.incomplete) {
                 _ = try await harness.module.receiveFileData(sid: sid)
             }
-            #expect(harness.eventCount { if case .jingleFileTransferFailed(sid, .incomplete) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount { if case .jingleFileTransferFailed(sid, _, .incomplete) = $0 { true } else { false } } == 1)
         }
 
         @Test
@@ -775,7 +939,7 @@ enum JingleSOCKS5Tests {
             // Bounded above as well: the 30 s unclaimed expiry this test deliberately set alongside the 300 ms
             // end-of-stream wait satisfies the lower bound just as well, so only a ceiling tells the two apart.
             #expect(elapsed < .seconds(5))
-            #expect(harness.eventCount { if case .jingleFileTransferFailed(sid, .incomplete) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount { if case .jingleFileTransferFailed(sid, _, .incomplete) = $0 { true } else { false } } == 1)
             withExtendedLifetime(peer) {}
         }
 
@@ -795,13 +959,13 @@ enum JingleSOCKS5Tests {
                 Issue.record("Expected the send to return, got \(String(describing: outcome))")
                 return
             }
-            #expect(harness.eventCount { if case .jingleFileTransferCompleted(sid, .socks5) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount { if case .jingleFileTransferCompleted(sid, _, .socks5) = $0 { true } else { false } } == 1)
             #expect(harness.eventCount(matching: JingleInitiatorHarness.isFailure) == 0)
         }
 
         @Test
         func `A write that fails without a confirmation throws`() async throws {
-            let harness = JingleInitiatorHarness()
+            let harness = JingleInitiatorHarness(timing: JingleTiming(peerEndGrace: .milliseconds(100)))
             let (sid, peer) = try await Self.connect(harness)
             let send = Task { try await harness.module.sendFileData(sid: sid, data: [UInt8](repeating: 7, count: 16_000_000)) }
             try await Task.sleep(for: .milliseconds(200))

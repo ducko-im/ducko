@@ -55,11 +55,16 @@ public final class FileTransferService {
         public var sid: String?
         /// Who an incoming transfer comes from, as a bare JID, so the chat with them can show it.
         public let peerJIDString: String?
+        /// The id this side gave a direct transfer's offer, which names its session apart from a later one reusing the
+        /// sid. A sent file's offer takes the row's id, so its session's events find the row before it has a sid.
+        public let offerID: String?
+        /// How fast a direct transfer is moving, once that is known.
+        public var rate: TransferRate?
 
         public init(
             id: UUID, accountID: UUID, fileName: String, fileSize: Int64,
             state: TransferState, method: TransferMethod = .httpUpload,
-            direction: TransferDirection = .outgoing, sid: String? = nil, peerJIDString: String? = nil
+            direction: TransferDirection = .outgoing, sid: String? = nil, peerJIDString: String? = nil, offerID: String? = nil
         ) {
             self.id = id
             self.accountID = accountID
@@ -70,6 +75,17 @@ public final class FileTransferService {
             self.direction = direction
             self.sid = sid
             self.peerJIDString = peerJIDString
+            self.offerID = offerID
+        }
+
+        /// Whether this is a direct transfer still under way, which can be stopped: waiting for acceptance, connecting,
+        /// or moving bytes.
+        public var isUnderwayDirectTransfer: Bool {
+            guard method == .jingle else { return false }
+            switch state {
+            case .negotiating, .connectingTransport, .transferring: return true
+            case .requestingSlot, .uploading, .completed, .failed, .awaitingAcceptance, .completedTransfer, .received: return false
+            }
         }
 
         /// Whether this is a file a contact is sending that was accepted and is not saved yet.
@@ -107,6 +123,8 @@ public final class FileTransferService {
         case noJingleModule
         case uploadFailed(String)
         case directTransferUnavailable
+        /// A direct transfer stopped because it had ended, for the reason its row reads.
+        case transferEnded(String)
 
         public var errorDescription: String? {
             switch self {
@@ -119,6 +137,7 @@ public final class FileTransferService {
             case .noJingleModule: "Direct file transfer is not available"
             case let .uploadFailed(reason): "Upload failed: \(reason)"
             case .directTransferUnavailable: "The contact has no device online that can receive files directly"
+            case let .transferEnded(reason): "File transfer failed: \(reason)"
             }
         }
     }
@@ -152,7 +171,7 @@ public final class FileTransferService {
     nonisolated static let maxDownloadSize = JingleFileDescription.maxSize
 
     /// Bundles file metadata extracted from the file system.
-    private struct FileInfo {
+    struct FileInfo {
         let url: URL
         let name: String
         let size: Int64
@@ -178,12 +197,43 @@ public final class FileTransferService {
 
     // MARK: - State
 
-    public private(set) var activeTransfers: [ActiveTransfer] = []
+    public internal(set) var activeTransfers: [ActiveTransfer] = []
     public private(set) var incomingOffers: [PendingJingleOffer] = []
     public private(set) var incomingOOBOffers: [PendingOOBOffer] = []
-    /// Jingle rows whose session ended, reported by its completion or failure event or by a finished send, so a later
-    /// session under the same sid is not mistaken for theirs.
-    private var endedSessionRows: Set<UUID> = []
+    /// Jingle rows whose end is settled: reported by their session's completion or failure event, by a finished send, or
+    /// by this side's own end. Their session's later events, such as progress dispatched late, leave them alone.
+    var endedSessionRows: Set<UUID> = []
+    /// How this side ended each direct transfer it ended, by row id. Nothing a transfer's own task or session reports
+    /// afterwards replaces that end.
+    var localEnds: [UUID: LocalEnd] = [:]
+
+    /// How this side ends a direct transfer.
+    enum LocalEnd {
+        /// The user stopped it.
+        case canceled
+        /// A requested disconnect cut it off.
+        case wentOffline
+
+        /// What the transfer's row reads.
+        var text: String {
+            switch self {
+            case .canceled: "You canceled the transfer"
+            case .wentOffline: "The transfer stopped when you went offline"
+            }
+        }
+
+        /// The reason the peer is told.
+        var terminateReason: JingleTerminateReason {
+            switch self {
+            case .canceled: .cancel
+            case .wentOffline: .gone
+            }
+        }
+    }
+
+    /// The conversation of each directly sent file whose outcome is not yet stored, by transfer id. Taking an entry out
+    /// is what lets only the first outcome be stored.
+    var directTransferConversations: [UUID: UUID] = [:]
     /// Offer-generation counter, bumped each time an account's waiting offers are dropped. A path that puts an offer back
     /// after an await captures it first and re-checks it via `offerGenerationUnchanged`, so an offer dropped meanwhile stays
     /// dropped.
@@ -226,12 +276,12 @@ public final class FileTransferService {
     public var onIncomingOffer: ((IncomingFileOffer) -> Void)?
 
     private weak var accountService: AccountService?
-    private weak var chatService: ChatService?
+    weak var chatService: ChatService?
     private let directTransfers = DirectTransferResolver()
-    /// Fire-and-forget Jingle receive tasks that outlive the accept call that spawned them.
-    /// Drained by `AppEnvironment.shutdown(within:)` so they can't race teardown; each task removes its
-    /// own handle on completion via `defer`.
-    private var pendingTasks: [UUID: Task<Void, Never>] = [:]
+    /// Fire-and-forget Jingle tasks that outlive the call that spawned them: receives, direct sends, and the writes that
+    /// record how a transfer ended. Drained by `AppEnvironment.shutdown(within:)` so they can't race teardown; each task
+    /// removes its own handle on completion via `defer`. A direct send is kept under its transfer's id.
+    var pendingTasks: [UUID: Task<Void, Never>] = [:]
 
     public init(downloadsDirectory: URL = .downloadsDirectory) {
         self.downloadsDirectory = downloadsDirectory
@@ -256,10 +306,23 @@ public final class FileTransferService {
     // MARK: - Lifecycle
 
     /// Runs on the lifecycle teardowns that bypass `.disconnected`. Those also end what is known of the contacts'
-    /// sessions, and with it which of them take direct transfers.
+    /// sessions, and with it which of them take direct transfers. The account's direct transfers still under way are
+    /// cut off by the disconnect, so each is ended here as having stopped when the user went offline.
+    ///
+    /// The disconnect also cancels the dispatch of the events its sessions still report. A row whose task already failed
+    /// it while it waited for its session's failure event keeps the failure it reads, recorded here instead.
     func purgeAccount(_ accountID: UUID) {
         dropWaitingOffers(for: accountID)
         directTransfers.forgetAccount(accountID)
+        for index in activeTransfers.indices where activeTransfers[index].accountID == accountID {
+            let row = activeTransfers[index]
+            if isUnfinishedDirectTransfer(row) {
+                endTransferLocally(at: index, as: .wentOffline)
+            } else if row.method == .jingle, case let .failed(reason) = row.state, !endedSessionRows.contains(row.id) {
+                endedSessionRows.insert(row.id)
+                recordFailedEnd(of: row, reason: reason)
+            }
+        }
     }
 
     /// Drops an account's waiting offers, which died with the connection that carried them, and fails each row still
@@ -294,6 +357,9 @@ public final class FileTransferService {
             pendingTasks[UUID()] = task
         }
 
+        /// Test seam: runs once a receive's row has ended, before its file is saved.
+        var receivedFileWillSaveForTesting: (@MainActor () async -> Void)?
+
         /// Test seam: puts a row in place without driving a session to it, so the rules for applying events to rows can be
         /// exercised on rows in any state.
         func registerTransferForTesting(_ transfer: ActiveTransfer) {
@@ -326,9 +392,9 @@ public final class FileTransferService {
     /// received the file, and the row reports how it ends.
     public func startDirectTransfer(url: URL, in conversation: Conversation, accountID: UUID) async throws {
         let transfer = try await recordDirectTransfer(of: FileInfo(readingAttributesAt: url), in: conversation, accountID: accountID)
-        let taskID = UUID()
-        pendingTasks[taskID] = Task { [weak self] in
-            defer { self?.pendingTasks[taskID] = nil }
+        // Kept under the transfer's id, which is how stopping a transfer that has no session yet reaches its task.
+        pendingTasks[transfer.id] = Task { [weak self] in
+            defer { self?.pendingTasks[transfer.id] = nil }
             try? await self?.runDirectTransfer(transfer, peer: nil)
         }
     }
@@ -353,13 +419,13 @@ public final class FileTransferService {
         switch event {
         case let .jingleFileTransferReceived(offer):
             trackIncomingOffer(offer, accountID: accountID)
-        case let .jingleFileTransferProgress(sid, bytesTransferred, totalBytes):
-            let progress = Double(bytesTransferred) / Double(totalBytes)
-            updateTransferState(forSID: sid, accountID: accountID, state: .transferring(progress: progress))
-        case let .jingleFileTransferCompleted(sid, _):
-            finishSession(sid: sid, accountID: accountID, state: .completedTransfer)
-        case let .jingleFileTransferFailed(sid, reason):
-            finishSession(sid: sid, accountID: accountID, state: .failed(reason.displayText))
+        case let .jingleFileTransferProgress(_, offerID, bytesTransferred, totalBytes, bytesPerSecond):
+            guard let index = sessionRowIndex(offerID: offerID, accountID: accountID) else { break }
+            recordProgress(at: index, bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: bytesPerSecond)
+        case let .jingleFileTransferCompleted(_, offerID, _):
+            finishSession(offerID: offerID, accountID: accountID, state: .completedTransfer)
+        case let .jingleFileTransferFailed(_, offerID, reason):
+            finishSession(offerID: offerID, accountID: accountID, state: .failed(reason.displayText))
         case let .oobIQOfferReceived(offer):
             trackIncomingOOBOffer(offer, accountID: accountID)
         case let .disconnected(reason):
@@ -427,14 +493,27 @@ public final class FileTransferService {
         onIncomingOffer?(Self.viewOffer(pending))
     }
 
-    /// Moves a session's transfer row to its final state and drops its pending offer. The module holds one session per
-    /// sid at a time and reports a session's end before a later one can take its sid, so the sid names that session here.
-    private func finishSession(sid: String, accountID: UUID, state: TransferState) {
-        if let index = sessionRowIndex(sid: sid, accountID: accountID) {
+    /// Moves a row to a progress event's fraction and rate. Events are dispatched independently, so one can arrive after
+    /// a later one, and a fraction below the row's current one is ignored.
+    private func recordProgress(at index: Int, bytesTransferred: Int64, totalBytes: Int64, bytesPerSecond: Double?) {
+        let progress = Double(bytesTransferred) / Double(totalBytes)
+        if case let .transferring(current) = activeTransfers[index].state, progress < current { return }
+        setTransferState(.transferring(progress: progress), at: index)
+        guard case .transferring = activeTransfers[index].state else { return }
+        activeTransfers[index].rate = TransferRate(bytesPerSecond: bytesPerSecond, bytesTransferred: bytesTransferred, totalBytes: totalBytes)
+    }
+
+    /// Moves the transfer row of the session of `offerID` to its final state and drops its pending offer. A failure is
+    /// the session's own report of how it ended, so it is also what gets stored.
+    private func finishSession(offerID: String, accountID: UUID, state: TransferState) {
+        if let index = sessionRowIndex(offerID: offerID, accountID: accountID) {
             setTransferState(state, at: index)
             endedSessionRows.insert(activeTransfers[index].id)
+            if case let .failed(reason) = state, case .failed = activeTransfers[index].state {
+                recordFailedEnd(of: activeTransfers[index], reason: reason)
+            }
         }
-        incomingOffers.removeAll { $0.offer.sid == sid && $0.accountID == accountID }
+        incomingOffers.removeAll { $0.offer.offerID == offerID && $0.accountID == accountID }
     }
 
     private func removeOffer(offerID: String) {
@@ -476,7 +555,8 @@ public final class FileTransferService {
             method: .jingle,
             direction: .incoming,
             sid: offer.sid,
-            peerJIDString: offer.from.bareJID.description
+            peerJIDString: offer.from.bareJID.description,
+            offerID: offerID
         ))
 
         let generation = offerGeneration[accountID, default: 0]
@@ -546,18 +626,26 @@ public final class FileTransferService {
         }
     }
 
-    /// Starts the task that receives an accepted offer's bytes once its connection is ready and saves them. The module's
-    /// completion or failure event records the transfer's outcome, and the saved file then replaces a completion.
+    /// Starts the task that receives an accepted offer's bytes once its connection is ready and saves them. The task ends
+    /// the row once the module hands it the checked bytes, and keeps the file it saves. A failure the module reports ends
+    /// the row through its failure event.
     private func startJingleReceiveTask(offer: JingleFileOffer, rowID: UUID, accountID: UUID, jingleModule: JingleModule) {
         let sid = offer.sid
-        let taskID = UUID()
-        pendingTasks[taskID] = Task { [weak self] in
-            defer { self?.pendingTasks[taskID] = nil }
+        startPendingTask { [weak self] in
             guard let self else { return }
             do {
                 try await jingleModule.awaitTransportReady(sid: sid, offerID: offer.offerID)
                 updateTransferState(id: rowID, state: .transferring(progress: 0))
                 let data = try await jingleModule.receiveFileData(sid: sid, offerID: offer.offerID)
+                // The module checked the bytes and committed the receive, and its confirmation to the sender goes out
+                // best effort. That commit settles the row, so it ends here as the completion event would end it. A
+                // stop or a requested disconnect while the file is saved then leaves the row alone, and the file is
+                // kept.
+                updateTransferState(id: rowID, state: .completedTransfer)
+                endedSessionRows.insert(rowID)
+                #if DEBUG
+                    await receivedFileWillSaveForTesting?()
+                #endif
                 let fileURL = try await Self.saveReceivedFile(data, named: offer.fileName, in: downloadsDirectory)
                 log.debug("Saved \(data.count) bytes received via Jingle for sid: \(sid)")
                 await recordReceivedFile(
@@ -567,15 +655,17 @@ public final class FileTransferService {
                 updateTransferState(id: rowID, state: .received(fileURL: fileURL))
             } catch {
                 log.warning("Jingle receive failed for sid \(sid): \(error)")
+                guard !isLocallyEnded(rowID) else { return }
                 recordJingleTransferFailure(error, id: rowID)
+                // A session's own end comes with its failure event, which notes it. Anything else, such as a save that
+                // failed, is noted here.
+                guard !(error is JingleModule.JingleError) else { return }
+                endedSessionRows.insert(rowID)
+                noteIncomingFileFailure(
+                    fileName: offer.fileName, from: offer.from.bareJID, accountID: accountID, reason: Self.failureDetail(of: error)
+                )
             }
         }
-    }
-
-    /// Reads and hashes a file off the main actor, so a large send doesn't freeze the UI before its row appears.
-    private nonisolated static func readAndHash(at url: URL) async throws -> (bytes: [UInt8], hash: String) {
-        let bytes = try Array(Data(contentsOf: url))
-        return (bytes, JingleFileDescription.sha256Hash(of: bytes))
     }
 
     /// Adds a saved file to the conversation with its sender, where it shows like any other attachment.
@@ -637,6 +727,78 @@ public final class FileTransferService {
         try await jingleModule.declineFileTransfer(sid: pending.offer.sid, offerID: offerID)
     }
 
+    // MARK: - Ending Direct Transfers
+
+    /// Stops a direct transfer still under way, sent or received, and tells the contact it was canceled. Its row reads
+    /// that the user canceled it, and nothing its session reports afterwards replaces that. Returns whether it stopped
+    /// the transfer, which it does not once the transfer ended.
+    @discardableResult
+    public func cancelTransfer(id: UUID) async -> Bool {
+        guard let index = activeTransfers.firstIndex(where: { $0.id == id }), isUnfinishedDirectTransfer(activeTransfers[index]) else {
+            return false
+        }
+        let row = activeTransfers[index]
+        endTransferLocally(at: index, as: .canceled)
+        guard let sid = row.sid else {
+            // A send with no session yet stops where it waits, and withdraws its offer if that went out meanwhile.
+            pendingTasks[id]?.cancel()
+            return true
+        }
+        try? await jingleModule(for: row.accountID).terminateSession(sid: sid, reason: .cancel, offerID: row.offerID)
+        return true
+    }
+
+    /// Whether a row is a direct transfer under way whose session has not ended.
+    private func isUnfinishedDirectTransfer(_ row: ActiveTransfer) -> Bool {
+        row.isUnderwayDirectTransfer && !endedSessionRows.contains(row.id)
+    }
+
+    /// Ends a direct transfer's row by this side's own action, reading why, and records that end. Later events of its
+    /// session leave the row alone.
+    private func endTransferLocally(at index: Int, as end: LocalEnd) {
+        let id = activeTransfers[index].id
+        setTransferState(.failed(end.text), at: index)
+        endedSessionRows.insert(id)
+        localEnds[id] = end
+        recordFailedEnd(of: activeTransfers[index], reason: end.text)
+    }
+
+    /// Whether this side ended the transfer, by the user's stop or a requested disconnect.
+    func isLocallyEnded(_ id: UUID) -> Bool {
+        localEnds[id] != nil
+    }
+
+    /// Records how a direct transfer failed where it outlasts the row: as a sent file's stored outcome, or as a note in
+    /// the chat that a file did not arrive. A sent file's outcome is claimed here, before its write is scheduled, so no
+    /// other outcome is stored in the meantime.
+    private func recordFailedEnd(of row: ActiveTransfer, reason: String) {
+        switch row.direction {
+        case .outgoing:
+            guard let conversationID = directTransferConversations.removeValue(forKey: row.id) else { return }
+            startPendingTask { [weak self] in
+                await self?.chatService?.recordSentFileOutcome(messageID: row.id, in: conversationID, failure: reason)
+            }
+        case .incoming:
+            guard let sender = row.peerJIDString.flatMap(BareJID.parse) else { return }
+            noteIncomingFileFailure(fileName: row.fileName, from: sender, accountID: row.accountID, reason: reason)
+        }
+    }
+
+    private func noteIncomingFileFailure(fileName: String, from sender: BareJID, accountID: UUID, reason: String) {
+        startPendingTask { [weak self] in
+            await self?.chatService?.recordIncomingFileFailure(fileName: fileName, from: sender, reason: reason, accountID: accountID)
+        }
+    }
+
+    /// Runs `operation` in a task that shutdown waits for, under a key of its own so it never takes another's place.
+    private func startPendingTask(_ operation: @escaping @MainActor () async -> Void) {
+        let taskID = UUID()
+        pendingTasks[taskID] = Task { [weak self] in
+            defer { self?.pendingTasks[taskID] = nil }
+            await operation()
+        }
+    }
+
     // MARK: - Received Files
 
     /// Fetches a remote image and saves it the way an accepted transfer is saved: same folder, a free name rather than
@@ -680,88 +842,18 @@ public final class FileTransferService {
 
     // MARK: - Private: Jingle Transfer
 
-    /// A file on its way to a contact directly, from the moment it has its row.
-    private struct DirectTransfer {
-        /// The id of the file's row in the chat and of its transfer row, which is how the chat finds the live state
-        /// of its row.
-        let id: UUID
-        let file: FileInfo
-        let contact: BareJID
-        let conversationID: UUID
-        let accountID: UUID
-    }
-
-    /// Gives the file its row in the chat and its transfer row before anything about the transfer itself can fail, so
-    /// every outcome has somewhere to show.
-    private func recordDirectTransfer(
-        of file: FileInfo, in conversation: Conversation, accountID: UUID
-    ) async throws -> DirectTransfer {
-        guard conversation.isDirectChat, let chatService else {
-            throw FileTransferError.directTransferUnavailable
-        }
-        let transferID = UUID()
-        let attachment = Attachment.locallySaved(id: UUID(), fileURL: file.url, mimeType: file.mimeType, fileSize: file.size)
-        let conversationID = try await chatService.recordSentFile(attachment, id: transferID, to: conversation.jid, accountID: accountID)
-        activeTransfers.append(ActiveTransfer(
-            id: transferID, accountID: accountID, fileName: file.name, fileSize: file.size,
-            state: .negotiating, method: .jingle, direction: .outgoing
-        ))
-        return DirectTransfer(
-            id: transferID, file: file, contact: conversation.jid, conversationID: conversationID, accountID: accountID
-        )
-    }
-
-    private func runDirectTransfer(_ transfer: DirectTransfer, peer: String?) async throws {
-        let (transferID, file, accountID) = (transfer.id, transfer.file, transfer.accountID)
-        do {
-            let peerJID = try await directTransferPeer(named: peer, for: transfer.contact, accountID: accountID)
-            let jingleModule = try await jingleModule(for: accountID)
-            let (fileData, hash) = try await Self.readAndHash(at: file.url)
-            // The size is taken from the bytes that were hashed, not from the earlier attribute read. A file still being
-            // written changes between the two, and the peer would then stop short of a size it never receives or fail the
-            // checksum on bytes that no longer match.
-            let fileDesc = JingleFileDescription(
-                name: file.name, size: Int64(fileData.count), mediaType: file.mimeType, hash: hash
-            )
-            let sid = try await jingleModule.initiateFileTransfer(to: peerJID, file: fileDesc)
-            if let index = activeTransfers.firstIndex(where: { $0.id == transferID }) {
-                activeTransfers[index].sid = sid
-            }
-
-            try await jingleModule.awaitTransportReady(sid: sid)
-            updateTransferState(id: transferID, state: .connectingTransport)
-            updateTransferState(id: transferID, state: .transferring(progress: 0))
-
-            try await jingleModule.sendFileData(sid: sid, data: fileData)
-            updateTransferState(id: transferID, state: .completedTransfer)
-            // A send can end its session without a completion event, which leaves its sid free for a later session.
-            endedSessionRows.insert(transferID)
-            await chatService?.recordSentFileOutcome(messageID: transferID, in: transfer.conversationID, failure: nil)
-        } catch {
-            // Cancelled means the app is quitting. Nothing is known of how the transfer would have ended, so nothing
-            // is recorded.
-            if Task.isCancelled { throw error }
-            // The chat row keeps the reason the transfer row ended up with, which is the session's own failure event
-            // when that came first.
-            recordJingleTransferFailure(error, id: transferID)
-            let reason = failureText(ofTransfer: transferID) ?? Self.failureDetail(of: error)
-            await chatService?.recordSentFileOutcome(messageID: transferID, in: transfer.conversationID, failure: reason)
-            throw error
-        }
-    }
-
     /// What went wrong, without the summary label an error's description leads with: a transfer's row already reads
     /// as a file that failed.
-    private static func failureDetail(of error: any Error) -> String {
+    static func failureDetail(of error: any Error) -> String {
         switch error as? JingleModule.JingleError {
         case let .transportFailed(reason)?, let .transportNegotiationFailed(reason)?: reason
-        case .notConnected?, .sessionNotFound?, .noConnectedJID?, .alreadyAccepted?, nil: error.localizedDescription
+        case .notConnected?, .sessionNotFound?, .noConnectedJID?, .alreadyAccepted?, .sessionEnded?, nil: error.localizedDescription
         }
     }
 
     /// The session a direct transfer goes to: the one `peer` names, else one chosen among the contact's online
     /// sessions, asking those that have not answered only when none known takes direct transfers.
-    private func directTransferPeer(named peer: String?, for jid: BareJID, accountID: UUID) async throws -> FullJID {
+    func directTransferPeer(named peer: String?, for jid: BareJID, accountID: UUID) async throws -> FullJID {
         if let peer, let named = FullJID.parse(peer) { return named }
         // A session already known to take the file is used at once: asking the rest first would hold the offer back
         // for as long as a session that has gone silent takes to time out.
@@ -773,7 +865,7 @@ public final class FileTransferService {
         return target
     }
 
-    private func failureText(ofTransfer id: UUID) -> String? {
+    func failureText(ofTransfer id: UUID) -> String? {
         guard case let .failed(text) = activeTransfers.first(where: { $0.id == id })?.state else { return nil }
         return text
     }
@@ -858,7 +950,7 @@ public final class FileTransferService {
 
     // MARK: - Private: Module Lookup
 
-    private func jingleModule(for accountID: UUID) async throws -> JingleModule {
+    func jingleModule(for accountID: UUID) async throws -> JingleModule {
         guard let client = accountService?.connectedClient(for: accountID) else {
             throw FileTransferError.noClient
         }
@@ -877,30 +969,23 @@ public final class FileTransferService {
 
     // MARK: - Private: State Updates
 
-    private func updateTransferState(id: UUID, state: TransferState) {
+    func updateTransferState(id: UUID, state: TransferState) {
         if let index = activeTransfers.firstIndex(where: { $0.id == id }) {
             setTransferState(state, at: index)
         }
     }
 
-    private func updateTransferState(forSID sid: String, accountID: UUID, state: TransferState) {
-        if let index = sessionRowIndex(sid: sid, accountID: accountID) {
-            setTransferState(state, at: index)
-        }
-    }
-
-    /// The row of the session a Jingle event names by sid. A peer can reuse a sid once its session ended and can choose a
-    /// link offer's stanza id as one, so the row is a Jingle row whose session has not yet reported its end: one that has
-    /// belongs to an earlier session.
-    private func sessionRowIndex(sid: String, accountID: UUID) -> Int? {
+    /// The row of the session a Jingle event names by the id this side gave its offer, while that row's end is not
+    /// settled. A peer can reuse a sid once its session ended and can choose a link offer's stanza id as one, so the sid
+    /// alone does not name a session.
+    private func sessionRowIndex(offerID: String, accountID: UUID) -> Int? {
         activeTransfers.firstIndex { row in
-            row.method == .jingle && row.sid == sid && row.accountID == accountID && !endedSessionRows.contains(row.id)
+            row.method == .jingle && row.offerID == offerID && row.accountID == accountID && !endedSessionRows.contains(row.id)
         }
     }
 
     /// A failed row stays failed: only another failure replaces its state. A received row likewise keeps the file it
-    /// saved — the transport's completion event is dispatched independently of the save, so one landing after it would
-    /// otherwise replace the saved URL with a bare completion and leave Quick Look and Reveal with nothing to open.
+    /// saved, which Quick Look and Reveal open.
     private func setTransferState(_ state: TransferState, at index: Int) {
         if case .failed = activeTransfers[index].state {
             guard case .failed = state else { return }

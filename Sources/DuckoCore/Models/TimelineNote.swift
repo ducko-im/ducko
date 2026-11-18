@@ -1,8 +1,8 @@
 import Foundation
 
-/// A line in a chat's timeline that records an event around the chat's encryption, such as a contact's message
-/// switching it on. It is not a message: nothing sends it, and unread counts, notifications, previews and archive sync
-/// never see it.
+/// A line in a chat's timeline that records an event in the conversation, such as a contact's message switching
+/// encryption on or a file that did not arrive. It is not a message: nothing sends it, and unread counts,
+/// notifications, previews and archive sync never see it.
 public struct TimelineNote: Sendable, Identifiable, Equatable {
     public enum Kind: String, Sendable, Codable {
         /// A contact's encrypted message switched encryption on for the chat.
@@ -14,6 +14,8 @@ public struct TimelineNote: Sendable, Identifiable, Equatable {
         case encryptionResumedByContact = "encryption-resumed-by-contact"
         /// The user reset the encryption sessions with the contact. `detail` lists the devices that need attention.
         case sessionsReset = "sessions-reset"
+        /// The file `fileName` the contact was sending directly did not arrive, for the reason in `detail`.
+        case incomingFileFailed = "incoming-file-failed"
     }
 
     public var id: UUID
@@ -22,17 +24,21 @@ public struct TimelineNote: Sendable, Identifiable, Equatable {
     public var kind: Kind
     /// Who the note is about, when that is a room occupant rather than the chat's contact: the occupant's nickname.
     public var subject: String?
+    /// The name of the file the note is about.
+    public var fileName: String?
     /// What the note adds to what its kind says.
     public var detail: String?
 
     public init(
-        id: UUID = UUID(), conversationID: UUID, timestamp: Date = Date(), kind: Kind, subject: String? = nil, detail: String? = nil
+        id: UUID = UUID(), conversationID: UUID, timestamp: Date = Date(), kind: Kind, subject: String? = nil,
+        fileName: String? = nil, detail: String? = nil
     ) {
         self.id = id
         self.conversationID = conversationID
         self.timestamp = timestamp
         self.kind = kind
         self.subject = subject
+        self.fileName = fileName
         self.detail = detail
     }
 
@@ -47,6 +53,8 @@ public struct TimelineNote: Sendable, Identifiable, Equatable {
             "\(contactName) sent an encrypted message again. Encryption stays off until you switch it on"
         case .sessionsReset:
             "Encryption sessions with \(contactName) reset" + (detail.map { ". \($0)" } ?? "")
+        case .incomingFileFailed:
+            "\(fileName ?? "A file") from \(contactName) did not arrive" + (detail.map { ": \($0)" } ?? "")
         }
     }
 }

@@ -548,6 +548,9 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         // counter one short of the server's, producing a phantom "Invalid ack"
         // warning on the next ack and corrupting any subsequent resume.
         if case .connected = state {
+            for module in modules.values {
+                await module.prepareForDisconnect()
+            }
             try? await send(XMPPPresence(type: .unavailable))
             // XEP-0198 sync ack: confirm server processed all sent stanzas (incl. the unavailable presence) before
             // closing the stream. Without this, prosody mod_smacks holds the session in resumption-pending state for

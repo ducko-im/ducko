@@ -18,15 +18,26 @@ public enum BuildEnvironment {
         return "im.ducko.dev"
     }
 
+    /// Pure helper that resolves whether Jingle offers direct candidates from the `DUCKO_JINGLE_PROXY_ONLY` value + build
+    /// flag. Only a debug build withholds them, so a local transfer has to go through the server's proxy.
+    static func computeJingleOffersDirectCandidates(proxyOnly: String?, isDebug: Bool) -> Bool {
+        guard isDebug else { return true }
+        return proxyOnly != "1"
+    }
+
     #if DEBUG
         private static let profileName = ProcessInfo.processInfo.environment["DUCKO_PROFILE"]
         public static let appSupportDirectoryName = computeAppSupportDirectoryName(profile: profileName, isDebug: true)
         public static let useKeychain = ProcessInfo.processInfo.environment["DUCKO_USE_KEYCHAIN"] == "1"
         public static let userDefaultsSuiteName: String? = computeUserDefaultsSuiteName(profile: profileName, isDebug: true)
+        public static let jingleOffersDirectCandidates = computeJingleOffersDirectCandidates(
+            proxyOnly: ProcessInfo.processInfo.environment["DUCKO_JINGLE_PROXY_ONLY"], isDebug: true
+        )
     #else
         public static let appSupportDirectoryName = computeAppSupportDirectoryName(profile: nil, isDebug: false)
         public static let useKeychain = true
         public static let userDefaultsSuiteName: String? = computeUserDefaultsSuiteName(profile: nil, isDebug: false)
+        public static let jingleOffersDirectCandidates = computeJingleOffersDirectCandidates(proxyOnly: nil, isDebug: false)
     #endif
 
     public static var appSupportDirectory: URL {

@@ -27,6 +27,8 @@ private func quitREPL(context: REPLContext, currentRoom: String?) async -> Never
         try? await context.environment.chatService.leaveRoom(jidString: currentRoom, accountID: context.accountID, forget: false)
     }
     await context.environment.accountService.disconnect(accountID: context.accountID)
+    // The disconnect left work behind that stores how the transfers it cut off ended.
+    await context.environment.shutdown(within: .seconds(3))
     Foundation.exit(0)
 }
 
@@ -75,10 +77,10 @@ private func dispatchREPLCommand(
     case .affiliations: await handleAffiliationsREPLCommand(arguments, context: context, currentRoom: currentRoom)
     case .config: await handleConfigREPLCommand(arguments, context: context, currentRoom: currentRoom)
     case .moderate: await handleModerateREPLCommand(arguments, context: context, currentRoom: currentRoom)
-    case .sendfile: await handleSendFileREPLCommand(arguments, context: context, currentRoom: currentRoom)
-    case .senddirect: await handleSendFileREPLCommand(arguments, context: context, currentRoom: nil, directly: true)
+    case .sendfile, .senddirect: await handleSendFileREPLCommand(arguments, context: context, currentRoom: currentRoom, directly: kind == .senddirect)
     case .accept: await handleAcceptREPLCommand(arguments, context: context)
     case .decline: await handleDeclineREPLCommand(arguments, context: context)
+    case .cancel: await handleCancelREPLCommand(arguments, context: context)
     case .transfers: await handleTransfersREPLCommand(context: context)
     case .rooms: await handleRoomsREPLCommand(arguments, context: context)
     case .avatar: await handleAvatarREPLCommand(arguments, context: context)

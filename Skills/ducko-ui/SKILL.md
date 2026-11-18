@@ -37,7 +37,7 @@ The scripts drive a copy of the debug app named `DuckoUITest`, which `ducko-laun
 
 Run a script on the Mac only when the user asks for that, with `DUCKO_UI_HOST=1` in its environment. Without it, every script stops with an error before touching any app. On the Mac the scripts still drive only the `DuckoUITest` copy, so an installed Ducko keeps running. The copy does take the foreground, though. A Mac run needs:
 
-- Peekaboo CLI installed (`/opt/homebrew/bin/peekaboo`), for `ducko-reveal.sh`
+- Peekaboo CLI installed (`/opt/homebrew/bin/peekaboo`), for `ducko-reveal.sh` and `ducko-stop-transfer.sh`
 - Accessibility permissions granted for Terminal/Claude
 - An unlocked GUI session. Check with `ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked`, run unsandboxed: `<true/>` means locked and no output means unlocked (a sandboxed `ioreg` also prints nothing). While locked, window captures fail and the scripts report windows as not found, so ask the user to unlock rather than polling.
 
@@ -111,8 +111,9 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `attachment-send-method` | Pop-up at the end of the pending attachment bar of a 1:1 chat, choosing Upload or Send Directly. Send Directly is greyed out unless the contact is online with a device that takes direct transfers. | Chat |
 | `attachment-encryption-note` | "Not end-to-end encrypted" at the end of the pending attachment bar, beneath the pop-up where there is one, while files are queued in a chat with encryption on. Its accessibility label reads "Files are not end-to-end encrypted". | Chat |
 | `direct-transfer-status` | Status line under a file sent directly (waiting for the contact to accept, sending, sent directly, or the reason it failed) or under a file being received | Chat |
+| `stop-direct-transfer-button` | Stop button at the end of a `direct-transfer-status` line, labelled "Stop sending" or "Stop receiving". It shows while the transfer waits for acceptance, sends or receives. It cancels the transfer: a sent file's row then reads "You canceled the transfer", and a file being received gives way to a `timeline-note` saying it did not arrive. Absent in the History window, and on the `receiving-file-row` of a file a contact sent as a link, whose download has nothing to stop | Chat |
 | `transfer-progress` | Progress strip for a file being uploaded. A file sent directly reports on its own row through `direct-transfer-status`, and one being received on a `receiving-file-row`. | Chat |
-| `receiving-file-row` | Row at the end of the message list for a file the chat's contact is sending right now, shown like one of their messages with "Receiving…" under it until the saved file's message replaces it | Chat |
+| `receiving-file-row` | Row at the end of the message list for a file the chat's contact is sending right now, shown like one of their messages with "Receiving…" under it. The saved file's message replaces it, or a `timeline-note` saying the file did not arrive | Chat |
 | `file-drop-overlay` | Drag-and-drop overlay | Chat |
 | `attachment-view` | Attachment in message bubble | Chat |
 | `attachment-preview-button` | File attachment card that opens the system Quick Look panel. Absent for a file not saved on this Mac. | Chat |
@@ -203,7 +204,7 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `untrusted-encrypted-indicator` | Orange warning shield on a message decrypted from a device that is not trusted, shown instead of `encrypted-indicator`. Its label and tooltip read "Sent from a device you haven't trusted" | Chat |
 | `delivered-indicator` | One checkmark on a sent message that reached the contact | Chat |
 | `read-indicator` | Two checkmarks on a sent message the contact has read, shown instead of `delivered-indicator` | Chat |
-| `timeline-note` | Note between messages, such as encryption having been switched on by a contact's encrypted message, a contact asking for unencrypted messages or resuming encryption, or what a session reset did with each device | Chat, Chat History |
+| `timeline-note` | Note between messages, such as encryption having been switched on by a contact's encrypted message, a contact asking for unencrypted messages or resuming encryption, or what a session reset did with each device, or a file a contact was sending directly that did not arrive | Chat, Chat History |
 | `encryption-menu` | Encryption menu button in chat header. A room's private chat has one only while its encryption is on, offering just Disable Encryption | Chat |
 | `reset-sessions-button` | "Reset Encryption Sessions" in the encryption menu of a one-to-one chat, disabled while offline. Find it by its title, as `ducko-omemo-reset.sh all` does | Chat |
 | `send-unencrypted-button` | "Send Unencrypted" in the banner above the message field, shown while a contact's request for unencrypted messages blocks the last send, and absent when that send was an edit. It switches encryption off and sends the blocked message | Chat |
@@ -342,6 +343,7 @@ Right-click a participant in the chat window sidebar:
 | `ducko-send-unencrypted.sh` | Press Send Unencrypted (`send-unencrypted-button`) in the active chat. Ducko never sends a request for unencrypted messages itself, so staging one takes another client | none |
 | `ducko-attach.sh` | Attach a file via the attachment button in chat. `ducko-file-panel.swift` fills the Open panel by posting key events to the panel's service process. The script succeeds only once the panel has closed. A panel still open after the wait is cancelled, and the script fails | `FILE_PATH` |
 | `ducko-send-method.sh` | Print or choose how the queued files are sent | `[upload\|direct]` (optional) |
+| `ducko-stop-transfer.sh` | Press the stop button (`stop-direct-transfer-button`) on a direct transfer in the active chat | `[TEXT]` (optional, matches the transfer whose row shows TEXT, e.g. the file name; default: the bottom-most transfer under way) |
 | `ducko-change-nickname.sh` | Change MUC nickname via participant sidebar context menu. Succeeds once the sidebar lists the new nickname | `NICKNAME` |
 | `ducko-private-message.sh` | Send a MUC private message via the participant sidebar context menu | `NICKNAME` |
 | `ducko-room-topic.sh` | View or set the room topic | `[TEXT]` (optional; no args prints current topic) |
@@ -370,6 +372,14 @@ Right-click a participant in the chat window sidebar:
 | `ducko-add-affiliation.sh` | Add a JID to a room's affiliation list | `ROOM_JID JID` |
 | `ducko-stop.sh` | End the `DuckoUITest` copy this checkout launched with a signal, forcing it after 10 seconds, and fail when it survives. Leaves every other Ducko running, including a `/preview` instance and the integration suites' bundle | none |
 | `ducko-window-id.sh` | Print the window ID of the frontmost `DuckoUITest` window, read from the window list by PID (`DUCKO_PID` when set). Used by other scripts | none |
+
+## When the app hangs
+
+When accessibility calls hang but the app is idle, check first for a leftover panel or open context menu (see Notes). When the app spins at 100% CPU, run `vm sh 'sample DuckoUITest 5'` and read the main thread's stack before reasoning from the code.
+
+A main thread stuck in `NSAccessibilityPostNotificationForObservedElementWithUserInfo` → `NSHostingView.accessibilityNodes` → `AG::Graph::print_cycle` means a control posted an accessibility notification from inside a SwiftUI update. Treat it as an app bug even when a full accessibility walk (`peekaboo see`, a dump of a window's entire contents) set it off: VoiceOver or any other accessibility client watching the window sets it off the same way. Look for a control whose value changes during that update, such as a determinate `ProgressView`, and draw the value with `ProgressBar` (`Sources/DuckoUI/Shared/ProgressBar.swift`) instead.
+
+When reproducing a hang, use a profile whose chat holds realistic history, with many rows. An empty chat and a throwaway app hosting the same view can both run clean while the real chat hangs.
 
 ## Workflow
 

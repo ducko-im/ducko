@@ -105,6 +105,14 @@ enum JingleCandidateNominationTests {
             #expect(proxy == [10 * 65536 + 65535])
         }
 
+        @Test
+        func `A module that offers no direct candidates offers only the proxy`() async throws {
+            let harness = JingleInitiatorHarness(offersDirectCandidates: false, answerIQ: Self.answerWithProxy)
+            _ = try await harness.initiate()
+
+            #expect(harness.offeredCandidates().map { $0.attribute("type") } == ["proxy"])
+        }
+
         /// The DST.ADDR for dialing a candidate the responder offered in session `sid`, which hashes the responder's JID
         /// before this side's (XEP-0260 §2.2).
         private static func responderDestination(_ harness: JingleInitiatorHarness, sid: String) throws -> String {

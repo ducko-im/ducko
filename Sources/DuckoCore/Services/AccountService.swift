@@ -208,8 +208,13 @@ public final class AccountService {
         let ids = connectionResources.compactMap { id, resources in
             resources.client != nil || resources.reconnectTask != nil || resources.retryDue != nil ? id : nil
         }
-        for id in ids {
-            await disconnect(accountID: id)
+        // Concurrent, so one stalled server can't use up the time the other accounts need to end their sessions.
+        await withDiscardingTaskGroup { group in
+            for id in ids {
+                group.addTask { [weak self] in
+                    await self?.disconnect(accountID: id)
+                }
+            }
         }
     }
 

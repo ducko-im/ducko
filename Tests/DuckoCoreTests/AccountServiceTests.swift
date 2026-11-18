@@ -647,6 +647,39 @@ enum AccountServiceTests {
             #expect(service.client(for: accountID) == nil)
         }
 
+        /// A server slow to close one account's stream must not use up the time the other accounts need to end theirs.
+        @Test
+        @MainActor
+        func `disconnectAll disconnects the accounts concurrently`() async throws {
+            let store = makeStore()
+            let accounts = try ["alice@example.com", "bob@example.com"].map { try makeAccount(jid: #require(BareJID.parse($0))) }
+            let transports = [accounts[0].id: MockTransport(), accounts[1].id: MockTransport()]
+            for account in accounts {
+                await store.addAccount(account)
+            }
+            let factory = MockXMPPClientFactory(transportForAccount: { transports[$0.id] ?? MockTransport() })
+            let service = makeAccountService(store: store, credentials: makeCredentials(), clientFactory: factory)
+            try await service.loadAccounts()
+            let entered = AsyncSemaphore()
+            let release = AsyncSemaphore()
+            for account in accounts {
+                let transport = try #require(transports[account.id])
+                _ = try await driveMockConnect(service, accountID: account.id, transport: transport)
+                await transport.installDisconnectGate(entered: entered, release: release)
+            }
+
+            let disconnect = Task { await service.disconnectAll() }
+            // Both teardowns reach their transport while neither has finished.
+            let bothEntered = try await boundedOutcome {
+                await entered.wait()
+                await entered.wait()
+            }
+            await release.signal()
+            await release.signal()
+            await disconnect.value
+            #expect(bothEntered != nil)
+        }
+
         @Test
         @MainActor
         func `disconnectAll within deadline returns even when no clients are connected`() async {

@@ -504,6 +504,31 @@ final class SOCKS5GreetingProbe: Sendable {
     }
 }
 
+// MARK: - Jingle File Sources
+
+/// A file source over bytes already in memory.
+actor InMemoryJingleFileSource: JingleFileSource {
+    private let bytes: [UInt8]
+    private var offset = 0
+
+    init(_ bytes: [UInt8]) {
+        self.bytes = bytes
+    }
+
+    func read(upTo count: Int) -> [UInt8] {
+        let end = min(offset + count, bytes.count)
+        defer { offset = end }
+        return Array(bytes[offset ..< end])
+    }
+}
+
+extension JingleModule {
+    /// Sends file data held in memory. See `sendFileData(sid:offerID:source:totalBytes:)`.
+    func sendFileData(sid: String, data: [UInt8]) async throws {
+        try await sendFileData(sid: sid, source: InMemoryJingleFileSource(data), totalBytes: Int64(data.count))
+    }
+}
+
 // MARK: - Jingle Initiator Harness
 
 extension JingleTiming {
@@ -536,14 +561,18 @@ final class JingleInitiatorHarness: Sendable {
     private let recorded = OSAllocatedUnfairLock(initialState: Recorded())
 
     /// - Parameters:
+    ///   - offersDirectCandidates: Whether the module offers this host's addresses.
     ///   - failingActions: Jingle actions whose outbound send fails.
     ///   - answerIQ: Returns the payload answering an outbound IQ, or throws its error.
+    ///   - sending: Runs on each outbound stanza once it is recorded, and can hold its send or fail it.
     init(
         timing: JingleTiming = .init(),
+        offersDirectCandidates: Bool = true,
         failingActions: Set<String> = [],
-        answerIQ: @escaping @Sendable (XMLElement) async throws -> XMLElement? = { _ in nil }
+        answerIQ: @escaping @Sendable (XMLElement) async throws -> XMLElement? = { _ in nil },
+        sending: @escaping @Sendable (XMLElement) async throws -> Void = { _ in }
     ) {
-        module = JingleModule(timing: timing)
+        module = JingleModule(timing: timing, offersDirectCandidates: offersDirectCandidates)
         let recorded = recorded
         module.setUp(ModuleContext(
             sendStanza: { stanza, onAccepted in
@@ -552,6 +581,7 @@ final class JingleInitiatorHarness: Sendable {
                 if let action = stanza.element.child(named: "jingle")?.attribute("action"), failingActions.contains(action) {
                     throw XMPPClientError.sendFailed("The connection was closed")
                 }
+                try await sending(stanza.element)
             },
             sendIQ: { iq, _ in
                 recorded.withLock { $0.iqs.append(iq.element) }
@@ -596,6 +626,33 @@ final class JingleInitiatorHarness: Sendable {
         sid: String, file: JingleFileDescription = JingleFileDescription(name: "test.txt", size: 3), senders: JingleContentSenders? = nil
     ) throws {
         try receive(action: JingleAction.sessionInitiate.rawValue, sid: sid, payload: [Self.fileContent(file, senders: senders)], id: "initiate-\(sid)")
+    }
+
+    /// Delivers the peer's offer of a 3-byte file under `sid` over SOCKS5, whose one direct candidate `cid` is a listener
+    /// the test runs, and returns that listener for `acceptSOCKS5Offer(sid:listener:)`.
+    func receiveSOCKS5Offer(sid: String = "sid-1", cid: String = "peer-direct") async throws -> SOCKS5Listener {
+        let listener = SOCKS5Listener()
+        let port = try await listener.start()
+        let candidate = SOCKS5Transport.Candidate(cid: cid, host: "127.0.0.1", port: port, jid: Self.peer.description, priority: 100, type: .direct)
+        let content = JingleContent(
+            name: "a-file-offer", creator: "initiator", description: JingleFileDescription(name: "test.txt", size: 3),
+            transport: .socks5(SOCKS5Transport(sid: "transport-sid", candidates: [candidate]))
+        )
+        try receive(action: JingleAction.sessionInitiate.rawValue, sid: sid, payload: [content.toXML()])
+        return listener
+    }
+
+    /// Accepts the peer's SOCKS5 offer under `sid` and takes this side's dial to the peer's `listener`, returning the
+    /// peer's end once the transport is ready.
+    func acceptSOCKS5Offer(sid: String = "sid-1", listener: SOCKS5Listener) async throws -> SOCKS5Connection {
+        try await module.acceptFileTransfer(sid: sid)
+        let destination = SOCKS5Connection.destinationAddress(
+            sid: "transport-sid", initiatorJID: Self.peer.description, targetJID: "user@example.com/res"
+        )
+        let peer = try await listener.accept(expectedDstAddr: destination)
+        await listener.close()
+        try await module.awaitTransportReady(sid: sid)
+        return peer
     }
 
     /// Matches this side's IQ reply of `type` (`result` or `error`) to the peer's IQ `id`.
@@ -791,6 +848,10 @@ final class JingleInitiatorHarness: Sendable {
         try await poll(timeout) { recorded in recorded.iqs.first(where: predicate) }
     }
 
+    func sentIQCount(matching predicate: @escaping @Sendable (XMLElement) -> Bool) -> Int {
+        recorded.withLock { $0.iqs.count(where: predicate) }
+    }
+
     /// Waits up to `timeout` for an emitted event matching `predicate`.
     func event(timeout: Duration = .seconds(2), matching predicate: @escaping @Sendable (XMPPEvent) -> Bool) async throws -> XMPPEvent? {
         try await poll(timeout) { recorded in recorded.events.first(where: predicate) }
@@ -846,4 +907,26 @@ func fetchRegistrationForm(
         await session.close()
         throw error
     }
+}
+
+/// A loopback TCP socket bound to an ephemeral port, listening when `listens` is set; `nil` when setup fails.
+func loopbackSocket(listens: Bool) -> (fd: Int32, port: UInt16)? {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return nil }
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let bound = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+    }
+    guard bound == 0, !listens || listen(fd, 1) == 0 else {
+        Darwin.close(fd)
+        return nil
+    }
+    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+    _ = withUnsafeMutablePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
+    }
+    return (fd, UInt16(bigEndian: address.sin_port))
 }

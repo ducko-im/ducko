@@ -98,4 +98,34 @@ struct JinglePreparationTests {
         try await probe.verifyNoPublishedSessionAndClosedListener()
         await module.handleDisconnect()
     }
+
+    /// Cancelled while the peer's answer is awaited, or given up on when no answer came in time.
+    @Test(arguments: [true, false])
+    func `An offer dropped after it went out is withdrawn from the peer`(cancel: Bool) async throws {
+        let offerSent = AsyncSemaphore()
+        let offerAnswered = AsyncSemaphore()
+        let harness = JingleInitiatorHarness { iq in
+            guard iq.child(named: "jingle")?.attribute("action") == JingleAction.sessionInitiate.rawValue else { return nil }
+            guard cancel else { throw XMPPClientError.timeout }
+            await offerSent.signal()
+            await offerAnswered.wait()
+            return nil
+        }
+        let operation = Task { try await harness.initiate() }
+        if cancel {
+            try #require(try await boundedOutcome { await offerSent.wait() } != nil)
+            operation.cancel()
+        }
+
+        let terminate = try #require(try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue)?.child(named: "jingle"))
+        await offerAnswered.signal()
+        let offer = try #require(try await harness.sentIQ { $0.child(named: "jingle")?.attribute("action") == JingleAction.sessionInitiate.rawValue })
+        #expect(terminate.attribute("sid") == offer.child(named: "jingle")?.attribute("sid"))
+        #expect(terminate.child(named: "reason")?.child(named: "cancel") != nil)
+        let outcome = try await boundedOutcome { _ = try await operation.value }
+        guard case .failure? = outcome else {
+            Issue.record("Expected the offer to fail, got \(String(describing: outcome))")
+            return
+        }
+    }
 }

@@ -66,6 +66,7 @@ struct JSONFormatter: CLIFormatter {
             "timestamp": formatTimestamp(note.timestamp)
         ]
         dict["subject"] = note.subject
+        dict["fileName"] = note.fileName
         dict["detail"] = note.detail
         return encode(dict)
     }
@@ -210,9 +211,9 @@ struct JSONFormatter: CLIFormatter {
         case let .roomDestroyed(room, reason, alternate): formatRoomDestroyedEvent(room: room, reason: reason, alternate: alternate, account: account)
         case .mucSelfPingFailed: nil
         case let .jingleFileTransferReceived(offer): formatFileOfferEvent(offer, account: account)
-        case let .jingleFileTransferProgress(sid, bytesTransferred, totalBytes): formatTransferProgress(sid: sid, bytesTransferred: bytesTransferred, totalBytes: totalBytes, account: account)
-        case let .jingleFileTransferCompleted(sid, transport): encode(["type": "jingle_transfer_completed", "sid": sid, "transport": transport.rawValue, "account": account])
-        case let .jingleFileTransferFailed(sid, reason): encode(["type": "jingle_transfer_failed", "sid": sid, "reason": reason.rawValue, "account": account])
+        case let .jingleFileTransferProgress(sid, offerID, bytesTransferred, totalBytes, bytesPerSecond): formatTransferProgress(["sid": sid, "offerId": offerID, "account": account], bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: bytesPerSecond)
+        case let .jingleFileTransferCompleted(sid, offerID, transport): encode(["type": "jingle_transfer_completed", "sid": sid, "offerId": offerID, "transport": transport.rawValue, "account": account])
+        case let .jingleFileTransferFailed(sid, offerID, reason): encode(["type": "jingle_transfer_failed", "sid": sid, "offerId": offerID, "reason": reason.rawValue, "account": account])
         case let .oobIQOfferReceived(offer): formatOOBIQOfferEvent(offer, account: account)
         case .presenceReceived, .iqReceived,
              .rosterUpdated,
@@ -270,16 +271,18 @@ struct JSONFormatter: CLIFormatter {
         return encode(dict)
     }
 
-    private func formatTransferProgress(sid: String, bytesTransferred: Int64, totalBytes: Int64, account: String) -> String {
+    /// A progress event's record, adding to `identity` (the session's `sid`, `offerId` and `account`) how far it got.
+    private func formatTransferProgress(_ identity: [String: String], bytesTransferred: Int64, totalBytes: Int64, bytesPerSecond: Double?) -> String {
         let (progress, _) = jingleProgressState(bytesTransferred: bytesTransferred, totalBytes: totalBytes)
-        return encode([
-            "type": "jingle_transfer_progress",
-            "sid": sid,
-            "progress": "\(Int(progress * 100))",
-            "bytesTransferred": "\(bytesTransferred)",
-            "totalBytes": "\(totalBytes)",
-            "account": account
-        ])
+        var dict = identity
+        dict["type"] = "jingle_transfer_progress"
+        dict["progress"] = "\(Int(progress * 100))"
+        dict["bytesTransferred"] = "\(bytesTransferred)"
+        dict["totalBytes"] = "\(totalBytes)"
+        let rate = TransferRate(bytesPerSecond: bytesPerSecond, bytesTransferred: bytesTransferred, totalBytes: totalBytes)
+        dict["bytesPerSecond"] = rate.map { "\(Int($0.bytesPerSecond.rounded()))" }
+        dict["secondsRemaining"] = rate?.secondsRemaining.map { "\(Int($0.rounded()))" }
+        return encode(dict)
     }
 
     private func formatOMEMOSession(jid: BareJID, deviceID: UInt32, identityKey: [UInt8], account: String) -> String {
@@ -439,32 +442,6 @@ struct JSONFormatter: CLIFormatter {
             "sid": offer.sid,
             "offerId": offer.offerID,
             "account": account
-        ])
-    }
-
-    func formatJingleTransferProgress(fileName: String, fileSize: Int64, progress: Double, state: String) -> String {
-        encode([
-            "type": "jingle_transfer_progress",
-            "fileName": fileName,
-            "fileSize": formatByteCount(fileSize),
-            "progress": "\(Int(progress * 100))",
-            "state": state
-        ])
-    }
-
-    func formatJingleTransferCompleted(sid: String, transport: JingleTransportKind) -> String {
-        encode([
-            "type": "jingle_transfer_completed",
-            "sid": sid,
-            "transport": transport.rawValue
-        ])
-    }
-
-    func formatJingleTransferFailed(sid: String, reason: JingleTransferFailureReason) -> String {
-        encode([
-            "type": "jingle_transfer_failed",
-            "sid": sid,
-            "reason": reason.rawValue
         ])
     }
 

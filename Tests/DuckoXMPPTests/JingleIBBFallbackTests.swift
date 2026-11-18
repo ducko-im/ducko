@@ -178,7 +178,7 @@ enum JingleIBBFallbackTests {
             #expect(try await harness.sentJingle(action: JingleAction.transportReplace.rawValue) != nil)
 
             try harness.receive(action: JingleAction.transportReject.rawValue, sid: sid, id: "expected-reject")
-            let failure = try await harness.event { if case .jingleFileTransferFailed(sid, .transportReject) = $0 { true } else { false } }
+            let failure = try await harness.event { if case .jingleFileTransferFailed(sid, _, .transportReject) = $0 { true } else { false } }
             #expect(failure != nil)
             try await harness.expectSingleReply(to: "expected-reject", type: "result", sid: sid)
             let terminate = try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue)
@@ -209,7 +209,7 @@ enum JingleIBBFallbackTests {
 
             try harness.receive(action: "transport-info", sid: sid, payload: [JingleInitiatorHarness.socks5Info(XMLElement(name: "candidate-error"))])
             let failure = try await harness.event { event in
-                if case .jingleFileTransferFailed(_, .transportReplaceFailed) = event { return true }
+                if case .jingleFileTransferFailed(_, _, .transportReplaceFailed) = event { return true }
                 return false
             }
             #expect(failure != nil)
@@ -301,7 +301,7 @@ enum JingleIBBFallbackTests {
                 action: "transport-info", sid: abandonedSID, payload: [JingleInitiatorHarness.socks5Info(XMLElement(name: "candidate-error"))]
             )
             let abandoned = try await harness.event { event in
-                if case .jingleFileTransferFailed(abandonedSID, .transportReplaceFailed) = event { return true }
+                if case .jingleFileTransferFailed(abandonedSID, _, .transportReplaceFailed) = event { return true }
                 return false
             }
             #expect(abandoned != nil)
@@ -309,12 +309,12 @@ enum JingleIBBFallbackTests {
             await harness.module.handleDisconnect()
             // The live session's failure shows the disconnect reported failures at all.
             let live = try await harness.event { event in
-                if case .jingleFileTransferFailed(liveSID, .disconnected) = event { return true }
+                if case .jingleFileTransferFailed(liveSID, _, .disconnected) = event { return true }
                 return false
             }
             #expect(live != nil)
             let repeated = try await harness.event(timeout: .zero) { event in
-                if case .jingleFileTransferFailed(abandonedSID, .disconnected) = event { return true }
+                if case .jingleFileTransferFailed(abandonedSID, _, .disconnected) = event { return true }
                 return false
             }
             #expect(repeated == nil)
@@ -445,7 +445,7 @@ enum JingleIBBFallbackTests {
 
             #expect(try await receiveTask.value == [1, 2, 3])
             let events = try await eventsTask.value
-            guard case let .jingleFileTransferCompleted(sid, transport) = events.last else {
+            guard case let .jingleFileTransferCompleted(sid, _, transport) = events.last else {
                 Issue.record("Expected jingleFileTransferCompleted event")
                 await disconnectFast(client)
                 return
@@ -494,7 +494,7 @@ enum JingleIBBFallbackTests {
                 return false
             }
             #expect(completions.count == 1)
-            if case let .jingleFileTransferCompleted(completedSID, transport) = completions.first {
+            if case let .jingleFileTransferCompleted(completedSID, _, transport) = completions.first {
                 #expect(completedSID == "sid-ibb-test")
                 #expect(transport == .ibb)
             }
@@ -504,11 +504,11 @@ enum JingleIBBFallbackTests {
 
     // MARK: - Harness Helpers
 
-    private static let received = XMLElement(name: "received", namespace: XMPPNamespaces.jingleFileTransfer)
+    static let received = XMLElement(name: "received", namespace: XMPPNamespaces.jingleFileTransfer)
 
     /// Delivers the peer's offer, accepts it and switches it to IBB, so this side receives over IBB. The accept is part
     /// of the flow: bytes that arrive before one are refused, so a helper that skipped it would not be a real receive.
-    private static func startIBBReceive(
+    static func startIBBReceive(
         _ harness: JingleInitiatorHarness, sid: String = "sid-1", file: JingleFileDescription = JingleFileDescription(name: "test.txt", size: 3)
     ) async throws {
         try harness.receiveOffer(sid: sid, file: file)
@@ -517,7 +517,7 @@ enum JingleIBBFallbackTests {
     }
 
     /// Starts a transfer this side sends and switches it to IBB.
-    private static func startIBBSend(_ harness: JingleInitiatorHarness) async throws -> String {
+    static func startIBBSend(_ harness: JingleInitiatorHarness) async throws -> String {
         let sid = try await harness.initiate()
         try harness.receive(action: "transport-replace", sid: sid, payload: [JingleInitiatorHarness.ibbContent()])
         return sid
@@ -608,7 +608,7 @@ enum JingleIBBFallbackTests {
             await #expect(throws: JingleModule.JingleError.transportFailed("The transfer ended before the whole file arrived")) {
                 _ = try await harness.module.receiveFileData(sid: "sid-1")
             }
-            #expect(harness.eventCount { if case .jingleFileTransferFailed("sid-1", .incomplete) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount { if case .jingleFileTransferFailed("sid-1", _, .incomplete) = $0 { true } else { false } } == 1)
             #expect(harness.eventCount(matching: JingleInitiatorHarness.isCompletion) == 0)
             let terminate = try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue)
             #expect(terminate?.child(named: "jingle")?.child(named: "reason")?.child(named: "cancel") != nil)
@@ -639,7 +639,7 @@ enum JingleIBBFallbackTests {
             await #expect(throws: JingleModule.JingleError.transportFailed("The transfer ended before the whole file arrived")) {
                 _ = try await harness.module.receiveFileData(sid: "sid-1")
             }
-            #expect(harness.eventCount { if case .jingleFileTransferFailed("sid-1", .incomplete) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount { if case .jingleFileTransferFailed("sid-1", _, .incomplete) = $0 { true } else { false } } == 1)
             // The peer already ended the session, so nothing is sent back. The terminate this guards against would go
             // out from a detached task, so the count is read only after giving that task room to run — read straight
             // after the throw, the assertion holds whether or not the guard exists.
@@ -701,7 +701,7 @@ enum JingleIBBFallbackTests {
             try await startIBBReceive(harness)
             try harness.receive(action: "session-terminate", sid: "sid-1", payload: [JingleInitiatorHarness.reason("success")])
 
-            #expect(harness.eventCount { if case .jingleFileTransferFailed("sid-1", .incomplete) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount { if case .jingleFileTransferFailed("sid-1", _, .incomplete) = $0 { true } else { false } } == 1)
             await #expect(throws: JingleModule.JingleError.sessionNotFound) {
                 _ = try await harness.module.receiveFileData(sid: "sid-1")
             }
@@ -715,7 +715,7 @@ enum JingleIBBFallbackTests {
             try await startIBBReceive(harness)
             try harness.deliver(JingleInitiatorHarness.ibbData([1, 2, 3], seq: 0), id: "data-0")
 
-            let failure = try await harness.event { if case .jingleFileTransferFailed("sid-1", .timeout) = $0 { true } else { false } }
+            let failure = try await harness.event { if case .jingleFileTransferFailed("sid-1", _, .timeout) = $0 { true } else { false } }
             #expect(failure != nil)
             let terminate = try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue)
             #expect(terminate?.child(named: "jingle")?.child(named: "reason")?.child(named: "timeout") != nil)
@@ -732,7 +732,7 @@ enum JingleIBBFallbackTests {
             let sid = try await startIBBSend(harness)
 
             try harness.deliver(JingleInitiatorHarness.ibbClose(), id: "close")
-            #expect(try await harness.event { if case .jingleFileTransferFailed(sid, .cancel) = $0 { true } else { false } } != nil)
+            #expect(try await harness.event { if case .jingleFileTransferFailed(sid, _, .cancel) = $0 { true } else { false } } != nil)
             #expect(harness.eventCount(matching: JingleInitiatorHarness.isFailure) == 1)
         }
     }
@@ -778,7 +778,7 @@ enum JingleIBBFallbackTests {
                 _ = try await harness.module.receiveFileData(sid: "sid-1")
             }
             #expect(harness.eventCount(matching: JingleInitiatorHarness.isFailure) == 1)
-            #expect(harness.eventCount { if case .jingleFileTransferFailed("sid-1", .checksumMismatch) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount { if case .jingleFileTransferFailed("sid-1", _, .checksumMismatch) = $0 { true } else { false } } == 1)
             #expect(harness.eventCount(matching: JingleInitiatorHarness.isCompletion) == 0)
         }
 
@@ -925,6 +925,18 @@ enum JingleIBBFallbackTests {
         }
 
         @Test
+        func `A block larger than the negotiated block-size is answered bad-request and fails the transfer`() async throws {
+            let harness = JingleInitiatorHarness()
+            try await startIBBReceive(harness, file: JingleFileDescription(name: "test.bin", size: 8192))
+            try harness.deliver(JingleInitiatorHarness.ibbData([UInt8](repeating: 1, count: 4097), seq: 0), id: "data-oversized")
+
+            let reply = try await harness.sentStanza(matching: JingleInitiatorHarness.isReply(to: "data-oversized", type: "error"))
+            #expect(reply?.child(named: "error")?.child(named: "bad-request") != nil)
+            #expect(try await harness.event { if case .jingleFileTransferFailed = $0 { true } else { false } } != nil)
+            #expect(harness.eventCount { if case .jingleFileTransferProgress = $0 { true } else { false } } == 0)
+        }
+
+        @Test
         func `An out-of-sequence block closes the stream instead of being acknowledged`() async throws {
             let harness = JingleInitiatorHarness()
             try await startIBBReceive(harness)
@@ -935,139 +947,33 @@ enum JingleIBBFallbackTests {
         }
     }
 
-    struct SenderConfirmation {
+    struct LocalEnd {
         @Test
-        func `A received confirmation arriving before the close's result still returns`() async throws {
-            let gated = GatedCloseHarness()
-            let harness = gated.harness
-            let sid = try await startIBBSend(harness)
-            let send = Task { try await harness.module.sendFileData(sid: sid, data: [1, 2, 3]) }
-
-            await gated.closeSent.wait()
-            try harness.receive(action: "session-info", sid: sid, payload: [received])
-            await gated.closeAnswered.signal()
-
-            let outcome = try await boundedOutcome { try await send.value }
-            guard case .success? = outcome else {
-                Issue.record("Expected the send to return, got \(String(describing: outcome))")
-                return
-            }
-        }
-
-        /// A harness whose IBB close is sent, then waits until the test answers it.
-        private struct GatedCloseHarness {
-            let harness: JingleInitiatorHarness
-            let closeSent = AsyncSemaphore()
-            let closeAnswered = AsyncSemaphore()
-
-            init(timing: JingleTiming = JingleTiming()) {
-                let closeSent = closeSent
-                let closeAnswered = closeAnswered
-                self.harness = JingleInitiatorHarness(timing: timing) { iq in
-                    if iq.child(named: "close", namespace: XMPPNamespaces.ibb) != nil {
-                        await closeSent.signal()
-                        await closeAnswered.wait()
-                    }
-                    return nil
-                }
-            }
-        }
-
-        /// The confirmed branch of the sender's cleanup: the receiver acknowledges with `<received/>` and then never
-        /// sends the terminate — a peer that crashes or drops between the two. Left uncovered, the session, its
-        /// transport and its send record leak for the life of the connection, or the timer fires at a sid a later
-        /// session has since taken.
-        @Test
-        func `A confirmed send terminates itself when the peer never does`() async throws {
-            let gated = GatedCloseHarness(timing: .short)
-            let harness = gated.harness
-            let sid = try await startIBBSend(harness)
-            let send = Task { try await harness.module.sendFileData(sid: sid, data: [1, 2, 3]) }
-
-            await gated.closeSent.wait()
-            try harness.receive(action: "session-info", sid: sid, payload: [received])
-            await gated.closeAnswered.signal()
-            _ = try await boundedOutcome { try await send.value }
-
-            let terminate = try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue)
-            #expect(terminate?.child(named: "jingle")?.child(named: "reason")?.child(named: "success") != nil)
-        }
-
-        @Test
-        func `The receiver's terminate after its received confirmation completes the session once`() async throws {
-            let gated = GatedCloseHarness()
-            let harness = gated.harness
-            let sid = try await startIBBSend(harness)
-            let send = Task { try await harness.module.sendFileData(sid: sid, data: [1, 2, 3]) }
-            await gated.closeSent.wait()
-            try harness.receive(action: "session-info", sid: sid, payload: [received])
-            await gated.closeAnswered.signal()
-            try await send.value
-
-            try harness.receive(action: "session-terminate", sid: sid, payload: [JingleInitiatorHarness.reason("success")])
-            #expect(try await harness.event(matching: JingleInitiatorHarness.isCompletion) != nil)
-            #expect(harness.eventCount(matching: JingleInitiatorHarness.isCompletion) == 1)
-            #expect(harness.eventCount(matching: JingleInitiatorHarness.isFailure) == 0)
-        }
-
-        @Test
-        func `Without a confirmation the sender terminates with success after the wait`() async throws {
-            let harness = JingleInitiatorHarness(timing: .short)
-            let sid = try await startIBBSend(harness)
-
-            try await harness.module.sendFileData(sid: sid, data: [1, 2, 3])
-            let terminate = try #require(try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue))
-            #expect(terminate.child(named: "jingle")?.child(named: "reason")?.child(named: "success") != nil)
-            #expect(harness.eventCount(matching: JingleInitiatorHarness.isFailure) == 0)
-        }
-
-        /// The receiver already holds every acknowledged block. A close it refuses, because it finished the stream on its
-        /// own, leaves the send to its confirmation instead of failing a transfer that arrived.
-        @Test
-        func `A refused close after every block was acknowledged still completes on the receiver's terminate`() async throws {
+        func `Ending a session mid-send stops its in-band blocks`() async throws {
+            let (firstBlockSent, firstBlockAnswered) = (AsyncSemaphore(), AsyncSemaphore())
             let harness = JingleInitiatorHarness { iq in
-                if iq.child(named: "close", namespace: XMPPNamespaces.ibb) != nil {
-                    throw JingleModule.JingleError.transportFailed("item-not-found")
+                if iq.child(named: "data", namespace: XMPPNamespaces.ibb)?.attribute("seq") == "0" {
+                    await firstBlockSent.signal()
+                    await firstBlockAnswered.wait()
                 }
                 return nil
             }
             let sid = try await startIBBSend(harness)
-            let send = Task { try await harness.module.sendFileData(sid: sid, data: [1, 2, 3]) }
-            #expect(try await harness.sentIQ(matching: { $0.child(named: "close", namespace: XMPPNamespaces.ibb) != nil }) != nil)
+            let send = Task { try await harness.module.sendFileData(sid: sid, data: [UInt8](repeating: 7, count: 3 * 4096)) }
+            try #require(try await boundedOutcome { await firstBlockSent.wait() } != nil)
 
-            try harness.receive(action: "session-terminate", sid: sid, payload: [JingleInitiatorHarness.reason("success")])
+            try await harness.module.terminateSession(sid: sid, reason: .cancel)
+            await firstBlockAnswered.signal()
+
             let outcome = try await boundedOutcome { try await send.value }
-            guard case .success? = outcome else {
-                Issue.record("Expected the send to return, got \(String(describing: outcome))")
+            guard case let .failure(error)? = outcome else {
+                Issue.record("Expected the send to fail, got \(String(describing: outcome))")
                 return
             }
-            #expect(try await harness.event(matching: JingleInitiatorHarness.isCompletion) != nil)
-            #expect(harness.eventCount(matching: JingleInitiatorHarness.isFailure) == 0)
-        }
-
-        @Test
-        func `A success terminate before the send starts fails as canceled`() async throws {
-            let harness = JingleInitiatorHarness()
-            let sid = try await startIBBSend(harness)
-
-            try harness.receive(action: "session-terminate", sid: sid, payload: [JingleInitiatorHarness.reason("success")])
-            #expect(try await harness.event { if case .jingleFileTransferFailed(sid, .cancel) = $0 { true } else { false } } != nil)
-            await #expect(throws: JingleModule.JingleError.sessionNotFound) {
-                try await harness.module.sendFileData(sid: sid, data: [1, 2, 3])
-            }
-        }
-
-        @Test
-        func `A receive whose terminate fails to send still reports exactly one event`() async throws {
-            let harness = JingleInitiatorHarness(failingActions: [JingleAction.sessionTerminate.rawValue])
-            try await startIBBReceive(harness)
-            try harness.deliver(JingleInitiatorHarness.ibbData([1, 2, 3], seq: 0), id: "data-0")
-            try harness.deliver(JingleInitiatorHarness.ibbClose(), id: "close")
-
-            #expect(try await harness.module.receiveFileData(sid: "sid-1") == [1, 2, 3])
-            #expect(try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue) != nil)
-            #expect(harness.eventCount(matching: JingleInitiatorHarness.isCompletion) == 1)
-            #expect(harness.eventCount(matching: JingleInitiatorHarness.isFailure) == 0)
+            #expect(error as? JingleModule.JingleError == .sessionNotFound)
+            #expect(harness.sentIQCount { $0.child(named: "data", namespace: XMPPNamespaces.ibb) != nil } == 1)
+            let terminate = try #require(try await harness.sentJingle(action: JingleAction.sessionTerminate.rawValue))
+            #expect(terminate.child(named: "jingle")?.child(named: "reason")?.child(named: "cancel") != nil)
         }
     }
 }

@@ -95,6 +95,12 @@ func jingleProgressState(bytesTransferred: Int64, totalBytes: Int64) -> (progres
     return (progress, state)
 }
 
+/// A direct transfer's rate and time left as the human-readable formatters append them to its progress, or nothing
+/// while the rate is not known.
+func transferRateSuffix(_ rate: TransferRate?) -> String {
+    rate.map { " · \($0.displayText)" } ?? ""
+}
+
 /// A data form field's values as one line of text, with a text-private value hidden.
 func dataFormValueText(_ field: RoomConfigField) -> String {
     hidesDataFormValue(field) ? obscuredDataFormValue : field.values.joined(separator: ", ")

@@ -159,14 +159,16 @@ struct TranscriptRowsTests {
         #expect(row.loadsIncomingImagesOnSight == chat.loadsOnSight)
     }
 
-    @Test func `a file waiting to be accepted names the chat, and one being received stands after the messages`() {
+    @Test func `a file waiting to be accepted names the chat, and one being received stands after the messages with its rate`() {
         let sent = message(at: 0, body: "", isOutgoing: true, localFile: true)
         let transfer = { (id: UUID, state: FileTransferService.TransferState, direction: FileTransferService.TransferDirection) in
             FileTransferService.ActiveTransfer(
                 id: id, accountID: accountID, fileName: "notes.txt", fileSize: 3, state: state, method: .jingle, direction: direction
             )
         }
-        let receiving = transfer(UUID(), .transferring(progress: 0.5), .incoming)
+        var receiving = transfer(UUID(), .transferring(progress: 0.5), .incoming)
+        let rate = TransferRate(bytesPerSecond: 38000, bytesTransferred: 1, totalBytes: 3)
+        receiving.rate = rate
 
         let rows = TranscriptRows.chat(
             items: [.message(sent)], details: TranscriptRows.Details(displayName: "Bob"),
@@ -179,8 +181,29 @@ struct TranscriptRowsTests {
         }
         #expect(row.transferStatus == .waiting(recipient: "Bob"))
         #expect(rows.last == TranscriptRow(id: receiving.id, kind: .receivingFile(
-            TranscriptRow.ReceivingFile(fileName: "notes.txt", fileSize: 3, status: .receiving(progress: 0.5))
+            TranscriptRow.ReceivingFile(fileName: "notes.txt", fileSize: 3, status: .receiving(progress: 0.5, rate: rate), canStop: true)
         )))
+    }
+
+    @Test(arguments: [
+        (FileTransferService.TransferMethod.jingle, true),
+        (.httpUpload, false)
+    ] as [(FileTransferService.TransferMethod, Bool)])
+    func `only a file being received directly can be stopped from its row`(method: FileTransferService.TransferMethod, canStop: Bool) {
+        let receiving = FileTransferService.ActiveTransfer(
+            id: UUID(), accountID: accountID, fileName: "notes.txt", fileSize: 3,
+            state: .transferring(progress: 0.5), method: method, direction: .incoming
+        )
+
+        let rows = TranscriptRows.chat(
+            items: [], details: TranscriptRows.Details(), transfers: [], receivingTransfers: [receiving], linkPreview: { _ in nil }
+        )
+
+        guard case let .receivingFile(file) = rows.last?.kind else {
+            Issue.record("Expected a receiving-file row")
+            return
+        }
+        #expect(file.canStop == canStop)
     }
 
     @Test func `a reply carries its quote only while the quoted message is loaded`() {
@@ -299,11 +322,13 @@ struct TranscriptRowsTests {
         #expect(!row.startsDay)
     }
 
-    @Test func `a History row of a file being sent directly carries its status`() {
+    @Test func `a History row of a file being sent directly carries its status and rate`() {
         let sent = message(at: 0, body: "", isOutgoing: true, localFile: true)
-        let transfer = FileTransferService.ActiveTransfer(
+        var transfer = FileTransferService.ActiveTransfer(
             id: sent.id, accountID: accountID, fileName: "notes.txt", fileSize: 3, state: .transferring(progress: 0.4), method: .jingle
         )
+        let rate = TransferRate(bytesPerSecond: 2_100_000, bytesTransferred: 1, totalBytes: 3)
+        transfer.rate = rate
 
         let rows = TranscriptRows.history(
             items: [.message(sent)], positions: [:], details: TranscriptRows.Details(displayName: "Bob"), transfers: [transfer]
@@ -313,6 +338,6 @@ struct TranscriptRowsTests {
             Issue.record("Expected a message row")
             return
         }
-        #expect(row.transferStatus == .sending(progress: 0.4))
+        #expect(row.transferStatus == .sending(progress: 0.4, rate: rate))
     }
 }

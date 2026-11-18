@@ -123,9 +123,9 @@ struct PlainFormatter: CLIFormatter {
         case let .roomDestroyed(room, reason, alternate): formatRoomDestroyedMUC(room: room, reason: reason, alternate: alternate)
         case .mucSelfPingFailed: nil
         case let .jingleFileTransferReceived(offer): formatFileOffer(fileName: offer.fileName, fileSize: offer.fileSize, from: offer.from.bareJID.description, offerID: offer.offerID)
-        case let .jingleFileTransferProgress(sid, bytesTransferred, totalBytes): formatTransferProgress(sid: sid, bytesTransferred: bytesTransferred, totalBytes: totalBytes)
-        case let .jingleFileTransferCompleted(sid, transport): formatJingleTransferCompleted(sid: sid, transport: transport)
-        case let .jingleFileTransferFailed(sid, reason): formatJingleTransferFailed(sid: sid, reason: reason)
+        case let .jingleFileTransferProgress(sid, _, bytesTransferred, totalBytes, bytesPerSecond): formatTransferProgress(sid: sid, bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: bytesPerSecond)
+        case let .jingleFileTransferCompleted(sid, _, transport): formatJingleTransferCompleted(sid: sid, transport: transport)
+        case let .jingleFileTransferFailed(sid, _, reason): formatJingleTransferFailed(sid: sid, reason: reason)
         case let .oobIQOfferReceived(offer): formatOOBOffer(offer: offer)
         case .presenceReceived, .iqReceived,
              .rosterUpdated,
@@ -149,11 +149,12 @@ struct PlainFormatter: CLIFormatter {
         return "[moderated] message moderated by \(moderator) in \(room) (id: \(originalID))\(reasonStr)"
     }
 
-    private func formatTransferProgress(sid: String, bytesTransferred: Int64, totalBytes: Int64) -> String {
+    private func formatTransferProgress(sid: String, bytesTransferred: Int64, totalBytes: Int64, bytesPerSecond: Double?) -> String {
         let (progress, state) = jingleProgressState(bytesTransferred: bytesTransferred, totalBytes: totalBytes)
+        let rate = TransferRate(bytesPerSecond: bytesPerSecond, bytesTransferred: bytesTransferred, totalBytes: totalBytes)
         return formatJingleTransferProgress(
             fileName: sid, fileSize: totalBytes, progress: progress, state: state
-        )
+        ) + transferRateSuffix(rate)
     }
 
     private func formatOOBOffer(offer: OOBIQOffer) -> String {

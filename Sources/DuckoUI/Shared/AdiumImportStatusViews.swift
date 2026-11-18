@@ -7,7 +7,7 @@ struct AdiumImportProgressView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            ProgressView(value: Double(progress.completedFiles), total: Double(max(progress.totalFiles, 1)))
+            ProgressBar(fraction: Double(progress.completedFiles) / Double(max(progress.totalFiles, 1)))
 
             Text("\(progress.completedFiles) / \(progress.totalFiles) files")
                 .font(.caption)

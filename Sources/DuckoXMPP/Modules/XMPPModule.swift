@@ -12,6 +12,8 @@ public protocol XMPPModule: AnyObject, Sendable {
     func handleConnect() async throws
     /// Called after a successful Stream Management session resume.
     func handleResume() async throws
+    /// Called when this side ends a connected session, while the stream can still carry the module's goodbyes to peers.
+    func prepareForDisconnect() async
     /// Called when the XMPP session is torn down (before state is cleared).
     func handleDisconnect() async
     /// Called for each incoming `<message>` stanza.
@@ -34,6 +36,7 @@ public extension XMPPModule {
     func handleSessionEstablished(resumed: Bool) {}
     func handleConnect() async throws {}
     func handleResume() async throws {}
+    func prepareForDisconnect() async {}
     func handleDisconnect() async {}
     func handleMessage(_ message: XMPPMessage) throws {}
     func handleDecryptedMessage(_ message: XMPPMessage) {}

@@ -46,6 +46,8 @@ public actor MockTransport: XMPPTransport {
     /// Whether the sending task was cancelled by the time `releaseBlockedSends()` let its held send through, for the
     /// latest such send. It is set before the send is recorded, so it is current once `waitForSent` returns that send.
     public private(set) var lastBlockedSendWasCancelled: Bool?
+    /// The latest stanza `blockSends(where:)` held, readable while it is still held.
+    public private(set) var lastBlockedStanza: String?
     private var autoReplies: [@Sendable (String) -> String?] = []
 
     /// A connected server answers the client's `</stream:stream>` with its own (RFC 6120 §4.4), so the mock does
@@ -134,6 +136,7 @@ public actor MockTransport: XMPPTransport {
             throw sendFailure
         }
         if let blockPredicate, !blockedReleased, blockPredicate(stanza) {
+            lastBlockedStanza = stanza
             try await withCheckedThrowingContinuation { continuation in
                 blockedSends.append(continuation)
                 let waiters = blockedSendWaiters

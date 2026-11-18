@@ -1,3 +1,4 @@
+import DuckoCore
 import DuckoXMPP
 import Foundation
 import Testing
@@ -79,11 +80,24 @@ struct PlainFileTransferFormatterTests {
     }
 
     @Test func `format transfer state marks a failure reason as an error`() {
-        #expect(formatTransferState(.failed("You declined the transfer")) == "error: You declined the transfer")
+        #expect(formatTransferState(transfer(in: .failed("You declined the transfer"))) == "error: You declined the transfer")
     }
 
     @Test func `format transfer state says where a received file was saved`() {
-        #expect(formatTransferState(.received(fileURL: URL(filePath: "/tmp/ducko/notes.txt"))) == "saved to /tmp/ducko/notes.txt")
+        #expect(formatTransferState(transfer(in: .received(fileURL: URL(filePath: "/tmp/ducko/notes.txt")))) == "saved to /tmp/ducko/notes.txt")
+    }
+
+    @Test func `format transfer state adds the rate and time left to a transferring row`() {
+        var row = transfer(in: .transferring(progress: 0.5))
+        #expect(formatTransferState(row) == "transferring 50%")
+        row.rate = TransferRate(bytesPerSecond: 250_000, bytesTransferred: 5_000_000, totalBytes: 10_000_000)
+        #expect(formatTransferState(row) == "transferring 50% · 250 kB/s · 20 sec left")
+    }
+
+    private func transfer(in state: FileTransferService.TransferState) -> FileTransferService.ActiveTransfer {
+        FileTransferService.ActiveTransfer(
+            id: UUID(), accountID: UUID(), fileName: "notes.txt", fileSize: 10_000_000, state: state, method: .jingle
+        )
     }
 }
 
@@ -220,42 +234,5 @@ struct JSONFileTransferFormatterTests {
         #expect(json["type"] == "oob_iq_offer")
         #expect(json["offerId"] == "offer-2")
         #expect(json["id"] == "stanza-2")
-    }
-
-    @Test func `format jingle transfer progress is valid JSON`() throws {
-        let output = formatter.formatJingleTransferProgress(fileName: "data.zip", fileSize: 10_485_760, progress: 0.6, state: "transferring")
-        let data = try #require(output.data(using: .utf8))
-        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
-        #expect(json["type"] == "jingle_transfer_progress")
-        #expect(json["fileName"] == "data.zip")
-        #expect(json["progress"] == "60")
-        #expect(json["state"] == "transferring")
-    }
-
-    @Test func `format jingle transfer completed is valid JSON`() throws {
-        let output = formatter.formatJingleTransferCompleted(sid: "sid-456", transport: .socks5)
-        let data = try #require(output.data(using: .utf8))
-        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
-        #expect(json["type"] == "jingle_transfer_completed")
-        #expect(json["sid"] == "sid-456")
-        #expect(json["transport"] == "socks5")
-    }
-
-    @Test func `format jingle transfer completed with ibb is valid JSON`() throws {
-        let output = formatter.formatJingleTransferCompleted(sid: "sid-456", transport: .ibb)
-        let data = try #require(output.data(using: .utf8))
-        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
-        #expect(json["type"] == "jingle_transfer_completed")
-        #expect(json["sid"] == "sid-456")
-        #expect(json["transport"] == "ibb")
-    }
-
-    @Test func `format jingle transfer failed is valid JSON`() throws {
-        let output = formatter.formatJingleTransferFailed(sid: "sid-789", reason: .transportReject)
-        let data = try #require(output.data(using: .utf8))
-        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
-        #expect(json["type"] == "jingle_transfer_failed")
-        #expect(json["sid"] == "sid-789")
-        #expect(json["reason"] == "transport-reject")
     }
 }

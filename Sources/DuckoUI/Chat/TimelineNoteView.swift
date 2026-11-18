@@ -27,6 +27,7 @@ struct TimelineNoteView: View {
         case .encryptionEnabledByContact, .encryptionResumedByContact: "lock.fill"
         case .plaintextRequested: "lock.open.fill"
         case .sessionsReset: "lock.rotation"
+        case .incomingFileFailed: "exclamationmark.triangle"
         }
     }
 }

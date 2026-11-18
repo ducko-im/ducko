@@ -37,6 +37,8 @@ struct TranscriptRow: Identifiable, Equatable {
         let fileName: String
         let fileSize: Int64
         let status: DirectTransferStatus
+        /// Whether the row offers to stop the transfer. Only a file sent directly can be stopped, not one downloaded from a link.
+        let canStop: Bool
     }
 
     enum Kind: Equatable {

@@ -49,11 +49,12 @@ public enum XMPPEvent: Sendable {
     case roomDestroyed(room: BareJID, reason: String?, alternateVenue: BareJID?)
     case mucSelfPingFailed(room: BareJID, reason: MUCSelfPingFailure)
 
-    // Jingle File Transfer (XEP-0166/0234)
+    // Jingle File Transfer (XEP-0166/0234). A session's events carry the id this side gave its offer, which names the
+    // session apart from a later one reusing its sid.
     case jingleFileTransferReceived(JingleFileOffer)
-    case jingleFileTransferCompleted(sid: String, transport: JingleTransportKind)
-    case jingleFileTransferFailed(sid: String, reason: JingleTransferFailureReason)
-    case jingleFileTransferProgress(sid: String, bytesTransferred: Int64, totalBytes: Int64)
+    case jingleFileTransferCompleted(sid: String, offerID: String, transport: JingleTransportKind)
+    case jingleFileTransferFailed(sid: String, offerID: String, reason: JingleTransferFailureReason)
+    case jingleFileTransferProgress(sid: String, offerID: String, bytesTransferred: Int64, totalBytes: Int64, bytesPerSecond: Double?)
     case jingleChecksumReceived(sid: String, checksum: JingleChecksumInfo)
 
     // PEP (XEP-0163)

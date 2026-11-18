@@ -34,7 +34,8 @@ struct ReceivingFileRow: View {
                 isMetadataVisible: false,
                 actionSenderName: windowState.displayName,
                 loadsIncomingImagesOnSight: false,
-                transferStatus: file.status
+                transferStatus: file.status,
+                stopTransfer: file.canStop ? { Task { await windowState.cancelTransfer(id: id) } } : nil
             )
 
             Spacer(minLength: 60)

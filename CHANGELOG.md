@@ -11,14 +11,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Let a server that still stores only a SCRAM-SHA-1 password upgrade it to a stronger hash during sign-in (XEP-0480), so later sign-ins use SCRAM-SHA-256 or stronger. Ducko helps only on sign-ins bound to the encrypted connection, and only once the server has proved it knows the password
 - Show a server's registration CAPTCHA when creating an account, checking a registration, or registering from the CLI (XEP-0158, XEP-0221, XEP-0231). The image appears above its answer field, and the server's own web page is offered for a challenge Ducko can't show. Ducko solves a proof-of-work challenge itself, so a server that accepts it registers you without asking for the image. The CLI saves the image to a private file for you to open and deletes it when the command ends
 - Show a fresh form when a server refuses a registration, with its error and what you typed kept, so a wrong CAPTCHA answer can be tried again
+- Stop a direct file transfer with the stop button on its row, or with `/cancel` in `ducko interactive`. The contact is told, and both sides say who canceled: a sent file reads "You canceled the transfer" or "The transfer was canceled", and a file that did not arrive leaves a note in the chat saying why
+- Show how fast a direct file transfer is going and how long it has left, such as "2.1 MB/s · 15 sec left", on its row, in `ducko interactive` and in `/transfers`. The CLI's JSON progress records carry `bytesPerSecond` and `secondsRemaining`, and every JSON direct-transfer record carries `offerId`, which tells apart two transfers that reuse a `sid`
 - Type anywhere in a chat window to write in its message field, and get the keyboard back where you left it when you return to the window, switch tabs, or close the find bar. ⌘F puts the keyboard in the find bar, and Escape closes it
 
 ### Changed
 
 - Show the server's registration form in a sheet over the Welcome window, without the note servers add for clients that can't show the form
 - End `ducko presence --for` and `--keep-alive` cleanly when the terminal closes, so contacts see you go offline right away. A hold started under `nohup` keeps running
-
 - Explain why a server refused a sign-in partway through: a rejected password or unknown account reads "Incorrect username or password" and is handled like any wrong password, a busy server is tried again later, and a mismatch in the connection's security details warns that the connection may be tampered with. The CLI's JSON `authentication_failed` record carries the server's reason as `condition`
+- Tell the contact when you quit Ducko, leave `ducko interactive` or take an account offline during a direct file transfer. Your side reads "The transfer stopped when you went offline", and a Ducko contact sees right away that you went offline instead of waiting for the file
+- End a direct file transfer you are receiving when the contact goes offline before it starts, or when an in-band transfer gets no data for 30 seconds, with a note in the chat saying the file did not arrive and why
+- Mark a direct send delivered only once the contact confirms it arrived. A send the contact does not confirm within 30 seconds fails with "The contact did not confirm the transfer"
+- Send in-band direct transfers in larger blocks, roughly four times as fast, and send large files without holding them in memory. A file edited or replaced after you click Send still goes out exactly as it was when you sent it
+
+### Fixed
+
+- Fix direct file transfers through a server's file transfer proxy, such as Prosody's, stalling just before the end and failing, because the proxy held back the last of the file
+- Fix the app freezing when an accessibility tool such as VoiceOver reads a chat while a file transfer shows its progress
 
 ### Security
 

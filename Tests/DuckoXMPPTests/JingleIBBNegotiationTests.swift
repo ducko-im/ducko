@@ -1,3 +1,4 @@
+import DuckoTestSupport
 import Testing
 @testable import DuckoXMPP
 
@@ -28,7 +29,7 @@ enum JingleIBBNegotiationTests {
             try harness.deliver(JingleInitiatorHarness.ibbClose(), id: "close")
 
             #expect(try await harness.module.receiveFileData(sid: "sid-1") == [1, 2, 3])
-            #expect(harness.eventCount { if case .jingleFileTransferCompleted("sid-1", .ibb) = $0 { true } else { false } } == 1)
+            #expect(harness.eventCount { if case .jingleFileTransferCompleted("sid-1", _, .ibb) = $0 { true } else { false } } == 1)
             #expect(harness.sentJingleCount(action: JingleAction.transportInfo.rawValue) == 0)
         }
 
@@ -47,19 +48,22 @@ enum JingleIBBNegotiationTests {
     }
 
     struct BlockSize {
-        /// A responder may only lower the offer's 4096-byte block-size (XEP-0261).
-        @Test(arguments: [(2048, [2048, 2048, 904]), (8192, [4096, 904])])
+        /// A responder may only lower the offer's 16384-byte block-size (XEP-0261).
+        @Test(arguments: [(8192, [8192, 8192, 3616]), (32768, [16384, 3616])])
         func `A transport-accept's block-size bounds the blocks only downward`(acceptedBlockSize: Int, expectedBlocks: [Int]) async throws {
             let harness = JingleInitiatorHarness(timing: .short)
             let sid = try await harness.initiate()
             try harness.receive(action: JingleAction.transportInfo.rawValue, sid: sid, payload: [JingleInitiatorHarness.socks5Info(XMLElement(name: "candidate-error"))])
             let replace = try #require(try await harness.sentJingle(action: JingleAction.transportReplace.rawValue))
-            let ibbSID = try #require(replace.child(named: "jingle")?.child(named: "content")?.child(named: "transport")?.attribute("sid"))
+            let offered = try #require(replace.child(named: "jingle")?.child(named: "content")?.child(named: "transport"))
+            #expect(offered.attribute("block-size") == "16384")
+            let ibbSID = try #require(offered.attribute("sid"))
 
             var accepted = XMLElement(name: "content", attributes: ["creator": "initiator", "name": "a-file-offer"])
             accepted.addChild(IBBTransport(sid: ibbSID, blockSize: acceptedBlockSize).toXML())
             try harness.receive(action: JingleAction.transportAccept.rawValue, sid: sid, payload: [accepted])
-            try await harness.module.sendFileData(sid: sid, data: [UInt8](repeating: 7, count: 5000))
+            let module = harness.module
+            let send = Task { try await module.sendFileData(sid: sid, data: [UInt8](repeating: 7, count: 20000)) }
 
             let open = try #require(try await harness.sentIQ(matching: isIBB("open")))
             #expect(open.child(named: "open")?.attribute("block-size") == String(expectedBlocks[0]))
@@ -69,6 +73,8 @@ enum JingleIBBNegotiationTests {
                 try blockSizes.append(#require(Base64.decode(data)).count)
             }
             #expect(blockSizes == expectedBlocks)
+            // Nothing confirms the send here, so it ends unconfirmed once its wait elapses.
+            _ = try await boundedOutcome { try await send.value }
         }
     }
 

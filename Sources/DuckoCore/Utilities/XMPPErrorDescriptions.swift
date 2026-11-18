@@ -90,6 +90,7 @@ extension JingleModule.JingleError: LocalizedError {
         switch self {
         case .notConnected, .noConnectedJID: notConnectedDescription
         case .sessionNotFound: "The file transfer session was not found"
+        case .sessionEnded: "The file transfer ended"
         case .alreadyAccepted: "The file transfer was already accepted"
         case let .transportNegotiationFailed(reason): "File transfer negotiation failed: \(reason)"
         case let .transportFailed(reason): "File transfer failed: \(reason)"

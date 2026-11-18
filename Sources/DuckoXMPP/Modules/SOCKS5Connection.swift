@@ -187,6 +187,13 @@ actor SOCKS5Connection {
         return try result.get()
     }
 
+    /// Ends this side's half of the stream, so the peer, or a proxy relaying to it, reads the end of the data rather
+    /// than waiting for more. Call it once every byte is written. Reading stays open.
+    func finishSending() {
+        guard fd >= 0, !closeRequested else { return }
+        shutdown(fd, SHUT_WR)
+    }
+
     /// Closes the SOCKS5 connection. A send or receive still running is shut down first. The descriptor is released only
     /// once that operation returns, so it never acts on a reused descriptor.
     func close() {

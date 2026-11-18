@@ -76,7 +76,8 @@ enum TranscriptRows {
             rows.append(TranscriptRow(id: transfer.id, kind: .receivingFile(TranscriptRow.ReceivingFile(
                 fileName: transfer.fileName,
                 fileSize: transfer.fileSize,
-                status: .receiving(transfer)
+                status: .receiving(transfer),
+                canStop: transfer.isUnderwayDirectTransfer
             ))))
         }
         return rows

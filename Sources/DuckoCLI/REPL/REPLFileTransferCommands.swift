@@ -113,6 +113,22 @@ private func handleFileTransferREPLCommand(
     }
 }
 
+/// Cancels the direct transfer whose session is `arguments`, or without one this account's newest direct transfer still
+/// under way.
+func handleCancelREPLCommand(_ arguments: String, context: REPLContext) async {
+    let underway = await MainActor.run {
+        context.environment.fileTransferService.activeTransfers.filter { $0.accountID == context.accountID && $0.isUnderwayDirectTransfer }
+    }
+    let transfer = arguments.isEmpty ? underway.last : underway.last { $0.sid == arguments }
+    let notFound = arguments.isEmpty ? CLIError.noDirectTransfers : CLIError.transferNotFound(arguments)
+    // The transfer can end between the lookup and the stop, which then stops nothing.
+    guard let transfer, await context.environment.fileTransferService.cancelTransfer(id: transfer.id) else {
+        print(context.formatter.formatError(notFound))
+        return
+    }
+    print("Canceled file transfer: \(transfer.fileName)")
+}
+
 func handleTransfersREPLCommand(context: REPLContext) async {
     let transfers = await MainActor.run { context.environment.fileTransferService.activeTransfers }
     if transfers.isEmpty {
@@ -120,7 +136,7 @@ func handleTransfersREPLCommand(context: REPLContext) async {
         return
     }
     for transfer in transfers {
-        let state = formatTransferState(transfer.state)
+        let state = formatTransferState(transfer)
         let direction = transfer.direction == .outgoing ? "outgoing" : "incoming"
         let method = switch transfer.method {
         case .httpUpload: "http"

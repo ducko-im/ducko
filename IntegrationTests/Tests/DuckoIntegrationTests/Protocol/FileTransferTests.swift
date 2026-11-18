@@ -84,6 +84,23 @@ extension DuckoIntegrationTests.ProtocolLayer {
             }
         }
 
+        /// Runs only when this build offers no direct candidates, as a debug build run with `DUCKO_JINGLE_PROXY_ONLY=1`
+        /// does, so a SOCKS5 completion can only have gone through the server's proxy.
+        @Test(
+            .enabled(if: !BuildEnvironment.jingleOffersDirectCandidates, "Direct candidates are offered: run a debug build with DUCKO_JINGLE_PROXY_ONLY=1"),
+            .timeLimit(.minutes(1))
+        )
+        @MainActor func `Jingle transfer completes over the server's proxy`() async throws {
+            try await TestHarness.withHarness { harness in
+                try await harness.setUp(accounts: [
+                    "alice": TestCredentials.alice,
+                    "bob": TestCredentials.bob
+                ])
+                let transport = try await Self.runJingleRoundTrip(harness: harness, assertBytesMatch: true)
+                #expect(transport == .socks5)
+            }
+        }
+
         // MARK: - Service Layer
 
         @Test @MainActor func `Service sendFile via HTTP upload delivers the OOB URL`() async throws {
@@ -167,7 +184,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 // receiver (Bob), not the sender — see `runJingleRoundTrip`.
                 _ = try await bob.waitForEvent(
                     matching: { event in
-                        if case let .jingleFileTransferCompleted(completedSID, _) = event, completedSID == offer.sid { return true }
+                        if case let .jingleFileTransferCompleted(completedSID, _, _) = event, completedSID == offer.sid { return true }
                         return false
                     },
                     timeout: TestTimeout.fileTransfer
@@ -208,7 +225,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 // Wait for Bob's own `.jingleFileTransferCompleted` event.
                 _ = try await bob.waitForEvent(
                     matching: { event in
-                        if case let .jingleFileTransferCompleted(completedSID, _) = event, completedSID == offer.sid { return true }
+                        if case let .jingleFileTransferCompleted(completedSID, _, _) = event, completedSID == offer.sid { return true }
                         return false
                     },
                     timeout: TestTimeout.fileTransfer
@@ -233,11 +250,11 @@ extension DuckoIntegrationTests.ProtocolLayer {
         // MARK: - Helpers
 
         /// Drives a full raw-Jingle offer → accept → transfer → completed cycle
-        /// between the harness's alice and bob accounts. `assertBytesMatch`
-        /// enables the bytewise equality check for the happy-path test; the
-        /// fallback test skips it and asserts only on completion.
-        @MainActor
-        private static func runJingleRoundTrip(harness: TestHarness, assertBytesMatch: Bool) async throws {
+        /// between the harness's alice and bob accounts, and returns the
+        /// transport the receiver completed over. `assertBytesMatch` adds a
+        /// bytewise check of the received file.
+        @MainActor @discardableResult
+        private static func runJingleRoundTrip(harness: TestHarness, assertBytesMatch: Bool) async throws -> JingleTransportKind {
             let bob = try #require(harness.accounts["bob"])
             let aliceJingle = try await harness.module(JingleModule.self, for: "alice")
             let bobJingle = try await harness.module(JingleModule.self, for: "bob")
@@ -261,7 +278,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
             }()
             async let sent: Void = {
                 try await aliceJingle.awaitTransportReady(sid: sid)
-                try await aliceJingle.sendFileData(sid: sid, data: fileData)
+                try await aliceJingle.sendFileData(sid: sid, source: InMemoryFileSource(fileData), totalBytes: Int64(fileData.count))
             }()
 
             let receivedBytes = try await received
@@ -272,10 +289,10 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
             // The receiver emits `.jingleFileTransferCompleted` once it verified
             // every byte; the sender returned after the receiver confirmed.
-            _ = try await bob.waitForEvent(
-                matching: { event in
-                    if case let .jingleFileTransferCompleted(completedSID, _) = event, completedSID == sid { return true }
-                    return false
+            return try await bob.waitForEvent(
+                extracting: { event in
+                    if case let .jingleFileTransferCompleted(completedSID, _, transport) = event, completedSID == sid { return transport }
+                    return nil
                 },
                 timeout: TestTimeout.fileTransfer
             )
@@ -319,5 +336,21 @@ extension DuckoIntegrationTests.ProtocolLayer {
             }
             return fullJID
         }
+    }
+}
+
+/// A file held in memory, read a chunk at a time.
+private actor InMemoryFileSource: JingleFileSource {
+    private let bytes: [UInt8]
+    private var offset = 0
+
+    init(_ bytes: [UInt8]) {
+        self.bytes = bytes
+    }
+
+    func read(upTo count: Int) -> [UInt8] {
+        let end = min(offset + count, bytes.count)
+        defer { offset = end }
+        return Array(bytes[offset ..< end])
     }
 }

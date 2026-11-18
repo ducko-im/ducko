@@ -92,15 +92,15 @@ func parseSendFileArgs(_ args: String, currentRoom: String?) -> SendFileTarget {
     return .send(jidString: currentRoom, filePath: args)
 }
 
-func formatTransferState(_ state: FileTransferService.TransferState) -> String {
-    switch state {
+func formatTransferState(_ transfer: FileTransferService.ActiveTransfer) -> String {
+    switch transfer.state {
     case .requestingSlot: "requesting slot"
     case let .uploading(progress): "uploading \(Int(progress * 100))%"
     case let .completed(url): "completed (\(url))"
     case let .failed(reason): "error: \(reason)"
     case .negotiating: "negotiating"
     case .connectingTransport: "connecting"
-    case let .transferring(progress): "transferring \(Int(progress * 100))%"
+    case let .transferring(progress): "transferring \(Int(progress * 100))%" + transferRateSuffix(transfer.rate)
     case .awaitingAcceptance: "awaiting acceptance"
     case .completedTransfer: "completed"
     case let .received(fileURL): "saved to \(fileURL.path)"

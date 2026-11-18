@@ -38,15 +38,18 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         return reason
     }
 
-    /// Puts an accepted incoming Jingle transfer's row in `service` under `sid` and returns its id. A Jingle offer only
-    /// gets a row once the user accepts it, which needs a session, so the rules that act on an existing row start here.
+    /// Puts an accepted incoming Jingle transfer's row in `service` under `sid` and `offerID` and returns its id. A Jingle
+    /// offer only gets a row once the user accepts it, which needs a session, so the rules that act on an existing row
+    /// start here.
     @MainActor
     @discardableResult
-    private static func seedJingleRow(_ service: FileTransferService, sid: String, accountID: UUID = testAccountID) -> UUID {
+    private static func seedJingleRow(
+        _ service: FileTransferService, sid: String, offerID: String, accountID: UUID = testAccountID
+    ) -> UUID {
         let id = UUID()
         service.registerTransferForTesting(.init(
             id: id, accountID: accountID, fileName: "file.bin", fileSize: 1, state: .connectingTransport, method: .jingle,
-            direction: .incoming, sid: sid
+            direction: .incoming, sid: sid, offerID: offerID
         ))
         return id
     }
@@ -487,7 +490,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         }
 
         @Test
-        func `A direct send cut off by the app quitting leaves its row without an outcome`() async throws {
+        func `A direct send cut off by a shutdown with no requested disconnect leaves its row without an outcome`() async throws {
             let harness = try await Self.connect(["laptop": .capable])
             try await harness.deliver(from: "laptop")
             await harness.refresh()
@@ -509,6 +512,70 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             let row = try #require(await harness.chatService.loadMessages(for: conversation.id).last)
             #expect(row.errorText == nil)
             #expect(!row.isDelivered)
+            await Self.tearDown(harness)
+        }
+
+        @Test
+        func `A direct send cut off by a requested disconnect keeps that reason when it then finds no session`() async throws {
+            let harness = try await Self.connect(["laptop": .silent])
+            try await harness.deliver(from: "laptop")
+            try await withTemporaryDirectory { directory in
+                let fileURL = directory.appendingPathComponent("notes.txt")
+                try "abc".write(to: fileURL, atomically: true, encoding: .utf8)
+                let conversation = try await harness.chatService.openConversation(for: Self.contact, accountID: harness.accountID)
+                try await harness.service.startDirectTransfer(url: fileURL, in: conversation, accountID: harness.accountID)
+                // Armed: the send waits for the session's answer to whether it takes files.
+                _ = try await sentStanza(on: harness.transport, matching: { $0.contains("disco#info") && $0.contains("/laptop") })
+
+                harness.service.purgeAccount(harness.accountID)
+                let tasks = harness.service.takePendingTasks()
+                // The disconnect fails the question, so the send then finds no session to go to.
+                await Self.tearDown(harness)
+                let drained = try await boundedOutcome {
+                    for task in tasks {
+                        await task.value
+                    }
+                }
+                try #require(drained != nil)
+
+                let row = try #require(await harness.chatService.loadMessages(for: conversation.id).last)
+                #expect(row.errorText == FileTransferService.LocalEnd.wentOffline.text)
+                #expect(harness.service.failureText(ofTransfer: row.id) == FileTransferService.LocalEnd.wentOffline.text)
+            }
+        }
+
+        /// Stopping a send with no session yet reaches the task `startDirectTransfer` keeps for it, which stops waiting
+        /// for the offer's answer and withdraws the offer.
+        @Test
+        func `Canceling a direct send whose offer is unanswered withdraws it and sends no data`() async throws {
+            let harness = try await Self.connect(["laptop": .capable])
+            try await harness.deliver(from: "laptop")
+            await harness.refresh()
+            try await withTemporaryDirectory { directory in
+                let fileURL = directory.appendingPathComponent("notes.txt")
+                try "abc".write(to: fileURL, atomically: true, encoding: .utf8)
+                let conversation = try await harness.chatService.openConversation(for: Self.contact, accountID: harness.accountID)
+                try await harness.service.startDirectTransfer(url: fileURL, in: conversation, accountID: harness.accountID)
+                // Armed: the offer is out, and the contact has not answered it.
+                _ = try await sentStanza(on: harness.transport, containing: "session-initiate")
+                let rowID = try #require(harness.service.activeTransfers.first { $0.direction == .outgoing }?.id)
+
+                #expect(await harness.service.cancelTransfer(id: rowID))
+
+                let terminate = try await sentStanza(on: harness.transport, containing: "session-terminate")
+                #expect(terminate.contains("<cancel/>"))
+                let tasks = harness.service.takePendingTasks()
+                let drained = try await boundedOutcome {
+                    for task in tasks {
+                        await task.value
+                    }
+                }
+                try #require(drained != nil)
+                let sent = await harness.transport.sentBytes.map { String(decoding: $0, as: UTF8.self) }
+                #expect(!sent.contains { $0.contains("<open") || $0.contains("<data") })
+                let row = try #require(await harness.chatService.loadMessages(for: conversation.id).last)
+                #expect(row.errorText == FileTransferService.LocalEnd.canceled.text)
+            }
             await Self.tearDown(harness)
         }
 
@@ -725,22 +792,25 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
     struct StickyFailure {
         private static func makeFailedService(sid: String) throws -> FileTransferService {
             let service = FileTransferService()
-            seedJingleRow(service, sid: sid)
-            service.handleJingleEvent(.jingleFileTransferFailed(sid: sid, reason: .checksumMismatch), accountID: testAccountID)
+            seedJingleRow(service, sid: sid, offerID: "sticky-offer")
+            service.handleJingleEvent(.jingleFileTransferFailed(sid: sid, offerID: "sticky-offer", reason: .checksumMismatch), accountID: testAccountID)
             return service
         }
 
         @Test
         func `A failed row stays failed after a later progress event`() throws {
             let service = try Self.makeFailedService(sid: "sticky-sid")
-            service.handleJingleEvent(.jingleFileTransferProgress(sid: "sticky-sid", bytesTransferred: 500, totalBytes: 1000), accountID: testAccountID)
+            service.handleJingleEvent(
+                .jingleFileTransferProgress(sid: "sticky-sid", offerID: "sticky-offer", bytesTransferred: 500, totalBytes: 1000, bytesPerSecond: nil),
+                accountID: testAccountID
+            )
             #expect(failureReason(service, sid: "sticky-sid") == "The received file is corrupted")
         }
 
         @Test
         func `A failed row stays failed after a later completion event`() throws {
             let service = try Self.makeFailedService(sid: "sticky-sid")
-            service.handleJingleEvent(.jingleFileTransferCompleted(sid: "sticky-sid", transport: .ibb), accountID: testAccountID)
+            service.handleJingleEvent(.jingleFileTransferCompleted(sid: "sticky-sid", offerID: "sticky-offer", transport: .ibb), accountID: testAccountID)
             #expect(failureReason(service, sid: "sticky-sid") == "The received file is corrupted")
         }
 
@@ -749,8 +819,8 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         @Test
         func `A row whose session ended keeps its outcome when the sid is reused`() throws {
             let service = try Self.makeFailedService(sid: "sticky-sid")
-            let live = seedJingleRow(service, sid: "sticky-sid")
-            service.handleJingleEvent(.jingleFileTransferFailed(sid: "sticky-sid", reason: .decline), accountID: testAccountID)
+            let live = seedJingleRow(service, sid: "sticky-sid", offerID: "live-offer")
+            service.handleJingleEvent(.jingleFileTransferFailed(sid: "sticky-sid", offerID: "live-offer", reason: .decline), accountID: testAccountID)
             #expect(failureReason(service, sid: "sticky-sid") == "The received file is corrupted")
             #expect(failureReason(service, rowID: live) == "The contact declined the transfer")
         }
@@ -797,10 +867,10 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         func `A session's events update only the row of the account they arrived on`() {
             let service = FileTransferService()
             let otherAccountID = UUID()
-            seedJingleRow(service, sid: "shared-sid", accountID: otherAccountID)
-            seedJingleRow(service, sid: "shared-sid", accountID: testAccountID)
+            seedJingleRow(service, sid: "shared-sid", offerID: "shared-offer", accountID: otherAccountID)
+            seedJingleRow(service, sid: "shared-sid", offerID: "shared-offer", accountID: testAccountID)
 
-            service.handleJingleEvent(.jingleFileTransferFailed(sid: "shared-sid", reason: .decline), accountID: testAccountID)
+            service.handleJingleEvent(.jingleFileTransferFailed(sid: "shared-sid", offerID: "shared-offer", reason: .decline), accountID: testAccountID)
 
             let other = service.activeTransfers.first { $0.accountID == otherAccountID }
             guard case .connectingTransport? = other?.state else {
@@ -896,11 +966,11 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         @Test
         func `An event updates the live row, not a finished one under the same sid`() {
             let service = FileTransferService()
-            let finished = seedJingleRow(service, sid: "reused-sid")
-            service.handleJingleEvent(.jingleFileTransferCompleted(sid: "reused-sid", transport: .ibb), accountID: testAccountID)
-            let live = seedJingleRow(service, sid: "reused-sid")
+            let finished = seedJingleRow(service, sid: "reused-sid", offerID: "first-offer")
+            service.handleJingleEvent(.jingleFileTransferCompleted(sid: "reused-sid", offerID: "first-offer", transport: .ibb), accountID: testAccountID)
+            let live = seedJingleRow(service, sid: "reused-sid", offerID: "second-offer")
 
-            service.handleJingleEvent(.jingleFileTransferFailed(sid: "reused-sid", reason: .decline), accountID: testAccountID)
+            service.handleJingleEvent(.jingleFileTransferFailed(sid: "reused-sid", offerID: "second-offer", reason: .decline), accountID: testAccountID)
 
             guard case .completedTransfer? = service.activeTransfers.first(where: { $0.id == finished })?.state else {
                 Issue.record("Expected the earlier session's row to stay completed")
@@ -912,14 +982,35 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             }
         }
 
+        /// Events are dispatched independently, so an earlier session's end can be reported after a later session took
+        /// its sid. The event names its own session, so it reaches neither row.
+        @Test
+        func `A late event of an ended session leaves the later session under its sid alone`() {
+            let service = FileTransferService()
+            let finished = seedJingleRow(service, sid: "reused-sid", offerID: "first-offer")
+            service.handleJingleEvent(.jingleFileTransferCompleted(sid: "reused-sid", offerID: "first-offer", transport: .ibb), accountID: testAccountID)
+            let live = seedJingleRow(service, sid: "reused-sid", offerID: "second-offer")
+
+            service.handleJingleEvent(.jingleFileTransferFailed(sid: "reused-sid", offerID: "first-offer", reason: .decline), accountID: testAccountID)
+
+            guard case .completedTransfer? = service.activeTransfers.first(where: { $0.id == finished })?.state else {
+                Issue.record("Expected the earlier session's row to stay completed")
+                return
+            }
+            guard case .connectingTransport? = service.activeTransfers.first(where: { $0.id == live })?.state else {
+                Issue.record("Expected the later session's row to keep connecting")
+                return
+            }
+        }
+
         /// A link offer's row carries the peer's stanza id, which a Jingle sid can equal. A Jingle event is not about it.
         @Test
         func `A Jingle event under a link offer's id leaves that offer's row alone`() throws {
             let service = FileTransferService()
             try seedOOBOffer(service, id: "oob-1", offerID: "offer-oob-1")
-            let control = seedJingleRow(service, sid: "oob-1")
+            let control = seedJingleRow(service, sid: "oob-1", offerID: "offer-control")
 
-            service.handleJingleEvent(.jingleFileTransferFailed(sid: "oob-1", reason: .cancel), accountID: testAccountID)
+            service.handleJingleEvent(.jingleFileTransferFailed(sid: "oob-1", offerID: "offer-control", reason: .cancel), accountID: testAccountID)
 
             // The event did land on a row, so the link row staying put is not an event that went nowhere.
             #expect(failureReason(service, rowID: control) == "The transfer was canceled")
@@ -1074,7 +1165,10 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             // tracking stopped working altogether.
             #expect(service.incomingOffers.count == 1)
 
-            service.handleJingleEvent(.jingleFileTransferProgress(sid: "progress-sid", bytesTransferred: 500, totalBytes: 1000), accountID: testAccountID)
+            service.handleJingleEvent(
+                .jingleFileTransferProgress(sid: "progress-sid", offerID: "progress-offer", bytesTransferred: 500, totalBytes: 1000, bytesPerSecond: nil),
+                accountID: testAccountID
+            )
 
             // Progress for an offer nobody accepted has no row to move, and must not invent one.
             #expect(service.activeTransfers.isEmpty)
@@ -1090,7 +1184,8 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             (FileTransferService.FileTransferError.noUploadModule, "File upload is not available"),
             (FileTransferService.FileTransferError.noJingleModule, "Direct file transfer is not available"),
             (FileTransferService.FileTransferError.uploadFailed("request too large"), "Upload failed: request too large"),
-            (FileTransferService.FileTransferError.directTransferUnavailable, "The contact has no device online that can receive files directly")
+            (FileTransferService.FileTransferError.directTransferUnavailable, "The contact has no device online that can receive files directly"),
+            (FileTransferService.FileTransferError.transferEnded("You canceled the transfer"), "File transfer failed: You canceled the transfer")
         ])
         func `FileTransferError renders a readable message`(error: FileTransferService.FileTransferError, expected: String) {
             let error: any Error = error
@@ -1107,14 +1202,14 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
     struct JingleTerminateRace {
         private static func makeService() -> (FileTransferService, UUID) {
             let service = FileTransferService()
-            return (service, seedJingleRow(service, sid: "race-sid"))
+            return (service, seedJingleRow(service, sid: "race-sid", offerID: "race-offer"))
         }
 
         @Test
         func `Session cancellation after the terminate event keeps the terminate reason`() {
             let (service, rowID) = Self.makeService()
 
-            service.handleJingleEvent(.jingleFileTransferFailed(sid: "race-sid", reason: .decline), accountID: testAccountID)
+            service.handleJingleEvent(.jingleFileTransferFailed(sid: "race-sid", offerID: "race-offer", reason: .decline), accountID: testAccountID)
             service.recordJingleTransferFailure(JingleModule.JingleError.sessionNotFound, id: rowID)
 
             #expect(failureReason(service, rowID: rowID) == "The contact declined the transfer")
@@ -1125,7 +1220,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             let (service, rowID) = Self.makeService()
 
             service.recordJingleTransferFailure(JingleModule.JingleError.sessionNotFound, id: rowID)
-            service.handleJingleEvent(.jingleFileTransferFailed(sid: "race-sid", reason: .decline), accountID: testAccountID)
+            service.handleJingleEvent(.jingleFileTransferFailed(sid: "race-sid", offerID: "race-offer", reason: .decline), accountID: testAccountID)
 
             #expect(failureReason(service, rowID: rowID) == "The contact declined the transfer")
         }
@@ -1134,7 +1229,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         func `Transport teardown after the terminate event keeps the terminate reason`() {
             let (service, rowID) = Self.makeService()
 
-            service.handleJingleEvent(.jingleFileTransferFailed(sid: "race-sid", reason: .cancel), accountID: testAccountID)
+            service.handleJingleEvent(.jingleFileTransferFailed(sid: "race-sid", offerID: "race-offer", reason: .cancel), accountID: testAccountID)
             service.recordJingleTransferFailure(JingleModule.JingleError.transportFailed("The connection was closed"), id: rowID)
 
             #expect(failureReason(service, rowID: rowID) == "The transfer was canceled")
@@ -1145,7 +1240,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             let (service, rowID) = Self.makeService()
             let error = CocoaError(.fileReadNoSuchFile)
 
-            service.handleJingleEvent(.jingleFileTransferFailed(sid: "race-sid", reason: .cancel), accountID: testAccountID)
+            service.handleJingleEvent(.jingleFileTransferFailed(sid: "race-sid", offerID: "race-offer", reason: .cancel), accountID: testAccountID)
             service.recordJingleTransferFailure(error, id: rowID)
 
             #expect(failureReason(service, rowID: rowID) == error.localizedDescription)
@@ -1173,7 +1268,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             service.handleJingleEvent(.jingleFileTransferReceived(offer), accountID: testAccountID)
             #expect(service.incomingOffers.count == 1)
 
-            service.handleJingleEvent(.jingleFileTransferCompleted(sid: "complete-sid", transport: .socks5), accountID: testAccountID)
+            service.handleJingleEvent(.jingleFileTransferCompleted(sid: "complete-sid", offerID: "complete-offer", transport: .socks5), accountID: testAccountID)
 
             #expect(service.incomingOffers.isEmpty)
             #expect(service.activeTransfers.isEmpty)
@@ -1182,108 +1277,14 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
 
     @MainActor
     struct JingleTaskFailureRecording {
-        private static let peerJID = "bob@example.com/res"
+        private static let peerJID = DirectTransferHarness.peerJID
 
-        private struct Harness {
-            let accountService: AccountService
-            let store: MockPersistenceStore
-            let chatService: ChatService
-            let service: FileTransferService
-            let transport: MockTransport
-            let accountID: UUID
-            let connectTask: Task<Void, any Error>
+        private static func connect(downloadsDirectory: URL = FileManager.default.temporaryDirectory) async throws -> DirectTransferHarness {
+            try await DirectTransferHarness.connect(downloadsDirectory: downloadsDirectory, takesLinkOffers: true)
         }
 
-        private static func connect(downloadsDirectory: URL = FileManager.default.temporaryDirectory) async throws -> Harness {
-            let store = MockPersistenceStore()
-            let account = try Account(
-                id: UUID(), jid: #require(BareJID.parse(testJIDString)), isEnabled: true, connectOnLaunch: false, createdAt: Date()
-            )
-            await store.addAccount(account)
-            let transport = MockTransport()
-            let accountService = makeAccountService(
-                store: store, clientFactory: MockXMPPClientFactory(transport: transport, modules: [JingleModule(), OOBModule()])
-            )
-            try await accountService.loadAccounts()
-            let chatService = ChatService(store: store, transcripts: MockTranscriptStore(), filterPipeline: MessageFilterPipeline())
-            let service = FileTransferService(downloadsDirectory: downloadsDirectory)
-            service.setAccountService(accountService)
-            service.setChatService(chatService)
-            // Only offers are forwarded: each test replays the failure event itself, so it controls whether the event
-            // lands before or after the transfer task's catch runs.
-            accountService.onEvent = { [weak service] event, accountID in
-                if case .jingleFileTransferReceived = event { service?.handleJingleEvent(event, accountID: accountID) }
-                if case .oobIQOfferReceived = event { service?.handleJingleEvent(event, accountID: accountID) }
-            }
-            // A requested disconnect reaches no event handler, so the purge stands in for `AppEnvironment`'s wiring.
-            accountService.onRequestedDisconnect = { [weak service] accountID in service?.purgeAccount(accountID) }
-            let (_, connectTask) = try await driveMockConnect(accountService, accountID: account.id, transport: transport)
-            return Harness(
-                accountService: accountService, store: store, chatService: chatService, service: service,
-                transport: transport, accountID: account.id, connectTask: connectTask
-            )
-        }
-
-        private static func tearDown(_ harness: Harness) async {
-            harness.connectTask.cancel()
-            await harness.accountService.disconnectAll()
-        }
-
-        private static func sessionInitiateXML(sid: String, size: Int = 3) -> String {
-            """
-            <iq type='set' id='initiate-\(sid)' from='\(peerJID)'>\
-            <jingle xmlns='urn:xmpp:jingle:1' action='session-initiate' sid='\(sid)' initiator='\(peerJID)'>\
-            <content creator='initiator' name='a-file-offer'>\
-            <description xmlns='urn:xmpp:jingle:apps:file-transfer:5'><file><name>test.txt</name><size>\(size)</size></file></description>\
-            <transport xmlns='urn:xmpp:jingle:transports:s5b:1' sid='transport-sid'/>\
-            </content>\
-            </jingle>\
-            </iq>
-            """
-        }
-
-        private static func transportReplaceXML(sid: String, ibbSID: String? = nil) -> String {
-            """
-            <iq type='set' id='replace-\(sid)' from='\(peerJID)'>\
-            <jingle xmlns='urn:xmpp:jingle:1' action='transport-replace' sid='\(sid)'>\
-            <content creator='initiator' name='a-file-offer'>\
-            <transport xmlns='urn:xmpp:jingle:transports:ibb:1' sid='\(ibbSID ?? "ibb-\(sid)")' block-size='4096'/>\
-            </content>\
-            </jingle>\
-            </iq>
-            """
-        }
-
-        private static func candidateErrorXML(sid: String) -> String {
-            """
-            <iq type='set' id='candidate-error-\(sid)' from='\(peerJID)'>\
-            <jingle xmlns='urn:xmpp:jingle:1' action='transport-info' sid='\(sid)'>\
-            <content creator='initiator' name='a-file-offer'>\
-            <transport xmlns='urn:xmpp:jingle:transports:s5b:1' sid='transport-sid'><candidate-error/></transport>\
-            </content>\
-            </jingle>\
-            </iq>
-            """
-        }
-
-        private static func transportAcceptXML(sid: String) -> String {
-            """
-            <iq type='set' id='accept-\(sid)' from='\(peerJID)'>\
-            <jingle xmlns='urn:xmpp:jingle:1' action='transport-accept' sid='\(sid)'>\
-            <content creator='initiator' name='a-file-offer'>\
-            <transport xmlns='urn:xmpp:jingle:transports:ibb:1' sid='ibb-\(sid)' block-size='4096'/>\
-            </content>\
-            </jingle>\
-            </iq>
-            """
-        }
-
-        private static func declineXML(sid: String) -> String {
-            """
-            <iq type='set' id='terminate-\(sid)' from='\(peerJID)'>\
-            <jingle xmlns='urn:xmpp:jingle:1' action='session-terminate' sid='\(sid)'><reason><decline/></reason></jingle>\
-            </iq>
-            """
+        private static func tearDown(_ harness: DirectTransferHarness) async {
+            await harness.tearDown()
         }
 
         private static func poll(_ condition: () -> Bool) async throws {
@@ -1295,7 +1296,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
 
         /// Waits for the offer the peer sent under `wireID` — a Jingle sid or an OOB stanza id — and returns the id this
         /// side gave it.
-        private static func waitForOffer(_ harness: Harness, wireID: String, from sender: String? = nil) async throws -> String {
+        private static func waitForOffer(_ harness: DirectTransferHarness, wireID: String, from sender: String? = nil) async throws -> String {
             func lookUp() -> String? {
                 harness.service.incomingOffers.first { $0.offer.sid == wireID }?.offer.offerID
                     ?? harness.service.incomingOOBOffers.first { pending in
@@ -1306,10 +1307,13 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             return try #require(lookUp())
         }
 
-        /// Replays the peer's decline event, then delivers the decline stanza that fails the transfer task's wait.
-        private static func deliverDecline(_ harness: Harness, sid: String) async {
-            harness.service.handleJingleEvent(.jingleFileTransferFailed(sid: sid, reason: .decline), accountID: harness.accountID)
-            await harness.transport.simulateReceive(declineXML(sid: sid))
+        /// Replays the peer's decline event for the session of `offerID`, then delivers the decline stanza that fails the
+        /// transfer task's wait.
+        private static func deliverDecline(_ harness: DirectTransferHarness, sid: String, offerID: String) async {
+            harness.service.handleJingleEvent(
+                .jingleFileTransferFailed(sid: sid, offerID: offerID, reason: .decline), accountID: harness.accountID
+            )
+            await harness.peerTerminates(sid: sid, reason: "decline")
         }
 
         /// Takes the one transfer task the test started. Taken before the stanza that ends it, which could otherwise let
@@ -1333,12 +1337,11 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         @Test
         func `An accepted transfer keeps the decline after its transport wait fails`() async throws {
             let harness = try await Self.connect()
-            await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "accept-sid"))
-            let offerID = try await Self.waitForOffer(harness, wireID: "accept-sid")
+            let offerID = try await harness.receiveOffer(sid: "accept-sid")
 
             try await harness.service.acceptIncomingTransfer(offerID, accountID: harness.accountID)
             let tasks = Self.takeTransferTask(harness.service)
-            await Self.deliverDecline(harness, sid: "accept-sid")
+            await Self.deliverDecline(harness, sid: "accept-sid", offerID: offerID)
             try await Self.drain(tasks)
 
             #expect(failureReason(harness.service, sid: "accept-sid") == "The contact declined the transfer")
@@ -1348,13 +1351,14 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         @Test
         func `A failed accepted transfer keeps its first failure`() async throws {
             let harness = try await Self.connect()
-            await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "recover-sid", size: 0))
-            let offerID = try await Self.waitForOffer(harness, wireID: "recover-sid")
+            let offerID = try await harness.receiveOffer(sid: "recover-sid", size: 0)
 
             try await harness.service.acceptIncomingTransfer(offerID, accountID: harness.accountID)
             let tasks = Self.takeTransferTask(harness.service)
-            harness.service.handleJingleEvent(.jingleFileTransferFailed(sid: "recover-sid", reason: .connectivityError), accountID: harness.accountID)
-            await harness.transport.simulateReceive(Self.transportReplaceXML(sid: "recover-sid"))
+            harness.service.handleJingleEvent(
+                .jingleFileTransferFailed(sid: "recover-sid", offerID: offerID, reason: .connectivityError), accountID: harness.accountID
+            )
+            await harness.peerSwitchesToIBB(sid: "recover-sid", ibbSID: "ibb-recover-sid")
             try await Self.drain(tasks)
 
             #expect(failureReason(harness.service, sid: "recover-sid") == "The contact could not be reached")
@@ -1364,12 +1368,11 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         @Test
         func `An accepted transfer of an empty file records the invalid size`() async throws {
             let harness = try await Self.connect()
-            await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "empty-sid", size: 0))
-            let offerID = try await Self.waitForOffer(harness, wireID: "empty-sid")
+            let offerID = try await harness.receiveOffer(sid: "empty-sid", size: 0)
 
             try await harness.service.acceptIncomingTransfer(offerID, accountID: harness.accountID)
             let tasks = Self.takeTransferTask(harness.service)
-            await harness.transport.simulateReceive(Self.transportReplaceXML(sid: "empty-sid"))
+            await harness.peerSwitchesToIBB(sid: "empty-sid", ibbSID: "ibb-empty-sid")
             try await Self.drain(tasks)
 
             #expect(failureReason(harness.service, sid: "empty-sid") == "The file size is invalid")
@@ -1402,7 +1405,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         }
 
         /// Whether this side answered the peer's OOB request `id` with a result.
-        private static func answeredOffer(_ harness: Harness, id: String) async -> Bool {
+        private static func answeredOffer(_ harness: DirectTransferHarness, id: String) async -> Bool {
             await harness.transport.sentBytes.contains { bytes in
                 let stanza = String(decoding: bytes, as: UTF8.self)
                 return stanza.contains(id) && stanza.contains("result")
@@ -1514,8 +1517,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         @Test
         func `A session-accept that fails to send returns the offer for another try`() async throws {
             let harness = try await Self.connect()
-            await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "retry-sid"))
-            let offerID = try await Self.waitForOffer(harness, wireID: "retry-sid")
+            let offerID = try await harness.receiveOffer(sid: "retry-sid")
 
             await harness.transport.simulateSendFailure(XMPPClientError.notConnected)
             await #expect(throws: (any Error).self) {
@@ -1532,23 +1534,6 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             await Self.tearDown(harness)
         }
 
-        /// Plays the peer's side of an outgoing offer until its session exists: answers proxy discovery with no items and
-        /// acknowledges the session-initiate. Returns that stanza and the sid it named.
-        private static func acknowledgeOffer(_ harness: Harness) async throws -> (stanza: String, sid: String) {
-            let discoItems = try #require(await harness.transport.waitForSent(matching: { $0.contains("disco#items") }))
-            let discoID = try #require(discoItems.firstMatch(of: /id=["']([^"']+)["']/)?.output.1)
-            await harness.transport.simulateReceive(
-                "<iq type='result' id='\(discoID)' from='example.com'><query xmlns='http://jabber.org/protocol/disco#items'/></iq>"
-            )
-            let initiate = try #require(await harness.transport.waitForSent { $0.contains("session-initiate") })
-            let initiateID = try #require(initiate.firstMatch(of: /\sid=["']([^"']+)["']/)?.output.1)
-            await harness.transport.simulateReceive("<iq type='result' id='\(initiateID)' from='\(peerJID)'/>")
-            // The row exists before its session does, so wait for the row to be given the session's sid.
-            try await poll { harness.service.activeTransfers.contains { $0.method == .jingle && $0.direction == .outgoing && $0.sid != nil } }
-            let sid = try #require(harness.service.activeTransfers.first { $0.method == .jingle && $0.direction == .outgoing }?.sid)
-            return (initiate, sid)
-        }
-
         /// A send whose write fails ends its session with an incomplete failure, and that event retires its row and frees
         /// its sid. A later transfer the peer offers under that sid gets its own row rather than the failed send's.
         @Test
@@ -1559,17 +1544,14 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 try "abc".write(to: fileURL, atomically: true, encoding: .utf8)
                 let service = harness.service
                 let accountID = harness.accountID
-                let sendTask = Task {
-                    try await service.sendFile(url: fileURL, in: makeConversation(), accountID: accountID, method: .jingle, peerJID: Self.peerJID)
-                }
-                let sid = try await Self.acknowledgeOffer(harness).sid
+                let (sendTask, sid) = try await harness.send(fileURL)
+                try await harness.awaitAnsweredOffer(sid: sid)
+                let sentOfferID = try harness.outgoingOfferID()
 
                 // The peer's candidate-error switches the send to IBB and its transport-accept makes that ready; opening
                 // the IBB stream then fails, which fails the write.
                 await harness.transport.failNextSend(matching: "http://jabber.org/protocol/ibb", error: XMPPClientError.sendFailed("The connection was closed"))
-                await harness.transport.simulateReceive(Self.candidateErrorXML(sid: sid))
-                _ = await harness.transport.waitForSent { $0.contains("transport-replace") }
-                await harness.transport.simulateReceive(Self.transportAcceptXML(sid: sid))
+                try await harness.switchToIBB(sid: sid)
                 let sent = try await boundedOutcome { _ = try await sendTask.value }
                 guard case .failure? = sent else {
                     Issue.record("Expected the send to fail, got \(String(describing: sent))")
@@ -1583,14 +1565,15 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 }
                 try #require(terminated != nil)
                 // The session's failure event reaches the service after the send task's catch, as dispatch orders it.
-                service.handleJingleEvent(.jingleFileTransferFailed(sid: sid, reason: .incomplete), accountID: accountID)
+                service.handleJingleEvent(.jingleFileTransferFailed(sid: sid, offerID: sentOfferID, reason: .incomplete), accountID: accountID)
                 #expect(failureReason(service, sid: sid) == JingleTransferFailureReason.incomplete.displayText)
 
-                await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: sid))
-                let offerID = try await Self.waitForOffer(harness, wireID: sid)
+                let offerID = try await harness.receiveOffer(sid: sid)
                 try await service.acceptIncomingTransfer(offerID, accountID: accountID)
                 _ = Self.takeTransferTask(service)
-                service.handleJingleEvent(.jingleFileTransferProgress(sid: sid, bytesTransferred: 1, totalBytes: 3), accountID: accountID)
+                service.handleJingleEvent(
+                    .jingleFileTransferProgress(sid: sid, offerID: offerID, bytesTransferred: 1, totalBytes: 3, bytesPerSecond: nil), accountID: accountID
+                )
 
                 let incoming = service.activeTransfers.first { $0.sid == sid && $0.direction == .incoming }
                 guard case .transferring? = incoming?.state else {
@@ -1609,19 +1592,17 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 let fileURL = directory.appendingPathComponent("jingle.txt")
                 try "abc".write(to: fileURL, atomically: true, encoding: .utf8)
                 let service = harness.service
-                let accountID = harness.accountID
-                let sendTask = Task {
-                    try await service.sendFile(url: fileURL, in: makeConversation(), accountID: accountID, method: .jingle, peerJID: Self.peerJID)
-                }
+                let (sendTask, sid) = try await harness.send(fileURL)
+                try await harness.awaitAnsweredOffer(sid: sid)
 
-                let initiate = try await Self.acknowledgeOffer(harness)
-                #expect(initiate.stanza.contains("algo=\"sha-256\""))
-                #expect(initiate.stanza.contains(JingleFileDescription.sha256Hash(of: Array("abc".utf8))))
-                let sid = initiate.sid
+                let initiate = try await sentStanza(on: harness.transport, containing: "session-initiate")
+                #expect(initiate.contains("algo=\"sha-256\""))
+                #expect(initiate.contains(JingleFileDescription.sha256Hash(of: Array("abc".utf8))))
 
-                await Self.deliverDecline(harness, sid: sid)
+                try await Self.deliverDecline(harness, sid: sid, offerID: harness.outgoingOfferID())
                 let outcome = try await boundedOutcome { _ = try? await sendTask.value }
                 #expect(outcome != nil)
+                try await Self.drain(service.takePendingTasks())
 
                 #expect(failureReason(harness.service, sid: sid) == "The contact declined the transfer")
                 // The file's row in the chat keeps the reason once the transfer row is gone.
@@ -1641,15 +1622,15 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 try "abc".write(to: fileURL, atomically: true, encoding: .utf8)
                 let service = harness.service
                 let accountID = harness.accountID
-                let sendTask = Task {
-                    try await service.sendFile(url: fileURL, in: makeConversation(), accountID: accountID, method: .jingle, peerJID: Self.peerJID)
-                }
-                let sid = try await Self.acknowledgeOffer(harness).sid
+                let (sendTask, sid) = try await harness.send(fileURL)
+                try await harness.awaitAnsweredOffer(sid: sid)
+                let offerID = try harness.outgoingOfferID()
 
-                await harness.transport.simulateReceive(Self.declineXML(sid: sid))
+                await harness.peerTerminates(sid: sid, reason: "decline")
                 let outcome = try await boundedOutcome { _ = try? await sendTask.value }
                 try #require(outcome != nil)
-                service.handleJingleEvent(.jingleFileTransferFailed(sid: sid, reason: .decline), accountID: accountID)
+                service.handleJingleEvent(.jingleFileTransferFailed(sid: sid, offerID: offerID, reason: .decline), accountID: accountID)
+                try await Self.drain(service.takePendingTasks())
 
                 #expect(failureReason(service, sid: sid) == "The contact declined the transfer")
                 // The task's own error named the same reason under a label. Both rows keep the reason alone.
@@ -1663,8 +1644,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         @Test
         func `Accepting an offer replaces its banner with a connecting transfer`() async throws {
             let harness = try await Self.connect()
-            await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "banner-sid"))
-            let offerID = try await Self.waitForOffer(harness, wireID: "banner-sid")
+            let offerID = try await harness.receiveOffer(sid: "banner-sid")
 
             try await harness.service.acceptIncomingTransfer(offerID, accountID: harness.accountID)
 
@@ -1684,13 +1664,12 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         @Test
         func `An accepted transfer's row follows progress and then completion`() async throws {
             let harness = try await Self.connect()
-            await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "state-sid"))
-            let offerID = try await Self.waitForOffer(harness, wireID: "state-sid")
+            let offerID = try await harness.receiveOffer(sid: "state-sid")
             try await harness.service.acceptIncomingTransfer(offerID, accountID: harness.accountID)
             let tasks = Self.takeTransferTask(harness.service)
 
             harness.service.handleJingleEvent(
-                .jingleFileTransferProgress(sid: "state-sid", bytesTransferred: 500, totalBytes: 1000),
+                .jingleFileTransferProgress(sid: "state-sid", offerID: offerID, bytesTransferred: 500, totalBytes: 1000, bytesPerSecond: nil),
                 accountID: harness.accountID
             )
             if case let .transferring(progress)? = harness.service.activeTransfers.first(where: { $0.sid == "state-sid" })?.state {
@@ -1700,7 +1679,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             }
 
             harness.service.handleJingleEvent(
-                .jingleFileTransferCompleted(sid: "state-sid", transport: .ibb), accountID: harness.accountID
+                .jingleFileTransferCompleted(sid: "state-sid", offerID: offerID, transport: .ibb), accountID: harness.accountID
             )
             if case .completedTransfer? = harness.service.activeTransfers.first(where: { $0.sid == "state-sid" })?.state {
                 // Expected
@@ -1708,7 +1687,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 Issue.record("Expected completedTransfer, got \(String(describing: harness.service.activeTransfers.first { $0.sid == "state-sid" }?.state))")
             }
 
-            await Self.deliverDecline(harness, sid: "state-sid")
+            await Self.deliverDecline(harness, sid: "state-sid", offerID: offerID)
             try await Self.drain(tasks)
             await Self.tearDown(harness)
         }
@@ -1716,8 +1695,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         @Test
         func `An accepted transfer claims its receive`() async throws {
             let harness = try await Self.connect()
-            await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "claim-sid"))
-            let offerID = try await Self.waitForOffer(harness, wireID: "claim-sid")
+            let offerID = try await harness.receiveOffer(sid: "claim-sid")
             try await harness.service.acceptIncomingTransfer(offerID, accountID: harness.accountID)
             let client = try #require(harness.accountService.connectedClient(for: harness.accountID))
             let module = try #require(await client.module(ofType: JingleModule.self))
@@ -1726,7 +1704,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             var isClaimed = false
             for attempt in 0 ..< 50 where !isClaimed {
                 await harness.transport.clearSentBytes()
-                await harness.transport.simulateReceive(Self.transportReplaceXML(sid: "claim-sid", ibbSID: "ibb-probe-\(attempt)"))
+                await harness.peerSwitchesToIBB(sid: "claim-sid", ibbSID: "ibb-probe-\(attempt)")
                 let reply = await harness.transport.waitForSent { $0.contains("transport-accept") || $0.contains("transport-reject") }
                 isClaimed = reply?.contains("transport-reject") == true
             }
@@ -1742,11 +1720,10 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         func `An accepted transfer saves the file and adds it to the sender's conversation`() async throws {
             try await withTemporaryDirectory { directory in
                 let harness = try await Self.connect(downloadsDirectory: directory)
-                await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "save-sid"))
-                let offerID = try await Self.waitForOffer(harness, wireID: "save-sid")
+                let offerID = try await harness.receiveOffer(sid: "save-sid")
 
                 try await harness.service.acceptIncomingTransfer(offerID, accountID: harness.accountID)
-                await harness.transport.simulateReceive(Self.transportReplaceXML(sid: "save-sid", ibbSID: "ibb-save"))
+                await harness.peerSwitchesToIBB(sid: "save-sid", ibbSID: "ibb-save")
                 await harness.transport.simulateReceive(
                     "<iq type='set' id='data-0' from='\(Self.peerJID)'><data xmlns='http://jabber.org/protocol/ibb' sid='ibb-save' seq='0'>AQID</data></iq>"
                 )
@@ -1771,10 +1748,11 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 // and a transcript append, so it can land after it. Replayed here in that order: the row has to keep the
                 // file it saved, or the UI is left with a bare completion and nothing for Quick Look and Reveal to open.
                 harness.service.handleJingleEvent(
-                    .jingleFileTransferCompleted(sid: "save-sid", transport: .ibb), accountID: harness.accountID
+                    .jingleFileTransferCompleted(sid: "save-sid", offerID: offerID, transport: .ibb), accountID: harness.accountID
                 )
                 harness.service.handleJingleEvent(
-                    .jingleFileTransferProgress(sid: "save-sid", bytesTransferred: 1, totalBytes: 3), accountID: harness.accountID
+                    .jingleFileTransferProgress(sid: "save-sid", offerID: offerID, bytesTransferred: 1, totalBytes: 3, bytesPerSecond: nil),
+                    accountID: harness.accountID
                 )
                 #expect(Self.savedFileURL(harness.service, sid: "save-sid") == fileURL)
                 await Self.tearDown(harness)
@@ -1785,7 +1763,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             "<iq type='set' id='\(id)' from='\(sender)'><query xmlns='jabber:iq:oob'><url>\(url.absoluteString)</url></query></iq>"
         }
 
-        private static func sentStanzas(_ harness: Harness) async -> [String] {
+        private static func sentStanzas(_ harness: DirectTransferHarness) async -> [String] {
             await harness.transport.sentBytes.map { String(decoding: $0, as: UTF8.self) }
         }
 
@@ -1799,7 +1777,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 let harness = try await Self.connect(downloadsDirectory: directory)
                 await harness.transport.simulateReceive(Self.oobOfferXML(id: "same-id", url: server.url()))
                 let linkOfferID = try await Self.waitForOffer(harness, wireID: "same-id")
-                await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "same-id"))
+                await harness.transport.simulateReceive(DirectTransferHarness.sessionInitiateXML(sid: "same-id"))
                 try await Self.poll { !harness.service.incomingOffers.isEmpty }
                 let fileOfferID = try #require(harness.service.incomingOffers.first?.offer.offerID)
 
@@ -1852,10 +1830,8 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         @Test
         func `Declining an accepted offer does not end its transfer`() async throws {
             let harness = try await Self.connect()
-            await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "taken-sid"))
-            let taken = try await Self.waitForOffer(harness, wireID: "taken-sid")
-            await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "waiting-sid"))
-            let waiting = try await Self.waitForOffer(harness, wireID: "waiting-sid")
+            let taken = try await harness.receiveOffer(sid: "taken-sid")
+            let waiting = try await harness.receiveOffer(sid: "waiting-sid")
             try await harness.service.acceptIncomingTransfer(taken, accountID: harness.accountID)
             _ = Self.takeTransferTask(harness.service)
 
@@ -1945,7 +1921,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
         /// Runs `operation` with its send containing `fragment` held on the wire, drops the account's offers while it is
         /// held, then fails that send, and expects `operation` to throw.
         private static func purgeDuringHeldSend(
-            _ harness: Harness, matching fragment: String, _ operation: @escaping @MainActor @Sendable () async throws -> Void
+            _ harness: DirectTransferHarness, matching fragment: String, _ operation: @escaping @MainActor @Sendable () async throws -> Void
         ) async throws {
             let transport = harness.transport
             await transport.blockSends { $0.contains(fragment) }
@@ -1958,13 +1934,13 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
             await #expect(throws: (any Error).self) { try await task.value }
         }
 
-        /// A session-accept still in flight when the account's offers are dropped: its failure must not put the offer
-        /// back, and its row ends failed rather than connecting. A later session reusing the sid gets its own row.
+        /// A session-accept still in flight when the account is disconnected: its failure must not put the offer back,
+        /// and its row ends as having stopped when the user went offline rather than connecting. A later session reusing
+        /// the sid gets its own row.
         @Test
         func `A Jingle accept failing after its offers were dropped fails its row instead of restoring the offer`() async throws {
             let harness = try await Self.connect()
-            await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "dropped-sid"))
-            let offerID = try await Self.waitForOffer(harness, wireID: "dropped-sid")
+            let offerID = try await harness.receiveOffer(sid: "dropped-sid")
             let service = harness.service
             let accountID = harness.accountID
 
@@ -1974,15 +1950,17 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
 
             #expect(!service.viewIncomingOffers.contains { $0.offerID == offerID })
             let failedRow = try #require(service.activeTransfers.first { $0.sid == "dropped-sid" }?.id)
-            #expect(failureReason(service, rowID: failedRow) == Self.disconnectedText)
+            #expect(failureReason(service, rowID: failedRow) == FileTransferService.LocalEnd.wentOffline.text)
 
             // The peer ends the first session and offers again under its sid.
-            await harness.transport.simulateReceive(Self.declineXML(sid: "dropped-sid"))
-            await harness.transport.simulateReceive(Self.sessionInitiateXML(sid: "dropped-sid"))
-            let secondOfferID = try await Self.waitForOffer(harness, wireID: "dropped-sid")
+            await harness.peerTerminates(sid: "dropped-sid", reason: "decline")
+            let secondOfferID = try await harness.receiveOffer(sid: "dropped-sid")
             try await service.acceptIncomingTransfer(secondOfferID, accountID: accountID)
             _ = Self.takeTransferTask(service)
-            service.handleJingleEvent(.jingleFileTransferProgress(sid: "dropped-sid", bytesTransferred: 1, totalBytes: 3), accountID: accountID)
+            service.handleJingleEvent(
+                .jingleFileTransferProgress(sid: "dropped-sid", offerID: secondOfferID, bytesTransferred: 1, totalBytes: 3, bytesPerSecond: nil),
+                accountID: accountID
+            )
 
             let liveRow = service.activeTransfers.first { $0.sid == "dropped-sid" && $0.id != failedRow }
             guard case .transferring? = liveRow?.state else {
@@ -1990,7 +1968,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 await Self.tearDown(harness)
                 return
             }
-            #expect(failureReason(service, rowID: failedRow) == Self.disconnectedText)
+            #expect(failureReason(service, rowID: failedRow) == FileTransferService.LocalEnd.wentOffline.text)
             await Self.tearDown(harness)
         }
 
