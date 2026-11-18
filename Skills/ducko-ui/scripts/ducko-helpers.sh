@@ -107,17 +107,18 @@ on findButtonByLabel(el, labelWanted, depth, maxDepth)
     return missing value
 end findButtonByLabel
 
--- The first element whose value holds an "@", which in Preferences > Accounts is an account row.
-on findAccountRow(el, depth, maxDepth)
+-- An element of the Preferences > Accounts row for accountJid, or of the first row when accountJid is "".
+-- Rows carry the JID in their identifier, so a row showing a display name is found as well.
+on findAccountRow(el, accountJid, depth, maxDepth)
     tell application "System Events"
         if depth > maxDepth then return missing value
         try
             repeat with c in (UI elements of el)
                 try
-                    set v to value of c
-                    if v is not missing value and v contains "@" then return c
+                    set elemId to value of attribute "AXIdentifier" of c
+                    if elemId is ("account-row-" & accountJid) or (accountJid is "" and elemId starts with "account-row-") then return c
                 end try
-                set found to my findAccountRow(c, depth + 1, maxDepth)
+                set found to my findAccountRow(c, accountJid, depth + 1, maxDepth)
                 if found is not missing value then return found
             end repeat
         end try
@@ -140,6 +141,19 @@ on collectStaticTexts(el, depth, maxDepth)
     end tell
     return acc
 end collectStaticTexts
+
+-- The static texts under root whose value holds msgText. An empty msgText matches every text with a value.
+on messageTextsContaining(root, msgText)
+    set matchingTexts to {}
+    tell application "System Events"
+        repeat with mt in (my collectStaticTexts(root, 0, 30))
+            try
+                if (value of mt) contains msgText then set end of matchingTexts to contents of mt
+            end try
+        end repeat
+    end tell
+    return matchingTexts
+end messageTextsContaining
 
 on collectByRole(el, roleWanted, depth, maxDepth)
     set acc to {}
@@ -195,6 +209,19 @@ ducko_as_raise_window_by_id() {
             delay ${raise_delay}
 EOF
     ducko_as_find_window_by_id "$identifier" "$error_msg" "$var_name"
+    ducko_as_require_front_window "$var_name" "the window holding ${identifier}"
+}
+
+# Stop unless the app is frontmost and the window is its main window, since keystrokes, menu shortcuts and the Escape
+# that closes a context menu go to whatever window is key. Emit it inside `tell process`.
+# Args: window_var window_description
+ducko_as_require_front_window() {
+    local window_var="$1"
+    local window_description="$2"
+    cat << EOF
+            if not frontmost then return "ERROR: DuckoUITest is not the frontmost app"
+            if (value of attribute "AXMain" of ${window_var}) is not true then return "ERROR: ${window_description} is not in front"
+EOF
 }
 
 # Find a window by its scene id (such as `contacts` or `chat`), which is the window's own
@@ -234,6 +261,7 @@ ducko_as_raise_scene_window() {
 EOF
     ducko_as_find_scene_window "$scene_id" "$var_name"
     echo "            if ${var_name} is missing value then return \"ERROR: ${error_msg}\""
+    ducko_as_require_front_window "$var_name" "the ${scene_id} window"
 }
 
 # Find an element by AXIdentifier within a window variable.
@@ -275,7 +303,8 @@ ducko_as_fill_field_by_id() {
     ducko_as_fill_element "fillTarget" "$value_expr"
 }
 
-# Type a value into a text field element, replacing its contents.
+# Type a value into a text field element, replacing its contents. Stops when the
+# field does not take the keyboard focus, which would send the keystrokes elsewhere.
 # Args: element_var value_expr
 ducko_as_fill_element() {
     local element_var="$1"
@@ -283,6 +312,7 @@ ducko_as_fill_element() {
     cat << EOF
             set focused of ${element_var} to true
             delay 0.2
+            if (focused of ${element_var}) is not true then return "ERROR: the field did not take the keyboard focus"
             keystroke "a" using command down
             delay 0.1
             keystroke ${value_expr}
@@ -304,21 +334,13 @@ ducko_as_find_message_by_text() {
     cat << EOF
             set msgRoot to my findByAttr(${window_var}, "AXIdentifier", "message-list", 0, 30)
             if msgRoot is missing value then set msgRoot to ${window_var}
-            set msgTexts to my collectStaticTexts(msgRoot, 0, 30)
-            set ${var_name} to missing value
+            set msgTexts to my messageTextsContaining(msgRoot, ${search_text_var})
+            if (count of msgTexts) is 0 then return "ERROR: ${error_msg}"
             if ${search_text_var} is "" then
-                if (count of msgTexts) > 0 then set ${var_name} to item -1 of msgTexts
+                set ${var_name} to item -1 of msgTexts
             else
-                repeat with mt in msgTexts
-                    try
-                        if (value of mt) contains ${search_text_var} then
-                            set ${var_name} to contents of mt
-                            exit repeat
-                        end if
-                    end try
-                end repeat
+                set ${var_name} to item 1 of msgTexts
             end if
-            if ${var_name} is missing value then return "ERROR: ${error_msg}"
 EOF
 }
 
@@ -367,18 +389,18 @@ EOF
     fi
 }
 
-# Select the first account in Preferences > Accounts and click an item of its
-# Actions pull-down, which only appears once the account is connected. Emit it
-# inside `tell application "System Events"`, not inside `tell process`.
+# Select an account in Preferences > Accounts. The account_expr is an
+# AppleScript expression for its JID, such as a variable name, or "" for the
+# first account. Emit it inside `tell application "System Events"`, not inside
+# `tell process`.
 # Sets the AppleScript variable prefsWin to the Preferences window.
-# Args: menu_item_name [error_msg]
-ducko_as_click_account_action() {
-    local menu_item_name="$1"
-    local error_msg="${2:-}"
+# Args: [account_expr]
+ducko_as_select_account_row() {
+    local account_expr="${1:-\"\"}"
     cat << EOF
             set prefsWin to missing value
             repeat with win in (windows of process "DuckoUITest")
-                set acctRow to my findAccountRow(win, 0, 30)
+                set acctRow to my findAccountRow(win, ${account_expr}, 0, 30)
                 if acctRow is not missing value then
                     set prefsWin to contents of win
                     exit repeat
@@ -387,7 +409,19 @@ ducko_as_click_account_action() {
             if prefsWin is missing value then return "ERROR: account row not found"
 $(ducko_as_select_table_row acctRow "could not select the account row")
             delay 0.4
+EOF
+}
 
+# Select the first account in Preferences > Accounts and click an item of its
+# Actions pull-down, which only appears once the account is connected. Emit it
+# inside `tell application "System Events"`, not inside `tell process`.
+# Sets the AppleScript variable prefsWin to the Preferences window.
+# Args: menu_item_name [error_msg]
+ducko_as_click_account_action() {
+    local menu_item_name="$1"
+    local error_msg="${2:-}"
+    ducko_as_select_account_row
+    cat << EOF
             -- A SwiftUI Menu bridges as a menu/pop-up button, not AXButton, so match by identifier alone.
             set actionsMenu to my findByAttr(prefsWin, "AXIdentifier", "account-actions-menu", 0, 30)
             if actionsMenu is missing value then return "ERROR: Actions menu not found (is an account row selected and connected?)"

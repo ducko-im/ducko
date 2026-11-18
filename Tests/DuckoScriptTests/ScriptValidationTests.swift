@@ -198,6 +198,16 @@ struct ScriptValidationTests {
         }
     }
 
+    @Test func `every script is executable`() throws {
+        // The other tests run each script as `/bin/bash <path>`, which ignores the executable bit, but `vm.sh ui` and
+        // direct runs execute the file itself.
+        for script in try automationScripts() {
+            let path = ScriptRunner.scriptsDirectory.appendingPathComponent(script).path
+            let permissions = try #require(FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int)
+            #expect(permissions & 0o100 != 0, "\(script) lacks the user-executable bit")
+        }
+    }
+
     @Test(arguments: try automationScripts())
     func `every script stops at the location gate before running anything`(_ script: String) throws {
         let captured = try ScriptRunner.capture(script, arguments: [], hostOptIn: false)
@@ -304,6 +314,7 @@ private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-contact-search.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument], response: "searched"),
     HandlerScriptCase(script: "ducko-destroy-room.sh", arguments: [scriptSpecialArgument], appleScriptArguments: [], invocations: ["ducko-room-settings.sh", "sleep", "osascript"]),
     HandlerScriptCase(script: "ducko-device-trust.sh", arguments: [scriptSpecialArgument, "trust"], appleScriptArguments: ["-", scriptSpecialArgument, "trust"]),
+    HandlerScriptCase(script: "ducko-edit-account.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument], invocations: ["ducko-preferences.sh", "ducko-preferences-tab.sh", "sleep", "osascript"]),
     HandlerScriptCase(script: "ducko-edit-profile.sh", arguments: ["--fullname", scriptSpecialArgument, "--nickname", scriptSpecialArgument, "--email", scriptSpecialArgument, "--save"], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, "yes"], invocations: ["ducko-profile.sh", "sleep", "osascript"]),
     HandlerScriptCase(script: "ducko-import.sh", arguments: [], appleScriptArguments: []),
     HandlerScriptCase(script: "ducko-join-room.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
@@ -319,6 +330,7 @@ private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-room-settings-tab.sh", arguments: ["Members"], appleScriptArguments: ["-", "Members"]),
     HandlerScriptCase(script: "ducko-room-topic.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-select-mode.sh", arguments: ["Register"], appleScriptArguments: ["-", "Register"]),
+    HandlerScriptCase(script: "ducko-send.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-send-unencrypted.sh", arguments: [], appleScriptArguments: []),
     HandlerScriptCase(script: "ducko-sign-in-security.sh", arguments: ["dont-allow"], appleScriptArguments: ["-", "dont-allow"]),
     HandlerScriptCase(script: "ducko-sign-in-security.sh", arguments: ["allow"], appleScriptArguments: ["-", "allow"], invocations: ["pgrep", "osascript"]),

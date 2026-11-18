@@ -52,6 +52,7 @@ struct AccountsPreferencesView: View {
                     Text(account.displayName ?? account.jid.description)
                         .singleLine()
                 }
+                .accessibilityIdentifier("account-row-\(account.jid)")
             }
             .listStyle(.bordered)
             .takesKeyboardOnClick()
@@ -202,6 +203,7 @@ private struct AccountDetailView: View {
                     Button("Edit…") {
                         onEdit()
                     }
+                    .accessibilityIdentifier("account-edit-button")
 
                     if isConnected {
                         actionsMenu
