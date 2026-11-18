@@ -1,6 +1,6 @@
 import AppKit
 import Testing
-@testable import DuckoApp
+@testable import DuckoUI
 
 @MainActor
 struct KeyboardFocusTests {
@@ -55,6 +55,18 @@ struct KeyboardFocusTests {
 
         // The field typed in since keeps the keyboard.
         #expect(fixture.other.currentEditor() != nil)
+    }
+
+    @Test func `a cursor past the end of text shortened since stays at its end`() throws {
+        let fixture = try Self.makeFixture()
+        fixture.field.currentEditor()?.selectedRange = NSRange(location: 3, length: 2)
+        let focus = KeyboardFocus(in: fixture.window)
+        try #require(fixture.window.makeFirstResponder(nil))
+        fixture.field.stringValue = "hi"
+
+        focus.restore(in: fixture.window)
+
+        #expect(fixture.field.currentEditor()?.selectedRange == NSRange(location: 2, length: 0))
     }
 
     @Test func `a field still being typed in is left alone`() throws {

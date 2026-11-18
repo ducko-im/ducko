@@ -76,7 +76,7 @@ A row whose window is "Menu bar" or "Contacts (menu bar)" names a menu-bar item.
 | `password-field` | Password field in account setup | Contacts |
 | `connect-button` | Connect button in account setup | Contacts |
 | `reply-compose-bar` | Reply/edit compose bar above input | Chat |
-| `message-search-bar` | Cmd+F find bar above the messages. With matches it shows Previous Match and Next Match buttons and a match count. The count reads `2/7`, the current match's number and the total, or the total alone while no match is current | Chat, Chat History |
+| `message-search-bar` | Cmd+F find bar above the messages. With matches it shows Previous Match and Next Match buttons and a match count. The count reads `2/7`, the current match's number and the total, or the total alone while no match is current. Its search field takes the keyboard when Cmd+F opens it, and Escape closes it | Chat, Chat History |
 | `edit-menu-search-all-conversations` | Edit ▸ Search All Conversations (⌥⌘F): puts the cursor in the Chat History window's toolbar search field. Enabled only while that window is focused | Menu bar |
 | `sort-mode-menu` | "Sort Contacts" picker, in the View menu bar | Contacts (menu bar) |
 | `hide-offline-menu` | "Hide Offline Contacts" toggle (⌘⇧H), in the View menu bar | Contacts (menu bar) |

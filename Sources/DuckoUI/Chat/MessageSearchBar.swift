@@ -7,6 +7,8 @@ struct MessageSearchBar: View {
     /// The current match's number, counted from one, or nil while none is current.
     let currentMatchNumber: Int?
     var focusesOnAppear = true
+    /// Changes whenever the field is to take the keyboard.
+    var focusRequest = 0
     var showsProgress = false
     let onSubmit: () -> Void
     let onPrevious: () -> Void
@@ -20,9 +22,13 @@ struct MessageSearchBar: View {
                 .textFieldStyle(.roundedBorder)
                 .focused($isTextFieldFocused)
                 .onAppear {
-                    if focusesOnAppear { isTextFieldFocused = true }
+                    // Asked one turn later. On appearing, the field is not in the window yet, and asked then, it does
+                    // not get the keyboard.
+                    if focusesOnAppear { Task { isTextFieldFocused = true } }
                 }
+                .onChange(of: focusRequest) { isTextFieldFocused = true }
                 .onSubmit(onSubmit)
+                .onExitCommand(perform: onDone)
 
             if showsProgress {
                 ProgressView()

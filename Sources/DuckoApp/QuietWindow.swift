@@ -1,4 +1,5 @@
 import AppKit
+import DuckoUI
 
 /// Shows a window without interrupting: it comes up behind the window the user is in, or was in before switching to
 /// another app, and that window keeps the keyboard and what had it.

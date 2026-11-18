@@ -5,6 +5,11 @@ public struct ChatContainerView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(ChatContainerState.self) private var container
     @Environment(\.appearsActive) private var appearsActive
+    /// Counts the requests for the selected tab's message field to take the keyboard.
+    @State private var messageFieldFocusRequest = 0
+    /// Counts the requests for the selected tab's find bar field to take the keyboard.
+    @State private var searchFieldFocusRequest = 0
+    @State private var messageField = MessageFieldReference()
 
     public init() {}
 
@@ -31,7 +36,12 @@ public struct ChatContainerView: View {
 
         VStack(spacing: 0) {
             if let state = container.selectedState {
-                ChatView(windowState: state)
+                ChatView(
+                    windowState: state,
+                    messageFieldFocusRequest: messageFieldFocusRequest,
+                    searchFieldFocusRequest: searchFieldFocusRequest,
+                    messageField: messageField
+                )
             } else {
                 emptyState
             }
@@ -42,6 +52,16 @@ public struct ChatContainerView: View {
         }
         .frame(minWidth: 380, minHeight: 320)
         .background { secondaryTabShortcuts }
+        .background {
+            ChatKeyboardKeeper(
+                selectedKey: container.selectedKey,
+                isOpeningQuietly: container.isOpeningQuietly,
+                isSearching: container.selectedState?.isSearching ?? false,
+                messageField: messageField,
+                requestMessageField: { messageFieldFocusRequest += 1 },
+                requestSearchField: { searchFieldFocusRequest += 1 }
+            )
+        }
         .navigationTitle(container.selectedState?.displayName ?? "Chat")
         .focusedSceneValue(\.chatWindowState, container.selectedState)
         .onChange(of: observedLastMessageDate) {

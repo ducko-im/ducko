@@ -7,6 +7,10 @@ struct MessageInputView: View {
     private static let keypadEnter = KeyEquivalent("\u{3}")
 
     @Bindable var windowState: ChatWindowState
+    /// Changes whenever the field is to take the keyboard.
+    let focusRequest: Int
+    /// Lets the chat window find the field.
+    let reference: MessageFieldReference
     @State private var isSending = false
     @State private var selection: TextSelection?
     @FocusState private var isInputFocused: Bool
@@ -66,7 +70,8 @@ struct MessageInputView: View {
                     }
                     .focused($isInputFocused)
                     .accessibilityIdentifier("message-field")
-                    .onAppear { isInputFocused = true }
+                    .background { MessageFieldAnchor(reference: reference) }
+                    .onChange(of: focusRequest) { focusField() }
 
                 Button {
                     sendMessage()
@@ -89,6 +94,13 @@ struct MessageInputView: View {
         ) { result in
             handleFileImporterResult(result)
         }
+    }
+
+    /// Gives the field the keyboard with the cursor after the draft. Taking the keyboard selects the whole draft, which
+    /// the next key typed would replace, and that selection lands after this call.
+    private func focusField() {
+        isInputFocused = true
+        Task { selection = TextSelection(insertionPoint: windowState.draftText.endIndex) }
     }
 
     /// The field inserts no line break for these keys itself. Replaces the selection with one and leaves the cursor

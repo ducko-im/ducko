@@ -3,6 +3,9 @@ import SwiftUI
 
 struct ChatView: View {
     let windowState: ChatWindowState
+    let messageFieldFocusRequest: Int
+    let searchFieldFocusRequest: Int
+    let messageField: MessageFieldReference
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,6 +28,7 @@ struct ChatView: View {
                     text: Bindable(windowState).searchText,
                     matchTotal: windowState.searchResults.count,
                     currentMatchNumber: windowState.currentSearchResultID.map { _ in windowState.currentSearchIndex + 1 },
+                    focusRequest: searchFieldFocusRequest,
                     onSubmit: windowState.performSearch,
                     onPrevious: windowState.previousSearchResult,
                     onNext: windowState.nextSearchResult,
@@ -44,7 +48,7 @@ struct ChatView: View {
 
                     Divider()
 
-                    MessageInputView(windowState: windowState)
+                    MessageInputView(windowState: windowState, focusRequest: messageFieldFocusRequest, reference: messageField)
                 }
 
                 if windowState.isGroupchat, windowState.showParticipantSidebar {

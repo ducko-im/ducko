@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Let a server that still stores only a SCRAM-SHA-1 password upgrade it to a stronger hash during sign-in (XEP-0480), so later sign-ins use SCRAM-SHA-256 or stronger. Ducko helps only on sign-ins bound to the encrypted connection, and only once the server has proved it knows the password
 - Show a server's registration CAPTCHA when creating an account, checking a registration, or registering from the CLI (XEP-0158, XEP-0221, XEP-0231). The image appears above its answer field, and the server's own web page is offered for a challenge Ducko can't show. Ducko solves a proof-of-work challenge itself, so a server that accepts it registers you without asking for the image. The CLI saves the image to a private file for you to open and deletes it when the command ends
 - Show a fresh form when a server refuses a registration, with its error and what you typed kept, so a wrong CAPTCHA answer can be tried again
+- Type anywhere in a chat window to write in its message field, and get the keyboard back where you left it when you return to the window, switch tabs, or close the find bar. ⌘F puts the keyboard in the find bar, and Escape closes it
 
 ### Changed
 
