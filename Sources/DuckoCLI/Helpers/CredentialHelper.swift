@@ -16,6 +16,17 @@ enum CredentialHelper {
         return try readHiddenLine(prompt: "Password: ")
     }
 
+    /// Reads a new password twice from the terminal without echoing it, refusing an empty one or a differing second entry.
+    static func readNewPassword() throws -> String {
+        guard let password = try readHiddenLine(prompt: "New password: ") else {
+            throw CLIError.noHiddenInput(field: "new password")
+        }
+        guard !password.isEmpty else { throw CLIError.emptyNewPassword }
+        let confirmation = try readHiddenLine(prompt: "Confirm new password: ")
+        guard confirmation == password else { throw CLIError.newPasswordsDiffer }
+        return password
+    }
+
     /// Reads one line from the terminal without echoing it, or returns nil when not running in a TTY.
     static func readHiddenLine(prompt: String) throws -> String? {
         guard isatty(STDIN_FILENO) != 0 else { return nil }

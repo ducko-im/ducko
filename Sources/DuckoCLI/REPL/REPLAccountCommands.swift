@@ -50,6 +50,16 @@ func handleSubmitRegistrationREPLCommand(_ arguments: String, context: REPLConte
     }
 }
 
+func handleChangePasswordREPLCommand(context: REPLContext) async {
+    do {
+        let newPassword = try CredentialHelper.readNewPassword()
+        try await context.environment.accountService.changePassword(accountID: context.accountID, newPassword: newPassword)
+        print("Password changed.")
+    } catch {
+        print(context.formatter.formatError(error))
+    }
+}
+
 func handleAvatarREPLCommand(_ arguments: String, context: REPLContext) async {
     if arguments.isEmpty {
         let hash = await MainActor.run { context.environment.avatarService.ownAvatarHash(for: context.accountID) }

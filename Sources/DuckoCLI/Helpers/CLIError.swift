@@ -6,6 +6,8 @@ enum CLIError: Error, LocalizedError {
     case noPassword
     case noHiddenInput(field: String)
     case hiddenInputTooLong(maxBytes: Int)
+    case emptyNewPassword
+    case newPasswordsDiffer
     case invalidJID(String)
     case connectionFailed(String)
     case connectionTimeout
@@ -25,6 +27,7 @@ enum CLIError: Error, LocalizedError {
     case noDirectTransfers
     case malformedQuotedArgument(String)
     case omemoDeviceNotFound(deviceID: UInt32, jid: String)
+    case omemoFingerprintMismatch(deviceID: UInt32, jid: String)
     case unlistedOption(String)
     case notYesOrNo(String)
     case registrationRedirected
@@ -43,6 +46,10 @@ enum CLIError: Error, LocalizedError {
             "No \(field) provided. Run in a terminal to enter it interactively."
         case let .hiddenInputTooLong(maxBytes):
             "Hidden input can be at most \(maxBytes) bytes long."
+        case .emptyNewPassword:
+            "The new password is empty."
+        case .newPasswordsDiffer:
+            "The new passwords do not match."
         case let .invalidJID(jid):
             "Invalid JID: \(jid)"
         case let .connectionFailed(message):
@@ -79,6 +86,8 @@ enum CLIError: Error, LocalizedError {
             "Invalid nickname argument: \(detail). Quote nicknames containing spaces, e.g. \"Alice Smith\"."
         case let .omemoDeviceNotFound(deviceID, jid):
             "Device \(deviceID) not found for \(jid)."
+        case let .omemoFingerprintMismatch(deviceID, jid):
+            "The fingerprint does not match the key of device \(deviceID) for \(jid)."
         case let .unlistedOption(value):
             "\(value) is not one of the listed options."
         case let .notYesOrNo(value):

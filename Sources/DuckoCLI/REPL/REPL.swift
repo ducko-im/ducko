@@ -11,12 +11,13 @@ func runREPL(formatter: any CLIFormatter, environment: AppEnvironment, accountID
         guard !trimmed.isEmpty else { continue }
 
         let command = REPLCommand(trimmed)
-        let arguments = command.arguments.trimmingCharacters(in: .whitespaces)
-        if let change = await dispatchREPLCommand(command.kind, arguments: arguments, context: context, currentRoom: currentRoom) {
-            currentRoom = change.applying(to: currentRoom)
-        } else {
+        guard let kind = command.kind else {
             print("Unknown command: \(trimmed). Type 'help' for commands.")
+            continue
         }
+        let arguments = command.arguments.trimmingCharacters(in: .whitespaces)
+        let change = await dispatchREPLCommand(kind, arguments: arguments, context: context, currentRoom: currentRoom)
+        currentRoom = change.applying(to: currentRoom)
     }
 
     await quitREPL(context: context, currentRoom: currentRoom)
@@ -39,10 +40,10 @@ struct REPLContext {
     let accountJID: BareJID
 }
 
-/// Returns `nil` for an unrecognized command; handlers that can change the current room report the change.
+/// Handlers that can change the current room report the change.
 private func dispatchREPLCommand(
-    _ kind: REPLCommand.Kind?, arguments: String, context: REPLContext, currentRoom: String?
-) async -> RoomSelectionChange? {
+    _ kind: REPLCommand.Kind, arguments: String, context: REPLContext, currentRoom: String?
+) async -> RoomSelectionChange {
     switch kind {
     case .send: await handleSendCommand(arguments, context: context)
     case .roster: await handleRosterCommand(context: context)
@@ -57,14 +58,14 @@ private func dispatchREPLCommand(
     case .edit: await handleEditREPLCommand(arguments, context: context)
     case .search: await handleSearchREPLCommand(arguments, context: context)
     case .searchAll: await handleSearchAllREPLCommand(arguments, context: context)
-    case .approve: await handleApproveREPLCommand(arguments, context: context)
-    case .deny: await handleDenyREPLCommand(arguments, context: context)
+    case .approve, .deny: await handleSubscriptionRequestREPLCommand(arguments, context: context, denying: kind == .deny)
     case .block, .unblock: await handleBlockREPLCommand(arguments, context: context, unblocking: kind == .unblock)
     case .blocklist: await handleBlockListREPLCommand(context: context)
     case .directedPresence: await handleDirectedPresenceREPLCommand(arguments, context: context)
     case .unregisterAccount: await handleUnregisterAccountREPLCommand(context: context)
     case .checkRegistration: await handleCheckRegistrationREPLCommand(arguments, context: context)
     case .submitRegistration: await handleSubmitRegistrationREPLCommand(arguments, context: context)
+    case .changePassword: await handleChangePasswordREPLCommand(context: context)
     case .join: return await handleJoinREPLCommand(arguments, context: context)
     case .leave: return await handleLeaveREPLCommand(arguments, context: context, currentRoom: currentRoom)
     case .members: await handleMembersREPLCommand(arguments, context: context, currentRoom: currentRoom)
@@ -86,11 +87,11 @@ private func dispatchREPLCommand(
     case .avatar: await handleAvatarREPLCommand(arguments, context: context)
     case .connectionInfo: await handleConnectionInfoREPLCommand(context: context)
     case .encrypt: await handleEncryptREPLCommand(arguments, context: context)
+    case .omemoVerify: await handleOMEMOVerifyREPLCommand(arguments, context: context)
     case .omemoReset: await handleOMEMOResetREPLCommand(arguments, context: context)
     case .pref: await handlePrefREPLCommand(arguments)
     case .help: print(REPLCommand.help)
     case .quit: await quitREPL(context: context, currentRoom: currentRoom)
-    case nil: return nil
     }
     return .unchanged
 }

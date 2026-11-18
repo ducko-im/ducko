@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Mark a contact's OMEMO device verified from the CLI with `ducko omemo verify <jid> <device-id> <fingerprint>` or `/omemo-verify` in `ducko interactive`, after comparing its fingerprint with the one their device shows. A fingerprint that names another key is refused
+- Change an account's password from the CLI with `ducko account change-password <jid>` or `/change-password` in `ducko interactive`, which ask for the new password twice
+
+### Fixed
+
+- Fix log lines going missing or being cut short when the app and the CLI, or two CLI sessions, run on the same profile, and keep each one logging to the current file after another rotates it, so `ducko logs show` prints its lines
+
 ## [0.13.0] - 2026-11-18
 
 ### Added

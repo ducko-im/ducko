@@ -30,7 +30,7 @@ public actor FileTranscriptStore: TranscriptStore {
     }
 
     public init(baseDirectory: URL) {
-        self.init(baseDirectory: baseDirectory, openFileHandle: Self.openAppendFile)
+        self.init(baseDirectory: baseDirectory, openFileHandle: FileHandle.openOwnerOnlyForAppending(at:))
     }
 
     init(baseDirectory: URL, openFileHandle: @escaping @Sendable (URL) throws -> FileHandle) {
@@ -413,19 +413,6 @@ public actor FileTranscriptStore: TranscriptStore {
     private func ensureDirectoryExists(for conversationID: UUID) throws {
         let dir = conversationDirectory(for: conversationID)
         try FileManager.default.createOwnerOnlyDirectory(at: dir)
-    }
-
-    private static func openAppendFile(_ fileURL: URL) throws -> FileHandle {
-        let path = fileURL.path
-        let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
-        guard fd >= 0 else {
-            let posixError = POSIXError(.init(rawValue: errno) ?? .ENOENT)
-            throw CocoaError(.fileWriteUnknown, userInfo: [
-                NSFilePathErrorKey: path,
-                NSUnderlyingErrorKey: posixError
-            ])
-        }
-        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
     }
 
     private func appendRecord(_ record: TranscriptRecord, to fileURL: URL, conversationID: UUID) throws {

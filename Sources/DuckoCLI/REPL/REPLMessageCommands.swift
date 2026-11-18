@@ -232,6 +232,23 @@ func handleEncryptREPLCommand(_ arguments: String, context: REPLContext) async {
     }
 }
 
+func handleOMEMOVerifyREPLCommand(_ arguments: String, context: REPLContext) async {
+    let parts = arguments.split(separator: " ", maxSplits: 2)
+    guard parts.count == 3, let deviceID = UInt32(parts[1]) else {
+        print("Usage: /omemo-verify <jid> <device-id> <fingerprint>")
+        return
+    }
+    let jid = String(parts[0])
+    do {
+        try await verifyOMEMODevice(
+            jid: jid, deviceID: deviceID, fingerprint: String(parts[2]), accountID: context.accountID, environment: context.environment
+        )
+        print(context.formatter.formatOMEMOTrustChange(jid: jid, deviceID: deviceID, trustLevel: .verified))
+    } catch {
+        print(context.formatter.formatError(error))
+    }
+}
+
 func handleOMEMOResetREPLCommand(_ arguments: String, context: REPLContext) async {
     let parts = arguments.split(separator: " ")
     guard (1 ... 2).contains(parts.count) else {

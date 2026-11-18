@@ -9,8 +9,8 @@ struct REPLCommandTests {
     }
 
     @Test(arguments: [
-        "", "send", "/send a hi", "Send a hi", "/add", "/reply", "/remove", "/approve", "/deny", "/block", "/unblock", "/edit", "/retract", "/search", "/searchall", "/encrypt", "/omemo-reset", "/pref", "/directed-presence",
-        "/roster extra", "/who extra", "/profile extra", "/blocklist extra", "/transfers extra", "/connection-info extra", "/unregister-account extra", "help extra", "quit extra", "exit extra",
+        "", "send", "/send a hi", "Send a hi", "/add", "/reply", "/remove", "/approve", "/deny", "/block", "/unblock", "/edit", "/retract", "/search", "/searchall", "/encrypt", "/omemo-verify", "/omemo-reset", "/pref", "/directed-presence",
+        "/roster extra", "/who extra", "/profile extra", "/blocklist extra", "/transfers extra", "/connection-info extra", "/unregister-account extra", "/change-password extra", "help extra", "quit extra", "exit extra",
         "/joiner room", "/join\troom", "send\ta hi", "/pm\nAlice hi", "/unknown"
     ])
     func `unrecognized forms stay unknown`(input: String) {
@@ -25,7 +25,8 @@ struct REPLCommandTests {
         ("/approve alice@example.com", .approve), ("/deny alice@example.com", .deny),
         ("/block alice@example.com/laptop", .block), ("/unblock alice@example.com", .unblock), ("/blocklist", .blocklist),
         ("/directed-presence alice@example.com", .directedPresence),
-        ("/encrypt alice@example.com on", .encrypt), ("/omemo-reset alice@example.com 7", .omemoReset), ("/pref chatstates off", .pref)
+        ("/encrypt alice@example.com on", .encrypt), ("/omemo-verify alice@example.com 7 d9f71a68 33945da8", .omemoVerify),
+        ("/omemo-reset alice@example.com 7", .omemoReset), ("/pref chatstates off", .pref)
     ])
     func `argument requiring commands retain their grammar`(input: String, expected: REPLCommand.Kind) {
         #expect(REPLCommand(input).kind == expected)
@@ -100,6 +101,7 @@ Commands:
   /unregister-account      Unregister account from server
   /check-registration [jid]  Show server registration form
   /submit-registration [jid] Submit registration to server/component
+  /change-password         Change the account's password on the server
   /join <room> [nick]      Join a MUC room
   /leave [room]            Leave a MUC room
   /members [room]          Show room occupants
@@ -122,6 +124,7 @@ Commands:
   /avatar [jid]            View avatar info (own or contact's)
   /connection-info         Show TLS connection info
   /encrypt <jid> on|off    Toggle OMEMO encryption for a conversation
+  /omemo-verify <jid> <id> <fingerprint>  Mark a device verified after comparing its fingerprint
   /omemo-reset <jid> [id]  Reset OMEMO sessions with a contact's or your other devices
   /pref chatstates on|off  Toggle chat state notifications
   /pref markers on|off      Toggle displayed markers (read receipts)

@@ -7,7 +7,7 @@ extension DuckoCLI {
     struct Account: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Manage XMPP accounts",
-            subcommands: [List.self, Add.self, Set.self, Delete.self, Unregister.self, Register.self, CheckRegistration.self],
+            subcommands: [List.self, Add.self, Set.self, Delete.self, Unregister.self, Register.self, CheckRegistration.self, ChangePassword.self],
             defaultSubcommand: List.self
         )
 
@@ -301,6 +301,34 @@ extension DuckoCLI {
                     domain: server, host: endpoint.host, port: endpoint.port ?? 5222
                 )
                 print(formatter.formatRegistrationForm(form))
+            }
+        }
+
+        struct ChangePassword: AsyncParsableCommand {
+            static let configuration = CommandConfiguration(
+                commandName: "change-password",
+                abstract: "Change an account's password on the server via XEP-0077"
+            )
+
+            @Argument(help: "The bare JID of the account")
+            var jid: String
+
+            func run() async throws {
+                let context = try await MainActor.run {
+                    try CLIBootstrap.setUp(formatter: PlainFormatter())
+                }
+                let env = context.environment
+
+                let account = try await resolveAccount(byJID: jid, environment: env)
+                guard let password = try CredentialHelper.getPassword(for: account.jid.description, using: env.credentialStore) else {
+                    throw CLIError.noPassword
+                }
+                let newPassword = try CredentialHelper.readNewPassword()
+
+                try await ConnectedOperation.run(environment: env, account: account, password: password) {
+                    try await env.accountService.changePassword(accountID: account.id, newPassword: newPassword)
+                    print("Password changed: \(jid)")
+                }
             }
         }
     }

@@ -108,6 +108,43 @@ struct FileLogHandlerTests {
         }
     }
 
+    // MARK: - Shared File
+
+    @Test
+    func `writers sharing the file keep each other's lines`() throws {
+        try withTemporaryDirectory { dir in
+            let first = FileLogWriter(directory: dir)
+            let second = FileLogWriter(directory: dir)
+
+            for i in 0 ..< 3 {
+                first.write("first \(i)\n")
+                second.write("second \(i)\n")
+            }
+
+            let content = try String(contentsOf: dir.appendingPathComponent("ducko.log"), encoding: .utf8)
+            #expect(content == (0 ..< 3).map { "first \($0)\nsecond \($0)\n" }.joined())
+        }
+    }
+
+    @Test
+    func `a writer follows the file after another writer rotated it`() throws {
+        try withTemporaryDirectory { dir in
+            let rotating = FileLogWriter(directory: dir, maxFileSize: 100, maxArchivedFiles: 3)
+            let other = FileLogWriter(directory: dir, maxFileSize: 100, maxArchivedFiles: 3)
+            other.write("before rotation\n")
+
+            rotating.write(String(repeating: "x", count: 100) + "\n")
+            other.write("noticing rotation\n")
+            other.write("after rotation\n")
+
+            let current = try String(contentsOf: dir.appendingPathComponent("ducko.log"), encoding: .utf8)
+            let archived = try String(contentsOf: dir.appendingPathComponent("ducko.1.log"), encoding: .utf8)
+            #expect(current == "after rotation\n")
+            #expect(archived == "before rotation\n" + String(repeating: "x", count: 100) + "\nnoticing rotation\n")
+            #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("ducko.2.log").path))
+        }
+    }
+
     // MARK: - All Log Files
 
     @Test

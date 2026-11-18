@@ -42,28 +42,19 @@ func handleRemoveCommand(_ jidString: String, context: REPLContext) async {
     }
 }
 
-func handleApproveREPLCommand(_ jidString: String, context: REPLContext) async {
-    await handleSubscriptionCommand(jidString, context: context, success: "Approved subscription from") {
-        try await context.environment.rosterService.approveSubscription(jidString: $0, accountID: context.accountID)
-    }
-}
-
-func handleDenyREPLCommand(_ jidString: String, context: REPLContext) async {
-    await handleSubscriptionCommand(jidString, context: context, success: "Denied subscription from") {
-        try await context.environment.rosterService.denySubscription(jidString: $0, accountID: context.accountID)
-    }
-}
-
-private func handleSubscriptionCommand(
-    _ jidString: String, context: REPLContext, success: String, action: (String) async throws -> Void
-) async {
+func handleSubscriptionRequestREPLCommand(_ jidString: String, context: REPLContext, denying: Bool) async {
     guard BareJID.parse(jidString) != nil else {
         print(context.formatter.formatError(CLIError.invalidJID(jidString)))
         return
     }
     do {
-        try await action(jidString)
-        print("\(success) \(jidString).")
+        if denying {
+            try await context.environment.rosterService.denySubscription(jidString: jidString, accountID: context.accountID)
+            print("Denied subscription from \(jidString).")
+        } else {
+            try await context.environment.rosterService.approveSubscription(jidString: jidString, accountID: context.accountID)
+            print("Approved subscription from \(jidString).")
+        }
     } catch {
         print(context.formatter.formatError(error))
     }

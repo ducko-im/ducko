@@ -81,6 +81,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/profile` — view own vCard profile
 - `/connection-info` — show TLS connection info (protocol, cipher, certificate)
 - `/encrypt <jid> on|off` — toggle OMEMO encryption for a conversation. `off` also keeps a contact's encrypted message from switching it back on.
+- `/omemo-verify <jid> <device-id> <fingerprint>` — mark a device verified after comparing its fingerprint, as `omemo verify` does
 - `/omemo-reset <jid> [device-id]` — reset the OMEMO sessions with the contact's devices, or with your other devices for your own JID, as `omemo reset` does
 - `/pref chatstates on|off` — toggle chat state notifications (typing indicators)
 - `/pref markers on|off` — toggle displayed markers (read receipts)
@@ -94,6 +95,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/directed-presence <jid>` — send directed presence to a JID
 - `/check-registration [jid]` — show server registration form
 - `/submit-registration [jid]` — submit registration to server/component. It prompts for every field the form asks for: a legacy form's elements, such as username, password, nick, name and email, all of them required, or a data form's fields. Enter keeps the current value. A required field asks again until it has one. Input that ends at a field's prompt submits nothing. A form that only names a web page is printed and not submitted. The legacy password and a text-private field read hidden input of at most 4094 bytes from the terminal. Without a terminal, a text-private field keeps its value, and a required one that has none ends with `No <field> provided…`. A boolean field takes yes or no (also y/n, on/off, true/false, 1/0) and asks again on any other answer. A list field takes only a listed option's value or label, comma-separated for list-multi. Text-multi and jid-multi read lines up to an empty one, and jid-multi also splits on commas.
+- `/change-password` — change the account's password on the server, as `account change-password` does, then print `Password changed.`
 - `/unregister-account` — unregister account from server
 - `help` — show available commands
 - `quit` / `exit` — disconnect and exit
@@ -343,6 +345,21 @@ Fetch and display a server's XEP-0077 registration form without registering: its
 ducko account check-registration --server example.com
 ```
 
+### `account change-password <jid>`
+
+Change an account's password on its server via XEP-0077 and save the new one, then print `Password changed: <jid>`. It prompts twice for the new password, reading hidden input from the terminal.
+
+It exits 1 without asking the server when:
+
+- the first entry is empty: `The new password is empty.`
+- the second entry differs: `The new passwords do not match.`
+- there is no terminal: `No new password provided…`
+- the connection is unencrypted: the error names `Sending a password needs an encrypted connection`
+
+```
+ducko account change-password alice@example.com
+```
+
 ### `account unregister <jid> [--include-history]`
 
 Unregister an account from its server via XEP-0077 and remove it locally. With `--include-history`, also deletes stored chat transcripts for the account.
@@ -431,6 +448,16 @@ Untrust an OMEMO device. Marks the device as untrusted, preventing encrypted ses
 ducko omemo untrust alice@example.com 12345
 ```
 
+### `omemo verify <jid> <device-id> <fingerprint>...`
+
+Mark an OMEMO device verified, after comparing its fingerprint with the one the contact's device shows. The command joins its remaining arguments, so the fingerprint can be pasted unquoted as `omemo devices` prints it. Case and spacing don't matter, and the raw form that `--output json` shows as `fingerprint` is accepted too. It prints `Verified device <id> for <jid>.`, and JSON emits an `omemo_trust` record with `trust` `verified`.
+
+It exits 1 for a fingerprint that names another key (`The fingerprint does not match the key of device <id> for <jid>.`), and for a device that is unknown or no longer on the contact's device list (`Device <id> not found for <jid>.`). A device whose key is not known yet cannot be verified either.
+
+```
+ducko omemo verify alice@example.com 12345 d9f71a68 33945da8 bda259e2 9a179ad2 e5092fe1 4d7372af 800da323 3b16ce4f
+```
+
 ### `omemo reset <jid> [--device <id>]`
 
 Reset the OMEMO sessions with every device on the contact's current list, or with one device. With the account's own JID it resets the account's other devices, and naming this device with `--device` is refused. A trusted or undecided device gets a new session and an empty key-exchange message. It is reported as still needing trusting when it is not trusted for encryption, as an undecided device is with trust on first use off. A device marked untrusted only has its session discarded, as do a device that publishes no keys and a `--device` that is not on the current list. A device whose bundle now carries another identity key is marked untrusted under the new key. The command prints each device's outcome, with both fingerprints of a changed key, and leaves a note in the chat with the contact (none for the account's own JID).
@@ -446,7 +473,7 @@ ducko omemo reset alice@example.com --device 12345 --output json
 
 Print recent entries from `~/Library/Application Support/<app-dir>/Logs/ducko.log`. Default: 50 lines.
 
-Every Ducko process on one `DUCKO_PROFILE` (the app, an `interactive` session, a one-shot command) writes to the same `ducko.log`, each at its own file offset rather than appending. Their lines overwrite each other, so they appear out of time order and can be lost or cut short. To attribute an event to one process, such as the app's own `Connected via` line, take it from a moment when only that process was running.
+Every Ducko process on one `DUCKO_PROFILE` (the app, an `interactive` session, a one-shot command) appends to the same `ducko.log`, so their lines interleave. A line does not name its process. To attribute an event to one process, such as the app's own `Connected via` line, take it from a moment when only that process was running.
 
 ```
 ducko logs show
@@ -548,6 +575,8 @@ printf '/status\n/roster\n/join chat@conference.example.com alice\n/members\n/le
 ```
 
 Output sent to a pipe or file is block-buffered and arrives only when the session exits. To read results while the session runs (for example, to wait for an incoming offer before answering it), drive the REPL under a pseudo-terminal instead: a `tmux -L <name>` session (`send-keys` to type a line, `capture-pane` to read) or `script -q <log> …`. Let the REPL write straight to the pseudo-terminal: piping or redirecting its output there, even into `tee`, makes it block-buffered again. A pseudo-terminal counts as a terminal, so still pass `--output plain`.
+
+To verify a command that changes an account on the server, such as `account change-password` or `account unregister`, register a throwaway account in a throwaway profile and leave the shared test accounts alone: their stored passwords can't be read, so a change to one can't be undone. Run `account register` and `account change-password` under `tmux -L <name>` as above, since their hidden and CAPTCHA prompts read from a terminal. When the server asks for a CAPTCHA, `account register` prints `CAPTCHA image for <field>: <path>` and deletes the image once the prompt ends, so read it while the prompt waits and `send-keys` the answer. Confirm the change by signing in from a fresh throwaway profile (`account add <jid> --password <new>`). Afterwards `account unregister` the account, and check that a fresh sign-in now fails. Keep failed sign-ins few, since a server can ban an address after repeated failures.
 
 `/approve <jid>` adds a `subscription=none` roster stub for that JID on the server even when no request was pending. Remove it afterwards with `roster remove <jid>`, or use a syntactically invalid JID when only the error path matters.
 

@@ -6,7 +6,7 @@ extension DuckoCLI {
         static let configuration = CommandConfiguration(
             commandName: "omemo",
             abstract: "OMEMO encryption management",
-            subcommands: [Fingerprint.self, Devices.self, Trust.self, Untrust.self, Reset.self]
+            subcommands: [Fingerprint.self, Devices.self, Trust.self, Untrust.self, Verify.self, Reset.self]
         )
 
         struct Fingerprint: AsyncParsableCommand {
@@ -80,11 +80,7 @@ extension DuckoCLI {
                 let formatter = global.formatter
 
                 try await ConnectedOperation.run(formatter: formatter, account: accountOption.account) { env, selectedAccount in
-                    let devices = await env.omemoService.deviceInfoList(for: jid, accountID: selectedAccount.id)
-                    guard let device = devices.first(where: { $0.deviceID == deviceID }) else {
-                        throw CLIError.omemoDeviceNotFound(deviceID: deviceID, jid: jid)
-                    }
-
+                    let device = try await omemoDevice(jid: jid, deviceID: deviceID, accountID: selectedAccount.id, environment: env)
                     try await env.omemoService.trustDevice(
                         accountID: selectedAccount.id, peerJID: jid,
                         deviceID: deviceID, fingerprint: device.fingerprint
@@ -117,6 +113,37 @@ extension DuckoCLI {
                         accountID: selectedAccount.id, peerJID: jid, deviceID: deviceID
                     )
                     print(formatter.formatOMEMOTrustChange(jid: jid, deviceID: deviceID, trustLevel: .untrusted))
+                }
+            }
+        }
+
+        struct Verify: AsyncParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Mark a contact's OMEMO device verified after comparing its fingerprint"
+            )
+
+            @OptionGroup var global: GlobalOptions
+
+            @OptionGroup var accountOption: AccountOption
+
+            @Argument(help: "The contact JID")
+            var jid: String
+
+            @Argument(help: "The device ID to verify")
+            var deviceID: UInt32
+
+            @Argument(help: "The fingerprint you compared, as 'omemo devices' shows it")
+            var fingerprint: [String]
+
+            func run() async throws {
+                let formatter = global.formatter
+
+                try await ConnectedOperation.run(formatter: formatter, account: accountOption.account) { env, selectedAccount in
+                    try await verifyOMEMODevice(
+                        jid: jid, deviceID: deviceID, fingerprint: fingerprint.joined(separator: " "),
+                        accountID: selectedAccount.id, environment: env
+                    )
+                    print(formatter.formatOMEMOTrustChange(jid: jid, deviceID: deviceID, trustLevel: .verified))
                 }
             }
         }

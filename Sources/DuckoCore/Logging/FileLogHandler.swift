@@ -45,6 +45,10 @@ struct FileLogHandler: LogHandler {
 /// Serialized file writer with size-based rotation. The mutable `FileHandle` is wrapped in a
 /// `Synchronization.Mutex` so the writer is `Sendable` without resorting to `@unchecked`, while
 /// `FileLogHandler.log` can still call `write(_:)` synchronously and preserve emission order.
+///
+/// The app and CLI processes of one profile write the same file. Each write appends, so no process overwrites another's
+/// lines. A file another process rotated away was already past the size limit they share, so this writer notices on
+/// its next write and reopens the file now at `currentLogFile`.
 public final class FileLogWriter: Sendable {
     public static let defaultFileName = "ducko.log"
 
@@ -101,8 +105,11 @@ public final class FileLogWriter: Sendable {
     private func rotateIfNeeded(_ handle: inout FileHandle?) {
         guard let active = handle, let size = try? active.offset(), size >= maxFileSize else { return }
 
+        let isCurrent = holdsCurrentLogFile(active)
         try? active.close()
         handle = nil
+        // Another writer already rotated the held file away, so the file now at the path is not the full one.
+        guard isCurrent else { return }
 
         // Shift archived files: N → N+1, delete oldest if over limit
         let fm = FileManager.default
@@ -132,18 +139,17 @@ public final class FileLogWriter: Sendable {
             return existing
         }
 
-        let fm = FileManager.default
-        let file = currentLogFile
+        try? FileManager.default.createOwnerOnlyDirectory(at: directory)
 
-        try? fm.createOwnerOnlyDirectory(at: directory)
-
-        if !fm.fileExists(atPath: file.path) {
-            fm.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600])
-        }
-
-        guard let opened = FileHandle(forWritingAtPath: file.path) else { return nil }
-        try? opened.seekToEnd()
+        guard let opened = try? FileHandle.openOwnerOnlyForAppending(at: currentLogFile) else { return nil }
         handle = opened
         return opened
+    }
+
+    private func holdsCurrentLogFile(_ handle: FileHandle) -> Bool {
+        var held = stat()
+        var current = stat()
+        guard fstat(handle.fileDescriptor, &held) == 0, stat(currentLogFile.path, &current) == 0 else { return false }
+        return held.st_dev == current.st_dev && held.st_ino == current.st_ino
     }
 }

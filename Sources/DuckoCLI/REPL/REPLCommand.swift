@@ -25,6 +25,7 @@ struct REPLCommand {
         case unregisterAccount = "/unregister-account"
         case checkRegistration = "/check-registration"
         case submitRegistration = "/submit-registration"
+        case changePassword = "/change-password"
         case join = "/join"
         case leave = "/leave"
         case members = "/members"
@@ -47,6 +48,7 @@ struct REPLCommand {
         case avatar = "/avatar"
         case connectionInfo = "/connection-info"
         case encrypt = "/encrypt"
+        case omemoVerify = "/omemo-verify"
         case omemoReset = "/omemo-reset"
         case pref = "/pref"
         case help
@@ -76,6 +78,7 @@ struct REPLCommand {
             case .unregisterAccount: ["  /unregister-account      Unregister account from server"]
             case .checkRegistration: ["  /check-registration [jid]  Show server registration form"]
             case .submitRegistration: ["  /submit-registration [jid] Submit registration to server/component"]
+            case .changePassword: ["  /change-password         Change the account's password on the server"]
             case .join: ["  /join <room> [nick]      Join a MUC room"]
             case .leave: ["  /leave [room]            Leave a MUC room"]
             case .members: ["  /members [room]          Show room occupants"]
@@ -98,6 +101,7 @@ struct REPLCommand {
             case .avatar: ["  /avatar [jid]            View avatar info (own or contact's)"]
             case .connectionInfo: ["  /connection-info         Show TLS connection info"]
             case .encrypt: ["  /encrypt <jid> on|off    Toggle OMEMO encryption for a conversation"]
+            case .omemoVerify: ["  /omemo-verify <jid> <id> <fingerprint>  Mark a device verified after comparing its fingerprint"]
             case .omemoReset: ["  /omemo-reset <jid> [id]  Reset OMEMO sessions with a contact's or your other devices"]
             case .pref: ["  /pref chatstates on|off  Toggle chat state notifications", "  /pref markers on|off      Toggle displayed markers (read receipts)"]
             case .help: ["  help                     Show this help"]
@@ -107,8 +111,8 @@ struct REPLCommand {
 
         fileprivate func accepts(hasArguments: Bool) -> Bool {
             switch self {
-            case .send, .add, .remove, .reply, .retract, .edit, .search, .searchAll, .approve, .deny, .block, .unblock, .directedPresence, .encrypt, .omemoReset, .pref: hasArguments
-            case .roster, .who, .profile, .blocklist, .unregisterAccount, .transfers, .connectionInfo, .help, .quit: !hasArguments
+            case .send, .add, .remove, .reply, .retract, .edit, .search, .searchAll, .approve, .deny, .block, .unblock, .directedPresence, .encrypt, .omemoVerify, .omemoReset, .pref: hasArguments
+            case .roster, .who, .profile, .blocklist, .unregisterAccount, .changePassword, .transfers, .connectionInfo, .help, .quit: !hasArguments
             case .status, .history, .checkRegistration, .submitRegistration, .join, .leave, .members, .topic, .nick, .destroy, .voice, .kick, .pm, .affiliations, .config, .moderate, .sendfile, .senddirect, .accept, .decline, .cancel, .rooms, .avatar: true
             }
         }

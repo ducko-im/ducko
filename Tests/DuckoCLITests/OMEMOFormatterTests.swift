@@ -87,3 +87,20 @@ struct OMEMOFormatterTests {
         #expect(object == expected)
     }
 }
+
+struct OMEMOVerifyFingerprintTests {
+    private let device = OMEMODeviceInfo(peerJID: "bob@example.com", deviceID: 42, fingerprint: storedFingerprintA, trustLevel: .trusted)
+
+    @Test(arguments: [
+        (displayFingerprintA, true),
+        (displayFingerprintA.uppercased(), true),
+        (displayFingerprintA.replacingOccurrences(of: " ", with: ""), true),
+        (storedFingerprintA, true),
+        (displayFingerprintB, false),
+        (storedFingerprintB, false),
+        (String(displayFingerprintA.dropLast()), false)
+    ])
+    func `a typed fingerprint matches the device's key in its displayed or stored form`(typed: String, names: Bool) {
+        #expect(device.matchesFingerprint(typed) == names)
+    }
+}
