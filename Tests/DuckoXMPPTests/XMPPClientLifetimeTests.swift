@@ -4,15 +4,16 @@ import Testing
 
 struct XMPPClientLifetimeTests {
     @Test(arguments: [false, true])
-    func `registered modules do not retain their client`(registerModule: Bool) async {
+    func `registered modules do not retain their client`(registerModule: Bool) async throws {
         var client: XMPPClient? = XMPPClient(
             domain: "example.com", credentials: .init(username: "user", password: "pass"),
             transport: MockTransport()
         )
-        weak var releasedClient = client
+        weak let releasedClient = client
         if registerModule { await client?.register(PingModule()) }
         await client?.disconnect()
         client = nil
-        #expect(releasedClient == nil)
+        // `disconnect()` awaits a teardown task that holds the client, and that task can let go of it a moment later.
+        try await eventually { releasedClient == nil }
     }
 }
