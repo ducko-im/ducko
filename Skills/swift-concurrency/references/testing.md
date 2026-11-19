@@ -272,17 +272,22 @@ Mark suites that rely on this with `.serialized` — the main serial executor do
 
 ## Testing memory management
 
-Verify deallocation to catch retain cycles early:
+Verify deallocation to catch retain cycles early.
+
+The object can outlive the last `await` for a moment. When the awaited call ran a `Task` that held the object, the finished task can release it after the awaiting code has already resumed. This shows mostly when the thread pool is busy, as in parallel test runs and on CI. Capturing `[weak self]` in that task makes it rarer but does not close the window. Poll the weak reference until a deadline instead of checking it at once or after a fixed sleep, using the project's polling helper when it has one. A real retain cycle still fails at the deadline.
 
 ```swift
 @Test func viewModelDeallocates() async throws {
     var viewModel: ViewModel? = ViewModel()
-    weak var weakViewModel = viewModel
+    weak let weakViewModel = viewModel
 
-    viewModel?.startWork()
+    await viewModel?.stop()
     viewModel = nil
 
-    try? await Task.sleep(for: .milliseconds(100))
+    let deadline = ContinuousClock.now + .seconds(2)
+    while weakViewModel != nil, ContinuousClock.now < deadline {
+        await Task.yield()
+    }
     #expect(weakViewModel == nil)
 }
 ```

@@ -20,7 +20,7 @@ Before diving in, clarify the goal and collect minimal facts:
 Branch quickly:
 
 - Repetitive tests → parameterized tests ([references/parameterized-tests.md](references/parameterized-tests.md))
-- Noisy or flaky failures → known-issue handling and test isolation ([references/parallelization-and-isolation.md](references/parallelization-and-isolation.md))
+- Noisy or flaky failures → known-issue handling and test isolation ([references/parallelization-and-isolation.md](references/parallelization-and-isolation.md)); reproduce the flake with repeated runs first ([references/performance-and-best-practices.md](references/performance-and-best-practices.md))
 - Migration questions → XCTest mapping and coexistence ([references/migrating-from-xctest.md](references/migrating-from-xctest.md))
 - Async callback complexity → continuation / confirmation patterns ([references/async-tests.md](references/async-tests.md))
 
@@ -290,7 +290,7 @@ End of example.
 
 - [references/async-tests.md](references/async-tests.md) — serialized tests, `confirmation()`, time limits, actor isolation, pre-concurrency code, networking mocks, cancellation, callback bridging, legacy-waiting anti-patterns.
 - [references/chunked-parallel-mock-drain.md](references/chunked-parallel-mock-drain.md) — drain mock outboxes one stanza at a time when the system under test fans out via `stride`-chunked `withTaskGroup`; `waitForSent(count: N)` deadlocks at chunk boundaries.
-- [references/performance-and-best-practices.md](references/performance-and-best-practices.md) — test speed, determinism, flakiness prevention.
+- [references/performance-and-best-practices.md](references/performance-and-best-practices.md) — test speed, determinism, flakiness prevention, reproducing a flake with repeated runs.
 
 ### Test doubles & fixtures
 

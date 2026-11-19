@@ -355,20 +355,7 @@ Task captures self?
 
 ### Unit test pattern
 
-```swift
-func testViewModelDeallocates() async {
-    var viewModel: ViewModel? = ViewModel()
-    weak var weakViewModel = viewModel
-    
-    viewModel?.startWork()
-    viewModel = nil
-    
-    // Give tasks time to complete
-    try? await Task.sleep(for: .milliseconds(100))
-    
-    XCTAssertNil(weakViewModel, "ViewModel should be deallocated")
-}
-```
+Poll the weak reference until a deadline rather than checking it after a fixed sleep. See "Testing memory management" in [testing.md](testing.md) for the pattern and why the object can outlive the last `await`.
 
 ### SwiftUI view test
 

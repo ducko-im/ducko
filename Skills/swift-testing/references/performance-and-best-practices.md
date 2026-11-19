@@ -182,6 +182,8 @@ Add TODO context and remove once dependencies are isolated.
 - Deterministic fixtures and stable clocks/random sources.
 - Explicit known-issue wrappers for temporary failures.
 
+Reproduce a suspected flake before fixing it, and confirm the fix the same way: `swift test --filter <test or suite> --maximum-repetitions <N> --repeat-until fail`. SwiftPM has no `--repetitions` flag. A rare race may need thousands of repetitions, so count a fix only when far more repetitions pass than it took to reproduce the failure.
+
 ## 9) Measure before changing waits
 
 - Measure per-test wall time from the runner's own `passed after N seconds` lines before changing any wait; rank suites by that, not by grepping for `Task.sleep`. Swift Testing runs tests in parallel by default, so a suspicious duration includes sibling contention; confirm it on a serialized run (`swift test --no-parallel`).
