@@ -162,12 +162,17 @@ func withTimeout<T: Sendable>(
 }
 ```
 
-Both `.timeLimit()` and this helper rely on the awaited work responding to cancellation. A test suspended on a continuation that nothing resumes, such as a `CheckedContinuation` parked in a registry, records a time-limit failure but never finishes. The task group can't return either, because it waits for every child, including the one that never finishes. To catch that kind of hang, run the operation in an unstructured `Task`, poll for its result against a deadline, and treat "still running at the deadline" as the failure, leaving the stuck task behind. Reserve this for hangs cancellation can't reach: the polling only enforces the deadline, and the test still synchronizes on the awaited work.
+Both `.timeLimit()` and this helper rely on the awaited work responding to cancellation. A test suspended on a continuation that nothing resumes, such as a `CheckedContinuation` parked in a registry, records a time-limit failure but never finishes. The task group can't return either, because it waits for every child, including the one that never finishes. To catch that kind of hang, run the operation in an unstructured `Task` and wait until it finishes or a deadline passes. Treat "still running at the deadline" as the failure, and leave the stuck task behind. The operation, a deadline task and the waiter's cancellation each signal one semaphore, so the wait ends as soon as the first of them fires. Use a semaphore that keeps a signal sent before the wait, such as DuckoTestSupport's `AsyncSemaphore`. Reserve this for hangs cancellation can't reach. The deadline only bounds the wait, and the test still synchronizes on the awaited work.
 
 ```swift
 actor OutcomeBox {
     private(set) var result: Result<Void, any Error>?
-    func finish(_ result: Result<Void, any Error>) { self.result = result }
+    let closed = AsyncSemaphore()
+
+    func finish(_ result: Result<Void, any Error>) async {
+        self.result = result
+        await closed.signal()
+    }
 }
 
 func boundedOutcome(
@@ -183,12 +188,19 @@ func boundedOutcome(
             await box.finish(.failure(error))
         }
     }
-    let deadline = ContinuousClock.now + timeout
-    while ContinuousClock.now < deadline {
-        if let result = await box.result { return result }
-        try await Task.sleep(for: .milliseconds(20))
+    let deadline = Task {
+        try await Task.sleep(for: timeout)
+        await box.closed.signal()
     }
-    return await box.result
+    defer { deadline.cancel() }
+    await withTaskCancellationHandler {
+        await box.closed.wait()
+    } onCancel: {
+        Task { await box.closed.signal() }
+    }
+    if let result = await box.result { return result }
+    try Task.checkCancellation()
+    return nil
 }
 
 @Test func waitFailsOnceTheSessionEnds() async throws {

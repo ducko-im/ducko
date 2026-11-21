@@ -75,22 +75,19 @@ func driveMockConnect(
     return (client, task)
 }
 
-/// Waits, within `boundedOutcome`'s deadline, for a stanza containing `fragment` to go out on `transport`.
+/// Waits, within `awaitSent`'s deadline, for a stanza containing `fragment` on `transport`, including one already sent.
 func sentStanza(on transport: MockTransport, containing fragment: String) async throws -> String {
     try await sentStanza(on: transport, matching: { $0.contains(fragment) }, "Nothing sent containing \(fragment)")
 }
 
-/// Waits, within `boundedOutcome`'s deadline, for a stanza matching `predicate` to go out on `transport`.
+/// Waits, within `awaitSent`'s deadline, for a stanza matching `predicate` on `transport`, including one already sent.
+/// Fails the test with `comment` when none is sent in time.
 func sentStanza(
     on transport: MockTransport,
     matching predicate: @escaping @Sendable (String) -> Bool,
     _ comment: Comment = "Nothing sent matching the predicate"
 ) async throws -> String {
-    let task = Task { await transport.waitForSent(matching: predicate) }
-    if try await boundedOutcome(of: { _ = await task.value }) == nil {
-        task.cancel()
-    }
-    return try #require(await task.value, comment)
+    try #require(try? await awaitSent(on: transport, matching: predicate), comment)
 }
 
 /// Answers the sign-in pass's bookmarks fetch on `transport` with an auto-join bookmark for each of `rooms`.

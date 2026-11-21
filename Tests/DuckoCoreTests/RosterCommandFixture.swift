@@ -63,18 +63,9 @@ final class RosterCommandFixture {
 
     func nextIQ(type: String) async throws -> String {
         let seen = seenIQIDs
-        let task = Task { [transport] in
-            await transport.waitForSent(matching: {
-                $0.contains("jabber:iq:roster") && $0.contains("type=\"\(type)\"") && !seen.contains(extractIQID(from: $0) ?? "")
-            })
+        let stanza = try await awaitSent(on: transport) {
+            $0.contains("jabber:iq:roster") && $0.contains("type=\"\(type)\"") && !seen.contains(extractIQID(from: $0) ?? "")
         }
-        let completion = try await boundedOutcome { _ = await task.value }
-        guard let completion else {
-            task.cancel()
-            throw RosterSynchronization.Failure.timedOut
-        }
-        try completion.get()
-        let stanza = try #require(await task.value)
         try seenIQIDs.insert(#require(extractIQID(from: stanza)))
         return stanza
     }

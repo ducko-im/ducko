@@ -455,10 +455,7 @@ enum PresenceServiceOwnPresenceTests {
                 } disconnect: { _ in }
             }
 
-            let aliceTransport = fixture.aliceTransport
-            let outcome = try await boundedOutcome {
-                _ = await aliceTransport.waitForSent { $0.contains("<presence") && $0.contains("away") }
-            }
+            let outcome = try? await awaitSent(on: fixture.aliceTransport) { $0.contains("<presence") && $0.contains("away") }
             #expect(outcome != nil)
 
             releaser.finish()

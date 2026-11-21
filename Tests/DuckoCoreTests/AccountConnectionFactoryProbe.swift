@@ -91,17 +91,7 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
 
 /// Waits for `transport` to send a stanza containing `fragment`, then clears what it sent and plays `response`.
 func exchange(_ transport: MockTransport, matching fragment: String, response: String) async throws {
-    try await withThrowingTaskGroup(of: Void.self) { group in
-        defer { group.cancelAll() }
-        group.addTask {
-            guard await transport.waitForSent(matching: { $0.contains(fragment) }) != nil else { throw CancellationError() }
-        }
-        group.addTask {
-            try await Task.sleep(for: .seconds(2))
-            throw AccountConnectionFactoryProbe.Failure.timeout
-        }
-        try await group.next()
-    }
+    try await awaitSent(on: transport) { $0.contains(fragment) }
     await transport.clearSentBytes()
     await transport.simulateReceive(response)
 }

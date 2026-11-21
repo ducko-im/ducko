@@ -356,21 +356,8 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                 try "abc".write(to: fileURL, atomically: true, encoding: .utf8)
                 let conversation = try await harness.chatService.openConversation(for: contact, accountID: harness.accountID)
                 try await harness.service.startDirectTransfer(url: fileURL, in: conversation, accountID: harness.accountID)
-                let transport = harness.transport
-                let offer = OfferBox()
-                let outcome = try await boundedOutcome {
-                    await offer.set(transport.waitForSent { $0.contains("session-initiate") })
-                }
-                guard outcome != nil, let stanza = await offer.stanza else { return nil }
+                guard let stanza = try? await awaitSent(on: harness.transport, matching: { $0.contains("session-initiate") }) else { return nil }
                 return stanza.firstMatch(of: /\sto=["'][^"'\/]+\/([^"']+)["']/).map { String($0.output.1) }
-            }
-        }
-
-        private actor OfferBox {
-            var stanza: String?
-
-            func set(_ stanza: String?) {
-                self.stanza = stanza
             }
         }
 
@@ -1559,11 +1546,7 @@ enum FileTransferServiceTests { // swiftlint:disable:this type_body_length
                     return
                 }
                 // Armed: the failed write ended the session, which is what leaves the sid free for the offer below.
-                let transport = harness.transport
-                let terminated = try await boundedOutcome {
-                    _ = await transport.waitForSent { $0.contains("session-terminate") && $0.contains("failed-transport") }
-                }
-                try #require(terminated != nil)
+                try await awaitSent(on: harness.transport) { $0.contains("session-terminate") && $0.contains("failed-transport") }
                 // The session's failure event reaches the service after the send task's catch, as dispatch orders it.
                 service.handleJingleEvent(.jingleFileTransferFailed(sid: sid, offerID: sentOfferID, reason: .incomplete), accountID: accountID)
                 #expect(failureReason(service, sid: sid) == JingleTransferFailureReason.incomplete.displayText)

@@ -1,8 +1,11 @@
 private actor OutcomeBox {
     private(set) var result: Result<Void, any Error>?
+    /// Signalled by whichever ends the wait first: the operation, the deadline, or the waiter's cancellation.
+    let closed = AsyncSemaphore()
 
-    func finish(_ result: Result<Void, any Error>) {
+    func finish(_ result: Result<Void, any Error>) async {
         self.result = result
+        await closed.signal()
     }
 }
 
@@ -22,12 +25,19 @@ public func boundedOutcome(
             await box.finish(.failure(error))
         }
     }
-    let deadline = ContinuousClock.now + timeout
-    while ContinuousClock.now < deadline {
-        if let result = await box.result { return result }
-        try await Task.sleep(for: .milliseconds(20))
+    let deadline = Task {
+        try await Task.sleep(for: timeout)
+        await box.closed.signal()
     }
-    return await box.result
+    defer { deadline.cancel() }
+    await withTaskCancellationHandler {
+        await box.closed.wait()
+    } onCancel: {
+        Task { await box.closed.signal() }
+    }
+    if let result = await box.result { return result }
+    try Task.checkCancellation()
+    return nil
 }
 
 /// What `task` throws, waiting no longer than `boundedOutcome` does. Returns `nil` when it finishes without throwing or

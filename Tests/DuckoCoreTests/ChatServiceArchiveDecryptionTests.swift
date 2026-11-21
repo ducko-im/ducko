@@ -42,7 +42,7 @@ struct ChatServiceArchiveDecryptionTests {
         #expect(stored?.body == "after the reset")
         #expect(stored?.isUndecryptable == false)
         #expect(try await harness.transcripts.fetchMessages(for: chat.id, before: nil, limit: 10).count == 1)
-        _ = try await harness.sentStanza(matching: Self.isEmptyMessage(to: contact))
+        try await awaitSent(on: harness.transport, matching: Self.isEmptyMessage(to: contact))
         #expect(await harness.transport.sentStrings.count(where: Self.isEmptyMessage(to: contact)) == 1)
         await harness.accountService.disconnect(accountID: harness.accountID)
     }
@@ -175,7 +175,7 @@ struct ChatServiceArchiveDecryptionTests {
         let message = try await tablet.message([bodyElement("please write unencrypted"), optOutElement()], id: "o1")
 
         try await harness.catchUp(account: [("A1", message)])
-        _ = try await harness.sentStanza(matching: Self.isEmptyMessage(to: contact))
+        try await awaitSent(on: harness.transport, matching: Self.isEmptyMessage(to: contact))
 
         let stored = try #require(try await harness.storedMessage(archiveID: "A1", in: contact))
         #expect(stored.body == "please write unencrypted")
@@ -221,7 +221,7 @@ struct ChatServiceArchiveDecryptionTests {
         let message = try await bob.message([bodyElement("hi")], id: "m1")
 
         try await harness.catchUp(account: [("A1", message)])
-        _ = try await harness.sentStanza(matching: Self.isEmptyMessage(to: contact))
+        try await awaitSent(on: harness.transport, matching: Self.isEmptyMessage(to: contact))
 
         let chat = try #require(harness.chatService.openConversations.first { $0.jid == contact && $0.isDirectChat })
         #expect(chat.encryptionEnabled)
@@ -243,7 +243,7 @@ struct ChatServiceArchiveDecryptionTests {
         try #require(try await harness.storedMessage(archiveID: "A1", in: contact)?.isUndecryptable == true)
 
         try await harness.catchUp(account: [("A1", message)])
-        _ = try await harness.sentStanza(matching: Self.isEmptyMessage(to: contact))
+        try await awaitSent(on: harness.transport, matching: Self.isEmptyMessage(to: contact))
 
         #expect(try await harness.storedMessage(archiveID: "A1", in: contact)?.isUndecryptable == false)
         let chat = try #require(harness.chatService.openConversations.first { $0.jid == contact && $0.isDirectChat })
@@ -320,7 +320,7 @@ struct ChatServiceArchiveDecryptionTests {
         let message = try await bob.message([bodyElement("hi")], id: "m1")
 
         try await harness.catchUp(account: [("A1", message)])
-        _ = try await harness.sentStanza(matching: Self.isEmptyMessage(to: contact))
+        try await awaitSent(on: harness.transport, matching: Self.isEmptyMessage(to: contact))
 
         let chat = try #require(harness.chatService.openConversations.first { $0.jid == contact && $0.isDirectChat })
         #expect(chat.id != seeded.id)
@@ -576,7 +576,7 @@ private extension EncryptedSendHarness {
         let first = try await bob.message([bodyElement("hello")], id: "live-1", time: Date().formatted(.iso8601))
         await transport.simulateReceive(first.element.xmlString)
         let isReply: @Sendable (String) -> Bool = { stanza in stanza.hasPrefix("<message") && stanza.contains("to=\"\(contact)\"") && stanza.contains(XMPPNamespaces.omemo) }
-        try await bob.read(parsedMessage(sentStanza(matching: isReply)))
+        try await bob.read(parsedMessage(awaitSent(on: transport, matching: isReply)))
         return bob
     }
 
@@ -613,13 +613,6 @@ private extension EncryptedSendHarness {
     func storedMessage(archiveID: String, in jid: BareJID) async throws -> ChatMessage? {
         let conversation = try #require(chatService.openConversations.first { $0.jid == jid && $0.occupantNickname == nil })
         return try await transcripts.findMessage(serverID: archiveID, conversationID: conversation.id)
-    }
-
-    /// Waits, within `boundedOutcome`'s deadline, for a stanza sent on the transport that `predicate` matches.
-    func sentStanza(matching predicate: @escaping @Sendable (String) -> Bool) async throws -> String {
-        let waiting = Task { await transport.waitForSent(matching: predicate) }
-        try #require(try await boundedOutcome { _ = await waiting.value } != nil)
-        return try #require(await waiting.value)
     }
 
     private func answer(_ query: ArchiveQuery, with entries: [(String, XMPPMessage)], from archive: BareJID?) async throws {

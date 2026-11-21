@@ -168,9 +168,7 @@ enum OOBModuleTests {
             <url>https://example.com/again.txt</url>\
             </query></iq>
             """)
-            let refused = try await boundedOutcome {
-                _ = await mock.waitForSent { $0.contains("id=\"in-flight\"") && $0.contains("conflict") }
-            }
+            let refused = try? await awaitSent(on: mock) { $0.contains("id=\"in-flight\"") && $0.contains("conflict") }
             #expect(refused != nil)
             try await oobModule.acceptOffer(offerID: offer.offerID)
 
@@ -243,9 +241,7 @@ enum OOBModuleTests {
             </query></iq>
             """)
             // Bounded, so a repeat that is taken instead of refused fails here rather than waiting for ever.
-            let refused = try await boundedOutcome {
-                _ = await mock.waitForSent { $0.contains("id=\"dup\"") && $0.contains("conflict") }
-            }
+            let refused = try? await awaitSent(on: mock) { $0.contains("id=\"dup\"") && $0.contains("conflict") }
             #expect(refused != nil)
 
             // An offer under another id still arrives, so the stream is not what kept the repeat from arriving.

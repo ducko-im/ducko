@@ -30,13 +30,10 @@ final class MockServerSession {
         try await connection.value
     }
 
-    /// The next stanza containing `fragment` that was not handed out before.
+    /// The earliest sent stanza containing `fragment` whose IQ id this session has not handed out yet.
     func next(_ fragment: String) async throws -> String {
         let seen = seen
-        let task = Task { [transport] in await transport.waitForSent(matching: { $0.contains(fragment) && !seen.contains(extractIQID(from: $0) ?? "") }) }
-        let result = try await boundedOutcome { _ = await task.value }
-        guard result != nil else { task.cancel(); throw CancellationError() }
-        let stanza = try #require(await task.value)
+        let stanza = try await awaitSent(on: transport) { $0.contains(fragment) && !seen.contains(extractIQID(from: $0) ?? "") }
         if let id = extractIQID(from: stanza) { self.seen.insert(id) }
         return stanza
     }

@@ -1074,9 +1074,7 @@ extension ChatServiceMAMTests {
         let initial = XMPPEvent.rosterUpdated(RosterUpdate(receipt: 1, origin: .initial, contents: .snapshot([]), version: "failed"))
         let application = roster.receiveRosterEvent(initial, accountID: harness.accountID)
         await harness.chatService.handleEvent(initial, accountID: harness.accountID)
-        let queryTask = Task { await harness.transport.waitForSent(matching: { $0.contains("urn:xmpp:mam:2") }) }
-        try #require(try await boundedOutcome { _ = await queryTask.value } != nil)
-        _ = try #require(await queryTask.value)
+        try await awaitSent(on: harness.transport) { $0.contains("urn:xmpp:mam:2") }
         let tasks = harness.chatService.takePendingTasks()
         #expect(tasks.count == 1)
         await application?.value

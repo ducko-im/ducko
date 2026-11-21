@@ -1026,10 +1026,7 @@ extension AvatarServiceTests {
         let task = Task {
             await connected.service.handleEvent(.vcardAvatarHashReceived(from: .bare(connected.peerJID), hash: "delayed-hash"), accountID: connected.accountID)
         }
-        let requested = try await boundedOutcome {
-            _ = await connected.transport.waitForSent(matching: { $0.contains("vcard-temp") })
-        }
-        try #require(requested != nil)
+        try await awaitSent(on: connected.transport) { $0.contains("vcard-temp") }
         try await connected.store.deleteContact(original.id)
         if readd {
             var replacement = Contact(id: UUID(), accountID: connected.accountID, jid: connected.peerJID, name: "Replacement", subscription: .none, groups: [], isBlocked: false, createdAt: Date())

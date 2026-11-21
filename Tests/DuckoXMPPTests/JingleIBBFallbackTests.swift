@@ -267,9 +267,7 @@ enum JingleIBBFallbackTests {
             await mock.simulateReceive(sessionInitiateXML(id: "jingle-2", sid: "sid-next"))
             let events = try await eventsTask.value
             #expect(!events.contains { if case .jingleFileTransferCompleted = $0 { true } else { false } })
-            let closeError = try await boundedOutcome {
-                _ = await mock.waitForSent { $0.contains("ibb-close-1") && $0.contains("item-not-found") }
-            }
+            let closeError = try? await awaitSent(on: mock) { $0.contains("ibb-close-1") && $0.contains("item-not-found") }
             #expect(closeError != nil)
             await disconnectFast(client)
         }
@@ -281,9 +279,7 @@ enum JingleIBBFallbackTests {
 
             await mock.simulateReceive(sessionInitiateXML())
             await mock.simulateReceive(transportReplaceXML(blockSize: 0))
-            let rejectSent = try await boundedOutcome {
-                _ = await mock.waitForSent { $0.contains("transport-reject") }
-            }
+            let rejectSent = try? await awaitSent(on: mock) { $0.contains("transport-reject") }
             #expect(rejectSent != nil)
             let sent = await mock.sentBytes.map { String(decoding: $0, as: UTF8.self) }
             #expect(!sent.contains { $0.contains("transport-accept") })
