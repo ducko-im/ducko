@@ -340,4 +340,11 @@ enum BlockingModuleTests {
             #expect(module.blockedJIDs.isEmpty)
         }
     }
+
+    struct Features {
+        @Test
+        func `Does not advertise the server's blocking feature`() {
+            #expect(!BlockingModule().features.contains(XMPPNamespaces.blocking))
+        }
+    }
 }

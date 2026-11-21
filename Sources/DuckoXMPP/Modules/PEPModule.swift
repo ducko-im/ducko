@@ -17,7 +17,7 @@ public final class PEPModule: XMPPModule, Sendable {
 
     public var features: [String] {
         let nodes = state.withLock { $0.notifyNodes }
-        return [XMPPNamespaces.pubsub] + nodes.map { $0 + "+notify" }.sorted()
+        return nodes.map { $0 + "+notify" }.sorted()
     }
 
     public init() {

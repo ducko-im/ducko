@@ -19,10 +19,6 @@ public final class BlockingModule: XMPPModule, Sendable {
 
     private let state: OSAllocatedUnfairLock<State>
 
-    public var features: [String] {
-        [XMPPNamespaces.blocking]
-    }
-
     public init() {
         self.state = OSAllocatedUnfairLock(initialState: State())
     }

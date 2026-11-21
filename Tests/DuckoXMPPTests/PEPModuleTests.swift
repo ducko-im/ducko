@@ -75,9 +75,13 @@ enum PEPModuleTests {
             let module = makePEPModule(nodes: [testNode, testNode2])
 
             let features = module.features
-            #expect(features.contains(XMPPNamespaces.pubsub))
             #expect(features.contains(testNode + "+notify"))
             #expect(features.contains(testNode2 + "+notify"))
+        }
+
+        @Test
+        func `Does not advertise itself as a pubsub service`() {
+            #expect(!makePEPModule(nodes: [testNode]).features.contains(XMPPNamespaces.pubsub))
         }
 
         @Test
