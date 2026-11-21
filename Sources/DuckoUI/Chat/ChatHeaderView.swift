@@ -235,7 +235,7 @@ struct ChatHeaderView: View {
     // MARK: - Disconnected Strip
 
     private var disconnectedStrip: some View {
-        Text("You're offline — messages will send when you reconnect.")
+        Text("You're offline. Messages can't be sent until you're connected.")
             .font(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
