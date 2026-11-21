@@ -258,6 +258,16 @@ Tell the user that the run needs the VM to itself for about three and a half min
 
 In a work folder kept from an earlier round, run `zsh Skills/lume-vm/scripts/vm.sh gui '/bin/rm -rf /Users/lume/work/DuckoDemo.app'` between item 1's `start` and `push`, since `push` merges into an existing bundle. Of item 2, only copy `content.json` and start the stub: the account carries over, since `bootstrap` restores the folder's first snapshot. Skip item 3, whose setting lasts until the VM is reset. Then repeat item 4.
 
+That snapshot is the store as it was when the folder was first bootstrapped. An account setting the app gained since then takes its migration default, and a default that refuses what the stub offers (such as PLAIN sign-in) breaks the run. `bootstrap` then fails with "no conversation record for … after 30 s", `stub.log` shows the connection closing right after the stream features, and `DUCKO_PROFILE=demo-screenshots DuckoDemo.app/Contents/Resources/ducko account list`, run in the work folder, prints `PLAIN: refused`. Set the folder up again from scratch:
+
+```bash
+zsh Skills/lume-vm/scripts/vm.sh gui 'pkill -f "stub.py 5299 "; pkill -f "DuckoDemo.app/Contents/MacOS/DuckoApp"; sleep 1
+mv /Users/lume/work "/Users/lume/work-$(date +%Y%m%d)"; /bin/rm -rf "$HOME/Library/Application Support/Ducko-Dev-demo-screenshots"
+defaults delete im.ducko.dev.demo-screenshots; defaults delete im.ducko.demo'
+```
+
+The old folder stays beside it with its `out` captures. Then run items 1, 2 and 4.
+
 1. On the host, build the copy as in Step 2, leaving out the `Add :NSRequiresAquaSystemAppearance bool true` line. The run sets each appearance through the system, and `reference.py` refuses a copy pinned to light. Then start the VM and push the copy:
 
    ```bash
@@ -296,7 +306,7 @@ zsh Skills/lume-vm/scripts/vm.sh gui 'cd /Users/lume/work; R="/Volumes/My Shared
 python3 "$R" bootstrap /Users/lume/work && python3 "$R" run /Users/lume/work "/Volumes/My Shared Files/vm-exchange/states.json" out'
 ```
 
-`bootstrap` builds `baseline/`, the store and defaults every state starts from. Run it again after any change of `/Users/lume/work/content.json`. The stub picks up the new content at its next session. A changed `account.jid` or `account.name` needs a new work folder.
+`bootstrap` builds `baseline/`, the store and defaults every state starts from. Run it again after any change of `/Users/lume/work/content.json`. The stub picks up the new content at its next session. A changed `account.jid` or `account.name` needs a new work folder. When `bootstrap` in a kept folder fails with "no conversation record", see the second paragraph of R2.
 
 `run` checks the build, the baseline and the Mac's appearance before it touches `out`, and each refusal names its fix. `--ids a,b` reruns those states into an existing folder captured from the same sources, content, macOS build and settings, and replaces only their files and entries. Each state restores the baseline, seeds its content, launches the copy and performs its live steps. It then checks through Accessibility that the state holds, and captures. A state that fails any of these lands in `skipped` with the step named, and leaves no PNG. Progress goes to `/Users/lume/work/reference.log`.
 
