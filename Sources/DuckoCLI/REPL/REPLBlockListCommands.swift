@@ -5,10 +5,10 @@ func handleBlockREPLCommand(_ jidString: String, context: REPLContext, unblockin
     do {
         if unblocking {
             try await context.environment.rosterService.unblockContact(jidString: jidString, accountID: context.accountID)
-            print("Unblocked \(jidString).")
+            print(context.formatter.formatCommandResult(.unblocked(jid: jidString)))
         } else {
             try await context.environment.rosterService.blockContact(jidString: jidString, accountID: context.accountID)
-            print("Blocked \(jidString).")
+            print(context.formatter.formatCommandResult(.blocked(jid: jidString)))
         }
     } catch {
         print(context.formatter.formatError(error))

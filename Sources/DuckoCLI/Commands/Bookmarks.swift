@@ -75,7 +75,7 @@ extension DuckoCLI {
                     )
                     try await env.bookmarksService.addBookmark(bookmark, accountID: selectedAccount.id)
 
-                    print("Added bookmark for \(jid).")
+                    print(formatter.formatCommandResult(.bookmarkAdded(jid: jid)))
                 }
             }
         }
@@ -98,7 +98,7 @@ extension DuckoCLI {
                 try await ConnectedOperation.run(formatter: formatter, account: accountOption.account) { env, selectedAccount in
                     try await env.bookmarksService.removeBookmark(jidString: jid, accountID: selectedAccount.id)
 
-                    print("Removed bookmark for \(jid).")
+                    print(formatter.formatCommandResult(.bookmarkRemoved(jid: jid)))
                 }
             }
         }

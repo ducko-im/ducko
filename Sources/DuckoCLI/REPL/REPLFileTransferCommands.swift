@@ -7,7 +7,7 @@ import Foundation
 func handleSendFileREPLCommand(_ arguments: String, context: REPLContext, currentRoom: String?, directly: Bool = false) async {
     let directUsage = directly ? "Usage: /senddirect <jid> <path>" : nil
     guard !arguments.isEmpty else {
-        print(directUsage ?? "Usage: /sendfile [jid] <path>")
+        print(context.formatter.formatUsageError(directUsage ?? "Usage: /sendfile [jid] <path>"))
         return
     }
 
@@ -18,10 +18,10 @@ func handleSendFileREPLCommand(_ arguments: String, context: REPLContext, curren
         jidString = target
         filePath = path
     case .missingPath:
-        print(directUsage ?? "Usage: /sendfile <jid> <path>")
+        print(context.formatter.formatUsageError(directUsage ?? "Usage: /sendfile <jid> <path>"))
         return
     case .noTarget:
-        print(directUsage ?? context.formatter.formatError(CLIError.noConversationTarget))
+        print(directUsage.map(context.formatter.formatUsageError) ?? context.formatter.formatError(CLIError.noConversationTarget))
         return
     }
 
@@ -60,7 +60,7 @@ private func startDirectTransferFromREPL(filePath: String, recipientJID: BareJID
     }
     let conversation = try await env.chatService.openConversation(for: recipientJID, accountID: accountID)
     try await env.fileTransferService.startDirectTransfer(url: fileURL, in: conversation, accountID: accountID)
-    print("Sending \(fileURL.lastPathComponent) to \(jidString) directly. Use /transfers to check progress.")
+    print(context.formatter.formatCommandResult(.directTransferStarted(fileName: fileURL.lastPathComponent, jid: jidString)))
 }
 
 func handleAcceptREPLCommand(_ arguments: String, context: REPLContext) async {
@@ -68,7 +68,7 @@ func handleAcceptREPLCommand(_ arguments: String, context: REPLContext) async {
     let downloadsPath = await MainActor.run { context.environment.fileTransferService.downloadsDirectory.path }
     await handleFileTransferREPLCommand(
         arguments, context: context,
-        confirmation: { "Accepted file transfer: \($0), saving to \(downloadsPath)" },
+        confirmation: { .transferAccepted(offerID: $0, directory: downloadsPath) },
         action: { offerID, accountID in
             try await context.environment.fileTransferService.acceptIncomingTransfer(offerID, accountID: accountID)
         }
@@ -78,7 +78,7 @@ func handleAcceptREPLCommand(_ arguments: String, context: REPLContext) async {
 func handleDeclineREPLCommand(_ arguments: String, context: REPLContext) async {
     await handleFileTransferREPLCommand(
         arguments, context: context,
-        confirmation: { "Declined file transfer: \($0)" },
+        confirmation: { .transferDeclined(offerID: $0) },
         action: { offerID, accountID in
             try await context.environment.fileTransferService.declineIncomingTransfer(offerID, accountID: accountID)
         }
@@ -87,7 +87,7 @@ func handleDeclineREPLCommand(_ arguments: String, context: REPLContext) async {
 
 private func handleFileTransferREPLCommand(
     _ arguments: String, context: REPLContext,
-    confirmation: (String) -> String,
+    confirmation: (String) -> CLICommandResult,
     action: (String, UUID) async throws -> Void
 ) async {
     let offerID: String
@@ -107,7 +107,7 @@ private func handleFileTransferREPLCommand(
     }
     do {
         try await action(offerID, context.accountID)
-        print(confirmation(offerID))
+        print(context.formatter.formatCommandResult(confirmation(offerID)))
     } catch {
         print(context.formatter.formatError(error))
     }
@@ -126,23 +126,16 @@ func handleCancelREPLCommand(_ arguments: String, context: REPLContext) async {
         print(context.formatter.formatError(notFound))
         return
     }
-    print("Canceled file transfer: \(transfer.fileName)")
+    print(context.formatter.formatCommandResult(.transferCanceled(fileName: transfer.fileName)))
 }
 
 func handleTransfersREPLCommand(context: REPLContext) async {
     let transfers = await MainActor.run { context.environment.fileTransferService.activeTransfers }
     if transfers.isEmpty {
-        print("No active transfers.")
+        print(context.formatter.formatEmptyResult(.transfers))
         return
     }
     for transfer in transfers {
-        let state = formatTransferState(transfer)
-        let direction = transfer.direction == .outgoing ? "outgoing" : "incoming"
-        let method = switch transfer.method {
-        case .httpUpload: "http"
-        case .jingle: "jingle"
-        }
-        let sidSuffix = if let sid = transfer.sid, transfer.method == .jingle { " (sid: \(sid))" } else { "" }
-        print("  \(transfer.fileName) (\(formatByteCount(transfer.fileSize))) [\(direction)/\(method)] \(state)\(sidSuffix)")
+        print(context.formatter.formatTransfer(transfer))
     }
 }

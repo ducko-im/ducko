@@ -292,6 +292,69 @@ extension DuckoIntegrationTests.CLILayer {
             }
         }
 
+        @Test
+        @MainActor func `JSON REPL lists a room's affiliations as records and prints the unlock hint on standard error`() async throws {
+            try await CLIProcess.withProcess { aliceCLI in
+                try await aliceCLI.seedAccount(TestCredentials.alice)
+                let roomJID = Self.makeEphemeralRoomJID()
+
+                let output = try await aliceCLI.run(
+                    ["interactive", "--output", "json"], stdin: "/join \(roomJID)\n/affiliations owner\n/destroy\n"
+                )
+
+                let records = try output.jsonRecords()
+                let groupIndex = try #require(records.firstIndex { $0["type"] == "affiliation_group" }, Comment(rawValue: output.stdout))
+                #expect(records[groupIndex]["affiliation"] == "owner")
+                // Event records print from background tasks, so one can land between the entries. A loop rather than a
+                // `prefix` or `filter` closure: here the compiler returned an empty `prefix` and crashed on `filter`.
+                var affiliations: [String?] = []
+                for record in records[(groupIndex + 1)...] where record["type"] == "affiliation" {
+                    affiliations.append(record["affiliation"])
+                }
+                #expect(!affiliations.isEmpty, Comment(rawValue: output.stdout))
+                #expect(Set(affiliations) == ["owner"], Comment(rawValue: output.stdout))
+                #expect(output.stderr.contains("Room created and locked — "), Comment(rawValue: output.stderr))
+            }
+        }
+
+        @Test
+        @MainActor func `room join prints its guidance on standard error and only records on standard output`() async throws {
+            try await TestHarness.withHarness { harness in
+                try await harness.setUp(accounts: ["alice": TestCredentials.alice])
+                let roomJID = try await harness.createEphemeralRoom(using: "alice")
+
+                try await CLIProcess.withProcess { aliceCLI in
+                    try await aliceCLI.seedAccount(TestCredentials.alice)
+
+                    let output = try await aliceCLI.run(
+                        ["room", "join", roomJID.description, "--nickname", "alice-cli", "--output", "json"], stdin: "bogus\nquit\n"
+                    )
+
+                    let records = try output.jsonRecords()
+                    #expect(records.contains { $0["type"] == "room_joined" }, Comment(rawValue: output.stdout))
+                    #expect(output.stderr.contains("Type 'send <message>' to send, 'quit' to leave."), Comment(rawValue: output.stderr))
+                    #expect(output.stderr.contains("Commands: send <message>, quit"), Comment(rawValue: output.stderr))
+                }
+            }
+        }
+
+        @Test
+        @MainActor func `JSON REPL prints the unjoined-room hint on standard error`() async throws {
+            try await CLIProcess.withProcess { aliceCLI in
+                try await aliceCLI.seedAccount(TestCredentials.alice)
+                let joinedRoom = Self.makeEphemeralRoomJID()
+                let unjoinedRoom = Self.makeEphemeralRoomJID()
+
+                let output = try await aliceCLI.run(
+                    ["interactive", "--output", "json"], stdin: "/join \(joinedRoom)\nsend \(unjoinedRoom) hi\n/destroy\n"
+                )
+
+                let records = try output.jsonRecords()
+                #expect(records.contains { $0["type"] == "room_joined" }, Comment(rawValue: output.stdout))
+                #expect(output.stderr.contains("Hint: send <room-jid> requires /join first; delivering as 1:1 message."), Comment(rawValue: output.stderr))
+            }
+        }
+
         // MARK: - Helpers
 
         private static func makeEphemeralRoomJID() -> String {

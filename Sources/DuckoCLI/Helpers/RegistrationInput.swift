@@ -72,12 +72,10 @@ func promptAndSubmitRegistration<Attempt: RegistrationAttempt>(
             let images = try CaptchaImageFiles.write(form.captcha)
             defer { images?.remove() }
             for image in images?.images ?? [] {
-                print("CAPTCHA image for \(image.variable): \(image.url.path)")
+                printToStandardError("CAPTCHA image for \(image.variable): \(image.url.path)")
             }
-            // Piped output is buffered, and the user needs the path before the prompt waits for an answer.
-            fflush(stdout)
             if form.hasFields {
-                print(intro)
+                printToStandardError(intro)
                 try promptForSubmittableValues(&form, formatter: formatter)
             }
         } catch {
@@ -105,7 +103,7 @@ private func promptForSubmittableValues(_ form: inout RegistrationFormInfo, form
         if isatty(STDIN_FILENO) == 0, let hidden = challengeFields.first, challengeFields.allSatisfy({ $0.type == "text-private" }) {
             throw CLIError.noHiddenInput(field: hidden.displayLabel)
         }
-        print(captcha.answersRequired.map { "Answer at least \($0) of the challenges." } ?? "Answer the challenge.")
+        printToStandardError(captcha.answersRequired.map { "Answer at least \($0) of the challenges." } ?? "Answer the challenge.")
         try promptForDataFormValues(&challengeFields, formatter: formatter)
         for field in challengeFields {
             guard let index = form.dataForm.fields.firstIndex(where: { $0.id == field.id }) else { continue }
@@ -138,12 +136,12 @@ private func promptForValue(of field: inout RegistrationField) throws {
             }
             typed = secret
         } else {
-            print("\(field.label) [\(field.value)]: ", terminator: "")
+            printToStandardError("\(field.label) [\(field.value)]: ", terminator: "")
             guard let line = readLine() else { throw CLIError.inputEnded(field: field.label) }
             typed = line.trimmingCharacters(in: .whitespaces)
         }
         if !typed.isEmpty { field.value = typed }
         guard field.isMissingValue else { return }
-        print("\(field.label) is required.")
+        printToStandardError("\(field.label) is required.")
     }
 }

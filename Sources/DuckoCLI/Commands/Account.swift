@@ -199,11 +199,11 @@ extension DuckoCLI {
 
                 let account = try await resolveAccount(byJID: jid, environment: env)
 
-                print("WARNING: This will permanently unregister \(jid) from the server.")
+                printToStandardError("WARNING: This will permanently unregister \(jid) from the server.")
                 if includeHistory {
-                    print("Chat history will also be deleted.")
+                    printToStandardError("Chat history will also be deleted.")
                 }
-                print("Type 'yes' to confirm:")
+                printToStandardError("Type 'yes' to confirm:")
                 guard readLine()?.trimmingCharacters(in: .whitespaces) == "yes" else {
                     print("Cancelled.")
                     return
@@ -273,7 +273,7 @@ extension DuckoCLI {
                     context.environment.accountService.accounts.first { $0.id == accountID }?.jid.description
                 }
                 await context.environment.accountService.disconnect(accountID: accountID)
-                print("Account registered: \(jid ?? "\(username)@\(server)")")
+                print(formatter.formatCommandResult(.accountRegistered(jid: jid ?? "\(username)@\(server)")))
             }
         }
 

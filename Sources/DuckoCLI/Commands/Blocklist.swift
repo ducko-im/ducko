@@ -55,7 +55,7 @@ extension DuckoCLI {
                 try await ConnectedOperation.run(formatter: formatter, account: accountOption.account) { env, selectedAccount in
                     try await env.rosterService.blockContact(jidString: jid, accountID: selectedAccount.id)
 
-                    print("Blocked \(jid).")
+                    print(formatter.formatCommandResult(.blocked(jid: jid)))
                 }
             }
         }
@@ -78,7 +78,7 @@ extension DuckoCLI {
                 try await ConnectedOperation.run(formatter: formatter, account: accountOption.account) { env, selectedAccount in
                     try await env.rosterService.unblockContact(jidString: jid, accountID: selectedAccount.id)
 
-                    print("Unblocked \(jid).")
+                    print(formatter.formatCommandResult(.unblocked(jid: jid)))
                 }
             }
         }

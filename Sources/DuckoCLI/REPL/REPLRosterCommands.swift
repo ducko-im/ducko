@@ -50,10 +50,10 @@ func handleSubscriptionRequestREPLCommand(_ jidString: String, context: REPLCont
     do {
         if denying {
             try await context.environment.rosterService.denySubscription(jidString: jidString, accountID: context.accountID)
-            print("Denied subscription from \(jidString).")
+            print(context.formatter.formatCommandResult(.subscriptionDenied(jid: jidString)))
         } else {
             try await context.environment.rosterService.approveSubscription(jidString: jidString, accountID: context.accountID)
-            print("Approved subscription from \(jidString).")
+            print(context.formatter.formatCommandResult(.subscriptionApproved(jid: jidString)))
         }
     } catch {
         print(context.formatter.formatError(error))

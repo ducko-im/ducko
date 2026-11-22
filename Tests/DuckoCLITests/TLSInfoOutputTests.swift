@@ -11,6 +11,7 @@ struct TLSInfoOutputTests {
         #expect(PlainFormatter().formatTLSInfo(info).contains(expected))
         #expect(ANSIFormatter().formatTLSInfo(info).contains(expected))
         let output = JSONFormatter().formatTLSInfo(info)
+        expectSnakeCaseKeys(output)
         let json = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
         #expect(json["type"] as? String == "tls_info")
         #expect(json["tls_version"] as? String == "TLS 1.3")

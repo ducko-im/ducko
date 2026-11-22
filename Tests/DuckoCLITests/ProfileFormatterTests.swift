@@ -82,11 +82,29 @@ struct ProfileFormatterTests {
             organization: "ACME"
         )
         let output = formatter.formatProfile(profile)
+        expectSnakeCaseKeys(output)
         #expect(output.contains("\"type\":\"profile\""))
-        #expect(output.contains("\"fullName\":\"Carol\""))
+        #expect(output.contains("\"full_name\":\"Carol\""))
         #expect(output.contains("\"nickname\":\"carol\""))
         #expect(output.contains("\"emails\":[\"carol@example.com\"]"))
         #expect(output.contains("\"organization\":\"ACME\""))
+    }
+
+    @Test func `json profile with every field set carries each one`() throws {
+        let profile = ProfileInfo(
+            fullName: "Carol Jones", nickname: "carol", familyName: "Jones", givenName: "Carol",
+            emails: [ProfileInfo.EmailEntry(address: "carol@example.com")], telephones: [ProfileInfo.TelephoneEntry(number: "+1234567890")],
+            organization: "ACME", title: "Engineer", role: "Lead", url: "https://example.com", birthday: "1990-01-01", note: "A note"
+        )
+        let output = JSONFormatter().formatProfile(profile)
+        expectSnakeCaseKeys(output)
+        let json = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? NSDictionary)
+        let expected: NSDictionary = [
+            "type": "profile", "full_name": "Carol Jones", "nickname": "carol", "given_name": "Carol", "family_name": "Jones",
+            "organization": "ACME", "title": "Engineer", "role": "Lead", "emails": ["carol@example.com"], "phones": ["+1234567890"],
+            "url": "https://example.com", "birthday": "1990-01-01", "note": "A note"
+        ]
+        #expect(json == expected)
     }
 
     @Test func `json empty profile has only type`() {
@@ -94,7 +112,7 @@ struct ProfileFormatterTests {
         let profile = ProfileInfo()
         let output = formatter.formatProfile(profile)
         #expect(output.contains("\"type\":\"profile\""))
-        let noFullName = !output.contains("\"fullName\"")
+        let noFullName = !output.contains("\"full_name\"")
         #expect(noFullName)
     }
 

@@ -5,7 +5,7 @@ import Foundation
 func handleSendCommand(_ arguments: String, context: REPLContext) async {
     let parts = arguments.split(separator: " ", maxSplits: 1)
     guard parts.count == 2 else {
-        print("Usage: send <jid> <message>")
+        print(context.formatter.formatUsageError("Usage: send <jid> <message>"))
         return
     }
     let jidString = String(parts[0])
@@ -28,7 +28,7 @@ func handleSendCommand(_ arguments: String, context: REPLContext) async {
             try await environment.chatService.sendGroupMessage(to: recipientJID, body: messageBody, accountID: accountID)
         } else {
             if looksLikeUnjoinedRoom {
-                print("Hint: send <room-jid> requires /join first; delivering as 1:1 message.")
+                printToStandardError("Hint: send <room-jid> requires /join first; delivering as 1:1 message.")
             }
             try await environment.chatService.sendMessage(to: recipientJID, body: messageBody, accountID: accountID)
         }
@@ -41,7 +41,7 @@ func handleHistoryCommand(_ arguments: String, context: REPLContext) async {
     let usage = "Usage: /history <jid> [limit]"
     let parts = arguments.split(separator: " ", maxSplits: 1)
     guard let jidPart = parts.first else {
-        print(usage)
+        print(context.formatter.formatUsageError(usage))
         return
     }
     let jidString = String(jidPart)
@@ -53,7 +53,7 @@ func handleHistoryCommand(_ arguments: String, context: REPLContext) async {
     var limit = 20
     if parts.count > 1 {
         guard let parsed = Int(parts[1]), parsed > 0 else {
-            print(usage)
+            print(context.formatter.formatUsageError(usage))
             return
         }
         limit = parsed
@@ -78,11 +78,11 @@ func handleRetractREPLCommand(_ jidString: String, context: REPLContext) async {
     do {
         let conversation = try await namedConversation(jidString, context: context)
         guard let original = try await lastOutgoingMessage(in: conversation, context: context), let stanzaID = original.stanzaID else {
-            print("No recent outgoing message to retract.")
+            print(context.formatter.formatEmptyResult(.recentMessage(.retract)))
             return
         }
         try await context.environment.chatService.retractMessage(original, in: conversation, accountID: context.accountID)
-        print("Retracted message: \(stanzaID)")
+        print(context.formatter.formatCommandResult(.messageRetracted(id: stanzaID)))
     } catch {
         print(context.formatter.formatError(error))
     }
@@ -91,7 +91,7 @@ func handleRetractREPLCommand(_ jidString: String, context: REPLContext) async {
 func handleEditREPLCommand(_ arguments: String, context: REPLContext) async {
     let parts = arguments.split(separator: " ", maxSplits: 1)
     guard parts.count == 2 else {
-        print("Usage: /edit <jid> <new-body>")
+        print(context.formatter.formatUsageError("Usage: /edit <jid> <new-body>"))
         return
     }
     let jidString = String(parts[0])
@@ -99,11 +99,11 @@ func handleEditREPLCommand(_ arguments: String, context: REPLContext) async {
     do {
         let conversation = try await namedConversation(jidString, context: context)
         guard let original = try await lastOutgoingMessage(in: conversation, context: context), let stanzaID = original.stanzaID else {
-            print("No recent outgoing message to edit.")
+            print(context.formatter.formatEmptyResult(.recentMessage(.edit)))
             return
         }
         try await context.environment.chatService.sendCorrection(of: original, newBody: newBody, in: conversation, accountID: context.accountID)
-        print("Edited message: \(stanzaID)")
+        print(context.formatter.formatCommandResult(.messageEdited(id: stanzaID)))
     } catch {
         print(context.formatter.formatError(error))
     }
@@ -112,7 +112,7 @@ func handleEditREPLCommand(_ arguments: String, context: REPLContext) async {
 func handleReplyREPLCommand(_ arguments: String, context: REPLContext) async {
     let parts = arguments.split(separator: " ", maxSplits: 1)
     guard parts.count == 2 else {
-        print("Usage: /reply <jid> <message>")
+        print(context.formatter.formatUsageError("Usage: /reply <jid> <message>"))
         return
     }
     let jidString = String(parts[0])
@@ -123,7 +123,7 @@ func handleReplyREPLCommand(_ arguments: String, context: REPLContext) async {
         guard let lastIncoming = messages.last(where: { !$0.isOutgoing && $0.replyReference != nil }),
               let replyReference = lastIncoming.replyReference
         else {
-            print("No recent incoming message to reply to.")
+            print(context.formatter.formatEmptyResult(.recentMessage(.reply)))
             return
         }
         try await context.environment.chatService.sendMessage(body, in: conversation, replyingTo: lastIncoming, accountID: context.accountID)
@@ -138,7 +138,7 @@ func handleReplyREPLCommand(_ arguments: String, context: REPLContext) async {
 func handleSearchREPLCommand(_ arguments: String, context: REPLContext) async {
     let parts = arguments.split(separator: " ", maxSplits: 1)
     guard parts.count == 2 else {
-        print("Usage: /search <jid> <query>")
+        print(context.formatter.formatUsageError("Usage: /search <jid> <query>"))
         return
     }
     let jidString = String(parts[0])
@@ -171,50 +171,56 @@ func handleSearchAllREPLCommand(_ query: String, context: REPLContext) async {
 }
 
 @MainActor
-func handlePrefREPLCommand(_ arguments: String) async {
+func handlePrefREPLCommand(_ arguments: String, context: REPLContext) async {
     let parts = arguments.split(separator: " ", maxSplits: 1)
     let key = String(parts[0])
     let valueArg = parts.count == 2 ? String(parts[1]) : nil
 
+    let result: CLICommandResult?
     switch key {
     case "chatstates":
-        togglePref(name: "Chat states", key: "chatstates", value: valueArg, get: { ChatPreferences.shared.enableChatStates }, set: { ChatPreferences.shared.enableChatStates = $0 })
+        result = togglePref(name: "Chat states", key: "chatstates", value: valueArg, get: { ChatPreferences.shared.enableChatStates }, set: { ChatPreferences.shared.enableChatStates = $0 })
     case "markers":
-        togglePref(name: "Displayed markers", key: "markers", value: valueArg, get: { ChatPreferences.shared.enableDisplayedMarkers }, set: { ChatPreferences.shared.enableDisplayedMarkers = $0 })
+        result = togglePref(name: "Displayed markers", key: "markers", value: valueArg, get: { ChatPreferences.shared.enableDisplayedMarkers }, set: { ChatPreferences.shared.enableDisplayedMarkers = $0 })
     default:
-        print("Unknown preference: \(key). Available: chatstates, markers")
+        print(context.formatter.formatUsageError("Unknown preference: \(key). Available: chatstates, markers"))
+        return
+    }
+    if let result {
+        print(context.formatter.formatCommandResult(result))
+    } else {
+        print(context.formatter.formatUsageError("Usage: /pref \(key) on|off"))
     }
 }
 
+/// The preference as `value` left it, or nil when `value` is neither on nor off.
 @MainActor
-private func togglePref(name: String, key: String, value: String?, get: () -> Bool, set: (Bool) -> Void) {
+private func togglePref(name: String, key: String, value: String?, get: () -> Bool, set: (Bool) -> Void) -> CLICommandResult? {
     guard let value else {
-        let current = get() ? "on" : "off"
-        print("\(name): \(current)")
-        return
+        return .preference(name: name, key: key, enabled: get(), changed: false)
     }
     switch value.lowercased() {
     case "on":
         set(true)
-        print("\(name) enabled.")
+        return .preference(name: name, key: key, enabled: true, changed: true)
     case "off":
         set(false)
-        print("\(name) disabled.")
+        return .preference(name: name, key: key, enabled: false, changed: true)
     default:
-        print("Usage: /pref \(key) on|off")
+        return nil
     }
 }
 
 func handleEncryptREPLCommand(_ arguments: String, context: REPLContext) async {
     let parts = arguments.split(separator: " ", maxSplits: 1)
     guard parts.count == 2 else {
-        print("Usage: /encrypt <jid> on|off")
+        print(context.formatter.formatUsageError("Usage: /encrypt <jid> on|off"))
         return
     }
     let jidString = String(parts[0])
     let toggle = String(parts[1]).lowercased()
     guard toggle == "on" || toggle == "off" else {
-        print("Usage: /encrypt <jid> on|off")
+        print(context.formatter.formatUsageError("Usage: /encrypt <jid> on|off"))
         return
     }
     let enabled = toggle == "on"
@@ -225,8 +231,7 @@ func handleEncryptREPLCommand(_ arguments: String, context: REPLContext) async {
         try await context.environment.chatService.setEncryptionEnabled(
             enabled, for: conversation.id, accountID: context.accountID
         )
-        let state = enabled ? "enabled" : "disabled"
-        print("Encryption \(state) for \(jidString).")
+        print(context.formatter.formatCommandResult(.encryption(jid: jidString, enabled: enabled)))
     } catch {
         print(context.formatter.formatError(error))
     }
@@ -235,7 +240,7 @@ func handleEncryptREPLCommand(_ arguments: String, context: REPLContext) async {
 func handleOMEMOVerifyREPLCommand(_ arguments: String, context: REPLContext) async {
     let parts = arguments.split(separator: " ", maxSplits: 2)
     guard parts.count == 3, let deviceID = UInt32(parts[1]) else {
-        print("Usage: /omemo-verify <jid> <device-id> <fingerprint>")
+        print(context.formatter.formatUsageError("Usage: /omemo-verify <jid> <device-id> <fingerprint>"))
         return
     }
     let jid = String(parts[0])
@@ -252,13 +257,13 @@ func handleOMEMOVerifyREPLCommand(_ arguments: String, context: REPLContext) asy
 func handleOMEMOResetREPLCommand(_ arguments: String, context: REPLContext) async {
     let parts = arguments.split(separator: " ")
     guard (1 ... 2).contains(parts.count) else {
-        print("Usage: /omemo-reset <jid> [device-id]")
+        print(context.formatter.formatUsageError("Usage: /omemo-reset <jid> [device-id]"))
         return
     }
     let deviceID: UInt32?
     if parts.count == 2 {
         guard let parsed = UInt32(parts[1]) else {
-            print("Usage: /omemo-reset <jid> [device-id]")
+            print(context.formatter.formatUsageError("Usage: /omemo-reset <jid> [device-id]"))
             return
         }
         deviceID = parsed

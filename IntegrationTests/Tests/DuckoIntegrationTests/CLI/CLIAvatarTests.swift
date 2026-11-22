@@ -87,8 +87,24 @@ extension DuckoIntegrationTests.CLILayer {
                     // the PNG that `set` published.
                     let savedData = try Data(contentsOf: outPath)
                     #expect(sha1Hex(Array(savedData)) == String(publishedHash))
+
+                    try await expectJSONSave(cli: cli)
                 }
             }
+        }
+
+        /// `avatar get --output json --save` reports the saved file as one `command_result` record.
+        @MainActor private func expectJSONSave(cli: CLIProcess) async throws {
+            let jsonPath = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ducko-inttest-avatar-json-\(UUID().uuidString).png")
+            await cli.addCleanup { try? FileManager.default.removeItem(at: jsonPath) }
+            let json = try await cli.run(["avatar", "get", TestCredentials.alice.jid, "--output", "json", "--save", jsonPath.path])
+            #expect(json.exitCode == 0, Comment(rawValue: json.stdout + json.stderr))
+            let records = try json.jsonRecords()
+            let saved = records.filter { $0["type"] == "command_result" }
+            #expect(saved.count == 1, Comment(rawValue: json.stdout))
+            #expect(saved.first?["action"] == "save_avatar")
+            #expect(saved.first?["path"] == jsonPath.path)
         }
     }
 }

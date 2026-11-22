@@ -23,7 +23,7 @@ extension DuckoCLI {
             try await connectStored(env, accountID: selectedAccount.id, password: password)
             try await waitForConnected(accountID: selectedAccount.id, environment: env)
 
-            print("Connected. Type 'help' for commands, 'quit' to exit.")
+            printToStandardError("Connected. Type 'help' for commands, 'quit' to exit.")
 
             // Run readLine loop in Task.detached (blocking I/O must not run on cooperative thread)
             let accountID = selectedAccount.id

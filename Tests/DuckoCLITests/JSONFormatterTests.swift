@@ -20,6 +20,7 @@ struct JSONFormatterTests {
             type: "chat"
         )
         let output = formatter.formatMessage(message)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "message")
@@ -60,6 +61,7 @@ struct JSONFormatterTests {
             isUndecryptable: true
         )
         let output = formatter.formatMessage(message)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["undecryptable"] == "true")
@@ -77,14 +79,15 @@ struct JSONFormatterTests {
             createdAt: Date()
         )
         let output = formatter.formatAccount(account)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "account")
         #expect(json["jid"] == "alice@example.com")
         #expect(json["id"] == accountID.uuidString)
-        #expect(json["isEnabled"] == "true")
-        #expect(json["allowsPLAIN"] == "false")
-        #expect(json["requireTLS"] == "true")
+        #expect(json["is_enabled"] == "true")
+        #expect(json["allows_plain"] == "false")
+        #expect(json["require_tls"] == "true")
     }
 
     // MARK: - formatContactWithPresence
@@ -96,18 +99,21 @@ struct JSONFormatterTests {
             accountID: UUID(),
             jid: jid,
             name: "Alice",
+            localAlias: "Ali",
             subscription: .both,
             groups: ["Friends"],
             isBlocked: false,
             createdAt: Date()
         )
         let output = formatter.formatContactWithPresence(contact, presence: .available)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "contact")
         #expect(json["jid"] == "alice@example.com")
         #expect(json["presence"] == "available")
         #expect(json["name"] == "Alice")
+        #expect(json["local_alias"] == "Ali")
         #expect(json["groups"] == "Friends")
     }
 
@@ -123,6 +129,7 @@ struct JSONFormatterTests {
             createdAt: Date()
         )
         let output = formatter.formatContactWithPresence(contact, presence: nil)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["presence"] == "offline")
@@ -161,11 +168,31 @@ struct JSONFormatterTests {
             )
         ])
         let output = formatter.formatGroupHeader(group)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "group_header")
         #expect(json["name"] == "Friends")
         #expect(json["count"] == "3")
+    }
+
+    // MARK: - formatServerInfo
+
+    @Test func `server info lists each kind of contact address under its own key`() throws {
+        let info = ServerInfo(contactAddresses: ContactAddressType.allCases.map { ContactAddress(type: $0, address: "mailto:\($0.displayName.lowercased())@example.com") }
+            + [ContactAddress(type: .admin, address: "xmpp:admin@example.com")])
+        let output = formatter.formatServerInfo(info)
+        expectSnakeCaseKeys(output)
+        let json = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: String])
+        #expect(json == [
+            "type": "server_info",
+            "admin_addresses": "mailto:admin@example.com,xmpp:admin@example.com",
+            "abuse_addresses": "mailto:abuse@example.com",
+            "feedback_addresses": "mailto:feedback@example.com",
+            "support_addresses": "mailto:support@example.com",
+            "security_addresses": "mailto:security@example.com",
+            "sales_addresses": "mailto:sales@example.com"
+        ])
     }
 
     // MARK: - formatEvent
@@ -174,6 +201,7 @@ struct JSONFormatterTests {
         let accountID = UUID()
         let jid = try #require(FullJID.parse("alice@example.com/res"))
         let output = try #require(formatter.formatEvent(.connected(jid), accountID: accountID))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "connected")
@@ -184,10 +212,11 @@ struct JSONFormatterTests {
         let accountID = UUID()
         let event = XMPPEvent.jingleFileTransferFailed(sid: "sid-789", offerID: "offer", reason: .transportReject)
         let output = try #require(formatter.formatEvent(event, accountID: accountID))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "jingle_transfer_failed")
-        #expect(json["offerId"] == "offer")
+        #expect(json["offer_id"] == "offer")
         #expect(json["reason"] == "transport-reject")
         #expect(json["account"] == accountID.uuidString)
     }
@@ -201,6 +230,7 @@ struct JSONFormatterTests {
     @Test func `subscription request is valid JSON`() throws {
         let jid = try #require(BareJID.parse("alice@example.com"))
         let output = try #require(formatter.formatEvent(.presenceSubscriptionRequest(from: jid), accountID: UUID()))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "subscription_request")
@@ -218,10 +248,11 @@ struct JSONFormatterTests {
     @Test func `note carries its kind and text`() throws {
         let note = TimelineNote(conversationID: UUID(), timestamp: Date(timeIntervalSince1970: 1_772_280_000), kind: .encryptionEnabledByContact)
         let output = formatter.formatNote(note, contactName: "bob@example.com")
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "note")
-        #expect(json["kind"] == "encryption-enabled-by-contact")
+        #expect(json["kind"] == "encryption_enabled_by_contact")
         #expect(json["text"] == "Encryption enabled because bob@example.com sent an encrypted message")
         #expect(json["timestamp"] == "2026-02-28T12:00:00Z")
         #expect(json["subject"] == nil)
@@ -233,9 +264,10 @@ struct JSONFormatterTests {
             subject: "carol", detail: "No OMEMO here"
         )
         let output = formatter.formatNote(note, contactName: "room@conference.example.com")
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
-        #expect(json["kind"] == "plaintext-requested")
+        #expect(json["kind"] == "plaintext_requested")
         #expect(json["text"] == "carol asked for unencrypted messages (No OMEMO here)")
         #expect(json["subject"] == "carol")
         #expect(json["detail"] == "No OMEMO here")
@@ -247,11 +279,12 @@ struct JSONFormatterTests {
             fileName: "report.pdf", detail: "The transfer was canceled"
         )
         let output = formatter.formatNote(note, contactName: "bob@example.com")
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
-        #expect(json["kind"] == "incoming-file-failed")
+        #expect(json["kind"] == "incoming_file_failed")
         #expect(json["text"] == "report.pdf from bob@example.com did not arrive: The transfer was canceled")
-        #expect(json["fileName"] == "report.pdf")
+        #expect(json["file_name"] == "report.pdf")
         #expect(json["detail"] == "The transfer was canceled")
     }
 
@@ -260,6 +293,7 @@ struct JSONFormatterTests {
     @Test func `search day carries the conversation, the day and the count`() throws {
         let jid = try #require(BareJID.parse("bob@example.com"))
         let output = formatter.formatSearchDay(jid: .bare(jid), day: Date(timeIntervalSince1970: 1_772_236_800), matchCount: 2)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json == ["type": "search_day", "jid": "bob@example.com", "day": "2026-02-28", "count": "2"])
@@ -280,6 +314,7 @@ struct JSONFormatterTests {
             type: "chat"
         )
         let output = formatter.formatMessage(message)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["delivered"] == "true")
@@ -300,6 +335,7 @@ struct JSONFormatterTests {
             type: "chat"
         )
         let output = formatter.formatMessage(message)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["read"] == "true")
@@ -318,6 +354,7 @@ struct JSONFormatterTests {
             type: "chat"
         )
         let output = formatter.formatMessage(message)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["edited"] == "true")
@@ -328,20 +365,22 @@ struct JSONFormatterTests {
     @Test func `delivery receipt event is valid JSON`() throws {
         let jid = try #require(JID.parse("alice@example.com/res"))
         let output = try #require(formatter.formatEvent(.deliveryReceiptReceived(messageID: "msg-1", from: jid), accountID: UUID()))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "delivery_receipt")
-        #expect(json["messageID"] == "msg-1")
+        #expect(json["message_id"] == "msg-1")
         #expect(json["from"] == "alice@example.com")
     }
 
     @Test func `displayed marker event is a read marker in JSON`() throws {
         let jid = try #require(JID.parse("alice@example.com/res"))
         let output = try #require(formatter.formatEvent(.chatMarkerReceived(messageID: "msg-1", type: .displayed, from: jid), accountID: UUID()))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "read_marker")
-        #expect(json["messageID"] == "msg-1")
+        #expect(json["message_id"] == "msg-1")
         #expect(json["from"] == "alice@example.com")
         #expect(formatter.formatEvent(.chatMarkerReceived(messageID: "msg-1", type: .received, from: jid), accountID: UUID()) == nil)
     }
@@ -362,6 +401,7 @@ struct JSONFormatterTests {
             attachments: [Attachment(id: UUID(), url: "https://example.com/photo.jpg", fileName: "photo.jpg")]
         )
         let output = formatter.formatMessage(message)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["attachments"] == "https://example.com/photo.jpg")
@@ -380,6 +420,7 @@ struct JSONFormatterTests {
             type: "chat"
         )
         let output = formatter.formatMessage(message)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["attachments"] == nil)
@@ -390,6 +431,7 @@ struct JSONFormatterTests {
     @Test func `typing indicator composing`() throws {
         let jid = try #require(BareJID.parse("alice@example.com"))
         let output = try #require(formatter.formatTypingIndicator(from: .bare(jid), state: .composing))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "typing")
@@ -399,6 +441,7 @@ struct JSONFormatterTests {
     @Test func `typing indicator paused`() throws {
         let jid = try #require(BareJID.parse("alice@example.com"))
         let output = try #require(formatter.formatTypingIndicator(from: .bare(jid), state: .paused))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "typing")
@@ -408,6 +451,7 @@ struct JSONFormatterTests {
     @Test func `typing indicator names a room occupant`() throws {
         let occupant = try #require(JID.parse("chat@conference.example.com/alice"))
         let output = try #require(formatter.formatTypingIndicator(from: occupant, state: .composing))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["jid"] == "chat@conference.example.com")
@@ -429,6 +473,7 @@ struct JSONFormatterTests {
             redirectURL: "https://example.com/register"
         ))
         let output = formatter.formatRegistrationForm(form)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(json["type"] as? String == "registration_form")
@@ -454,6 +499,7 @@ struct JSONFormatterTests {
             ])
         ))
         let output = formatter.formatRegistrationForm(form)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(json["type"] as? String == "registration_form")
@@ -467,7 +513,7 @@ struct JSONFormatterTests {
 
     /// Locks the structured envelope shape for `omemoRecipientsPartial` —
     /// it diverges from the file's flat-dict pattern intentionally so JSON
-    /// consumers can read `dropped` as an array of `{jid, deviceID}` objects.
+    /// consumers can read `dropped` as an array of `{jid, device_id}` objects.
     /// A regression that flattens the envelope or renames a field would
     /// silently break downstream consumers.
     @Test func `omemo_recipients_partial event emits structured dropped array`() throws {
@@ -479,16 +525,17 @@ struct JSONFormatterTests {
         let accountID = UUID()
         let event = XMPPEvent.omemoRecipientsPartial(conversation: conversation, droppedDevices: dropped)
         let output = try #require(formatter.formatEvent(event, accountID: accountID))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(json["type"] as? String == "omemo_recipients_partial")
         #expect(json["conversation"] as? String == "alice@example.com")
         #expect(json["account"] as? String == accountID.uuidString)
-        #expect(json["droppedCount"] as? Int == 2)
+        #expect(json["dropped_count"] as? Int == 2)
         let droppedArray = try #require(json["dropped"] as? [[String: Any]])
         #expect(droppedArray.count == 2)
         #expect(droppedArray[0]["jid"] as? String == "alice@example.com")
-        #expect(droppedArray[0]["deviceID"] as? Int == 1234)
-        #expect(droppedArray[1]["deviceID"] as? Int == 5678)
+        #expect(droppedArray[0]["device_id"] as? Int == 1234)
+        #expect(droppedArray[1]["device_id"] as? Int == 5678)
     }
 }

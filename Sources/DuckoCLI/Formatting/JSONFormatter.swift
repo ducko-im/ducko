@@ -39,7 +39,7 @@ struct JSONFormatter: CLIFormatter {
             dict["encrypted"] = "true"
         }
         if message.isFromUntrustedDevice {
-            dict["untrustedDevice"] = "true"
+            dict["untrusted_device"] = "true"
         }
         if message.isUndecryptable {
             dict["undecryptable"] = "true"
@@ -61,12 +61,12 @@ struct JSONFormatter: CLIFormatter {
     func formatNote(_ note: TimelineNote, contactName: String) -> String {
         var dict = [
             "type": "note",
-            "kind": note.kind.rawValue,
+            "kind": note.kind.rawValue.replacing("-", with: "_"),
             "text": note.text(contactName: contactName),
             "timestamp": formatTimestamp(note.timestamp)
         ]
         dict["subject"] = note.subject
-        dict["fileName"] = note.fileName
+        dict["file_name"] = note.fileName
         dict["detail"] = note.detail
         return encode(dict)
     }
@@ -102,6 +102,24 @@ struct JSONFormatter: CLIFormatter {
             encode(["type": "omemo_identity_empty", "account": accountID.uuidString])
         case let .omemoDevices(jid, accountID):
             encode(["type": "omemo_devices_empty", "account": accountID.uuidString, "jid": jid])
+        case .onlineContacts:
+            encode(["type": "online_contacts_empty"])
+        case .transfers:
+            encode(["type": "transfers_empty"])
+        case let .affiliations(affiliation, room):
+            encode(["type": "affiliations_empty", "affiliation": affiliation.rawValue, "room": room])
+        case let .roomConfig(room):
+            encode(["type": "room_config_empty", "room": room])
+        case .connectionInfo:
+            encode(["type": "tls_info_empty"])
+        case .ownAvatar:
+            encode(["type": "own_avatar_empty"])
+        case let .avatar(jid):
+            encode(["type": "avatar_empty", "jid": jid])
+        case let .recentMessage(purpose):
+            encode(["type": "recent_message_empty", "purpose": purpose.rawValue])
+        case .moderatableMessage:
+            encode(["type": "moderatable_message_empty"])
         }
     }
 
@@ -110,9 +128,25 @@ struct JSONFormatter: CLIFormatter {
             "type": "roster_command", "operation": outcome.operation.rawValue,
             "account": outcome.accountID.uuidString, "jid": outcome.jid,
             "remote_status": "confirmed", "local_status": outcome.localStatus.rawValue,
-            "subscription_status": outcome.subscriptionStatus.rawValue,
+            "subscription_status": jsonValue(outcome.subscriptionStatus),
             "result": outcome.isComplete ? "complete" : "partial", "message": outcome.message
         ])
+    }
+
+    private func jsonValue(_ status: RosterCommandOutcome.SubscriptionStatus) -> String {
+        switch status {
+        case .notRequested: "not_requested"
+        case .sent: "sent"
+        case .incomplete: "incomplete"
+        }
+    }
+
+    private func jsonValue(_ status: RosterCommandError.RemoteStatus) -> String {
+        switch status {
+        case .notSent: "not_sent"
+        case .rejected: "rejected"
+        case .unconfirmed: "unconfirmed"
+        }
     }
 
     func formatAccount(_ account: Account) -> String {
@@ -120,9 +154,9 @@ struct JSONFormatter: CLIFormatter {
             "type": "account",
             "id": account.id.uuidString,
             "jid": account.jid.description,
-            "isEnabled": account.isEnabled ? "true" : "false",
-            "allowsPLAIN": account.allowsPLAIN ? "true" : "false",
-            "requireTLS": account.requireTLS ? "true" : "false"
+            "is_enabled": account.isEnabled ? "true" : "false",
+            "allows_plain": account.allowsPLAIN ? "true" : "false",
+            "require_tls": account.requireTLS ? "true" : "false"
         ])
     }
 
@@ -137,7 +171,7 @@ struct JSONFormatter: CLIFormatter {
             dict["name"] = name
         }
         if let localAlias = contact.localAlias {
-            dict["localAlias"] = localAlias
+            dict["local_alias"] = localAlias
         }
         if !contact.groups.isEmpty {
             dict["groups"] = contact.groups.joined(separator: ",")
@@ -170,8 +204,8 @@ struct JSONFormatter: CLIFormatter {
             return encode([
                 "type": "error", "operation": error.operation.rawValue,
                 "account": error.accountID.uuidString, "jid": error.jid,
-                "remote_status": error.status.rawValue, "local_status": "notStarted",
-                "subscription_status": "notRequested", "message": error.localizedDescription
+                "remote_status": jsonValue(error.status), "local_status": "not_started",
+                "subscription_status": "not_requested", "message": error.localizedDescription
             ])
         }
         return encode([
@@ -194,9 +228,9 @@ struct JSONFormatter: CLIFormatter {
         case let .presenceSubscriptionRequest(from: jid): encode(["type": "subscription_request", "from": jid.description])
         case let .presenceSubscriptionApproved(from: jid): encode(["type": "subscription_approved", "from": jid.description])
         case let .presenceSubscriptionRevoked(from: jid): encode(["type": "subscription_revoked", "from": jid.description])
-        case let .deliveryReceiptReceived(messageID, from): encode(["type": "delivery_receipt", "messageID": messageID, "from": from.bareJID.description, "account": account])
-        case let .chatMarkerReceived(messageID, .displayed, from): encode(["type": "read_marker", "messageID": messageID, "from": from.bareJID.description, "account": account])
-        case let .messageCorrected(originalID, newBody, _, from, messageType, _): encode(["type": "message_corrected", "originalID": originalID, "newBody": newBody, "from": from.bareJID.description, "message_type": messageType.rawValue, "account": account])
+        case let .deliveryReceiptReceived(messageID, from): encode(["type": "delivery_receipt", "message_id": messageID, "from": from.bareJID.description, "account": account])
+        case let .chatMarkerReceived(messageID, .displayed, from): encode(["type": "read_marker", "message_id": messageID, "from": from.bareJID.description, "account": account])
+        case let .messageCorrected(originalID, newBody, _, from, messageType, _): encode(["type": "message_corrected", "original_id": originalID, "new_body": newBody, "from": from.bareJID.description, "message_type": messageType.rawValue, "account": account])
         case let .messageError(_, from, error): formatMessageError(from: from, error: error, account: account)
         case let .messageRetracted(originalID, from, messageType, _): encode(["type": "message_retracted", "original_id": originalID, "from": from.bareJID.description, "message_type": messageType.rawValue, "account": account])
         case let .messageModerated(originalID, moderator, room, reason): formatModeratedMessage(originalID: originalID, moderator: moderator, room: room, reason: reason, account: account)
@@ -211,9 +245,9 @@ struct JSONFormatter: CLIFormatter {
         case let .roomDestroyed(room, reason, alternate): formatRoomDestroyedEvent(room: room, reason: reason, alternate: alternate, account: account)
         case .mucSelfPingFailed: nil
         case let .jingleFileTransferReceived(offer): formatFileOfferEvent(offer, account: account)
-        case let .jingleFileTransferProgress(sid, offerID, bytesTransferred, totalBytes, bytesPerSecond): formatTransferProgress(["sid": sid, "offerId": offerID, "account": account], bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: bytesPerSecond)
-        case let .jingleFileTransferCompleted(sid, offerID, transport): encode(["type": "jingle_transfer_completed", "sid": sid, "offerId": offerID, "transport": transport.rawValue, "account": account])
-        case let .jingleFileTransferFailed(sid, offerID, reason): encode(["type": "jingle_transfer_failed", "sid": sid, "offerId": offerID, "reason": reason.rawValue, "account": account])
+        case let .jingleFileTransferProgress(sid, offerID, bytesTransferred, totalBytes, bytesPerSecond): formatTransferProgress(["sid": sid, "offer_id": offerID, "account": account], bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: bytesPerSecond)
+        case let .jingleFileTransferCompleted(sid, offerID, transport): encode(["type": "jingle_transfer_completed", "sid": sid, "offer_id": offerID, "transport": transport.rawValue, "account": account])
+        case let .jingleFileTransferFailed(sid, offerID, reason): encode(["type": "jingle_transfer_failed", "sid": sid, "offer_id": offerID, "reason": reason.rawValue, "account": account])
         case let .oobIQOfferReceived(offer): formatOOBIQOfferEvent(offer, account: account)
         case .presenceReceived, .iqReceived,
              .rosterUpdated,
@@ -271,25 +305,31 @@ struct JSONFormatter: CLIFormatter {
         return encode(dict)
     }
 
-    /// A progress event's record, adding to `identity` (the session's `sid`, `offerId` and `account`) how far it got.
+    /// A progress event's record, adding to `identity` (the session's `sid`, `offer_id` and `account`) how far it got.
     private func formatTransferProgress(_ identity: [String: String], bytesTransferred: Int64, totalBytes: Int64, bytesPerSecond: Double?) -> String {
         let (progress, _) = jingleProgressState(bytesTransferred: bytesTransferred, totalBytes: totalBytes)
         var dict = identity
         dict["type"] = "jingle_transfer_progress"
         dict["progress"] = "\(Int(progress * 100))"
-        dict["bytesTransferred"] = "\(bytesTransferred)"
-        dict["totalBytes"] = "\(totalBytes)"
-        let rate = TransferRate(bytesPerSecond: bytesPerSecond, bytesTransferred: bytesTransferred, totalBytes: totalBytes)
-        dict["bytesPerSecond"] = rate.map { "\(Int($0.bytesPerSecond.rounded()))" }
-        dict["secondsRemaining"] = rate?.secondsRemaining.map { "\(Int($0.rounded()))" }
+        dict["bytes_transferred"] = "\(bytesTransferred)"
+        dict["total_bytes"] = "\(totalBytes)"
+        dict.merge(rateFields(TransferRate(bytesPerSecond: bytesPerSecond, bytesTransferred: bytesTransferred, totalBytes: totalBytes))) { $1 }
         return encode(dict)
+    }
+
+    /// A direct transfer's rate and time left as whole numbers, each only once it is known.
+    func rateFields(_ rate: TransferRate?) -> [String: String] {
+        var fields: [String: String] = [:]
+        fields["bytes_per_second"] = rate.map { "\(Int($0.bytesPerSecond.rounded()))" }
+        fields["seconds_remaining"] = rate?.secondsRemaining.map { "\(Int($0.rounded()))" }
+        return fields
     }
 
     private func formatOMEMOSession(jid: BareJID, deviceID: UInt32, identityKey: [UInt8], account: String) -> String {
         encode([
             "type": "omemo_session_established",
             "jid": jid.description,
-            "deviceID": "\(deviceID)",
+            "device_id": "\(deviceID)",
             "fingerprint": omemoFingerprint(of: identityKey),
             "account": account
         ])
@@ -401,7 +441,7 @@ struct JSONFormatter: CLIFormatter {
         var dict: [String: String] = [
             "type": "oob_iq_offer",
             "id": offer.id,
-            "offerId": offer.offerID,
+            "offer_id": offer.offerID,
             "url": offer.url,
             "from": offer.from.bareJID.description,
             "account": account
@@ -413,8 +453,8 @@ struct JSONFormatter: CLIFormatter {
     func formatTransferProgress(fileName: String, fileSize: Int64, progress: Double) -> String {
         encode([
             "type": "transfer_progress",
-            "fileName": fileName,
-            "fileSize": formatByteCount(fileSize),
+            "file_name": fileName,
+            "file_size": formatByteCount(fileSize),
             "progress": "\(Int(progress * 100))"
         ])
     }
@@ -422,12 +462,12 @@ struct JSONFormatter: CLIFormatter {
     func formatFileMessage(fileName: String, url: String, fileSize: Int64?) -> String {
         var dict: [String: String] = [
             "type": "file",
-            "fileName": fileName,
+            "file_name": fileName,
             "url": url
         ]
         if let fileSize {
-            dict["fileSize"] = formatByteCount(fileSize)
-            dict["fileSizeBytes"] = "\(fileSize)"
+            dict["file_size"] = formatByteCount(fileSize)
+            dict["file_size_bytes"] = "\(fileSize)"
         }
         return encode(dict)
     }
@@ -435,12 +475,12 @@ struct JSONFormatter: CLIFormatter {
     private func formatFileOfferEvent(_ offer: JingleFileOffer, account: String) -> String {
         encode([
             "type": "file_offer",
-            "fileName": offer.fileName,
-            "fileSize": formatByteCount(offer.fileSize),
-            "fileSizeBytes": "\(offer.fileSize)",
+            "file_name": offer.fileName,
+            "file_size": formatByteCount(offer.fileSize),
+            "file_size_bytes": "\(offer.fileSize)",
             "from": offer.from.bareJID.description,
             "sid": offer.sid,
-            "offerId": offer.offerID,
+            "offer_id": offer.offerID,
             "account": account
         ])
     }
@@ -499,7 +539,7 @@ struct JSONFormatter: CLIFormatter {
     func formatRoomParticipantGroupHeader(_ group: RoomParticipantGroup) -> String {
         encode([
             "type": "room_participant_group",
-            "affiliation": group.affiliation.displayName,
+            "affiliation": group.affiliation.rawValue,
             "count": "\(group.participants.count)"
         ])
     }
@@ -639,7 +679,7 @@ struct JSONFormatter: CLIFormatter {
     func formatServerInfo(_ info: ServerInfo) -> String {
         var dict = ["type": "server_info"]
         for address in info.contactAddresses {
-            let key = address.type.rawValue
+            let key = address.type.rawValue.replacing("-", with: "_")
             if let existing = dict[key] {
                 dict[key] = existing + "," + address.address
             } else {
@@ -670,19 +710,19 @@ struct JSONFormatter: CLIFormatter {
     }
 
     func formatOMEMOFingerprint(_ fingerprint: String) -> String {
-        encode(["type": "omemo_fingerprint", "fingerprint": fingerprint, "displayFingerprint": OMEMODeviceInfo.formatFingerprint(fingerprint)])
+        encode(["type": "omemo_fingerprint", "fingerprint": fingerprint, "display_fingerprint": OMEMODeviceInfo.formatFingerprint(fingerprint)])
     }
 
     func formatOMEMODevice(_ device: OMEMODeviceInfo) -> String {
         var dict: [String: String] = [
             "type": "omemo_device",
             "jid": device.peerJID,
-            "deviceID": "\(device.deviceID)",
+            "device_id": "\(device.deviceID)",
             "trust": device.trustLevel.rawValue
         ]
         if !device.fingerprint.isEmpty {
             dict["fingerprint"] = device.fingerprint
-            dict["displayFingerprint"] = OMEMODeviceInfo.formatFingerprint(device.fingerprint)
+            dict["display_fingerprint"] = OMEMODeviceInfo.formatFingerprint(device.fingerprint)
         }
         return encode(dict)
     }
@@ -691,7 +731,7 @@ struct JSONFormatter: CLIFormatter {
         encode([
             "type": "omemo_trust",
             "jid": jid,
-            "deviceID": "\(deviceID)",
+            "device_id": "\(deviceID)",
             "trust": trustLevel.rawValue
         ])
     }
@@ -717,32 +757,6 @@ struct JSONFormatter: CLIFormatter {
         json.birthday = profile.birthday
         json.note = profile.note
         return encode(json)
-    }
-
-    /// Synthesized `Encodable` references each stored property in
-    /// `encode(to:)`, but Periphery's analyzer still flags them as
-    /// assign-only. Suppress per-property; the alternative — a manual
-    /// `encode(to:)` matching `ProfileJSON` — would re-introduce the
-    /// stringly-typed `CodingKeys` boilerplate the structured envelope was
-    /// meant to avoid.
-    private struct OMEMORecipientsPartialJSON: Encodable {
-        // periphery:ignore
-        let type: String
-        // periphery:ignore
-        let conversation: String
-        // periphery:ignore
-        let dropped: [DroppedDevice]
-        // periphery:ignore
-        let droppedCount: Int
-        // periphery:ignore
-        let account: String
-
-        struct DroppedDevice: Encodable {
-            // periphery:ignore
-            let jid: String
-            // periphery:ignore
-            let deviceID: UInt32
-        }
     }
 
     private struct ProfileJSON: Encodable {
@@ -778,12 +792,14 @@ struct JSONFormatter: CLIFormatter {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case type, fullName, nickname, givenName, familyName
-            case organization, title, role, emails, phones, url, birthday, note
+            case type, nickname, organization, title, role, emails, phones, url, birthday, note
+            case fullName = "full_name"
+            case givenName = "given_name"
+            case familyName = "family_name"
         }
     }
 
-    private func encode(_ value: some Encodable) -> String {
+    func encode(_ value: some Encodable) -> String {
         guard let data = try? encoder.encode(value),
               let string = String(data: data, encoding: .utf8)
         else {
@@ -795,6 +811,40 @@ struct JSONFormatter: CLIFormatter {
     /// ISO 8601 without fractional seconds for cleaner JSON output.
     private func formatTimestamp(_ date: Date) -> String {
         date.formatted(Date.ISO8601FormatStyle())
+    }
+}
+
+/// Synthesized `Encodable` references each stored property in
+/// `encode(to:)`, but Periphery's analyzer still flags them as
+/// assign-only. Suppress per-property rather than write a manual
+/// `encode(to:)` like `ProfileJSON`'s.
+private struct OMEMORecipientsPartialJSON: Encodable {
+    // periphery:ignore
+    let type: String
+    // periphery:ignore
+    let conversation: String
+    // periphery:ignore
+    let dropped: [DroppedDevice]
+    // periphery:ignore
+    let droppedCount: Int
+    // periphery:ignore
+    let account: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type, conversation, dropped, account
+        case droppedCount = "dropped_count"
+    }
+
+    struct DroppedDevice: Encodable {
+        // periphery:ignore
+        let jid: String
+        // periphery:ignore
+        let deviceID: UInt32
+
+        private enum CodingKeys: String, CodingKey {
+            case jid
+            case deviceID = "device_id"
+        }
     }
 }
 
@@ -831,7 +881,13 @@ private struct OMEMOSessionResetOutput: Encodable {
     }
 
     private enum DeviceKeys: String, CodingKey {
-        case deviceID, outcome, needsTrusting, previousFingerprint, previousDisplayFingerprint, newFingerprint, newDisplayFingerprint, error
+        case outcome, error
+        case deviceID = "device_id"
+        case needsTrusting = "needs_trusting"
+        case previousFingerprint = "previous_fingerprint"
+        case previousDisplayFingerprint = "previous_display_fingerprint"
+        case newFingerprint = "new_fingerprint"
+        case newDisplayFingerprint = "new_display_fingerprint"
     }
 
     func encode(to encoder: any Encoder) throws {

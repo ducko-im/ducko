@@ -4,7 +4,7 @@ import Foundation
 
 func handleJoinREPLCommand(_ arguments: String, context: REPLContext) async -> RoomSelectionChange {
     guard !arguments.isEmpty else {
-        print("Usage: /join <room-jid> [nickname]")
+        print(context.formatter.formatUsageError("Usage: /join <room-jid> [nickname]"))
         return .unchanged
     }
     let parts = arguments.split(separator: " ", maxSplits: 1)
@@ -17,7 +17,7 @@ func handleJoinREPLCommand(_ arguments: String, context: REPLContext) async -> R
         )
         let isNewlyCreated = await MainActor.run { context.environment.chatService.isRoomNewlyCreated(jidString: roomJID, accountID: context.accountID) }
         if isNewlyCreated {
-            print("Room created and locked — run /config submit-default to open it, or /config to customize.")
+            printToStandardError("Room created and locked — run /config submit-default to open it, or /config to customize.")
         }
         return .select(roomJID)
     } catch {
@@ -30,7 +30,7 @@ func handleLeaveREPLCommand(_ arguments: String, context: REPLContext, currentRo
     guard let roomJID = targetRoom(arguments, currentRoom: currentRoom, context: context) else { return .unchanged }
     do {
         try await context.environment.chatService.leaveRoom(jidString: roomJID, accountID: context.accountID)
-        print("Left \(roomJID).")
+        print(context.formatter.formatCommandResult(.roomLeft(room: roomJID)))
         return currentRoom == roomJID ? .clear : .unchanged
     } catch {
         print(context.formatter.formatError(error))
@@ -47,7 +47,7 @@ func handleTopicREPLCommand(_ arguments: String, context: REPLContext, currentRo
     if arguments.isEmpty {
         // Only a pushed subject is cached; there is no fetch-on-demand API, so confirm the current room instead.
         guard let roomJID = requireCurrentRoom(currentRoom, context: context) else { return }
-        print("Current room: \(roomJID)")
+        print(context.formatter.formatCommandResult(.currentRoom(room: roomJID)))
         return
     }
     guard let (roomJID, subject) = parseTopicArgs(arguments, currentRoom: currentRoom) else {
@@ -63,7 +63,7 @@ func handleTopicREPLCommand(_ arguments: String, context: REPLContext, currentRo
 
 func handleNickREPLCommand(_ arguments: String, context: REPLContext, currentRoom: String?) async {
     guard !arguments.isEmpty else {
-        print("Usage: /nick <new-nickname>")
+        print(context.formatter.formatUsageError("Usage: /nick <new-nickname>"))
         return
     }
     guard let roomJID = requireCurrentRoom(currentRoom, context: context) else { return }
@@ -82,7 +82,7 @@ func handleDestroyREPLCommand(_ arguments: String, context: REPLContext, current
             reason: arguments.isEmpty ? nil : arguments,
             accountID: context.accountID
         )
-        print("Room \(roomJID) destroyed.")
+        print(context.formatter.formatCommandResult(.roomDestroyed(room: roomJID)))
         return .clear
     } catch {
         print(context.formatter.formatError(error))
@@ -94,7 +94,7 @@ func handleVoiceREPLCommand(_ arguments: String, context: REPLContext, currentRo
     let usage = "Usage: /voice grant|revoke <nickname>"
     let parts = arguments.split(separator: " ", maxSplits: 1)
     guard parts.count == 2 else {
-        print(usage)
+        print(context.formatter.formatUsageError(usage))
         return
     }
     let action = String(parts[0])
@@ -104,12 +104,12 @@ func handleVoiceREPLCommand(_ arguments: String, context: REPLContext, currentRo
         switch action {
         case "grant":
             try await context.environment.chatService.grantVoice(nickname: nickname, inRoomJIDString: roomJID, accountID: context.accountID)
-            print("Granted voice to \(nickname).")
+            print(context.formatter.formatCommandResult(.voiceChanged(nickname: nickname, granted: true)))
         case "revoke":
             try await context.environment.chatService.revokeVoice(nickname: nickname, inRoomJIDString: roomJID, accountID: context.accountID)
-            print("Revoked voice from \(nickname).")
+            print(context.formatter.formatCommandResult(.voiceChanged(nickname: nickname, granted: false)))
         default:
-            print(usage)
+            print(context.formatter.formatUsageError(usage))
         }
     } catch {
         print(context.formatter.formatError(error))
@@ -118,7 +118,7 @@ func handleVoiceREPLCommand(_ arguments: String, context: REPLContext, currentRo
 
 func handleKickREPLCommand(_ arguments: String, context: REPLContext, currentRoom: String?) async {
     guard !arguments.isEmpty else {
-        print("Usage: /kick <nickname> [reason]  (quote nicknames with spaces: /kick \"Alice Smith\" reason)")
+        print(context.formatter.formatUsageError("Usage: /kick <nickname> [reason]  (quote nicknames with spaces: /kick \"Alice Smith\" reason)"))
         return
     }
     guard let roomJID = requireCurrentRoom(currentRoom, context: context) else { return }
@@ -130,7 +130,7 @@ func handleKickREPLCommand(_ arguments: String, context: REPLContext, currentRoo
             reason: parsed.trailingArgument,
             accountID: context.accountID
         )
-        print("Kicked \(parsed.nickname) from \(roomJID).")
+        print(context.formatter.formatCommandResult(.kicked(nickname: parsed.nickname, room: roomJID)))
     } catch {
         print(context.formatter.formatError(error))
     }
@@ -140,7 +140,7 @@ func handleAffiliationsREPLCommand(_ arguments: String, context: REPLContext, cu
     guard let roomJID = requireCurrentRoom(currentRoom, context: context) else { return }
     let affiliation = arguments.isEmpty ? RoomAffiliation.member : RoomAffiliation(rawValue: arguments)
     guard let affiliation, affiliation != RoomAffiliation.none else {
-        print("Usage: /affiliations [member|admin|owner|outcast]")
+        print(context.formatter.formatUsageError("Usage: /affiliations [member|admin|owner|outcast]"))
         return
     }
     do {
@@ -150,15 +150,11 @@ func handleAffiliationsREPLCommand(_ arguments: String, context: REPLContext, cu
             accountID: context.accountID
         )
         if items.isEmpty {
-            print("No \(affiliation.displayName.lowercased())s.")
+            print(context.formatter.formatEmptyResult(.affiliations(affiliation, room: roomJID)))
         } else {
-            print("--- \(affiliation.displayName)s (\(items.count)) ---")
+            print(context.formatter.formatAffiliationGroupHeader(affiliation, count: items.count))
             for item in items {
-                var line = "  \(item.jidString)"
-                if let nickname = item.nickname {
-                    line += " (\(nickname))"
-                }
-                print(line)
+                print(context.formatter.formatAffiliation(item))
             }
         }
     } catch {
@@ -175,7 +171,7 @@ func handleConfigREPLCommand(_ arguments: String, context: REPLContext, currentR
             if form.fields.contains(where: \.isDisplayed) {
                 print(context.formatter.formatDataForm(form))
             } else {
-                print("No configuration fields.")
+                print(context.formatter.formatEmptyResult(.roomConfig(room: roomJID)))
             }
         } catch {
             print(context.formatter.formatError(error))
@@ -183,12 +179,12 @@ func handleConfigREPLCommand(_ arguments: String, context: REPLContext, currentR
     case "submit-default":
         do {
             try await context.environment.chatService.submitRoomConfig(jidString: roomJID, fields: [], accountID: context.accountID)
-            print("Submitted default room configuration for \(roomJID).")
+            print(context.formatter.formatCommandResult(.roomConfigSubmitted(room: roomJID)))
         } catch {
             print(context.formatter.formatError(error))
         }
     default:
-        print("Usage: /config [submit-default]")
+        print(context.formatter.formatUsageError("Usage: /config [submit-default]"))
     }
 }
 
@@ -208,14 +204,14 @@ func handleModerateREPLCommand(_ arguments: String, context: REPLContext, curren
         guard let target = messages.last(where: { !$0.isRetracted && !$0.isOutgoing && $0.serverID != nil }),
               let serverID = target.serverID
         else {
-            print("No moderatable message found.")
+            print(context.formatter.formatEmptyResult(.moderatableMessage))
             return
         }
         try await context.environment.chatService.moderateMessage(
             serverID: serverID, in: room,
             reason: arguments.isEmpty ? nil : arguments, accountID: context.accountID
         )
-        print("Moderated message (server-id: \(serverID)).")
+        print(context.formatter.formatCommandResult(.moderated(serverID: serverID)))
     } catch {
         print(context.formatter.formatError(error))
     }
@@ -234,21 +230,21 @@ func handleRoomsREPLCommand(_ arguments: String, context: REPLContext) async {
 func handlePMREPLCommand(_ arguments: String, context: REPLContext, currentRoom: String?) async {
     let usage = "Usage: /pm <nickname> <message>  (quote nicknames with spaces: /pm \"Alice Smith\" hello)"
     guard !arguments.isEmpty else {
-        print(usage)
+        print(context.formatter.formatUsageError(usage))
         return
     }
     guard let roomJID = requireCurrentRoom(currentRoom, context: context) else { return }
     do {
         let parsed = try parseNicknameArgument(arguments)
         guard let body = parsed.trailingArgument else {
-            print(usage)
+            print(context.formatter.formatUsageError(usage))
             return
         }
         let privateChat = try await context.environment.chatService.openMUCPMConversation(
             roomJIDString: roomJID, nickname: parsed.nickname, accountID: context.accountID
         )
         try await context.environment.chatService.sendMessage(body, in: privateChat, accountID: context.accountID)
-        print("PM to \(parsed.nickname) sent.")
+        print(context.formatter.formatCommandResult(.privateMessageSent(nickname: parsed.nickname)))
     } catch {
         print(context.formatter.formatError(error))
     }

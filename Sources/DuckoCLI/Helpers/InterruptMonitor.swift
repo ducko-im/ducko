@@ -16,7 +16,7 @@ struct InterruptMonitor {
         let queue = DispatchQueue(label: "im.ducko.cli.interrupt-monitor")
         let sources = trappableTerminatingSignals().map { signo -> any DispatchSourceProtocol in
             // Ignore the default disposition so the signal feeds the dispatch source instead of terminating the
-            // process (matches CLIBootstrap's SIGPIPE handling).
+            // process.
             signal(signo, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: signo, queue: queue)
             // `DispatchSourceSignal` coalesces repeats — the consumer must treat a fire while already tearing

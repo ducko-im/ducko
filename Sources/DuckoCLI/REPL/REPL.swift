@@ -12,7 +12,7 @@ func runREPL(formatter: any CLIFormatter, environment: AppEnvironment, accountID
 
         let command = REPLCommand(trimmed)
         guard let kind = command.kind else {
-            print("Unknown command: \(trimmed). Type 'help' for commands.")
+            print(context.formatter.formatUsageError("Unknown command: \(trimmed). Type 'help' for commands."))
             continue
         }
         let arguments = command.arguments.trimmingCharacters(in: .whitespaces)
@@ -89,8 +89,8 @@ private func dispatchREPLCommand(
     case .encrypt: await handleEncryptREPLCommand(arguments, context: context)
     case .omemoVerify: await handleOMEMOVerifyREPLCommand(arguments, context: context)
     case .omemoReset: await handleOMEMOResetREPLCommand(arguments, context: context)
-    case .pref: await handlePrefREPLCommand(arguments)
-    case .help: print(REPLCommand.help)
+    case .pref: await handlePrefREPLCommand(arguments, context: context)
+    case .help: print(context.formatter.formatHelp(REPLCommand.help))
     case .quit: await quitREPL(context: context, currentRoom: currentRoom)
     }
     return .unchanged

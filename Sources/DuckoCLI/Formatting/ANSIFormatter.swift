@@ -70,6 +70,18 @@ struct ANSIFormatter: CLIFormatter {
         result.message
     }
 
+    func formatCommandResult(_ result: CLICommandResult) -> String {
+        result.message
+    }
+
+    func formatUsageError(_ line: String) -> String {
+        line
+    }
+
+    func formatHelp(_ text: String) -> String {
+        text
+    }
+
     func formatRosterCommand(_ outcome: RosterCommandOutcome) -> String {
         "\(outcome.isComplete ? Color.green : Color.yellow)\(outcome.message)\(Color.reset)"
     }
@@ -230,6 +242,14 @@ struct ANSIFormatter: CLIFormatter {
         return line
     }
 
+    func formatAffiliationGroupHeader(_ affiliation: RoomAffiliation, count: Int) -> String {
+        affiliationGroupHeaderText(affiliation, count: count)
+    }
+
+    func formatAffiliation(_ item: RoomAffiliationItem) -> String {
+        affiliationText(item)
+    }
+
     func formatRoomParticipantGroupHeader(_ group: RoomParticipantGroup) -> String {
         "\(Color.bold)--- \(group.affiliation.displayName) (\(group.participants.count)) ---\(Color.reset)"
     }
@@ -382,6 +402,10 @@ struct ANSIFormatter: CLIFormatter {
         }
         line += "\n  \(Color.cyan)\(url)\(Color.reset)"
         return line
+    }
+
+    func formatTransfer(_ transfer: FileTransferService.ActiveTransfer) -> String {
+        transferLineText(transfer)
     }
 
     func formatFileOffer(fileName: String, fileSize: Int64, from: String, offerID: String) -> String {

@@ -51,6 +51,7 @@ struct DataFormFormatterTests {
 
     @Test func `JSON keeps each field's raw attributes`() throws {
         let output = JSONFormatter().formatDataForm(form)
+        expectSnakeCaseKeys(output)
         let json = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
         let fields = try #require(json["fields"] as? [[String: Any]])
 
@@ -100,6 +101,7 @@ struct DataFormFormatterTests {
 
     @Test func `JSON carries the CAPTCHA`() throws {
         let output = JSONFormatter().formatRegistrationForm(captchaForm)
+        expectSnakeCaseKeys(output)
         let json = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
         let captcha = try #require(json["captcha"] as? [String: Any])
         let challenges = try #require(captcha["challenges"] as? [[String: String]])
@@ -144,6 +146,7 @@ struct DataFormFormatterTests {
 
     @Test func `JSON carries a CAPTCHA image on the web, one that can't be shown, and the web page`() throws {
         let output = JSONFormatter().formatRegistrationForm(linkedCaptchaForm)
+        expectSnakeCaseKeys(output)
         let json = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
         let captcha = try #require(json["captcha"] as? [String: Any])
         let challenges = try #require(captcha["challenges"] as? [[String: String]])

@@ -51,14 +51,14 @@ struct SignInSecurityProcessTests {
             #expect(allow.exitCode == 0, Comment(rawValue: allow.output + allow.errors))
             #expect(await !(server.authenticated))
             let afterAllow = try await accountRecord(in: profile)
-            #expect(afterAllow["allowsPLAIN"] as? String == "true")
-            #expect(afterAllow["requireTLS"] as? String == "true")
+            #expect(afterAllow["allows_plain"] as? String == "true")
+            #expect(afterAllow["require_tls"] as? String == "true")
 
             let optional = try await profile.run(["account", "set", "alice@example.com", "--no-require-tls"])
             #expect(optional.exitCode == 0, Comment(rawValue: optional.output + optional.errors))
             let afterOptional = try await accountRecord(in: profile)
-            #expect(afterOptional["allowsPLAIN"] as? String == "true")
-            #expect(afterOptional["requireTLS"] as? String == "false")
+            #expect(afterOptional["allows_plain"] as? String == "true")
+            #expect(afterOptional["require_tls"] as? String == "false")
 
             let run = try await profile.run(["profile", "--output", "json"])
             #expect(run.reason == .exit, Comment(rawValue: run.errors))
@@ -75,7 +75,7 @@ struct SignInSecurityProcessTests {
             let list = try await profile.run(["account", "list", "--output", "json"])
             let records = try list.output.split(separator: "\n").map { try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]) }
             let added = records.first { $0["jid"] as? String == "bob@example.com" }
-            #expect(added?["allowsPLAIN"] as? String == "true", Comment(rawValue: list.output))
+            #expect(added?["allows_plain"] as? String == "true", Comment(rawValue: list.output))
         }
     }
 

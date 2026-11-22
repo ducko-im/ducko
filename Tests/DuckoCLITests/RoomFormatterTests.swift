@@ -53,6 +53,15 @@ struct PlainRoomFormatterTests {
         #expect(output.contains("1"))
     }
 
+    // MARK: - Affiliations
+
+    @Test(arguments: [PlainFormatter() as any CLIFormatter, ANSIFormatter()])
+    func `an affiliation list prints a header and one indented line per entry`(formatter: any CLIFormatter) {
+        #expect(formatter.formatAffiliationGroupHeader(.member, count: 2) == "--- Members (2) ---")
+        #expect(formatter.formatAffiliation(RoomAffiliationItem(jidString: "carol@example.com", affiliation: .member, nickname: "carol")) == "  carol@example.com (carol)")
+        #expect(formatter.formatAffiliation(RoomAffiliationItem(jidString: "dave@example.com", affiliation: .member)) == "  dave@example.com")
+    }
+
     // MARK: - MUC Events
 
     @Test func `format event room joined`() throws {
@@ -208,6 +217,7 @@ struct JSONRoomFormatterTests {
     @Test func `format room is valid JSON`() throws {
         let room = DiscoveredRoom(jidString: "chat@conference.example.com", name: "Chat Room")
         let output = formatter.formatRoom(room)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room")
@@ -218,6 +228,7 @@ struct JSONRoomFormatterTests {
     @Test func `format room without name omits name`() throws {
         let room = DiscoveredRoom(jidString: "chat@conference.example.com", name: nil)
         let output = formatter.formatRoom(room)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room")
@@ -229,6 +240,7 @@ struct JSONRoomFormatterTests {
     @Test func `format room participant is valid JSON`() throws {
         let participant = RoomParticipant(nickname: "alice", jidString: "alice@example.com", affiliation: .member, role: .participant)
         let output = formatter.formatRoomParticipant(participant)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_participant")
@@ -246,11 +258,25 @@ struct JSONRoomFormatterTests {
             RoomParticipant(nickname: "admin2", affiliation: .owner, role: .moderator)
         ])
         let output = formatter.formatRoomParticipantGroupHeader(group)
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_participant_group")
-        #expect(json["affiliation"] == "Owner")
+        #expect(json["affiliation"] == "owner")
         #expect(json["count"] == "2")
+    }
+
+    // MARK: - Affiliations
+
+    @Test func `an affiliation list is a group record before one record per entry, each with the protocol affiliation`() throws {
+        let item = RoomAffiliationItem(jidString: "carol@example.com", affiliation: .member, nickname: "carol")
+        let header = formatter.formatAffiliationGroupHeader(.member, count: 1)
+        let entry = formatter.formatAffiliation(item)
+        expectSnakeCaseKeys(header)
+        expectSnakeCaseKeys(entry)
+        #expect(try JSONDecoder().decode([String: String].self, from: Data(header.utf8)) == ["type": "affiliation_group", "affiliation": "member", "count": "1"])
+        #expect(try JSONDecoder().decode([String: String].self, from: Data(entry.utf8))
+            == ["type": "affiliation", "jid": "carol@example.com", "affiliation": "member", "nickname": "carol"])
     }
 
     // MARK: - MUC Events
@@ -261,6 +287,7 @@ struct JSONRoomFormatterTests {
             RoomOccupant(nickname: "alice", affiliation: .member, role: .participant)
         ], subject: "Topic")
         let output = try #require(formatter.formatEvent(.roomJoined(room: room, occupancy: occupancy, isNewlyCreated: false), accountID: UUID()))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_joined")
@@ -273,6 +300,7 @@ struct JSONRoomFormatterTests {
         let room = try #require(BareJID.parse("chat@conference.example.com"))
         let occupant = RoomOccupant(nickname: "charlie", affiliation: .member, role: .participant)
         let output = try #require(formatter.formatEvent(.roomOccupantJoined(room: room, occupant: occupant), accountID: UUID()))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_occupant_joined")
@@ -285,6 +313,7 @@ struct JSONRoomFormatterTests {
         let room = try #require(BareJID.parse("chat@conference.example.com"))
         let occupant = RoomOccupant(nickname: "charlie", affiliation: .member, role: .participant)
         let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: nil, isSelf: isSelf), accountID: UUID()))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_occupant_left")
@@ -298,6 +327,7 @@ struct JSONRoomFormatterTests {
         let occupant = RoomOccupant(nickname: "me2", affiliation: .member, role: .participant)
         let event = XMPPEvent.roomOccupantNickChanged(room: room, oldNickname: "me", occupant: occupant, isSelf: isSelf)
         let output = try #require(formatter.formatEvent(event, accountID: UUID()))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_nick_changed")
@@ -308,6 +338,7 @@ struct JSONRoomFormatterTests {
         let room = try #require(BareJID.parse("chat@conference.example.com"))
         let occupant = RoomOccupant(nickname: "troublemaker", affiliation: .none, role: .participant)
         let output = try #require(formatter.formatEvent(.roomOccupantLeft(room: room, occupant: occupant, reason: .kicked(reason: "disruptive"), isSelf: false), accountID: UUID()))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_occupant_left")
@@ -320,6 +351,7 @@ struct JSONRoomFormatterTests {
         let room = try #require(BareJID.parse("chat@conference.example.com"))
         let setter = JID.parse("chat@conference.example.com/alice")
         let output = try #require(formatter.formatEvent(.roomSubjectChanged(room: room, subject: "New topic", setter: setter), accountID: UUID()))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_subject_changed")
@@ -333,6 +365,7 @@ struct JSONRoomFormatterTests {
         let from = try #require(JID.parse("bob@example.com"))
         let invite = RoomInvite(room: room, from: from, reason: "Join us")
         let output = try #require(formatter.formatEvent(.roomInviteReceived(invite), accountID: UUID()))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_invite")
@@ -346,6 +379,7 @@ struct JSONRoomFormatterTests {
         message.from = JID.parse("chat@conference.example.com/alice")
         message.body = "Hello everyone!"
         let output = try #require(formatter.formatEvent(.roomMessageReceived(message), accountID: UUID()))
+        expectSnakeCaseKeys(output)
         let data = try #require(output.data(using: .utf8))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(json["type"] == "room_message")

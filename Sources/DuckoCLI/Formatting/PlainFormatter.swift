@@ -55,6 +55,18 @@ struct PlainFormatter: CLIFormatter {
         result.message
     }
 
+    func formatCommandResult(_ result: CLICommandResult) -> String {
+        result.message
+    }
+
+    func formatUsageError(_ line: String) -> String {
+        line
+    }
+
+    func formatHelp(_ text: String) -> String {
+        text
+    }
+
     func formatRosterCommand(_ outcome: RosterCommandOutcome) -> String {
         outcome.message
     }
@@ -332,6 +344,14 @@ struct PlainFormatter: CLIFormatter {
         return line
     }
 
+    func formatAffiliationGroupHeader(_ affiliation: RoomAffiliation, count: Int) -> String {
+        affiliationGroupHeaderText(affiliation, count: count)
+    }
+
+    func formatAffiliation(_ item: RoomAffiliationItem) -> String {
+        affiliationText(item)
+    }
+
     func formatRoomParticipantGroupHeader(_ group: RoomParticipantGroup) -> String {
         "--- \(group.affiliation.displayName) (\(group.participants.count)) ---"
     }
@@ -348,6 +368,10 @@ struct PlainFormatter: CLIFormatter {
         }
         line += "\n  \(url)"
         return line
+    }
+
+    func formatTransfer(_ transfer: FileTransferService.ActiveTransfer) -> String {
+        transferLineText(transfer)
     }
 
     func formatFileOffer(fileName: String, fileSize: Int64, from: String, offerID: String) -> String {

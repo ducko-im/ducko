@@ -19,31 +19,79 @@ struct RegistrationProcessTests {
     func `submit-registration asks again for a field left blank and submits nothing without it`() async throws {
         let run = try await submitRegistration(form: "<username>alice</username><nick/>", input: "/submit-registration\n\n\n")
 
-        #expect(run.output.contains("Nickname is required."), Comment(rawValue: run.output))
+        #expect(run.errors.contains("Nickname is required."), Comment(rawValue: run.errors))
+        #expect(!run.output.contains("Nickname is required."), Comment(rawValue: run.output))
         #expect(run.output.contains("Input ended before Nickname had a value."), Comment(rawValue: run.output))
         #expect(!run.output.contains("Registration submitted successfully."), Comment(rawValue: run.output))
     }
 
     @Test(arguments: [
-        ("<field var='nick' type='text-single' label='Nickname'><required/></field>", "Nickname", "", "Nickname is required."),
-        (
-            "<field var='role' type='list-single' label='Role'><required/><option><value>member</value></option></field>",
-            "Role", "admin", "admin is not one of the listed options."
-        )
+        ("<field var='nick' type='text-single' label='Nickname'><required/></field>", "Nickname", "", "Nickname is required.", false),
+        (roleField, "Role", "admin", "admin is not one of the listed options.", true)
     ])
     func `submit-registration asks again until a required data form field gets a value and submits nothing without it`(
-        field: String, label: String, typed: String, complaint: String
+        field: String, label: String, typed: String, complaint: String, isErrorRecord: Bool
     ) async throws {
-        let run = try await submitRegistration(form: dataForm(field), input: "/submit-registration\n\(typed)\n")
+        let run = try await submitRegistration(form: Self.dataForm(field), input: "/submit-registration\n\(typed)\n")
 
-        #expect(run.output.contains(complaint), Comment(rawValue: run.output))
+        // A prompt's complaint is on standard error, and an invalid value's error on standard output.
+        let (complaintStream, otherStream) = isErrorRecord ? (run.output, run.errors) : (run.errors, run.output)
+        #expect(complaintStream.contains(complaint), Comment(rawValue: complaintStream))
+        #expect(!otherStream.contains(complaint), Comment(rawValue: otherStream))
         #expect(run.output.contains("Input ended before \(label) had a value."), Comment(rawValue: run.output))
         #expect(!run.output.contains("Registration submitted successfully."), Comment(rawValue: run.output))
+        if isErrorRecord {
+            #expect(run.errors.contains("Options: member"), Comment(rawValue: run.errors))
+            #expect(!run.output.contains("Options: member"), Comment(rawValue: run.output))
+        }
     }
 
     @Test
+    func `an invalid value's error record reaches a JSON reader while the CLI waits at the prompt again`() async throws {
+        let run = try await withLoopbackServer(responder: RegistrationFormResponder(form: Self.dataForm(Self.roleField)), profile: "registration") { _, profile in
+            try await profile.run(
+                ["interactive", "--output", "json"], input: "/submit-registration\nadmin\n", until: "admin is not one of the listed options.",
+                atMarker: { _ in }, thenSignals: [SIGINT]
+            )
+        }
+
+        // Standard input stayed open and the interrupt ended the run, so the CLI was still waiting for a value when the
+        // record arrived.
+        #expect(!run.output.contains("Input ended before"), Comment(rawValue: run.output))
+        #expect(run.reason == .uncaughtSignal && run.exitCode == SIGINT, Comment(rawValue: run.errors))
+        let errors = try jsonRecords(run.output).filter { $0["type"] == "error" }
+        #expect(errors.map { $0["message"] } == ["admin is not one of the listed options."], Comment(rawValue: run.output))
+    }
+
+    @Test(arguments: [
+        (
+            dataForm("""
+            <field var='intro' type='fixed'><value>Pick a nickname.</value></field>\
+            <field var='nick' type='text-single' label='Nickname'><desc>Shown to others</desc><required/></field>\
+            <field var='bio' type='text-multi' label='About you'/>
+            """),
+            "/submit-registration\njules\nhello\n\n",
+            ["Enter registration details", "Pick a nickname.", "Shown to others", "Nickname (required) [", "About you [], one per line"]
+        ),
+        ("<username>alice</username><nick/>", "/submit-registration\n\njules\n", ["Enter registration details", "Nickname []: "])
+    ])
+    func `under JSON output, registration prompts go to standard error and standard output holds only records`(
+        form: String, input: String, prompts: [String]
+    ) async throws {
+        let run = try await submitRegistration(form: form, input: input, output: "json")
+
+        let records = try jsonRecords(run.output)
+        #expect(records.contains { $0["type"] == "command_result" && $0["action"] == "submit_registration" }, Comment(rawValue: run.output + run.errors))
+        for prompt in prompts {
+            #expect(run.errors.contains(prompt), Comment(rawValue: run.errors))
+        }
+    }
+
+    private nonisolated static let roleField = "<field var='role' type='list-single' label='Role'><required/><option><value>member</value></option></field>"
+
+    @Test
     func `submit-registration without a terminal keeps an optional hidden field's value and submits the form`() async throws {
-        let form = dataForm("<field var='pin' type='text-private' label='PIN'/><field var='nick' type='text-single' label='Nickname'><required/></field>")
+        let form = Self.dataForm("<field var='pin' type='text-private' label='PIN'/><field var='nick' type='text-single' label='Nickname'><required/></field>")
 
         let run = try await submitRegistration(form: form, input: "/submit-registration\njules\n")
 
@@ -53,7 +101,7 @@ struct RegistrationProcessTests {
     @Test
     func `submit-registration without a terminal names the required hidden field it cannot read`() async throws {
         let run = try await submitRegistration(
-            form: dataForm("<field var='pin' type='text-private' label='PIN'><required/></field>"), input: "/submit-registration\n"
+            form: Self.dataForm("<field var='pin' type='text-private' label='PIN'><required/></field>"), input: "/submit-registration\n"
         )
 
         #expect(run.output.contains("No PIN provided. Run in a terminal to enter it interactively."), Comment(rawValue: run.output))
@@ -68,7 +116,8 @@ struct RegistrationProcessTests {
 
         let (run, sets) = try await submitRegistration(responder, input: "/submit-registration\nk7Rq4w\n")
 
-        let path = try #require(imagePath(in: run.output), Comment(rawValue: run.output))
+        let path = try #require(imagePath(in: run.errors), Comment(rawValue: run.errors))
+        #expect(imagePath(in: run.output) == nil, Comment(rawValue: run.output))
         #expect(!FileManager.default.fileExists(atPath: path))
         #expect(run.output.contains("Registration submitted successfully."), Comment(rawValue: run.output))
         #expect(sets.count == 1)
@@ -79,13 +128,16 @@ struct RegistrationProcessTests {
         let responder = ScriptedRegistrationResponder(forms: [captchaForm(imageChallenge)])
 
         let run = try await withLoopbackServer(responder: responder, profile: "registration") { _, profile in
-            try await profile.run(["interactive", "--output", "plain"], input: "/submit-registration\n", until: "CAPTCHA image for ocr: ", atMarker: { output in
-                let path = try #require(imagePath(in: output))
-                #expect(FileManager.default.fileExists(atPath: path))
-            }, thenSignals: [SIGINT])
+            try await profile.run(
+                ["interactive", "--output", "plain"], input: "/submit-registration\n", until: "CAPTCHA image for ocr: ", in: .errors,
+                atMarker: { errors in
+                    let path = try #require(imagePath(in: errors))
+                    #expect(FileManager.default.fileExists(atPath: path))
+                }, thenSignals: [SIGINT]
+            )
         }
 
-        let path = try #require(imagePath(in: run.output))
+        let path = try #require(imagePath(in: run.errors))
         #expect(!FileManager.default.fileExists(atPath: path))
         #expect(run.reason == .exit && run.exitCode == 130, Comment(rawValue: run.output))
     }
@@ -107,7 +159,8 @@ struct RegistrationProcessTests {
 
         let (run, sets) = try await submitRegistration(responder, input: "/submit-registration\nk7Rq4w\n\n")
 
-        #expect(run.output.contains("Answer at least 2 of the challenges."), Comment(rawValue: run.output))
+        #expect(run.errors.contains("Answer at least 2 of the challenges."), Comment(rawValue: run.errors))
+        #expect(!run.output.contains("Answer at least 2 of the challenges."), Comment(rawValue: run.output))
         #expect(run.output.contains("Input ended before"), Comment(rawValue: run.output))
         #expect(sets.isEmpty)
     }
@@ -120,6 +173,7 @@ struct RegistrationProcessTests {
         let (run, sets) = try await submitRegistration(responder, input: "/submit-registration\n")
 
         #expect(run.output.contains("No What is 2 + 3? provided."), Comment(rawValue: run.output))
+        #expect(!run.errors.contains("Answer the challenge."), Comment(rawValue: run.errors))
         #expect(!run.output.contains("Answer the challenge."), Comment(rawValue: run.output))
         #expect(sets.isEmpty)
     }
@@ -132,7 +186,7 @@ struct RegistrationProcessTests {
 
         let (run, sets) = try await submitRegistration(responder, input: "/submit-registration\n\nk7Rq4w\n")
 
-        #expect(run.output.contains("Answer at least 1 of the challenges."), Comment(rawValue: run.output))
+        #expect(run.errors.contains("Answer at least 1 of the challenges."), Comment(rawValue: run.errors))
         #expect(run.output.contains("Registration submitted successfully."), Comment(rawValue: run.output))
         #expect(sets.count == 1)
         #expect(sets.first?.contains("k7Rq4w") == true)
@@ -179,7 +233,7 @@ struct RegistrationProcessTests {
     /// A registration form shaped like ejabberd's CAPTCHA form, holding `challenges` and the image the image challenge
     /// names. It asks for no password, which the plaintext loopback stream would refuse to send.
     private func captchaForm(_ challenges: String) -> String {
-        dataForm("""
+        Self.dataForm("""
         <field var='from' type='hidden'><value>example.com</value></field>\
         <field var='challenge' type='hidden'><value>123</value></field>\
         \(challenges)\
@@ -202,17 +256,17 @@ struct RegistrationProcessTests {
     }
 
     /// A registration data form holding `fields`.
-    private func dataForm(_ fields: String) -> String {
+    private nonisolated static func dataForm(_ fields: String) -> String {
         """
         <x xmlns='\(XMPPNamespaces.dataForms)' type='form'><field var='FORM_TYPE' type='hidden'>\
         <value>\(XMPPNamespaces.register)</value></field>\(fields)</x>
         """
     }
 
-    /// Runs the REPL against a server whose registration form holds `form`, typing `input`.
-    private func submitRegistration(form: String, input: String) async throws -> ThrowawayProfile.Run {
+    /// Runs the REPL in `output` format against a server whose registration form holds `form`, typing `input`.
+    private func submitRegistration(form: String, input: String, output: String = "plain") async throws -> ThrowawayProfile.Run {
         try await withLoopbackServer(responder: RegistrationFormResponder(form: form), profile: "registration") { _, profile in
-            try await profile.run(["interactive", "--output", "plain"], input: input)
+            try await profile.run(["interactive", "--output", output], input: input)
         }
     }
 }

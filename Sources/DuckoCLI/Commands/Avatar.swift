@@ -36,7 +36,7 @@ extension DuckoCLI {
                     }
 
                     guard let avatar = await env.avatarService.fetchAvatar(for: bareJID, accountID: selectedAccount.id) else {
-                        print("No avatar found for \(jid).")
+                        print(formatter.formatEmptyResult(.avatar(jid: jid)))
                         return
                     }
 
@@ -44,10 +44,9 @@ extension DuckoCLI {
                     let filePath = save ?? "\(jid).\(ext)"
                     try avatar.data.write(to: URL(fileURLWithPath: filePath))
 
-                    print("Saved avatar to \(filePath)")
-                    print("Hash: \(avatar.hash)")
-                    print("Type: \(avatar.mimeType)")
-                    print("Size: \(avatar.data.count) bytes")
+                    print(formatter.formatCommandResult(.avatarSaved(
+                        path: filePath, hash: avatar.hash, mimeType: avatar.mimeType, size: avatar.data.count
+                    )))
                 }
             }
         }
@@ -77,9 +76,7 @@ extension DuckoCLI {
                 try await ConnectedOperation.run(environment: env, account: selectedAccount, password: password) {
                     let avatar = try await env.avatarService.publishAvatar(imageData: imageData, accountID: selectedAccount.id)
 
-                    print("Avatar published successfully.")
-                    print("Hash: \(avatar.hash)")
-                    print("Size: \(avatar.data.count) bytes")
+                    print(formatter.formatCommandResult(.avatarPublished(hash: avatar.hash, size: avatar.data.count)))
                 }
             }
         }

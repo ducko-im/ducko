@@ -16,11 +16,14 @@ struct OMEMOFormatterTests {
         .init(deviceID: 43, outcome: .keyChanged(previousFingerprint: storedFingerprintA, newFingerprint: storedFingerprintB)),
         .init(deviceID: 44, outcome: .failed("The connection was closed")),
         .init(deviceID: 45, outcome: .rebuilt(needsTrusting: true)),
-        .init(deviceID: 46, outcome: .notListed)
+        .init(deviceID: 46, outcome: .notListed),
+        .init(deviceID: 47, outcome: .discarded),
+        .init(deviceID: 48, outcome: .noBundle)
     ])
 
     private func jsonObject(_ output: String) throws -> [String: String] {
-        try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: String])
+        expectSnakeCaseKeys(output)
+        return try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: String])
     }
 
     @Test func `plain device line shows id, display fingerprint and trust`() {
@@ -35,14 +38,14 @@ struct OMEMOFormatterTests {
     @Test func `json device is structured with the raw and display fingerprints`() throws {
         let object = try jsonObject(JSONFormatter().formatOMEMODevice(device))
         #expect(object == [
-            "type": "omemo_device", "jid": "bob@example.com", "deviceID": "42",
-            "fingerprint": storedFingerprintA, "displayFingerprint": displayFingerprintA, "trust": "trusted"
+            "type": "omemo_device", "jid": "bob@example.com", "device_id": "42",
+            "fingerprint": storedFingerprintA, "display_fingerprint": displayFingerprintA, "trust": "trusted"
         ])
     }
 
     @Test func `json fingerprint keeps the raw hex and adds the display form`() throws {
         let object = try jsonObject(JSONFormatter().formatOMEMOFingerprint(storedFingerprintA))
-        #expect(object == ["type": "omemo_fingerprint", "fingerprint": storedFingerprintA, "displayFingerprint": displayFingerprintA])
+        #expect(object == ["type": "omemo_fingerprint", "fingerprint": storedFingerprintA, "display_fingerprint": displayFingerprintA])
     }
 
     @Test(arguments: [(OMEMOTrustLevel.trusted, "Trusted"), (.untrusted, "Untrusted")])
@@ -50,7 +53,7 @@ struct OMEMOFormatterTests {
         #expect(PlainFormatter().formatOMEMOTrustChange(jid: "bob@example.com", deviceID: 42, trustLevel: trustLevel) == "\(verb) device 42 for bob@example.com.")
         #expect(ANSIFormatter().formatOMEMOTrustChange(jid: "bob@example.com", deviceID: 42, trustLevel: trustLevel).contains("\(verb) device 42 for bob@example.com."))
         let object = try jsonObject(JSONFormatter().formatOMEMOTrustChange(jid: "bob@example.com", deviceID: 42, trustLevel: trustLevel))
-        #expect(object == ["type": "omemo_trust", "jid": "bob@example.com", "deviceID": "42", "trust": trustLevel.rawValue])
+        #expect(object == ["type": "omemo_trust", "jid": "bob@example.com", "device_id": "42", "trust": trustLevel.rawValue])
     }
 
     @Test func `a session reset lists each device's outcome with both keys of a changed one in their display form`() {
@@ -60,7 +63,9 @@ struct OMEMOFormatterTests {
             "  Device 43 changed its key from \(displayFingerprintA) to \(displayFingerprintB) and needs trusting",
             "  Device 44 could not be reset: The connection was closed",
             "  Device 45 has a new session and needs trusting",
-            "  Device 46 is not on the device list, so its session was discarded"
+            "  Device 46 is not on the device list, so its session was discarded",
+            "  Device 47 is marked untrusted, so its session was discarded",
+            "  Device 48 publishes no keys, so its session was discarded"
         ]
         #expect(PlainFormatter().formatOMEMOSessionReset(resetReport) == expected.joined(separator: "\n"))
         let ansi = ANSIFormatter().formatOMEMOSessionReset(resetReport)
@@ -68,20 +73,24 @@ struct OMEMOFormatterTests {
     }
 
     @Test func `json session reset carries each device's outcome and the raw and display keys of a changed one`() throws {
-        let object = try #require(JSONSerialization.jsonObject(with: Data(JSONFormatter().formatOMEMOSessionReset(resetReport).utf8)) as? NSDictionary)
+        let output = JSONFormatter().formatOMEMOSessionReset(resetReport)
+        expectSnakeCaseKeys(output)
+        let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? NSDictionary)
         let expected: NSDictionary = [
             "type": "omemo_session_reset",
             "jid": "bob@example.com",
             "devices": [
-                ["deviceID": "42", "outcome": "rebuilt", "needsTrusting": "false"],
+                ["device_id": "42", "outcome": "rebuilt", "needs_trusting": "false"],
                 [
-                    "deviceID": "43", "outcome": "key_changed",
-                    "previousFingerprint": storedFingerprintA, "previousDisplayFingerprint": displayFingerprintA,
-                    "newFingerprint": storedFingerprintB, "newDisplayFingerprint": displayFingerprintB
+                    "device_id": "43", "outcome": "key_changed",
+                    "previous_fingerprint": storedFingerprintA, "previous_display_fingerprint": displayFingerprintA,
+                    "new_fingerprint": storedFingerprintB, "new_display_fingerprint": displayFingerprintB
                 ],
-                ["deviceID": "44", "outcome": "failed", "error": "The connection was closed"],
-                ["deviceID": "45", "outcome": "rebuilt", "needsTrusting": "true"],
-                ["deviceID": "46", "outcome": "not_listed"]
+                ["device_id": "44", "outcome": "failed", "error": "The connection was closed"],
+                ["device_id": "45", "outcome": "rebuilt", "needs_trusting": "true"],
+                ["device_id": "46", "outcome": "not_listed"],
+                ["device_id": "47", "outcome": "discarded"],
+                ["device_id": "48", "outcome": "no_bundle"]
             ]
         ]
         #expect(object == expected)

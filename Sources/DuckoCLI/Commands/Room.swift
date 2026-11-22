@@ -79,7 +79,7 @@ extension DuckoCLI {
                     accountID: selectedAccount.id, timeout: .seconds(15), remember: false
                 )
 
-                print("Type 'send <message>' to send, 'quit' to leave.")
+                printToStandardError("Type 'send <message>' to send, 'quit' to leave.")
 
                 let accountID = selectedAccount.id
                 let roomJID = jid
@@ -175,7 +175,7 @@ private func runRoomLoop(roomJID: String, formatter: any CLIFormatter, environme
                 print(formatter.formatError(error))
             }
         } else {
-            print("Commands: send <message>, quit")
+            printToStandardError("Commands: send <message>, quit")
         }
     }
 

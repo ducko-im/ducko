@@ -42,7 +42,7 @@ func handleWhoCommand(context: REPLContext) async {
     onlineContacts.sort { $0.0.jid.description < $1.0.jid.description }
 
     guard !onlineContacts.isEmpty else {
-        print("No contacts online.")
+        print(context.formatter.formatEmptyResult(.onlineContacts))
         return
     }
 
@@ -58,7 +58,7 @@ func handleDirectedPresenceREPLCommand(_ jidString: String, context: REPLContext
     }
     do {
         try await context.environment.presenceService.sendDirectedPresence(to: jidString, accountID: context.accountID)
-        print("Sent directed presence to \(jidString).")
+        print(context.formatter.formatCommandResult(.directedPresenceSent(jid: jidString)))
     } catch {
         print(context.formatter.formatError(error))
     }

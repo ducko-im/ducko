@@ -8,6 +8,11 @@ protocol CLIFormatter: Sendable {
     /// The line that introduces one day of one conversation in the results of a search over all conversations.
     func formatSearchDay(jid: JID, day: Date, matchCount: Int) -> String
     func formatEmptyResult(_ result: CLIEmptyResult) -> String
+    func formatCommandResult(_ result: CLICommandResult) -> String
+    /// A REPL line saying a command was typed wrong: its usage, or that the command or preference is unknown. JSON
+    /// prints it as an `error` record.
+    func formatUsageError(_ line: String) -> String
+    func formatHelp(_ text: String) -> String
     func formatRosterCommand(_ outcome: RosterCommandOutcome) -> String
     func formatAccount(_ account: Account) -> String
     func formatPresence(jid: BareJID, status: String, message: String?) -> String
@@ -24,8 +29,11 @@ protocol CLIFormatter: Sendable {
     func formatRoom(_ room: DiscoveredRoom) -> String
     func formatRoomParticipant(_ participant: RoomParticipant) -> String
     func formatRoomParticipantGroupHeader(_ group: RoomParticipantGroup) -> String
+    func formatAffiliationGroupHeader(_ affiliation: RoomAffiliation, count: Int) -> String
+    func formatAffiliation(_ item: RoomAffiliationItem) -> String
     func formatTransferProgress(fileName: String, fileSize: Int64, progress: Double) -> String
     func formatFileMessage(fileName: String, url: String, fileSize: Int64?) -> String
+    func formatTransfer(_ transfer: FileTransferService.ActiveTransfer) -> String
     func formatBookmark(_ bookmark: RoomBookmark) -> String
     func formatBlockListEntry(_ entry: BlockListEntry) -> String
     func formatProfile(_ profile: ProfileInfo) -> String
@@ -51,6 +59,20 @@ enum CLIEmptyResult {
     case messages
     case omemoIdentity(accountID: UUID)
     case omemoDevices(jid: String, accountID: UUID)
+    case onlineContacts
+    case transfers
+    case affiliations(RoomAffiliation, room: String)
+    case roomConfig(room: String)
+    case connectionInfo
+    case ownAvatar
+    case avatar(jid: String)
+    case recentMessage(RecentMessagePurpose)
+    case moderatableMessage
+
+    /// The command that looked for the message, which JSON reports as `purpose`.
+    enum RecentMessagePurpose: String {
+        case retract, edit, reply
+    }
 
     var message: String {
         switch self {
@@ -64,6 +86,17 @@ enum CLIEmptyResult {
         case .messages: "No messages found."
         case .omemoIdentity: "No OMEMO identity found."
         case let .omemoDevices(jid, _): "No known OMEMO devices for \(jid)."
+        case .onlineContacts: "No contacts online."
+        case .transfers: "No active transfers."
+        case let .affiliations(affiliation, _): "No \(affiliation.displayName.lowercased())s."
+        case .roomConfig: "No configuration fields."
+        case .connectionInfo: "No TLS connection info available."
+        case .ownAvatar: "No avatar set."
+        case let .avatar(jid): "No avatar found for \(jid)."
+        case .recentMessage(.retract): "No recent outgoing message to retract."
+        case .recentMessage(.edit): "No recent outgoing message to edit."
+        case .recentMessage(.reply): "No recent incoming message to reply to."
+        case .moderatableMessage: "No moderatable message found."
         }
     }
 }
@@ -151,6 +184,36 @@ func omemoTrustChangeText(jid: String, deviceID: UInt32, trustLevel: OMEMOTrustL
 /// The line above the devices of a session reset, which says so when there were none.
 func omemoSessionResetHeading(_ report: OMEMOSessionResetReport) -> String {
     report.devices.isEmpty ? "No OMEMO devices to reset for \(report.peerJID)." : "Reset the OMEMO sessions with \(report.peerJID):"
+}
+
+/// A transfer as `/transfers` lists it in the human-readable formats.
+func transferLineText(_ transfer: FileTransferService.ActiveTransfer) -> String {
+    let sidSuffix = if let sid = transfer.sid, transfer.method == .jingle { " (sid: \(sid))" } else { "" }
+    return "  \(transfer.fileName) (\(formatByteCount(transfer.fileSize))) [\(transferDirectionName(transfer))/\(transferMethodName(transfer))] "
+        + formatTransferState(transfer) + sidSuffix
+}
+
+/// A transfer's direction as every format names it.
+func transferDirectionName(_ transfer: FileTransferService.ActiveTransfer) -> String {
+    transfer.direction == .outgoing ? "outgoing" : "incoming"
+}
+
+/// A transfer's method as every format names it.
+func transferMethodName(_ transfer: FileTransferService.ActiveTransfer) -> String {
+    switch transfer.method {
+    case .httpUpload: "http"
+    case .jingle: "jingle"
+    }
+}
+
+/// The line above a room's affiliation list in the human-readable formats.
+func affiliationGroupHeaderText(_ affiliation: RoomAffiliation, count: Int) -> String {
+    "--- \(affiliation.displayName)s (\(count)) ---"
+}
+
+/// One entry of a room's affiliation list in the human-readable formats.
+func affiliationText(_ item: RoomAffiliationItem) -> String {
+    "  \(item.jidString)" + (item.nickname.map { " (\($0))" } ?? "")
 }
 
 func formatByteCount(_ bytes: Int64) -> String {

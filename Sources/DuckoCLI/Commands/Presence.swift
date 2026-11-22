@@ -183,9 +183,6 @@ private func performHoldWork(
     try await waitForConnected(accountID: accountID, environment: env)
     await applyPresence(status, message: message, environment: env, accountID: accountID)
     print(context.formatter.formatPresence(jid: context.account.jid, status: status.rawValue, message: message))
-    // stdout is block-buffered when piped (no TTY); flush so the set-status line is observable during the hold
-    // rather than only on exit.
-    fflush(stdout)
     switch lifetime {
     case let .bounded(duration):
         printToStandardError("Holding presence until the window elapses (Ctrl-C to stop early)…")

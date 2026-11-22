@@ -6,7 +6,7 @@ import Foundation
 func promptForDataFormValues(_ fields: inout [RoomConfigField], formatter: any CLIFormatter) throws {
     for index in fields.indices where fields[index].isDisplayed {
         if fields[index].isFixed {
-            fields[index].values.forEach { print($0) }
+            fields[index].values.forEach { printToStandardError($0) }
         } else {
             try promptForValues(of: &fields[index], formatter: formatter)
         }
@@ -45,12 +45,12 @@ func dataFormValues(typed lines: [String], for field: RoomConfigField) throws ->
 }
 
 private func promptForValues(of field: inout RoomConfigField, formatter: any CLIFormatter) throws {
-    if let description = field.description { print(description) }
+    if let description = field.description { printToStandardError(description) }
     if !field.options.isEmpty {
         let options = field.options.map { option in
             option.label.map { $0 == option.value ? option.value : "\(option.value) (\($0))" } ?? option.value
         }
-        print("Options: \(options.joined(separator: ", "))")
+        printToStandardError("Options: \(options.joined(separator: ", "))")
     }
     while true {
         guard let lines = try readValues(for: field) else { return }
@@ -63,7 +63,7 @@ private func promptForValues(of field: inout RoomConfigField, formatter: any CLI
             continue
         }
         guard field.isMissingRequiredValue else { return }
-        print("\(field.displayLabel) is required.")
+        printToStandardError("\(field.displayLabel) is required.")
     }
 }
 
@@ -82,7 +82,7 @@ private func readValues(for field: RoomConfigField) throws -> [String]? {
     let current = dataFormValueText(field)
     switch field.type {
     case "text-multi", "jid-multi":
-        print("\(field.displayLabel)\(marker) [\(current)], one per line, empty line to finish:")
+        printToStandardError("\(field.displayLabel)\(marker) [\(current)], one per line, empty line to finish:")
         var lines: [String] = []
         while let line = readLine() {
             if line.isEmpty { return lines }
@@ -91,7 +91,7 @@ private func readValues(for field: RoomConfigField) throws -> [String]? {
         guard !lines.isEmpty else { throw CLIError.inputEnded(field: field.displayLabel) }
         return lines
     default:
-        print("\(field.displayLabel)\(marker) [\(current)]: ", terminator: "")
+        printToStandardError("\(field.displayLabel)\(marker) [\(current)]: ", terminator: "")
         guard let line = readLine() else { throw CLIError.inputEnded(field: field.displayLabel) }
         return [line]
     }
