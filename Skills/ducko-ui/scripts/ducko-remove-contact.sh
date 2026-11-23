@@ -25,7 +25,7 @@ on run argv
         set frontmost of process "DuckoUITest" to true
         delay 0.3
         tell process "DuckoUITest"
-            $(ducko_as_raise_window_by_id "contact-list" "Contacts window not found" "contactWin")
+            $(ducko_as_raise_scene_window "contacts" "Contacts window not found" "contactWin")
             -- A leftover confirmation would otherwise be the one the confirm step presses.
             if (count of sheets of contactWin) > 0 then return "ERROR: a dialog is already open in the Contacts window"
             $(ducko_as_find_element_by_id 'targetId' 'contactWin' 'contact row not found for " & contactJID & "' 'targetRow')
@@ -46,7 +46,8 @@ $(ducko_as_handlers)
 on run argv
     tell application "System Events"
         tell process "DuckoUITest"
-            $(ducko_as_find_window_by_id "contact-list" "Contacts window not found" "contactWin")
+            $(ducko_as_find_scene_window "contacts" "contactWin")
+            if contactWin is missing value then return "ERROR: Contacts window not found"
             $(ducko_as_click_button_by_label "Remove Contact" 'contactWin' 'remove confirmation button not found')
             return "ok"
         end tell

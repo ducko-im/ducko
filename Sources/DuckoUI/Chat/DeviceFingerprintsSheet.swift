@@ -127,8 +127,7 @@ struct DeviceFingerprintsSheet: View {
     private func deviceRows(_ devices: [OMEMODeviceInfo]) -> some View {
         ForEach(devices) { device in
             deviceRow(device)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("device-row-\(device.deviceID)")
+                .containerAccessibilityIdentifier("device-row-\(device.deviceID)")
         }
     }
 

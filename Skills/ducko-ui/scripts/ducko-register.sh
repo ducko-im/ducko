@@ -30,19 +30,6 @@ EMAIL="${4:-__none__}"
 
 RESULT=$(osascript - "$SERVER" "$USERNAME" "$PASSWORD" "$EMAIL" << APPLESCRIPT
 $(ducko_as_handlers)
-on fillField(win, fieldId, fieldValue)
-    set theField to my findByAttr(win, "AXIdentifier", fieldId, 0, 30)
-    if theField is missing value then return false
-    tell application "System Events"
-        set focused of theField to true
-        delay 0.2
-        keystroke "a" using command down
-        delay 0.1
-        keystroke fieldValue
-    end tell
-    return true
-end fillField
-
 on run argv
     set serverArg to item 1 of argv
     set usernameArg to item 2 of argv
@@ -53,29 +40,28 @@ on run argv
         set proc to process "DuckoUITest"
         set frontmost of proc to true
         delay 1
-        if not (exists window "Welcome" of proc) then return "ERROR: Welcome window not found"
-        set win to window "Welcome" of proc
+        tell process "DuckoUITest"
+            $(ducko_as_raise_scene_window "welcome" "Welcome window not found" "win")
 
-        -- Select the Register segment in the setup mode picker.
-        set picker to my findByAttr(win, "AXIdentifier", "setup-mode-picker", 0, 30)
-        if picker is missing value then return "ERROR: setup-mode-picker not found"
-        set seg to my findByAttr(picker, "AXDescription", "Register", 0, 6)
-        if seg is missing value then return "ERROR: Register segment not found"
-        click seg
-        delay 0.5
+            -- Select the Register segment in the setup mode picker.
+            set picker to my findByAttr(win, "AXIdentifier", "setup-mode-picker", 0, 30)
+            if picker is missing value then return "ERROR: setup-mode-picker not found"
+            set seg to my findByAttr(picker, "AXDescription", "Register", 0, 6)
+            if seg is missing value then return "ERROR: Register segment not found"
+            click seg
 
-        -- Fill in the registration fields.
-        if not (my fillField(win, "register-server-field", serverArg)) then return "ERROR: register-server-field not found"
-        if not (my fillField(win, "register-username-field", usernameArg)) then return "ERROR: register-username-field not found"
-        if not (my fillField(win, "register-password-field", passwordArg)) then return "ERROR: register-password-field not found"
-        if emailArg is not "__none__" then
-            my fillField(win, "register-email-field", emailArg)
-        end if
+            -- Fill in the registration fields.
+            $(ducko_as_await_element '"register-server-field"' win window 5 'register-server-field not found' serverField)
+            $(ducko_as_fill_element "serverField" "serverArg")
+            $(ducko_as_fill_field_by_id '"register-username-field"' 'win' 'usernameArg' 'register-username-field not found')
+            $(ducko_as_fill_field_by_id '"register-password-field"' 'win' 'passwordArg' 'register-password-field not found')
+            if emailArg is not "__none__" then
+                $(ducko_as_fill_field_by_id '"register-email-field"' 'win' 'emailArg' 'register-email-field not found')
+            end if
 
-        set registerBtn to my findByAttr(win, "AXIdentifier", "register-button", 0, 30)
-        if registerBtn is missing value then return "ERROR: register-button not found"
-        click registerBtn
-$(ducko_as_await_registration proc win MORE)
+            $(ducko_as_click_element_by_id '"register-button"' 'win' 'register-button not found')
+$(ducko_as_await_welcome_outcome proc win MORE)
+        end tell
     end tell
 end run
 APPLESCRIPT

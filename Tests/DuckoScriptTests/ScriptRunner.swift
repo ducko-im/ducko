@@ -133,19 +133,34 @@ struct CapturedAppleScript {
     let compilerExitCode: Int32
     let compilerErrors: String
     let invocations: [String]
+    /// The arguments of the last `swift` call.
+    let swiftArguments: [String]
+    /// The arguments of the last call to each stubbed sibling script or command, by name.
+    let siblingArguments: [String: [String]]
+    /// The fixture folder the wrapper ran from. `capture` removes it before returning, so only the path is left to compare.
+    let scriptDirectory: URL
 }
 
 extension ScriptRunner {
     /// Only the selected wrapper and real helpers run. Sibling scripts and app commands
     /// are inert, and osascript captures and compiles its input without executing it.
-    /// `hostOptIn: false` leaves `DUCKO_UI_HOST` unset, and the stub PATH has no `sysctl`, so the location gate fails.
+    /// `hostOptIn: false` leaves `DUCKO_UI_HOST` unset, and unless `vmPresent` is set the stub PATH has no `sysctl`, so the location gate fails.
+    /// `vmPresent: true` adds a `sysctl` that reports a VM, which the VM-only gate requires.
     static func capture(
-        _ script: String, arguments: [String], response: String = "ok", hostOptIn: Bool = true, environment extra: [String: String] = [:]
+        _ script: String,
+        arguments: [String],
+        response: String = "ok",
+        hostOptIn: Bool = true,
+        vmPresent: Bool = false,
+        environment extra: [String: String] = [:]
     ) throws -> CapturedAppleScript {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Ducko script fixture \(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         try installCaptureFixture(in: directory, script: script)
+        if vmPresent {
+            try writeExecutable("#!/bin/bash\necho 1\n", to: directory.appendingPathComponent("bin/sysctl"))
+        }
         let captureDirectory = directory.appendingPathComponent("capture")
         try FileManager.default.createDirectory(at: captureDirectory, withIntermediateDirectories: true)
         var environment = [
@@ -161,15 +176,22 @@ extension ScriptRunner {
         func read(_ name: String) -> String {
             (try? String(contentsOf: captureDirectory.appendingPathComponent(name), encoding: .utf8)) ?? ""
         }
+        func nullSeparated(_ name: String) -> [String] {
+            read(name).split(separator: "\0", omittingEmptySubsequences: false).dropLast().map(String.init)
+        }
         let invocations = read("invocations").split(separator: "\n").map(String.init)
         let calls = 1 ..< invocations.count { $0 == "osascript" } + 1
+        let siblings = Set(invocations).subtracting(["osascript", "swift"])
         return CapturedAppleScript(
             result: result,
             sources: calls.map { read("source.applescript.\($0)") },
-            argumentsByCall: calls.map { read("argv.\($0)").split(separator: "\0", omittingEmptySubsequences: false).dropLast().map(String.init) },
+            argumentsByCall: calls.map { nullSeparated("argv.\($0)") },
             compilerExitCode: Int32(read("compile-status").trimmingCharacters(in: .whitespacesAndNewlines)) ?? -1,
             compilerErrors: read("compile-errors"),
-            invocations: invocations
+            invocations: invocations,
+            swiftArguments: nullSeparated("stub-argv.swift"),
+            siblingArguments: Dictionary(uniqueKeysWithValues: siblings.map { ($0, nullSeparated("stub-argv.\($0)")) }),
+            scriptDirectory: directory
         )
     }
 
@@ -186,9 +208,10 @@ extension ScriptRunner {
                 try writeExecutable(captureNoOp, to: destination)
             }
         }
-        for command in ["sleep", "pgrep", "open", "pkill", "killall", "swift"] {
+        for command in ["sleep", "pgrep", "open", "pkill", "killall"] {
             try writeExecutable(captureNoOp, to: bin.appendingPathComponent(command))
         }
+        try writeExecutable(captureNoOp, to: bin.appendingPathComponent("swift"))
         for (name, target) in [("cat", "/bin/cat"), ("dirname", "/usr/bin/dirname")] {
             try manager.createSymbolicLink(atPath: bin.appendingPathComponent(name).path, withDestinationPath: target)
         }
@@ -196,10 +219,11 @@ extension ScriptRunner {
     }
 }
 
-/// Records its own name, and fails when `CAPTURE_FAILING` lists that name.
+/// Records its own name and its arguments, and fails when `CAPTURE_FAILING` lists that name.
 private let captureNoOp = #"""
 #!/bin/bash
 printf '%s\n' "${0##*/}" >> "$CAPTURE_DIR/invocations"
+if [[ $# -gt 0 ]]; then printf '%s\0' "$@" > "$CAPTURE_DIR/stub-argv.${0##*/}"; else : > "$CAPTURE_DIR/stub-argv.${0##*/}"; fi
 [[ " ${CAPTURE_FAILING:-} " == *" ${0##*/} "* ]] && exit 1
 exit 0
 """#

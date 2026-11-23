@@ -22,8 +22,8 @@ case "${1:-open}" in
 esac
 
 # Ensure Preferences window is open on the Accounts tab
-"$SCRIPT_DIR/ducko-preferences.sh" > /dev/null 2>&1 || true
-"$SCRIPT_DIR/ducko-preferences-tab.sh" Accounts > /dev/null 2>&1 || true
+"$SCRIPT_DIR/ducko-preferences.sh" > /dev/null
+"$SCRIPT_DIR/ducko-preferences-tab.sh" Accounts > /dev/null
 
 RESULT=$(osascript << APPLESCRIPT
 $(ducko_as_handlers)

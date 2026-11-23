@@ -1,5 +1,6 @@
 #!/bin/bash
 # Invite a user to a room via its context menu.
+# Succeeds once the Invite User sheet has closed, and fails with the sheet's error when it shows one.
 # Usage: ducko-invite-user.sh ROOM_JID INVITEE_JID
 #   ROOM_JID:    The JID of the room (must be visible in the Rooms section)
 #   INVITEE_JID: The JID of the user to invite
@@ -27,32 +28,14 @@ on run argv
         set frontmost of process "DuckoUITest" to true
         delay 0.3
         tell process "DuckoUITest"
-            $(ducko_as_raise_window_by_id "contact-list" "Contacts window not found" "contactWin")
+            $(ducko_as_raise_scene_window "contacts" "Contacts window not found" "contactWin")
             $(ducko_as_find_element_by_id 'targetId' 'contactWin' 'room row not found for " & roomJID & "' 'targetRow')
-
-            -- Open the context menu and select "Invite User…". The menu may render
-            -- at process level (a sibling of the windows) or under the window.
-            perform action "AXShowMenu" of targetRow
-            delay 0.5
-            set menuItem to missing value
-            repeat with m in menus
-                set menuItem to my findByRoleAndName(m, "AXMenuItem", "Invite User…", 0, 8)
-                if menuItem is not missing value then exit repeat
-            end repeat
-            if menuItem is missing value then set menuItem to my findByRoleAndName(contactWin, "AXMenuItem", "Invite User…", 0, 30)
-            if menuItem is missing value then return "ERROR: Invite User menu item not found"
-            click menuItem
-            delay 0.5
-
-            -- Fill the JID field in the invite dialog.
-            $(ducko_as_find_element_by_id '"invite-user-jid-field"' 'contactWin' 'JID field not found in invite dialog' 'jidField')
-            set focused of jidField to true
-            delay 0.2
-            keystroke "a" using command down
-            delay 0.1
-            keystroke inviteeJID
-            delay 0.2
+            $(ducko_as_click_context_menu_item "Invite User…" targetRow contactWin "Invite User… menu item not found" continue)
+            $(ducko_as_await_element '"invite-user-jid-field"' contactWin sheets 5 'JID field not found in invite dialog' inviteField)
+            $(ducko_as_fill_element "inviteField" "inviteeJID")
+            -- Invite has .defaultAction keyboard shortcut
             keystroke return
+            $(ducko_as_await_sheet_closed contactWin contacts '"invite-user-jid-field"' '"invite-user-error"' 10 "Invite sheet stayed open")
             return "ok"
         end tell
     end tell

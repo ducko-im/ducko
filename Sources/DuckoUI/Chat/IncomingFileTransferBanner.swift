@@ -20,8 +20,7 @@ struct IncomingFileTransferBanner: View {
             }
             .padding(.vertical, 4)
             .background(Palette.accent.opacity(0.1))
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("file-transfer-banner")
+            .containerAccessibilityIdentifier("file-transfer-banner")
         }
     }
 }

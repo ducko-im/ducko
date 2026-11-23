@@ -48,8 +48,7 @@ struct RegistrationFormSheet: View {
         .task {
             await loadForm()
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("registration-form-sheet")
+        .containerAccessibilityIdentifier("registration-form-sheet")
     }
 
     @ViewBuilder

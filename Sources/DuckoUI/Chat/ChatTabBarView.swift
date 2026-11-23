@@ -70,8 +70,7 @@ struct ChatTabBarView: View {
         // per-tab `chat-tab-<jid>` identifier — disappears, leaving neither
         // VoiceOver (which navigates the element) nor UI automation (which
         // targets the identifier) able to address an individual tab.
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("chat-tab-bar")
+        .containerAccessibilityIdentifier("chat-tab-bar")
     }
 
     private func overflowMenu(_ tabs: [ConversationKey]) -> some View {

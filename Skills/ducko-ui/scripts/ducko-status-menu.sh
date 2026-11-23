@@ -19,13 +19,13 @@ if [[ $# -lt 1 ]]; then
 fi
 
 case "$1" in
-    available) LABEL="Available" ;;
-    away)      LABEL="Away" ;;
-    xa)        LABEL="Extended Away" ;;
-    dnd)       LABEL="Do Not Disturb" ;;
-    offline)   LABEL="Offline" ;;
     toggle|custom) LABEL="" ;;
-    *) echo "Usage: ducko-status-menu.sh <available|away|xa|dnd|offline|toggle|custom>" >&2; exit 1 ;;
+    *)
+        LABEL=$(ducko_status_label "$1" 2> /dev/null) || {
+            echo "Usage: ducko-status-menu.sh <available|away|xa|dnd|offline|toggle|custom>" >&2
+            exit 1
+        }
+        ;;
 esac
 
 RESULT=$(osascript - "$1" "$LABEL" << 'APPLESCRIPT'

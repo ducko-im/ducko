@@ -1,6 +1,7 @@
 #!/bin/bash
 # Edit profile fields and optionally save.
-# Opens the profile sheet first if not already open.
+# Opens the profile sheet first if not already open, and waits for it to load. An empty value clears its field.
+# With --save, succeeds once the sheet has closed, and fails with the sheet's error when it shows one.
 #
 # Walks the profile sheet via findByAttr rather than `entire contents`, which
 # collapses on the nested profile form on macOS 26.
@@ -29,25 +30,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Open profile sheet
-"$SCRIPTS/ducko-profile.sh" > /dev/null 2>&1
-sleep 0.5
+"$SCRIPTS/ducko-profile.sh" > /dev/null
 
 RESULT=$(osascript - "$FULLNAME" "$NICKNAME" "$EMAIL" "$SAVE" << APPLESCRIPT
 $(ducko_as_handlers)
-on fillField(win, fieldId, fieldValue)
-    set theField to my findByAttr(win, "AXIdentifier", fieldId, 0, 30)
-    if theField is missing value then return false
-    tell application "System Events"
-        set focused of theField to true
-        delay 0.2
-        keystroke "a" using command down
-        delay 0.1
-        keystroke fieldValue
-    end tell
-    return true
-end fillField
-
 on run argv
     set fullnameArg to item 1 of argv
     set nicknameArg to item 2 of argv
@@ -56,34 +42,32 @@ on run argv
     tell application "System Events"
         set frontmost of process "DuckoUITest" to true
         delay 0.3
-        -- Find the window containing the profile edit view.
-        set profileWin to missing value
-        repeat with win in (windows of process "DuckoUITest")
-            if (my findByAttr(win, "AXIdentifier", "profile-edit-view", 0, 30)) is not missing value then
-                set profileWin to win
-                exit repeat
+        tell process "DuckoUITest"
+            $(ducko_as_find_scene_window "contacts" "contactWin")
+            if contactWin is missing value then return "ERROR: Contacts window not found"
+            $(ducko_as_require_front_window "contactWin" "the contacts window")
+            -- The sheet shows its fields once the profile has loaded.
+            $(ducko_as_await_element '"profile-fullname-field"' contactWin sheets 10 'the profile did not load' loadedField)
+
+            if fullnameArg is not "__none__" then
+                $(ducko_as_fill_field_by_id '"profile-fullname-field"' 'contactWin' 'fullnameArg' 'profile-fullname-field not found')
             end if
-        end repeat
-        if profileWin is missing value then return "ERROR: profile sheet not found"
+            if nicknameArg is not "__none__" then
+                $(ducko_as_fill_field_by_id '"profile-nickname-field"' 'contactWin' 'nicknameArg' 'profile-nickname-field not found')
+            end if
+            if emailArg is not "__none__" then
+                $(ducko_as_fill_field_by_id '"profile-email-field-0"' 'contactWin' 'emailArg' 'profile-email-field-0 not found')
+            end if
 
-        if fullnameArg is not "__none__" then my fillField(profileWin, "profile-fullname-field", fullnameArg)
-        if nicknameArg is not "__none__" then my fillField(profileWin, "profile-nickname-field", nicknameArg)
-        if emailArg is not "__none__" then my fillField(profileWin, "profile-email-field-0", emailArg)
-
-        if saveArg is "yes" then
-            set saveBtn to my findByAttr(profileWin, "AXIdentifier", "profile-save-button", 0, 30)
-            if saveBtn is missing value then return "ERROR: profile-save-button not found"
-            click saveBtn
-        end if
-        return "ok"
+            if saveArg is "yes" then
+                $(ducko_as_click_element_by_id '"profile-save-button"' 'contactWin' 'profile-save-button not found')
+                $(ducko_as_await_sheet_closed contactWin contacts '"profile-edit-view"' '"profile-error"' 15 "Profile sheet stayed open")
+            end if
+            return "ok"
+        end tell
     end tell
 end run
 APPLESCRIPT
 )
 
-if [[ "$RESULT" == ok ]]; then
-    echo "Profile updated"
-else
-    echo "$RESULT" >&2
-    exit 1
-fi
+ducko_check_result "$RESULT" "Profile updated"

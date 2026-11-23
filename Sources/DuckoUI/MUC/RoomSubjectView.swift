@@ -18,6 +18,7 @@ struct RoomSubjectView: View {
                     .textFieldStyle(.roundedBorder)
                     .focused($isTopicFieldFocused)
                     .onAppear { isTopicFieldFocused = true }
+                    .accessibilityIdentifier("room-topic-field")
 
                 Button("Save") {
                     let text = editText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -26,6 +27,7 @@ struct RoomSubjectView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .accessibilityIdentifier("room-topic-save-button")
 
                 Button("Cancel") {
                     isEditing = false
@@ -36,6 +38,7 @@ struct RoomSubjectView: View {
                     .font(.callout)
                     .foregroundStyle(subject != nil ? .primary : .tertiary)
                     .singleLine()
+                    .accessibilityIdentifier("room-topic-text")
 
                 Spacer()
 
@@ -48,10 +51,11 @@ struct RoomSubjectView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("room-topic-edit-button")
             }
         }
         .padding(.horizontal)
         .padding(.vertical, 4)
-        .accessibilityIdentifier("room-subject-view")
+        .containerAccessibilityIdentifier("room-subject-view")
     }
 }

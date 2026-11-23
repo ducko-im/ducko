@@ -64,8 +64,7 @@ struct BlockedContactsSheet: View {
         .task {
             await loadBlockList()
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("blocked-contacts-view")
+        .containerAccessibilityIdentifier("blocked-contacts-view")
     }
 
     private var trimmedAddress: String {

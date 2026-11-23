@@ -30,6 +30,7 @@ struct InviteUserSheet: View {
                 Text(errorMessage)
                     .foregroundStyle(.red)
                     .font(.callout)
+                    .accessibilityIdentifier("invite-user-error")
             }
 
             HStack {

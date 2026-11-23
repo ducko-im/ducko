@@ -21,7 +21,7 @@ on run argv
         set frontmost of process "DuckoUITest" to true
         delay 0.3
         tell process "DuckoUITest"
-            $(ducko_as_raise_window_by_id "preferences-window" "Settings window not found (open it with ducko-preferences.sh first)" "settingsWin")
+            $(ducko_as_raise_scene_window "$DUCKO_SETTINGS_SCENE" "Settings window not found (open it with ducko-preferences.sh first)" "settingsWin")
 
             -- Click the tab button in the toolbar
             try

@@ -2,6 +2,7 @@
 # Change account password via Preferences > Accounts.
 # Opens Preferences on the Accounts tab, selects the account, opens the
 # Change Password sheet from the Actions pull-down, fills the fields, and submits.
+# Succeeds once the sheet has closed, and fails with the sheet's error when it shows one.
 #
 # The Actions pull-down only appears once the account is connected. Fields and
 # buttons are located via findByAttr / findByRoleAndName rather than
@@ -22,8 +23,8 @@ fi
 NEW_PASSWORD="$1"
 
 # Open Preferences > Accounts
-"$SCRIPTS/ducko-preferences.sh" > /dev/null 2>&1
-"$SCRIPTS/ducko-preferences-tab.sh" Accounts > /dev/null 2>&1
+"$SCRIPTS/ducko-preferences.sh" > /dev/null
+"$SCRIPTS/ducko-preferences-tab.sh" Accounts > /dev/null
 sleep 0.5
 
 RESULT=$(osascript - "$NEW_PASSWORD" << APPLESCRIPT
@@ -34,35 +35,22 @@ on run argv
         set frontmost of process "DuckoUITest" to true
         delay 0.3
 $(ducko_as_click_account_action "Change Password…")
-        delay 0.5
 
-        set newField to my findByAttr(prefsWin, "AXIdentifier", "new-password-field", 0, 30)
-        if newField is missing value then return "ERROR: new-password-field not found"
-        set focused of newField to true
-        delay 0.2
-        keystroke "a" using command down
-        delay 0.1
-        keystroke newPw
-
-        set confirmField to my findByAttr(prefsWin, "AXIdentifier", "confirm-password-field", 0, 30)
-        if confirmField is missing value then return "ERROR: confirm-password-field not found"
-        set focused of confirmField to true
-        delay 0.2
-        keystroke "a" using command down
-        delay 0.1
-        keystroke newPw
-        delay 0.2
-
-        keystroke return
-        return "ok"
+        tell process "DuckoUITest"
+            $(ducko_as_require_front_window "prefsWin" "the Preferences window")
+            $(ducko_as_await_element '"new-password-field"' prefsWin sheets 5 'new-password-field not found' newField)
+            $(ducko_as_fill_element "newField" "newPw")
+            set confirmField to my findInSheets(prefsWin, "confirm-password-field")
+            if confirmField is missing value then return "ERROR: confirm-password-field not found"
+            $(ducko_as_fill_element "confirmField" "newPw")
+            -- Change Password has .defaultAction keyboard shortcut
+            keystroke return
+            $(ducko_as_await_sheet_closed prefsWin "$DUCKO_SETTINGS_SCENE" '"new-password-field"' '"change-password-error"' 15 "Change Password sheet stayed open")
+            return "ok"
+        end tell
     end tell
 end run
 APPLESCRIPT
 )
 
-if [[ "$RESULT" == ok ]]; then
-    echo "Password change submitted"
-else
-    echo "$RESULT" >&2
-    exit 1
-fi
+ducko_check_result "$RESULT" "Password changed"

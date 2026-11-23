@@ -30,7 +30,7 @@ struct ProfileEditView: View {
             }
         }
         .frame(minWidth: 450, minHeight: 500)
-        .accessibilityIdentifier("profile-edit-view")
+        .containerAccessibilityIdentifier("profile-edit-view")
         .task {
             await loadProfile()
         }
@@ -55,6 +55,7 @@ struct ProfileEditView: View {
                     .foregroundStyle(.red)
                     .font(.callout)
                     .padding(.horizontal)
+                    .accessibilityIdentifier("profile-error")
             }
 
             footerButtons

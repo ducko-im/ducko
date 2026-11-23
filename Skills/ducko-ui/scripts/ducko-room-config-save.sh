@@ -22,8 +22,7 @@ fi
 ROOM_JID="$1"
 
 # Open Room Settings sheet
-"$SCRIPTS/ducko-room-settings.sh" "$ROOM_JID" > /dev/null 2>&1
-sleep 0.5
+"$SCRIPTS/ducko-room-settings.sh" "$ROOM_JID" > /dev/null
 
 RESULT=$(osascript << 'APPLESCRIPT'
 tell application "System Events"

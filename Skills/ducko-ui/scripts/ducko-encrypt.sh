@@ -14,28 +14,16 @@ ducko_require_vm_or_host_opt_in
 
 ACTION="${1:-__none__}"
 
-RESULT=$(osascript - "$ACTION" << 'APPLESCRIPT'
+RESULT=$(osascript - "$ACTION" << APPLESCRIPT
+$(ducko_as_handlers)
 on run argv
     set encAction to item 1 of argv
     tell application "System Events"
         set frontmost of process "DuckoUITest" to true
         delay 0.5
         tell process "DuckoUITest"
-            -- Find the chat window (window containing message-field)
-            set chatWin to missing value
-            repeat with win in windows
-                set allElems to entire contents of win
-                repeat with elem in allElems
-                    try
-                        if value of attribute "AXIdentifier" of elem is "message-field" then
-                            set chatWin to win
-                            exit repeat
-                        end if
-                    end try
-                end repeat
-                if chatWin is not missing value then exit repeat
-            end repeat
-            if chatWin is missing value then return "ERROR: chat window not found"
+            -- The menu opens in the key window.
+            $(ducko_as_raise_scene_window "chat" "chat window not found" "chatWin")
             -- Find and click the encryption menu
             set menuBtn to missing value
             set allElems to entire contents of chatWin

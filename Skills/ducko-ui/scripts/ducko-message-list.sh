@@ -21,7 +21,8 @@ on run argv
         set frontmost of process "DuckoUITest" to true
         delay 0.3
         tell process "DuckoUITest"
-            $(ducko_as_find_window_by_id "message-field" "chat window not found" "chatWin")
+            $(ducko_as_find_scene_window "chat" "chatWin")
+            if chatWin is missing value then return "ERROR: chat window not found"
             $(ducko_as_click_element_by_id 'buttonId' 'chatWin' 'jump button not found: the message list is at the newest message')
             return "ok"
         end tell

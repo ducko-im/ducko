@@ -42,7 +42,7 @@ on run argv
         set frontmost of process "DuckoUITest" to true
         delay 0.3
         tell process "DuckoUITest"
-            $(ducko_as_raise_window_by_id "contact-list" "Contacts window not found" "contactWin")
+            $(ducko_as_raise_scene_window "contacts" "Contacts window not found" "contactWin")
             -- Refuse to run over a leftover dialog, which would block or intercept the menu command.
             if (count of sheets of contactWin) > 0 then return "ERROR: a dialog is already open in the Contacts window"
             $(ducko_as_find_element_by_id 'targetId' 'contactWin' 'contact row not found for " & contactJID & "' 'targetRow')

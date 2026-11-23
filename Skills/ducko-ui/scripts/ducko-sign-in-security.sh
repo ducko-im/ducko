@@ -29,7 +29,7 @@ on run argv
         set frontmost of process "DuckoUITest" to true
         delay 0.3
         tell process "DuckoUITest"
-            $(ducko_as_raise_window_by_id "contact-list" "Contacts window not found" "contactWin")
+            $(ducko_as_raise_scene_window "contacts" "Contacts window not found" "contactWin")
             if signInAction is "dont-allow" then
                 $(ducko_as_click_button_by_label "Don't Allow" 'contactWin' 'Sign-In Refused alert not found')
             else

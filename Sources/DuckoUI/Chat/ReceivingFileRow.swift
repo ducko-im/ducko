@@ -40,7 +40,6 @@ struct ReceivingFileRow: View {
 
             Spacer(minLength: 60)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("receiving-file-row")
+        .containerAccessibilityIdentifier("receiving-file-row")
     }
 }

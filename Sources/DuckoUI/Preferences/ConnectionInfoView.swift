@@ -22,8 +22,7 @@ struct ConnectionInfoView: View {
             .padding()
         }
         .frame(minWidth: 450)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("connection-info-view")
+        .containerAccessibilityIdentifier("connection-info-view")
         .onExitCommand { dismiss() }
     }
 

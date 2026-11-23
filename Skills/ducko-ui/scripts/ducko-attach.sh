@@ -12,7 +12,7 @@ FILE_PATH="${1:?Usage: ducko-attach.sh FILE_PATH}"
 
 # Resolve to absolute path
 if [[ "$FILE_PATH" != /* ]]; then
-    FILE_PATH="$(cd "$(dirname "$FILE_PATH")" && pwd)/$(basename "$FILE_PATH")"
+    FILE_PATH="$(cd "$(dirname "$FILE_PATH")" && pwd)/${FILE_PATH##*/}"
 fi
 
 if [[ ! -f "$FILE_PATH" ]]; then
@@ -28,7 +28,8 @@ on run
         delay 0.5
 
         tell process "DuckoUITest"
-            $(ducko_as_find_window_by_id "message-field" "chat window not found" "chatWin")
+            $(ducko_as_find_scene_window "chat" "chatWin")
+            if chatWin is missing value then return "ERROR: chat window not found"
             $(ducko_as_click_element_by_id '"attachment-button"' 'chatWin' "attachment-button not found")
             return "ok"
         end tell

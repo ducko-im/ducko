@@ -60,6 +60,7 @@ struct RoomJoinDialog: View {
                 Text(errorMessage)
                     .foregroundStyle(.red)
                     .font(.callout)
+                    .accessibilityIdentifier("join-room-error")
             }
 
             if let searchWaitSeconds {
@@ -177,6 +178,7 @@ struct RoomJoinDialog: View {
                         joinRoom()
                     }
                 }
+                .containerAccessibilityIdentifier("channel-result-\(channel.jidString)")
             }
             .listStyle(.plain)
             .frame(height: 150)
@@ -303,6 +305,7 @@ struct RoomJoinDialog: View {
     private func searchChannels() {
         guard let accountID = account?.id, !searchText.isEmpty, searchWaitSeconds == nil else { return }
         isSearching = true
+        errorMessage = nil
         discoveredRooms = []
         lastSearchQuery = searchText
         lastCursor = nil

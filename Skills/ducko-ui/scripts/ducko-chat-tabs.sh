@@ -2,7 +2,7 @@
 # Enumerate, select, cycle, or close the bottom conversation tabs in the chat window.
 # Usage: ducko-chat-tabs.sh <list|select|close|next|previous|close-all> [JID]
 #   list:        print the identity of all open tabs (one per line)
-#   select JID:  click the tab for JID to make it active
+#   select JID:  raise the chat window and click the tab for JID to make it active
 #   close JID:   close the tab through its "Close Tab" accessibility action
 #   next:        Window > Select Next Tab (⌃⇥), wrapping at the end
 #   previous:    Window > Select Previous Tab (⌃⇧⇥), wrapping at the start
@@ -50,6 +50,9 @@ on run argv
             $(ducko_as_find_scene_window "chat" "chatWin")
             if chatWin is missing value then return "ERROR: chat window not found"
             if tabAction is "list" or tabAction is "select" or tabAction is "close" then
+                if tabAction is "select" then
+                    $(ducko_as_raise_scene_window "chat" "chat window not found" "chatWin")
+                end if
                 $(ducko_as_find_element_by_id '"chat-tab-bar"' 'chatWin' 'chat tab bar not found' 'tabBar')
                 if tabAction is "list" then
                     set tabList to ""
@@ -57,7 +60,7 @@ on run argv
                         try
                             set elemId to value of attribute "AXIdentifier" of elem
                             if elemId starts with "chat-tab-" and elemId is not "chat-tab-overflow" then
-                                set tabList to tabList & (text 10 thru -1 of elemId) & linefeed
+                                set tabList to tabList & (my idSuffix("chat-tab-", elemId)) & linefeed
                             end if
                         end try
                     end repeat
@@ -79,8 +82,7 @@ on run argv
                 return "ERROR: the tab offers no Close Tab action"
             else if tabAction is "next" or tabAction is "previous" then
                 -- Tab cycling acts on the focused chat window.
-                perform action "AXRaise" of chatWin
-                delay 0.3
+                $(ducko_as_raise_scene_window "chat" "chat window not found" "chatWin")
                 if tabAction is "next" then
                     set itemName to "Select Next Tab"
                 else

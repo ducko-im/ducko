@@ -115,8 +115,7 @@ struct ContactInfoView: View {
                 DismissibleBanner(message: notice, dismissalLabel: "Dismiss notice", dismissalShortcut: .cancelAction) {
                     state.rosterNotice = nil
                 }
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("contact-info-roster-notice")
+                .containerAccessibilityIdentifier("contact-info-roster-notice")
             }
         }
         if let contact = state.contact {

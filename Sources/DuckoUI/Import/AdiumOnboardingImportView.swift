@@ -158,6 +158,7 @@ struct AdiumOnboardingImportView: View {
                             Text(authError)
                                 .font(.caption)
                                 .foregroundStyle(.red)
+                                .accessibilityIdentifier("account-error-\(account.id)")
                         }
 
                         if let refusal = plainRefusals[account.id] {

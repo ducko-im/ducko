@@ -1,7 +1,8 @@
 #!/bin/bash
 # Open the New Chat sheet (File menu, ⌘N), fill in a JID, optionally pick the
 # sending account, and start the chat. The sheet and the chat open in the chat window.
-# Succeeds once the sheet has closed and the chat window has a tab for the JID.
+# Succeeds once the sheet has closed and the chat window has a tab for the JID, and fails with the sheet's error when
+# it shows one.
 # Usage: ducko-new-chat.sh JID [ACCOUNT]
 #   JID:     the peer JID to start a chat with
 #   ACCOUNT: optional account label to select in the account picker — shown only
@@ -26,10 +27,11 @@ on run argv
         delay 0.5
         tell process "DuckoUITest"
             keystroke "n" using command down
-            delay 1
-            $(ducko_as_find_scene_window "chat" "chatWin")
-            if chatWin is missing value then return "ERROR: chat window not found"
-            $(ducko_as_fill_field_by_id '"new-chat-jid-field"' 'chatWin' 'jid' 'new-chat-jid-field not found')
+            $(ducko_as_await_scene_window "chat" 5 "chat window not found" "chatWin")
+            $(ducko_as_raise_scene_window "chat" "chat window not found" "chatWin")
+            -- The window can be open already, before its sheet is.
+            $(ducko_as_await_element '"new-chat-jid-field"' chatWin sheets 5 'new-chat-jid-field not found' jidField '"chat"')
+            $(ducko_as_fill_element "jidField" "jid")
             -- Optionally select the sending account. The picker is present only
             -- when more than one account is enabled; with a single account the
             -- chat opens under it and no ACCOUNT argument is needed.
@@ -46,20 +48,20 @@ on run argv
             end if
             -- Start Chat has .defaultAction keyboard shortcut
             keystroke return
-            set deadline to (current date) + 15
-            repeat until (current date) > deadline
-                delay 0.5
-                $(ducko_as_find_scene_window "chat" "chatWin")
-                set sheetOpen to (my findInSheets(chatWin, "new-chat-jid-field")) is not missing value
-                if not sheetOpen then
-                    set tabBar to my findByAttr(chatWin, "AXIdentifier", "chat-tab-bar", 0, 30)
-                    if tabBar is not missing value then
-                        if my findChatTab(tabBar, jid) is not missing value then return "ok"
-                    end if
+            $(ducko_as_await_sheet_closed chatWin chat '"new-chat-jid-field"' '"new-chat-error"' 15 "the New Chat sheet stayed open")
+            -- The window title follows the selected tab, which can change again once its conversation has loaded, so
+            -- find the window again on each pass.
+            set deadline to (current date) + 5
+            repeat
+$(ducko_as_find_scene_window "chat" "chatWin")
+                set tabBar to missing value
+                if chatWin is not missing value then set tabBar to my findByAttr(chatWin, "AXIdentifier", "chat-tab-bar", 0, 30)
+                if tabBar is not missing value then
+                    if (my findChatTab(tabBar, jid)) is not missing value then return "ok"
                 end if
+                if (current date) > deadline then return "ERROR: no chat tab for " & jid & " appeared"
+                delay 0.5
             end repeat
-            if sheetOpen then return "ERROR: the New Chat sheet stayed open"
-            return "ERROR: no chat tab for " & jid & " appeared"
         end tell
     end tell
 end run

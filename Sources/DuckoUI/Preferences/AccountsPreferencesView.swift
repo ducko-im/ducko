@@ -514,6 +514,7 @@ private struct ChangePasswordSheet: View {
                     Text(errorMessage)
                         .foregroundStyle(.red)
                         .font(.callout)
+                        .accessibilityIdentifier("change-password-error")
                 }
             }
             .formStyle(.grouped)

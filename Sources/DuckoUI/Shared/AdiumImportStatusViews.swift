@@ -51,10 +51,12 @@ struct AdiumImportCompletionView: View {
 
             Text(noAccountConnected ? "No Accounts Connected" : "Import Complete")
                 .font(.headline)
+                .accessibilityIdentifier("import-result-title")
 
             VStack(alignment: .leading, spacing: 4) {
                 if !accountResults.isEmpty {
                     Text("Accounts connected: \(succeededCount)/\(accountResults.count)")
+                        .accessibilityIdentifier("import-result-accounts")
                 }
                 if let result {
                     Text("Messages imported: \(result.importedMessages)")
@@ -74,6 +76,7 @@ struct AdiumImportCompletionView: View {
                     ForEach(failedAccounts) { account in
                         Text("\(account.jid): \(account.error ?? "Failed")")
                             .foregroundStyle(.red)
+                            .accessibilityIdentifier("import-account-failure-\(account.jid)")
                     }
                     // Errors are a static, append-only list with no identity of their own.
                     ForEach(errors.prefix(Self.visibleErrorLimit).indices, id: \.self) { index in

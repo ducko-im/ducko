@@ -26,12 +26,8 @@ on run argv
 $(ducko_as_select_account_row accountJid)
         tell process "DuckoUITest"
             $(ducko_as_click_element_by_id '"account-edit-button"' 'prefsWin' 'Edit button not found')
-            set deadline to (current date) + 5
-            repeat until (current date) > deadline
-                delay 0.3
-                if (my findInSheets(prefsWin, "allowPlainToggle")) is not missing value then return "ok"
-            end repeat
-            return "ERROR: the Edit sheet did not open"
+            $(ducko_as_await_element '"allowPlainToggle"' prefsWin sheets 5 'the Edit sheet did not open' plainToggle)
+            return "ok"
         end tell
     end tell
 end run

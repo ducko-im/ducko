@@ -28,29 +28,12 @@ case "$ACTION" in
 esac
 
 if [[ "$ACTION" == open ]]; then
-    "$SCRIPT_DIR/ducko-preferences.sh" > /dev/null 2>&1 || true
-    "$SCRIPT_DIR/ducko-preferences-tab.sh" Accounts > /dev/null 2>&1 || true
+    "$SCRIPT_DIR/ducko-preferences.sh" > /dev/null
+    "$SCRIPT_DIR/ducko-preferences-tab.sh" Accounts > /dev/null
 fi
 
 RESULT=$(osascript - "$ACTION" "$JID" << APPLESCRIPT
 $(ducko_as_handlers)
-on collectIdentifiers(el, prefixWanted, depth, maxDepth)
-    set acc to {}
-    tell application "System Events"
-        if depth > maxDepth then return acc
-        try
-            repeat with c in (UI elements of el)
-                try
-                    set elemId to value of attribute "AXIdentifier" of c
-                    if elemId starts with prefixWanted then set end of acc to elemId
-                end try
-                set acc to acc & (my collectIdentifiers(c, prefixWanted, depth + 1, maxDepth))
-            end repeat
-        end try
-    end tell
-    return acc
-end collectIdentifiers
-
 on blockedContactsWindow()
     tell application "System Events"
         repeat with win in (windows of process "DuckoUITest")
@@ -68,12 +51,8 @@ on run argv
         delay 0.5
         if blockAction is "open" then
 $(ducko_as_click_account_action "Blocked Contacts…")
-            set deadline to (current date) + 10
-            repeat until (current date) > deadline
-                if (my findInSheets(prefsWin, "blocked-contacts-content")) is not missing value then return "ok"
-                delay 0.5
-            end repeat
-            return "ERROR: the Blocked Contacts sheet did not finish loading"
+$(ducko_as_await_element '"blocked-contacts-content"' prefsWin sheets 10 'the Blocked Contacts sheet did not finish loading' blockedContent)
+            return "ok"
         end if
 
         set prefsWin to my blockedContactsWindow()
@@ -82,7 +61,7 @@ $(ducko_as_click_account_action "Blocked Contacts…")
         if blockAction is "list" then
             set entryList to ""
             repeat with entryId in (my collectIdentifiers(prefsWin, "blocked-contact-", 0, 30))
-                set entryList to entryList & (text 17 thru -1 of entryId) & linefeed
+                set entryList to entryList & (my idSuffix("blocked-contact-", entryId)) & linefeed
             end repeat
             return "LIST:" & entryList
         end if
@@ -90,6 +69,7 @@ $(ducko_as_click_account_action "Blocked Contacts…")
         set rowId to "blocked-contact-" & blockJID
         tell process "DuckoUITest"
             if blockAction is "add" then
+$(ducko_as_raise_scene_window "$DUCKO_SETTINGS_SCENE" "Preferences window not found" "prefsWin")
 $(ducko_as_fill_field_by_id '"block-address-field"' 'prefsWin' 'blockJID' 'block-address-field not found')
 $(ducko_as_click_element_by_id '"block-address-button"' 'prefsWin' 'block-address-button not found')
             else

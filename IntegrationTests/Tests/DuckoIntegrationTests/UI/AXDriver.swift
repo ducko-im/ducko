@@ -93,47 +93,16 @@ final class AXDriver {
         return matches.last
     }
 
+    /// Returns the first windowed descendant whose `kAXIdentifier` equals `identifier`.
     func resolveElement(identifier: String) throws -> AXUIElement {
-        try resolveElement(identifier: identifier, matching: { _ in true }, qualifier: identifier)
-    }
-
-    /// Resolves the first element whose `kAXIdentifier` equals `identifier`,
-    /// whose role is `role`, and — when `label` is given — whose
-    /// title/description matches it. SwiftUI on macOS 26 propagates a
-    /// container's `.accessibilityIdentifier` onto every leaf descendant, so
-    /// several elements can share one identifier (e.g. `room-subject-view` is
-    /// carried by both the topic `AXStaticText` and the pencil `AXButton`, and
-    /// in edit mode by the `AXTextField` and the Save/Cancel `AXButton`s). The
-    /// role — and `label` via `segmentLabel` — disambiguates which leaf to
-    /// return.
-    func resolveElement(identifier: String, role: String, label: String? = nil) throws -> AXUIElement {
-        let qualifier = label.map { "\(identifier)[\(role):\($0)]" } ?? "\(identifier)[\(role)]"
-        return try resolveElement(
-            identifier: identifier,
-            matching: { element in
-                self.elementRole(of: element) == role && (label == nil || self.segmentLabel(of: element) == label)
-            },
-            qualifier: qualifier
-        )
-    }
-
-    /// Shared identifier-walk: returns the first windowed descendant whose
-    /// `kAXIdentifier` equals `identifier` and that also satisfies `matching`.
-    /// `qualifier` is the identifier embedded in the thrown `elementNotFound`
-    /// so role/label-qualified lookups report a precise diagnostic.
-    func resolveElement(
-        identifier: String,
-        matching: (AXUIElement) -> Bool,
-        qualifier: String
-    ) throws -> AXUIElement {
         guard let pid else {
-            throw TestHarnessError.elementNotFound(identifier: qualifier)
+            throw TestHarnessError.elementNotFound(identifier: identifier)
         }
         let appElement = AXUIElementCreateApplication(pid)
         let predicate: (AXUIElement) -> Bool = { element in
             var value: AnyObject?
             let err = AXUIElementCopyAttributeValue(element, kAXIdentifierAttribute as CFString, &value)
-            return err == .success && (value as? String) == identifier && matching(element)
+            return err == .success && (value as? String) == identifier
         }
         // Scope the walk to the application's windows. SwiftUI accessibility
         // identifiers we resolve always live inside windows (contacts list,
@@ -178,7 +147,7 @@ final class AXDriver {
         if probe == .apiDisabled {
             throw TestHarnessError.axTrustMissing
         }
-        throw TestHarnessError.elementNotFound(identifier: qualifier)
+        throw TestHarnessError.elementNotFound(identifier: identifier)
     }
 
     func perform(action: String, on element: AXUIElement, identifier: String) throws {
@@ -338,13 +307,12 @@ final class AXDriver {
     }
 
     /// Finds the table-row element to right-click for the occupant whose
-    /// nickname contains `substring`. SwiftUI propagates `participant-sidebar`
-    /// onto inner row content, so the `AXRow`/`AXCell` that owns the
-    /// `.contextMenu` is an *ancestor* of the resolved container's static text,
-    /// not a descendant — a downward role search misses it. Find the nickname
-    /// `AXStaticText` first, then walk up to the enclosing row, preferring the
-    /// outer `AXRow` over the inner `AXCell` (the row owns the menu) and falling
-    /// back to whichever of `roles` is nearest.
+    /// nickname contains `substring`. The `AXRow`/`AXCell` that owns the
+    /// `.contextMenu` encloses the `participant-row-{nickname}` group that holds
+    /// the nickname text. Find the nickname `AXStaticText` first, then walk up
+    /// to the enclosing row, preferring the outer `AXRow` over the inner
+    /// `AXCell` (the row owns the menu) and falling back to whichever of
+    /// `roles` is nearest.
     func findMenuRow(
         ofTextContaining substring: String,
         in container: AXUIElement,

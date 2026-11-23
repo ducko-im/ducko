@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/ducko-helpers.sh"
 ducko_require_vm_or_host_opt_in
 
 # Ensure profile sheet is open
-"$SCRIPT_DIR/ducko-profile.sh" > /dev/null 2>&1 || true
+"$SCRIPT_DIR/ducko-profile.sh" > /dev/null
 
 RESULT=$(osascript << APPLESCRIPT
 $(ducko_as_handlers)
@@ -20,21 +20,16 @@ on run
     tell application "System Events"
         set frontmost of process "DuckoUITest" to true
         delay 0.5
-        -- Find the window containing the profile sheet.
-        set profileWin to missing value
-        repeat with win in (windows of process "DuckoUITest")
-            if (my findByAttr(win, "AXIdentifier", "profile-edit-view", 0, 30)) is not missing value then
-                set profileWin to win
-                exit repeat
-            end if
-        end repeat
-        if profileWin is missing value then return "ERROR: Profile sheet not found"
-
-        set removeBtn to my findByAttr(profileWin, "AXIdentifier", "profile-remove-photo-button", 0, 30)
-        if removeBtn is missing value then return "ERROR: Remove Photo button not found (no avatar set?)"
-        click removeBtn
-        delay 2
-        return "ok"
+        tell process "DuckoUITest"
+            -- ducko-profile.sh opens the profile sheet on Contacts.
+            $(ducko_as_find_scene_window "contacts" "contactWin")
+            if contactWin is missing value then return "ERROR: Contacts window not found"
+            set removeBtn to my findInSheets(contactWin, "profile-remove-photo-button")
+            if removeBtn is missing value then return "ERROR: Remove Photo button not found (no avatar set?)"
+            click removeBtn
+            delay 2
+            return "ok"
+        end tell
     end tell
 end run
 APPLESCRIPT

@@ -52,8 +52,7 @@ struct ContactListWindow: View {
                     DismissibleBanner(message: notice, dismissalLabel: "Dismiss notice", dismissalShortcut: .cancelAction) {
                         state.rosterNotice = nil
                     }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("roster-notice")
+                    .containerAccessibilityIdentifier("roster-notice")
                 }
             }
             // Pin the chrome to its natural height so a short window can never

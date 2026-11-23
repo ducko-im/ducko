@@ -18,14 +18,7 @@ usage() {
 
 [[ $# -eq 2 ]] || usage
 
-case "$2" in
-    available) LABEL="Available" ;;
-    away)      LABEL="Away" ;;
-    xa)        LABEL="Extended Away" ;;
-    dnd)       LABEL="Do Not Disturb" ;;
-    offline)   LABEL="Offline" ;;
-    *) usage ;;
-esac
+LABEL=$(ducko_status_label "$2" 2> /dev/null) || usage
 
 RESULT=$(osascript - "$1" "$LABEL" << 'APPLESCRIPT'
 on run argv

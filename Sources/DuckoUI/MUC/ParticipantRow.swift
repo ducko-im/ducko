@@ -63,8 +63,7 @@ struct ParticipantRow: View {
             }
         }
         .padding(.vertical, 2)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("participant-row-\(participant.nickname)")
+        .containerAccessibilityIdentifier("participant-row-\(participant.nickname)")
         .contextMenu {
             if isOtherParticipant {
                 Button("Send Private Message") {

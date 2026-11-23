@@ -112,8 +112,7 @@ extension DuckoIntegrationTests.UILayer {
                 )
 
                 // `Change Nickname…` appears only on the self row. Alice joined
-                // as "alice", so her row's static text is the stable handle —
-                // participant rows carry no identifier and bridge to `AXGroup`.
+                // as "alice", so her row is the one whose text holds that nickname.
                 try await app.rightClickDescendant(
                     roles: [kAXGroupRole as String, kAXRowRole as String, kAXCellRole as String],
                     withSubstring: "alice",
@@ -154,34 +153,13 @@ extension DuckoIntegrationTests.UILayer {
                 try await app.activateWindow(named: roomJID)
 
                 let topic = "topic-\(UUID().uuidString.prefix(6))"
-                // SwiftUI propagates `room-subject-view` onto each leaf, so the
-                // pencil/topic-field/Save all carry that identifier and are
-                // resolved by role (not as descendants). The pencil is the lone
-                // `AXButton` with the id when not editing; clicking it flips the
-                // view into edit mode, surfacing the `AXTextField` (which
-                // auto-focuses via `@FocusState`, installing its field editor)
-                // and the inline Save (`AXButton` labeled "Save", distinct from
-                // Cancel). Click the field to make it first responder (the chat
-                // message-field otherwise wins focus), then type — kAXSetValue
-                // doesn't commit the SwiftUI binding the Save button reads.
-                try await app.clickElement(identifier: "room-subject-view", role: kAXButtonRole as String)
-                try await app.waitForElement(identifier: "room-subject-view", role: kAXTextFieldRole as String)
-                try await app.focusAndTypeElement(topic, identifier: "room-subject-view", role: kAXTextFieldRole as String)
-                // Confirm the typed text reached the field's value (the SwiftUI
-                // binding committed) before Save reads it.
-                try await app.waitForElementValue(
-                    containing: topic,
-                    identifier: "room-subject-view",
-                    role: kAXTextFieldRole as String
-                )
-                try await app.clickElement(identifier: "room-subject-view", role: kAXButtonRole as String, label: "Save")
+                try await app.click(identifier: "room-topic-edit-button")
+                try await app.waitForElement(identifier: "room-topic-field")
+                try await app.clickAndType(topic, intoIdentifier: "room-topic-field")
+                try await app.waitForValue(topic, identifier: "room-topic-field")
+                try await app.click(identifier: "room-topic-save-button")
 
-                try await app.waitForElementValue(
-                    containing: topic,
-                    identifier: "room-subject-view",
-                    role: kAXStaticTextRole as String,
-                    timeout: TestTimeout.event
-                )
+                try await app.waitForValue(topic, identifier: "room-topic-text", timeout: TestTimeout.event)
             }
         }
 
@@ -203,10 +181,7 @@ extension DuckoIntegrationTests.UILayer {
                 try await app.contextMenuItem(title: "Room Settings…")
                 try await app.waitForElement(identifier: "room-settings-view", timeout: TestTimeout.uiElement)
 
-                // SwiftUI propagates `room-settings-view` onto the leaf buttons,
-                // so the destroy button is resolved by id+role+label, not its
-                // (overridden) `room-settings-destroy` identifier.
-                try await app.clickElement(identifier: "room-settings-view", role: kAXButtonRole as String, label: "Destroy Room…")
+                try await app.click(identifier: "room-settings-destroy")
                 // Confirm in the `.confirmationDialog`, scoped to its message so
                 // an unrelated "Destroy" can't match. The sheet dismisses after
                 // `destroyRoom` returns; the room row then disappears once the

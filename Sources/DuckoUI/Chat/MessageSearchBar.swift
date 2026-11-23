@@ -29,10 +29,12 @@ struct MessageSearchBar: View {
                 .onChange(of: focusRequest) { isTextFieldFocused = true }
                 .onSubmit(onSubmit)
                 .onExitCommand(perform: onDone)
+                .accessibilityIdentifier("message-search-field")
 
             if showsProgress {
                 ProgressView()
                     .controlSize(.small)
+                    .accessibilityIdentifier("message-search-progress")
             }
 
             if matchTotal > 0 {
@@ -40,6 +42,7 @@ struct MessageSearchBar: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+                    .accessibilityIdentifier("message-search-count")
 
                 Button("Previous Match", systemImage: "chevron.up", action: onPrevious)
                     .labelStyle(.iconOnly)
@@ -56,6 +59,6 @@ struct MessageSearchBar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color(.windowBackgroundColor))
-        .accessibilityIdentifier("message-search-bar")
+        .containerAccessibilityIdentifier("message-search-bar")
     }
 }

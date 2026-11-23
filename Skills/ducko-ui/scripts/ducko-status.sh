@@ -6,6 +6,8 @@
 #
 # MESSAGE is typed into the Custom Status sheet with keystrokes, which go to
 # the frontmost app, so the instance has to stay frontmost while it runs.
+# Succeeds once the header's status pull-down shows the message, trimmed as the app trims it, or the status when no
+# message is left. Offline always shows Offline, since a disconnected account shows no message.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -20,32 +22,25 @@ fi
 STATUS="$1"
 MESSAGE="${2:-__none__}"
 
-RESULT=$(osascript - "$STATUS" "$MESSAGE" << APPLESCRIPT
+STATUS_LABEL=$(ducko_status_label "$STATUS")
+
+EXPECTED="$STATUS_LABEL"
+if [[ "$MESSAGE" != "__none__" && "$STATUS" != offline ]]; then
+    TRIMMED=$(ducko_trim "$MESSAGE")
+    [[ -z "$TRIMMED" ]] || EXPECTED="$TRIMMED"
+fi
+
+RESULT=$(osascript - "$STATUS_LABEL" "$MESSAGE" "$EXPECTED" << APPLESCRIPT
 $(ducko_as_handlers)
 on run argv
-    set statusArg to item 1 of argv
+    set targetLabel to item 1 of argv
     set messageArg to item 2 of argv
+    set expectedLabel to item 3 of argv
     tell application "System Events"
         set frontmost of process "DuckoUITest" to true
         delay 0.3
         tell process "DuckoUITest"
-            $(ducko_as_raise_window_by_id "contact-list" "Contacts window not found" "contactWin")
-
-            -- Map status arg to display name
-            set targetLabel to ""
-            if statusArg is "available" then
-                set targetLabel to "Available"
-            else if statusArg is "away" then
-                set targetLabel to "Away"
-            else if statusArg is "xa" then
-                set targetLabel to "Extended Away"
-            else if statusArg is "dnd" then
-                set targetLabel to "Do Not Disturb"
-            else if statusArg is "offline" then
-                set targetLabel to "Offline"
-            else
-                return "ERROR: unknown status: " & statusArg
-            end if
+            $(ducko_as_raise_scene_window "contacts" "Contacts window not found" "contactWin")
 
             -- Find and click the status picker menu
             $(ducko_as_find_element_by_id '"status-picker"' 'contactWin' 'status-picker not found' 'pickerBtn')
@@ -101,34 +96,41 @@ on run argv
                     if customClicked then exit repeat
                 end repeat
                 if not customClicked then return "ERROR: Custom… menu item not found"
-                delay 0.5
-
-                $(ducko_as_find_element_by_id '"custom-status-message-field"' 'contactWin' 'custom-status-message-field not found' 'msgField')
-                set focused of msgField to true
-                delay 0.2
-                keystroke "a" using command down
-                delay 0.1
-                keystroke messageArg
-                delay 0.2
+                $(ducko_as_await_element '"custom-status-message-field"' contactWin sheets 5 'custom-status-message-field not found' messageField)
+                $(ducko_as_fill_element "messageField" "messageArg")
                 -- Set button carries .defaultAction.
                 keystroke return
-                delay 0.3
             end if
 
-            return "ok"
+            -- The pull-down appends counts of the accounts showing another status after " · ", so a plain prefix
+            -- match would take a stale longer message for the expected one.
+            set deadline to (current date) + 10
+            repeat
+                delay 0.5
+                $(ducko_as_find_scene_window "contacts" "contactWin")
+                if contactWin is missing value then return "ERROR: Contacts window not found"
+                set sheetOpen to (my findInSheets(contactWin, "custom-status-message-field")) is not missing value
+                set shownLabel to ""
+                set picker to my findByAttr(contactWin, "AXIdentifier", "status-picker", 0, 30)
+                if picker is not missing value then
+                    try
+                        set shownLabel to value of picker
+                    end try
+                end if
+                if shownLabel is missing value then set shownLabel to ""
+                considering case
+                    set labelShown to (shownLabel is expectedLabel or shownLabel starts with (expectedLabel & " · "))
+                end considering
+                if not sheetOpen and labelShown then return "ok"
+                if (current date) > deadline then
+                    if sheetOpen then return "ERROR: the Custom Status sheet stayed open"
+                    return "ERROR: the status pull-down shows " & shownLabel & " instead of " & expectedLabel
+                end if
+            end repeat
         end tell
     end tell
 end run
 APPLESCRIPT
 )
 
-if [[ "$RESULT" == ok ]]; then
-    if [[ "$MESSAGE" != "__none__" ]]; then
-        echo "Status set to ${STATUS} with message"
-    else
-        echo "Status set to ${STATUS}"
-    fi
-else
-    echo "$RESULT" >&2
-    exit 1
-fi
+ducko_check_result "$RESULT" "Status set to $EXPECTED"

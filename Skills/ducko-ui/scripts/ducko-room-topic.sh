@@ -1,90 +1,71 @@
 #!/bin/bash
 # View or set the room topic in the active chat window.
 # The RoomSubjectView provides inline editing with a pencil button.
-#
-# Walks the chat window via findByAttr / findByRole rather than `entire
-# contents`, which collapses on the nested chat hierarchy on macOS 26.
+# Setting succeeds once the banner shows the new topic, trimmed as the app trims it, or "No topic set" for an empty one.
 # Usage: ducko-room-topic.sh [TEXT]
 #   No args: prints the current topic
-#   TEXT: set the room topic to TEXT
+#   TEXT: set the room topic to TEXT (one line; an empty TEXT clears the topic)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/ducko-helpers.sh"
 ducko_require_vm_or_host_opt_in
 
-TEXT="${1:-__none__}"
+ARGS=()
+if [[ $# -gt 0 ]]; then
+    TEXT="$1"
+    # Typed with keystrokes, so a line break would press Return and submit the field early.
+    if [[ "$TEXT" == *$'\n'* || "$TEXT" == *$'\r'* ]]; then
+        echo "Usage: ducko-room-topic.sh [TEXT] (TEXT must be one line)" >&2
+        exit 1
+    fi
+    EXPECTED=$(ducko_trim "$TEXT")
+    [[ -n "$EXPECTED" ]] || EXPECTED="No topic set"
+    ARGS=("$TEXT" "$EXPECTED")
+fi
 
-RESULT=$(osascript - "$TEXT" << APPLESCRIPT
+RESULT=$(osascript - ${ARGS[@]+"${ARGS[@]}"} << APPLESCRIPT
 $(ducko_as_handlers)
-on findByRole(el, roleWanted, depth, maxDepth)
-    tell application "System Events"
-        if depth > maxDepth then return missing value
-        try
-            repeat with c in (UI elements of el)
-                try
-                    if (role of c) is roleWanted then return c
-                end try
-                set found to my findByRole(c, roleWanted, depth + 1, maxDepth)
-                if found is not missing value then return found
-            end repeat
-        end try
-    end tell
-    return missing value
-end findByRole
-
 on run argv
-    set topicText to item 1 of argv
     tell application "System Events"
         set frontmost of process "DuckoUITest" to true
         delay 0.5
-        -- Find the chat window (window containing message-field).
-        set chatWin to missing value
-        repeat with win in (windows of process "DuckoUITest")
-            if (my findByAttr(win, "AXIdentifier", "message-field", 0, 30)) is not missing value then
-                set chatWin to win
-                exit repeat
-            end if
-        end repeat
-        if chatWin is missing value then return "ERROR: chat window not found"
+        tell process "DuckoUITest"
+            $(ducko_as_raise_scene_window "chat" "chat window not found" "chatWin")
+            $(ducko_as_find_element_by_id '"room-topic-text"' 'chatWin' 'room-topic-text not found (is this a room?)' 'topicLabel')
 
-        set subjectView to my findByAttr(chatWin, "AXIdentifier", "room-subject-view", 0, 30)
-        if subjectView is missing value then return "ERROR: room-subject-view not found (is this a room?)"
+            if (count of argv) is 0 then return "TOPIC:" & (value of topicLabel)
+            set topicText to item 1 of argv
+            set expectedText to item 2 of argv
 
-        -- Read mode: return the current topic text.
-        if topicText is "__none__" then
-            set topicLabel to my findByRole(subjectView, "AXStaticText", 0, 10)
-            if topicLabel is missing value then return "No topic set"
-            return value of topicLabel
-        end if
+            $(ducko_as_click_element_by_id '"room-topic-edit-button"' 'chatWin' 'room-topic-edit-button not found')
+            $(ducko_as_await_element '"room-topic-field"' chatWin window 5 'room-topic-field not found' topicField '"chat"')
+            $(ducko_as_fill_element "topicField" "topicText")
+            $(ducko_as_click_element_by_id '"room-topic-save-button"' 'chatWin' 'room-topic-save-button not found')
 
-        -- Edit mode: click the pencil edit button.
-        set pencil to my findByRole(subjectView, "AXButton", 0, 10)
-        if pencil is missing value then return "ERROR: edit button not found in room-subject-view"
-        click pencil
-        delay 0.3
-
-        -- Fill the text field that appears after clicking edit.
-        set topicField to my findByRole(subjectView, "AXTextField", 0, 10)
-        if topicField is missing value then return "ERROR: topic text field not found"
-        set focused of topicField to true
-        delay 0.2
-        keystroke "a" using command down
-        delay 0.1
-        keystroke topicText
-        delay 0.3
-
-        set saveBtn to my findByRoleAndName(chatWin, "AXButton", "Save", 0, 30)
-        if saveBtn is missing value then return "ERROR: Save button not found"
-        click saveBtn
-        return "ok"
+            -- The window title follows the selected tab, so find the window again on each pass.
+            set deadline to (current date) + 10
+            repeat until (current date) > deadline
+                delay 0.5
+$(ducko_as_find_scene_window "chat" "chatWin")
+                set topicLabel to missing value
+                if chatWin is not missing value then set topicLabel to my findByAttr(chatWin, "AXIdentifier", "room-topic-text", 0, 30)
+                if topicLabel is not missing value then
+                    considering case
+                        set topicShown to ((value of topicLabel) is expectedText)
+                    end considering
+                    if topicShown then return "ok"
+                end if
+            end repeat
+            return "ERROR: the topic did not change (needs moderator rights?)"
+        end tell
     end tell
 end run
 APPLESCRIPT
 )
 
 case "$RESULT" in
-    ok)     echo "Room topic set" ;;
-    ERROR*) echo "$RESULT" >&2; exit 1 ;;
-    *)      echo "Topic: $RESULT" ;;
+    ok)      echo "Room topic set to: $EXPECTED" ;;
+    TOPIC:*) echo "Topic: ${RESULT#TOPIC:}" ;;
+    *)       echo "$RESULT" >&2; exit 1 ;;
 esac

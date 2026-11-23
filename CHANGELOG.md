@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix a sign-in refusal being misread as an unknown error when the server adds its own detail to it
 - Stop presenting Ducko to other clients as a file upload service, a pubsub service, or a server that keeps a block list
 - Fix a chat's offline notice promising that messages will send when you reconnect. Ducko doesn't keep a message written while offline, so the notice now says messages can't be sent until you're connected
+- Fix the Join Room sheet keeping an earlier error on screen after a new channel search starts
 
 ## [0.13.0] - 2026-11-18
 

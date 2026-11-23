@@ -15,13 +15,16 @@ ducko_require_vm_or_host_opt_in
 
 ACTION="${1:-__none__}"
 
-RESULT=$(osascript - "$ACTION" << 'APPLESCRIPT'
+RESULT=$(osascript - "$ACTION" << APPLESCRIPT
+$(ducko_as_handlers)
 on run argv
     set sortAction to item 1 of argv
     tell application "System Events"
         set frontmost of process "DuckoUITest" to true
         delay 0.3
         tell process "DuckoUITest"
+            -- The View menu holds these items only while Contacts is the key window.
+            $(ducko_as_raise_scene_window "contacts" "Contacts window not found" "contactWin")
             -- Map sortAction to its View-menu label.
             set targetLabel to ""
             if sortAction is not "__none__" then

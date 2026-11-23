@@ -170,13 +170,73 @@ on collectByRole(el, roleWanted, depth, maxDepth)
     end tell
     return acc
 end collectByRole
+
+-- The identifiers under el that start with prefixWanted. An element that matches is not searched further, so the
+-- children of a row cannot repeat the identifier of the row.
+on collectIdentifiers(el, prefixWanted, depth, maxDepth)
+    set acc to {}
+    tell application "System Events"
+        if depth > maxDepth then return acc
+        try
+            repeat with c in (UI elements of el)
+                set matched to false
+                try
+                    set elemId to value of attribute "AXIdentifier" of c
+                    if elemId starts with prefixWanted then
+                        set end of acc to elemId
+                        set matched to true
+                    end if
+                end try
+                if not matched then set acc to acc & (my collectIdentifiers(c, prefixWanted, depth + 1, maxDepth))
+            end repeat
+        end try
+    end tell
+    return acc
+end collectIdentifiers
+
+-- The part of idText after prefixText, such as the JID in "room-row-{jid}".
+on idSuffix(prefixText, idText)
+    set idString to idText as text
+    return text ((length of prefixText) + 1) thru -1 of idString
+end idSuffix
+
+-- How often textItem occurs in listItems.
+on countOf(textItem, listItems)
+    set occurrences to 0
+    repeat with listItem in listItems
+        if (contents of listItem) is textItem then set occurrences to occurrences + 1
+    end repeat
+    return occurrences
+end countOf
+
+-- Picks the room row a join produced from the matching room-row ids. An id repeats once per account that lists the
+-- room. For a room JID, the pick is its row as soon as it is listed. For a bare name, it is a row listed more often
+-- than before the submit, since a room joined already keeps its row. Once past the deadline, it is the one room
+-- listed. Returns the row id, "" to keep waiting, "ambiguous" when several rooms of the name are listed, or "none".
+on pickRoomRow(matchingRows, priorRows, isJid, pastDeadline)
+    if isJid and (count of matchingRows) > 0 then return (item 1 of matchingRows) as text
+    set distinctRows to {}
+    repeat with rowId in matchingRows
+        set rowText to (contents of rowId) as text
+        if (not isJid) and ((my countOf(rowText, matchingRows)) > (my countOf(rowText, priorRows))) then return rowText
+        if rowText is not in distinctRows then set end of distinctRows to rowText
+    end repeat
+    if not pastDeadline then return ""
+    if (count of distinctRows) is 1 then return item 1 of distinctRows
+    if (count of distinctRows) > 1 then return "ambiguous"
+    return "none"
+end pickRoomRow
 EOF
 }
 
 # --- AppleScript snippet generators ---
 
+# The identifier SwiftUI gives the Settings window, whose title follows the selected tab.
+DUCKO_SETTINGS_SCENE="com_apple_SwiftUI_Settings_window"
+
 # Find a window containing an element with the given AXIdentifier.
 # Sets the AppleScript variable $var_name (default: targetWin).
+# It reads bare `windows`, so emit it inside `tell process`.
 # Args: identifier [error_msg] [var_name]
 ducko_as_find_window_by_id() {
     local identifier="$1"
@@ -184,32 +244,14 @@ ducko_as_find_window_by_id() {
     local var_name="${3:-targetWin}"
     cat << EOF
             set ${var_name} to missing value
-            repeat with win in windows
-                if (my findByAttr(win, "AXIdentifier", "${identifier}", 0, 30)) is not missing value then
-                    set ${var_name} to win
+            repeat with candidateWin in windows
+                if (my findByAttr(candidateWin, "AXIdentifier", "${identifier}", 0, 30)) is not missing value then
+                    set ${var_name} to candidateWin
                     exit repeat
                 end if
             end repeat
             if ${var_name} is missing value then return "ERROR: ${error_msg}"
 EOF
-}
-
-# Find a window containing an element with the given AXIdentifier and raise it.
-# System Events window references are positional, so the raise can re-point
-# the variable at another window; the window is found again afterwards.
-# Args: identifier [error_msg] [var_name] [raise_delay]
-ducko_as_raise_window_by_id() {
-    local identifier="$1"
-    local error_msg="${2:-window not found}"
-    local var_name="${3:-targetWin}"
-    local raise_delay="${4:-0.3}"
-    ducko_as_find_window_by_id "$identifier" "$error_msg" "$var_name"
-    cat << EOF
-            perform action "AXRaise" of ${var_name}
-            delay ${raise_delay}
-EOF
-    ducko_as_find_window_by_id "$identifier" "$error_msg" "$var_name"
-    ducko_as_require_front_window "$var_name" "the window holding ${identifier}"
 }
 
 # Stop unless the app is frontmost and the window is its main window, since keystrokes, menu shortcuts and the Escape
@@ -228,16 +270,24 @@ EOF
 # AXIdentifier. One Apple event per window, so it suits a polling loop, unlike
 # ducko_as_find_window_by_id's walk of each window's contents.
 # Sets the AppleScript variable $var_name (default: targetWin), or sets it to missing value when no window matches.
+# Emit it inside `tell process`.
 # Args: scene_id [var_name]
 ducko_as_find_scene_window() {
-    local scene_id="$1"
+    ducko_as_find_scene_window_expr "\"$1\"" "${2:-targetWin}"
+}
+
+# ducko_as_find_scene_window for a scene id held in an AppleScript expression, such as a variable name.
+# The loop has its own variable, since a loop that matches nothing leaves its variable at the last window.
+# Args: scene_expr [var_name]
+ducko_as_find_scene_window_expr() {
+    local scene_expr="$1"
     local var_name="${2:-targetWin}"
     cat << EOF
             set ${var_name} to missing value
-            repeat with win in windows
+            repeat with candidateWin in windows
                 try
-                    if (value of attribute "AXIdentifier" of win) is "${scene_id}" then
-                        set ${var_name} to contents of win
+                    if (value of attribute "AXIdentifier" of candidateWin) is ${scene_expr} then
+                        set ${var_name} to contents of candidateWin
                         exit repeat
                     end if
                 end try
@@ -245,8 +295,27 @@ ducko_as_find_scene_window() {
 EOF
 }
 
-# Find a window by its scene id and raise it. System Events window references
-# are positional, so the window is found again after the raise.
+# Wait up to timeout seconds for a window with the given scene id. Emit it inside `tell process`.
+# Args: scene_id timeout error_msg [var_name]
+ducko_as_await_scene_window() {
+    local scene_id="$1"
+    local timeout="$2"
+    local error_msg="$3"
+    local var_name="${4:-targetWin}"
+    cat << EOF
+            set windowDeadline to (current date) + ${timeout}
+            repeat
+EOF
+    ducko_as_find_scene_window "$scene_id" "$var_name"
+    cat << EOF
+                if ${var_name} is not missing value then exit repeat
+                if (current date) > windowDeadline then return "ERROR: ${error_msg}"
+                delay 0.3
+            end repeat
+EOF
+}
+
+# Find a window by its scene id and raise it, then find it again and require it in front. Emit it inside `tell process`.
 # Args: scene_id [error_msg] [var_name] [raise_delay]
 ducko_as_raise_scene_window() {
     local scene_id="$1"
@@ -280,6 +349,57 @@ ducko_as_find_element_by_id() {
 EOF
 }
 
+# Wait up to timeout seconds for an element with the given AXIdentifier, searching the whole window, or only its
+# sheets when scope is `sheets`. The id_expr is an AppleScript expression, as for ducko_as_find_element_by_id.
+# A sheet lists its elements while it is still opening, and once open it gives the keyboard focus to its first text
+# field. So with scope `sheets`, the wait looks again half a second after the element appears, and ends on the next
+# look that finds it.
+# A window found by its scene id is held by its title. For a window whose title can change during the wait, such as
+# the chat window, pass scene_expr (an AppleScript expression such as '"chat"') to find the window again on each pass.
+# window_var then holds the current window. Emit it inside `tell process` when passing scene_expr.
+# Sets the AppleScript variable $var_name (default: targetElem).
+# Args: id_expr window_var scope timeout error_msg [var_name] [scene_expr]
+ducko_as_await_element() {
+    local id_expr="$1"
+    local window_var="$2"
+    local scope="$3"
+    local timeout="$4"
+    local error_msg="$5"
+    local var_name="${6:-targetElem}"
+    local scene_expr="${7:-}"
+    local lookup="my findByAttr(${window_var}, \"AXIdentifier\", ${id_expr}, 0, 30)"
+    local found_step="if ${var_name} is not missing value then exit repeat"
+    if [[ "$scope" == sheets ]]; then
+        lookup="my findInSheets(${window_var}, ${id_expr})"
+        found_step="if ${var_name} is not missing value then
+                    if elementSettled then exit repeat
+                    set elementSettled to true
+                    delay 0.5
+                else"
+    fi
+    echo "            set elementDeadline to (current date) + ${timeout}"
+    [[ "$scope" == sheets ]] && echo "            set elementSettled to false"
+    cat << EOF
+            repeat
+EOF
+    if [[ -n "$scene_expr" ]]; then
+        ducko_as_find_scene_window_expr "$scene_expr" "$window_var"
+        cat << EOF
+                set ${var_name} to missing value
+                if ${window_var} is not missing value then set ${var_name} to ${lookup}
+EOF
+    else
+        echo "                set ${var_name} to ${lookup}"
+    fi
+    cat << EOF
+                ${found_step}
+                if (current date) > elementDeadline then return "ERROR: ${error_msg}"
+                delay 0.3
+EOF
+    [[ "$scope" == sheets ]] && echo "                end if"
+    echo "            end repeat"
+}
+
 # Click an element found by AXIdentifier. Combines find + click.
 # Args: id_expr window_var [error_msg]
 ducko_as_click_element_by_id() {
@@ -303,20 +423,88 @@ ducko_as_fill_field_by_id() {
     ducko_as_fill_element "fillTarget" "$value_expr"
 }
 
-# Type a value into a text field element, replacing its contents. Stops when the
-# field does not take the keyboard focus, which would send the keystrokes elsewhere.
+# Type a value into a text field element, replacing its contents, or clear it for an empty value. Stops when the
+# field does not take the keyboard focus within 2 seconds, which would send the keystrokes elsewhere. A field of a
+# sheet that has just opened can take it only after the sheet has settled.
 # Args: element_var value_expr
 ducko_as_fill_element() {
     local element_var="$1"
     local value_expr="$2"
     cat << EOF
             set focused of ${element_var} to true
-            delay 0.2
-            if (focused of ${element_var}) is not true then return "ERROR: the field did not take the keyboard focus"
+            set focusDeadline to (current date) + 2
+            repeat
+                delay 0.2
+                if (focused of ${element_var}) is true then exit repeat
+                if (current date) > focusDeadline then return "ERROR: the field did not take the keyboard focus"
+                set focused of ${element_var} to true
+            end repeat
             keystroke "a" using command down
             delay 0.1
-            keystroke ${value_expr}
+            if ${value_expr} is "" then
+                key code 51
+            else
+                keystroke ${value_expr}
+            end if
             delay 0.3
+EOF
+}
+
+# Wait up to 2 seconds until a text field element holds exactly the typed value. Not for secure fields, whose value
+# is hidden.
+# Args: element_var value_expr
+ducko_as_await_field_value() {
+    local element_var="$1"
+    local value_expr="$2"
+    cat << EOF
+            set fieldDeadline to (current date) + 2
+            repeat
+                set fieldValue to ""
+                try
+                    set fieldValue to value of ${element_var}
+                end try
+                if fieldValue is missing value then set fieldValue to ""
+                considering case
+                    set fieldHoldsValue to (fieldValue is ${value_expr})
+                end considering
+                if fieldHoldsValue then exit repeat
+                if (current date) > fieldDeadline then return "ERROR: the field does not hold the typed text"
+                delay 0.2
+            end repeat
+EOF
+}
+
+# Wait for a sheet to close after its submit. Returns the sheet's error text when it shows one, and open_msg when the
+# sheet is still open after the timeout. Falls through once the sheet's field is gone. The window is found by its
+# scene id again on each pass, and a window that cannot be found is an error, not a closed sheet.
+# Emit it inside `tell process`. field_id_expr and error_id_expr are AppleScript expressions, such as '"profile-error"'.
+# Args: window_var scene_id field_id_expr error_id_expr timeout open_msg
+ducko_as_await_sheet_closed() {
+    local window_var="$1"
+    local scene_id="$2"
+    local field_id_expr="$3"
+    local error_id_expr="$4"
+    local timeout="$5"
+    local open_msg="$6"
+    cat << EOF
+            set sheetDeadline to (current date) + ${timeout}
+            repeat
+                delay 0.5
+EOF
+    ducko_as_find_scene_window "$scene_id" "$window_var"
+    cat << EOF
+                if ${window_var} is missing value then return "ERROR: the ${scene_id} window is gone"
+                set sheetError to my findInSheets(${window_var}, ${error_id_expr})
+                if sheetError is not missing value then
+                    set sheetErrorText to "the sheet shows an error"
+                    try
+                        set sheetErrorText to (value of sheetError) as text
+                    end try
+                    return "ERROR: " & sheetErrorText
+                end if
+                if (my findInSheets(${window_var}, ${field_id_expr})) is missing value then exit repeat
+                if (current date) > sheetDeadline then return "ERROR: ${open_msg}"
+            end repeat
 EOF
 }
 
@@ -469,15 +657,16 @@ ducko_as_click_button_by_label() {
 EOF
 }
 
-# Wait for a Register press in the Welcome window or its registration sheet to settle. Returns "ok" once the window
-# has closed, since the account is then registered and signed in, or the error the window shows. With
-# form_shown_result, returns that once the sheet shows the server's registration form. Without it, also returns the
-# error the sheet shows, such as the server's refusal.
-# Args: proc_var window_var [form_shown_result]
-ducko_as_await_registration() {
+# Wait for a Connect or Register press in the Welcome window or its registration sheet to settle. Returns "ok" once
+# the window has closed, since the account is then signed in, or the error the window shows. With form_shown_result,
+# returns that once the sheet shows the server's registration form. Without it, also returns the error the sheet
+# shows, such as the server's refusal. Returns fail_msg when none of these happens within 30 seconds.
+# Args: proc_var window_var [form_shown_result] [fail_msg]
+ducko_as_await_welcome_outcome() {
     local proc_var="$1"
     local window_var="$2"
     local form_shown_result="${3:-}"
+    local fail_msg="${4:-the registration did not finish}"
     cat << EOF
         set deadline to (current date) + 30
         repeat until (current date) > deadline
@@ -492,9 +681,9 @@ EOF
         echo "            set formError to my findInSheets(${window_var}, \"register-server-form-error\")"
         echo "            if formError is not missing value then return \"ERROR: \" & (value of formError)"
     fi
-    cat << 'EOF'
+    cat << EOF
         end repeat
-        return "ERROR: the registration did not finish"
+        return "ERROR: ${fail_msg}"
 EOF
 }
 
@@ -508,6 +697,37 @@ ducko_require_vm_or_host_opt_in() {
     fi
     echo "ERROR: ducko-ui scripts run in the Lume VM (zsh Skills/lume-vm/scripts/vm.sh ui <script>). Set DUCKO_UI_HOST=1 only when the user asked for a run on this Mac." >&2
     exit 1
+}
+
+# Stop unless this runs in a VM (the Lume VM), whatever DUCKO_UI_HOST says, for a script that writes the current
+# user's real data folders.
+ducko_require_vm() {
+    if [[ "$(sysctl -n kern.hv_vmm_present 2>/dev/null)" == 1 ]]; then
+        return
+    fi
+    echo "ERROR: this script writes the current user's real data folders, so it runs only in the Lume VM (zsh Skills/lume-vm/scripts/vm.sh ui <script>), even with DUCKO_UI_HOST=1." >&2
+    exit 1
+}
+
+# Print the text without surrounding whitespace and line breaks, as the app trims a typed status message or topic.
+# Args: text
+ducko_trim() {
+    local text="$1"
+    text="${text#"${text%%[![:space:]]*}"}"
+    printf '%s' "${text%"${text##*[![:space:]]}"}"
+}
+
+# Print the status menu label for a status key (available, away, xa, dnd, offline), or fail for any other key.
+# Args: status
+ducko_status_label() {
+    case "$1" in
+        available) echo "Available" ;;
+        away)      echo "Away" ;;
+        xa)        echo "Extended Away" ;;
+        dnd)       echo "Do Not Disturb" ;;
+        offline)   echo "Offline" ;;
+        *)         echo "ERROR: unknown status: $1" >&2; return 1 ;;
+    esac
 }
 
 # Print this checkout's root, with symlinks resolved so it matches a running copy's command line.

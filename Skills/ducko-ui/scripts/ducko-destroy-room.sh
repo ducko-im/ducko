@@ -20,8 +20,7 @@ fi
 ROOM_JID="$1"
 
 # Open Room Settings sheet
-"$SCRIPTS/ducko-room-settings.sh" "$ROOM_JID" > /dev/null 2>&1
-sleep 0.5
+"$SCRIPTS/ducko-room-settings.sh" "$ROOM_JID" > /dev/null
 
 RESULT=$(osascript << APPLESCRIPT
 $(ducko_as_handlers)
@@ -29,20 +28,15 @@ on run
     tell application "System Events"
         set frontmost of process "DuckoUITest" to true
         delay 0.3
-        -- Find and click the destroy button.
-        set destroyBtn to missing value
-        set destroyWin to missing value
-        repeat with win in (windows of process "DuckoUITest")
-            set destroyBtn to my findByAttr(win, "AXIdentifier", "room-settings-destroy", 0, 30)
-            if destroyBtn is not missing value then
-                set destroyWin to win
-                exit repeat
-            end if
-        end repeat
-        if destroyBtn is missing value then return "ERROR: room-settings-destroy button not found"
-        click destroyBtn
-        $(ducko_as_click_button_by_label "Destroy" 'destroyWin' 'Destroy confirmation button not found')
-        return "ok"
+        tell process "DuckoUITest"
+            -- Room Settings is a sheet on Contacts that has just opened, so wait for its Destroy button.
+            $(ducko_as_find_scene_window "contacts" "destroyWin")
+            if destroyWin is missing value then return "ERROR: Contacts window not found"
+            $(ducko_as_await_element '"room-settings-destroy"' destroyWin sheets 5 'room-settings-destroy button not found' destroyBtn)
+            click destroyBtn
+            $(ducko_as_click_button_by_label "Destroy" 'destroyWin' 'Destroy confirmation button not found')
+            return "ok"
+        end tell
     end tell
 end run
 APPLESCRIPT

@@ -27,22 +27,22 @@ on run argv
     set targetMode to item 1 of argv
     tell application "System Events"
         if not (exists process "DuckoUITest") then return "ERROR: DuckoUITest is not running"
-        set proc to process "DuckoUITest"
-        set frontmost of proc to true
+        set frontmost of process "DuckoUITest" to true
         delay 1
-        if not (exists window "Welcome" of proc) then return "ERROR: Welcome window not found"
-        set win to window "Welcome" of proc
+        tell process "DuckoUITest"
+            $(ducko_as_raise_scene_window "welcome" "Welcome window not found" "win")
 
-        set picker to my findByAttr(win, "AXIdentifier", "setup-mode-picker", 0, 30)
-        if picker is missing value then return "ERROR: setup-mode-picker not found"
+            set picker to my findByAttr(win, "AXIdentifier", "setup-mode-picker", 0, 30)
+            if picker is missing value then return "ERROR: setup-mode-picker not found"
 
-        -- The SwiftUI segmented Picker exposes each segment label via
-        -- AXDescription; AXTitle/name is empty on macOS 26, so match on that.
-        set seg to my findByAttr(picker, "AXDescription", targetMode, 0, 6)
-        if seg is missing value then return "ERROR: " & targetMode & " segment not found"
+            -- The SwiftUI segmented Picker exposes each segment label via
+            -- AXDescription; AXTitle/name is empty on macOS 26, so match on that.
+            set seg to my findByAttr(picker, "AXDescription", targetMode, 0, 6)
+            if seg is missing value then return "ERROR: " & targetMode & " segment not found"
 
-        click seg
-        return "ok"
+            click seg
+            return "ok"
+        end tell
     end tell
 end run
 APPLESCRIPT

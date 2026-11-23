@@ -4,8 +4,8 @@
 #
 # Walks the Welcome window's UI-element tree via findByAttr rather than
 # `entire contents`, which collapses on the Welcome window's deeply-nested
-# SwiftUI hierarchy on macOS 26. The success message is gated on the osascript
-# result, so a missing field reports an error instead of false success.
+# SwiftUI hierarchy on macOS 26. Succeeds once the Welcome window has closed, since the account is then signed in,
+# and fails with the error the window shows.
 # Usage: ducko-login.sh JID PASSWORD
 set -euo pipefail
 
@@ -26,37 +26,16 @@ on run argv
         set proc to process "DuckoUITest"
         set frontmost of proc to true
         delay 1
-        if not (exists window "Welcome" of proc) then return "ERROR: Welcome window not found"
-        set win to window "Welcome" of proc
-
-        set jidField to my findByAttr(win, "AXIdentifier", "jid-field", 0, 30)
-        if jidField is missing value then return "ERROR: jid-field not found"
-        set focused of jidField to true
-        delay 0.2
-        keystroke "a" using command down
-        delay 0.1
-        keystroke jid
-
-        set pwField to my findByAttr(win, "AXIdentifier", "password-field", 0, 30)
-        if pwField is missing value then return "ERROR: password-field not found"
-        set focused of pwField to true
-        delay 0.2
-        keystroke "a" using command down
-        delay 0.1
-        keystroke pw
-
-        set connectBtn to my findByAttr(win, "AXIdentifier", "connect-button", 0, 30)
-        if connectBtn is missing value then return "ERROR: connect-button not found"
-        click connectBtn
-        return "ok"
+        tell process "DuckoUITest"
+            $(ducko_as_raise_scene_window "welcome" "Welcome window not found" "win")
+            $(ducko_as_fill_field_by_id '"jid-field"' 'win' 'jid' 'jid-field not found')
+            $(ducko_as_fill_field_by_id '"password-field"' 'win' 'pw' 'password-field not found')
+            $(ducko_as_click_element_by_id '"connect-button"' 'win' 'connect-button not found')
+$(ducko_as_await_welcome_outcome proc win "" "the sign-in did not finish")
+        end tell
     end tell
 end run
 APPLESCRIPT
 )
 
-if [[ "$RESULT" == ok ]]; then
-    echo "Login initiated for $JID"
-else
-    echo "$RESULT" >&2
-    exit 1
-fi
+ducko_check_result "$RESULT" "Signed in as $JID"

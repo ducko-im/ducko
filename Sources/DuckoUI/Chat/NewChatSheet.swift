@@ -40,6 +40,7 @@ struct NewChatSheet: View {
                 Text(errorMessage)
                     .foregroundStyle(.red)
                     .font(.callout)
+                    .accessibilityIdentifier("new-chat-error")
             }
 
             HStack {

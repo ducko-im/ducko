@@ -37,8 +37,7 @@ struct ServerInfoView: View {
         .task {
             await loadServerInfo()
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("server-info-view")
+        .containerAccessibilityIdentifier("server-info-view")
         .onExitCommand { dismiss() }
     }
 

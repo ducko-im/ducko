@@ -18,7 +18,7 @@ struct BookmarkListView: View {
                     BookmarkRow(bookmark: bookmark) {
                         removeBookmark(bookmark)
                     }
-                    .accessibilityIdentifier("bookmark-row-\(bookmark.jidString)")
+                    .containerAccessibilityIdentifier("bookmark-row-\(bookmark.jidString)")
                 }
             }
         }
@@ -138,6 +138,7 @@ private struct AddBookmarkSheet: View {
                 Text(errorMessage)
                     .foregroundStyle(.red)
                     .font(.callout)
+                    .accessibilityIdentifier("add-bookmark-error")
             }
 
             HStack {

@@ -23,22 +23,19 @@ on run argv
     set tabNames to {"General", "Members"}
     if tabName is not in tabNames then return "ERROR: unknown tab: " & tabName
     tell application "System Events"
-        set proc to process "DuckoUITest"
-        set frontmost of proc to true
+        set frontmost of process "DuckoUITest" to true
         delay 0.3
-        -- Find the window/sheet containing the room settings view.
-        set settingsWin to missing value
-        repeat with win in (windows of proc)
-            if (my findByAttr(win, "AXIdentifier", "room-settings-view", 0, 30)) is not missing value then
-                set settingsWin to win
-                exit repeat
-            end if
-        end repeat
-        if settingsWin is missing value then return "ERROR: room settings sheet not found (open it with ducko-room-settings.sh first)"
-        set tabSeg to my findByAttr(settingsWin, "AXDescription", tabName, 0, 30)
-        if tabSeg is missing value then return "ERROR: tab " & tabName & " not found in room settings"
-        click tabSeg
-        return "ok"
+        tell process "DuckoUITest"
+            -- ducko-room-settings.sh opens the sheet on Contacts.
+            $(ducko_as_find_scene_window "contacts" "contactWin")
+            if contactWin is missing value then return "ERROR: Contacts window not found"
+            set settingsView to my findInSheets(contactWin, "room-settings-view")
+            if settingsView is missing value then return "ERROR: room settings sheet not found (open it with ducko-room-settings.sh first)"
+            set tabSeg to my findByAttr(settingsView, "AXDescription", tabName, 0, 30)
+            if tabSeg is missing value then return "ERROR: tab " & tabName & " not found in room settings"
+            click tabSeg
+            return "ok"
+        end tell
     end tell
 end run
 APPLESCRIPT

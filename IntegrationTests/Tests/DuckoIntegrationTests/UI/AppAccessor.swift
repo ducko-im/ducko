@@ -423,27 +423,6 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
         }
     }
 
-    /// Polls the AX tree for an element matching `identifier`+`role` (the
-    /// role-aware companion to `waitForElement(identifier:)`). Use to await a
-    /// control that shares a container-propagated identifier with siblings of
-    /// other roles — e.g. the room-topic `AXTextField` that materializes under
-    /// `room-subject-view` only after the pencil flips the view into edit mode.
-    func waitForElement(identifier: String, role: String, timeout: Duration = TestTimeout.uiElement) async throws {
-        do {
-            try await pollUntil(timeout: timeout) {
-                do {
-                    _ = try self.axDriver.resolveElement(identifier: identifier, role: role)
-                    return true
-                } catch TestHarnessError.elementNotFound {
-                    return false
-                }
-            }
-        } catch TestHarnessError.timeout {
-            log.debug("waitForElement timeout (\(timeout)) for identifier '\(identifier)' role '\(role)'")
-            throw TestHarnessError.timeout
-        }
-    }
-
     /// Polls `containsDescendant(role:withSubstring:underIdentifier:)` until
     /// it returns `true` or the timeout elapses. Use this when asserting on
     /// AX state that is updated asynchronously (message bubble after
@@ -533,8 +512,8 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
     /// `roles` is the candidate set for the enclosing row element: a SwiftUI
     /// `List` row surfaces as `kAXRowRole`/`kAXCellRole` (NSTableView-backed) or
     /// `kAXGroupRole`. The row is found by locating the nickname text and walking
-    /// up (see `findMenuRow`), since the identifier's propagation onto inner
-    /// content leaves the row as an ancestor of the resolved container.
+    /// up (see `findMenuRow`), since the row element that owns the menu encloses
+    /// the identified participant group rather than being it.
     func rightClickDescendant(
         roles: [String],
         withSubstring substring: String,
@@ -1086,13 +1065,10 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
     }
 
     /// Clicks a button by visible label inside the application's topmost
-    /// sheet. Use when SwiftUI's `.accessibilityIdentifier` does not
-    /// propagate to a `Button` that also carries `.keyboardShortcut(.defaultAction)`
-    /// or `.keyboardShortcut(.cancelAction)` — the bridged AX button instead
-    /// inherits the *outer* container's identifier (e.g. both Save and
-    /// Destroy under a VStack tagged `room-settings-view` come through with
-    /// `id='room-settings-view'`), so a global identifier-based DFS lands
-    /// on a sibling at best. The button's `kAXTitleAttribute` is also empty
+    /// sheet. Use for a button that carries no identifier of its own, such
+    /// as Room Settings' Save, which has none because SwiftUI does not reliably
+    /// bridge `.accessibilityIdentifier` to a `Button` that also carries
+    /// `.keyboardShortcut(.defaultAction)`. The button's `kAXTitleAttribute` is also empty
     /// for SwiftUI `Button("Save") { … }`; the human-readable label is
     /// published via `kAXDescriptionAttribute`. The same title-then-description
     /// fallback shape powers `axDriver.segmentLabel(of:)`.
@@ -1297,52 +1273,16 @@ actor AppAccessor { // swiftlint:disable:this type_body_length
         try await waitForConfirmationDialogDismissed(dialogText: dialogText)
     }
 
-    /// Presses the element resolved by `identifier`+`role` (+ optional `label`).
-    /// Use when a control carries an identifier propagated from a SwiftUI
-    /// container onto its leaves — e.g. the room-subject pencil
-    /// (`identifier: "room-subject-view", role: AXButton`, no label, the only
-    /// button with that identifier when not editing) and the inline Save
-    /// (`label: "Save"`, distinguishing it from Cancel in edit mode).
-    func clickElement(identifier: String, role: String, label: String? = nil) async throws {
-        try await retryOnStaleElement(identifier: identifier) {
-            let element = try self.axDriver.resolveElement(identifier: identifier, role: role, label: label)
-            let qualifier = label.map { "\(identifier)[\(role):\($0)]" } ?? "\(identifier)[\(role)]"
-            try self.axDriver.perform(action: kAXPressAction, on: element, identifier: qualifier)
-        }
-    }
-
-    /// Clicks the role-qualified field before typing without re-activation.
+    /// Clicks the field before typing without re-activation.
     /// Room-topic edits need this path because AX value changes do not commit
     /// the binding read by Save, and re-activation can restore composer focus.
-    func focusAndTypeElement(_ text: String, identifier: String, role: String) async throws {
-        let qualifier = "\(identifier)[\(role)]"
+    func clickAndType(_ text: String, intoIdentifier identifier: String) async throws {
         try await retryOnStaleElement(identifier: identifier) {
-            let element = try self.axDriver.resolveElement(identifier: identifier, role: role)
-            let point = try await self.unoccludedCenter(of: element, identifier: qualifier)
+            let element = try self.axDriver.resolveElement(identifier: identifier)
+            let point = try await self.unoccludedCenter(of: element, identifier: identifier)
             self.axDriver.postClickPair(at: point, clickState: 1)
             try? await Task.sleep(for: .milliseconds(100))
             try self.typeFocusedText(text, clearFirst: false)
-        }
-    }
-
-    /// Polls until the element resolved by `identifier`+`role` reports a value
-    /// containing `substring`. The role-aware companion to `waitForDescendant`,
-    /// for asserting on a control that shares a container-propagated identifier
-    /// with siblings of other roles (e.g. the room-subject topic text).
-    func waitForElementValue(
-        containing substring: String,
-        identifier: String,
-        role: String,
-        timeout: Duration = TestTimeout.uiElement
-    ) async throws {
-        do {
-            try await pollUntil(timeout: timeout) {
-                guard let element = try? self.axDriver.resolveElement(identifier: identifier, role: role) else { return false }
-                return self.axDriver.elementText(of: element)?.contains(substring) ?? false
-            }
-        } catch TestHarnessError.timeout {
-            log.debug("waitForElementValue timeout (\(timeout)) substring '\(substring)' for '\(identifier)' role '\(role)'")
-            throw TestHarnessError.timeout
         }
     }
 

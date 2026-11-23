@@ -37,8 +37,7 @@ struct AttachmentView: View {
         .sheet(isPresented: $showSheet) {
             ImagePreviewSheet(attachment: attachment)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("attachment-view")
+        .containerAccessibilityIdentifier("attachment-view")
     }
 
     /// A saved file opens the system Quick Look panel. A remote image that is not shown yet is fetched by the first

@@ -78,7 +78,7 @@ struct RoomSettingsView: View {
         } message: {
             Text("This will permanently destroy the room and remove all occupants. This action cannot be undone.")
         }
-        .accessibilityIdentifier("room-settings-view")
+        .containerAccessibilityIdentifier("room-settings-view")
     }
 }
 
@@ -159,6 +159,7 @@ private struct AffiliationListView: View {
                             }
                             .buttonStyle(.borderless)
                         }
+                        .containerAccessibilityIdentifier("affiliation-row-\(item.jidString)")
                     }
                 }
                 .listStyle(.inset)
@@ -191,7 +192,7 @@ private struct AffiliationListView: View {
         .task {
             await loadList()
         }
-        .accessibilityIdentifier("affiliation-list-view")
+        .containerAccessibilityIdentifier("affiliation-list-view")
     }
 
     private func loadList() async {
