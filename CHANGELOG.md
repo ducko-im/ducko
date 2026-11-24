@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-24
+
 ### Added
 
 - Mark a contact's OMEMO device verified from the CLI with `ducko omemo verify <jid> <device-id> <fingerprint>` or `/omemo-verify` in `ducko interactive`, after comparing its fingerprint with the one their device shows. A fingerprint that names another key is refused
@@ -564,7 +566,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release.
 
-[Unreleased]: https://github.com/ducko-im/ducko/compare/0.13.0...HEAD
+[Unreleased]: https://github.com/ducko-im/ducko/compare/0.14.0...HEAD
+[0.14.0]: https://github.com/ducko-im/ducko/compare/0.13.0...0.14.0
 [0.13.0]: https://github.com/ducko-im/ducko/compare/0.12.0...0.13.0
 [0.12.0]: https://github.com/ducko-im/ducko/compare/0.11.0...0.12.0
 [0.11.0]: https://github.com/ducko-im/ducko/compare/0.10.0...0.11.0
