@@ -11,64 +11,21 @@ private func makeOMEMOService(store: MockOMEMOStore) -> OMEMOService {
     OMEMOService(omemoStore: store)
 }
 
-/// An identity provider whose identity appears at `readyAt`, as a new device's does once the account's list is read.
-private struct DelayedIdentityProvider: OMEMOIdentityProviding {
-    let identity: OMEMOModule.OMEMOIdentityData
-    let readyAt: ContinuousClock.Instant
-
-    var ownIdentityData: OMEMOModule.OMEMOIdentityData? {
-        ContinuousClock.now >= readyAt ? identity : nil
-    }
-
-    func consumedPreKeyIDs() -> Set<UInt32> {
-        []
-    }
-}
-
 // MARK: - Tests
 
 enum OMEMOServiceTests {
-    struct HandleConnectedFirstTimePersistence {
+    struct PersistNewIdentity {
         @Test
         @MainActor
-        func `returns early when identity already persisted`() async {
+        func `stores the identity and its keys under the account the key names`() async throws {
             let store = MockOMEMOStore()
             let accountJID = testAccountJID.description
             let identityData = makeIdentityData(deviceID: 4242)
-            await store.seedFromIdentityData(identityData, accountJID: accountJID)
-
             let service = makeOMEMOService(store: store)
-            let stub = StubPreKeyModule(identity: identityData, consumed: [])
+            let accountID = UUID().uuidString
+            await service.installAccountJIDForTesting(accountJID, accountID: accountID)
 
-            await service.handleConnectedFirstTimePersistence(
-                provider: stub,
-                accountJID: accountJID,
-                pollTimeout: .milliseconds(100)
-            )
-
-            #expect(await store.saveIdentityCalls == 0)
-            #expect(await store.savePreKeysCalls == 0)
-            #expect(await store.saveSignedPreKeyCalls == 0)
-        }
-
-        @Test
-        @MainActor
-        func `persists identity from provider when store empty`() async throws {
-            let store = MockOMEMOStore()
-            let accountJID = testAccountJID.description
-            let identityData = makeIdentityData(deviceID: 4242)
-            let stub = StubPreKeyModule(identity: identityData, consumed: [])
-            let service = makeOMEMOService(store: store)
-
-            await service.handleConnectedFirstTimePersistence(
-                provider: stub,
-                accountJID: accountJID,
-                pollTimeout: .seconds(2)
-            )
-
-            #expect(await store.saveIdentityCalls == 1)
-            #expect(await store.savePreKeysCalls == 1)
-            #expect(await store.saveSignedPreKeyCalls == 1)
+            #expect(await service.persistNewIdentity(identityData, accountID: accountID))
 
             let storedIdentity = try #require(await store.loadIdentity(for: accountJID))
             #expect(storedIdentity.deviceID == 4242)
@@ -85,44 +42,6 @@ enum OMEMOServiceTests {
             #expect(storedSPK.signature == Data(identityData.signedPreKeySignature))
         }
 
-        /// A new device waits on reading the account's device list, which a slow server can stretch to the IQ timeout.
-        @Test
-        @MainActor
-        func `persists an identity that appears only after several seconds`() async {
-            let store = MockOMEMOStore()
-            let service = makeOMEMOService(store: store)
-
-            await service.handleConnectedFirstTimePersistence(
-                provider: DelayedIdentityProvider(identity: makeIdentityData(deviceID: 4242), readyAt: .now + .seconds(6)),
-                accountJID: testAccountJID.description
-            )
-
-            #expect(await store.saveIdentityCalls == 1)
-        }
-
-        @Test
-        @MainActor
-        func `skips persistence when identity never readies`() async {
-            let store = MockOMEMOStore()
-            let accountJID = testAccountJID.description
-            let stub = StubPreKeyModule(identity: nil, consumed: [])
-            let service = makeOMEMOService(store: store)
-
-            let start = ContinuousClock.now
-            await service.handleConnectedFirstTimePersistence(
-                provider: stub,
-                accountJID: accountJID,
-                pollTimeout: .milliseconds(100)
-            )
-            let elapsed = start.duration(to: ContinuousClock.now)
-
-            #expect(await store.saveIdentityCalls == 0)
-            #expect(await store.savePreKeysCalls == 0)
-            #expect(await store.saveSignedPreKeyCalls == 0)
-            // Polling exhausts at ~100 ms; allow generous slack for CI variance.
-            #expect(elapsed < .milliseconds(500))
-        }
-
         @Test(arguments: [MockOMEMOStore.FailingCall.saveIdentity, .savePreKeys])
         @MainActor
         func `stores no keys without the identity, and the signed pre-key without the pre-keys`(
@@ -131,13 +50,12 @@ enum OMEMOServiceTests {
             let store = MockOMEMOStore()
             await store.setFailing(failing)
             let service = makeOMEMOService(store: store)
+            let accountID = UUID().uuidString
+            await service.installAccountJIDForTesting(testAccountJID.description, accountID: accountID)
 
-            await service.handleConnectedFirstTimePersistence(
-                provider: StubPreKeyModule(identity: makeIdentityData(), consumed: []),
-                accountJID: testAccountJID.description,
-                pollTimeout: .milliseconds(100)
-            )
+            let isStored = await service.persistNewIdentity(makeIdentityData(), accountID: accountID)
 
+            #expect(isStored == (failing != .saveIdentity))
             #expect(await store.saveIdentityCalls == 1)
             #expect(await store.savePreKeysCalls == (failing == .saveIdentity ? 0 : 1))
             #expect(await store.saveSignedPreKeyCalls == (failing == .saveIdentity ? 0 : 1))
@@ -145,19 +63,12 @@ enum OMEMOServiceTests {
 
         @Test
         @MainActor
-        func `skips persistence when the stored identity cannot be read`() async {
+        func `stores nothing for an account it has no address for`() async {
             let store = MockOMEMOStore()
-            await store.setFailing(.loadIdentity)
             let service = makeOMEMOService(store: store)
 
-            await service.handleConnectedFirstTimePersistence(
-                provider: StubPreKeyModule(identity: makeIdentityData(), consumed: []),
-                accountJID: testAccountJID.description,
-                pollTimeout: .milliseconds(100)
-            )
-
+            #expect(await !service.persistNewIdentity(makeIdentityData(), accountID: UUID().uuidString))
             #expect(await store.saveIdentityCalls == 0)
-            #expect(await store.savePreKeysCalls == 0)
         }
     }
 

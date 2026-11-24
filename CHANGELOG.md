@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Keep an account's contacts listed, shown offline, while the account is offline or signing in. Disabling or deleting the account removes them, and a disabled account you connect by hand shows its contacts only while it stays connected
+
+### Fixed
+
+- Fix an account dropping its connection, and its contacts and presence no longer showing, when this Mac's encryption setup fails or the server is slow to answer it. The account now stays online and Ducko tries the setup again in the background. An encrypted chat shows a notice with Try Again until the setup succeeds. In the CLI, `ducko interactive` prints each attempt's outcome, and `/omemo-setup` tries again at once
+- Fix the import during onboarding leaving accounts without a saved password unticked. Every account starts ticked, and one without a saved password shows a field for it
+
 ## [0.14.0] - 2026-11-24
 
 ### Added

@@ -134,6 +134,15 @@ func transferRateSuffix(_ rate: TransferRate?) -> String {
     rate.map { " · \($0.displayText)" } ?? ""
 }
 
+/// The line the human-readable formatters print for a setup attempt's outcome.
+func omemoSetupLine(_ status: OMEMOSetupStatus) -> String {
+    switch status {
+    case .complete: "OMEMO: this device's encryption setup is complete"
+    case .incomplete: "OMEMO: this device's encryption setup is incomplete; encrypted replies may not reach it"
+    case let .refused(condition): "OMEMO: the server refused this device's encryption keys: \(condition.displayText)"
+    }
+}
+
 /// A data form field's values as one line of text, with a text-private value hidden.
 func dataFormValueText(_ field: RoomConfigField) -> String {
     hidesDataFormValue(field) ? obscuredDataFormValue : field.values.joined(separator: ", ")

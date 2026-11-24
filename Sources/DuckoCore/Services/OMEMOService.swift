@@ -37,6 +37,13 @@ public final class OMEMOService {
     /// Each account's trust guard, kept for the life of the process so a used pre-key or a pinned key outlives the
     /// connection's module. Keyed by account JID, so a re-added account keeps its record.
     private var trustGuardsByAccountJID: [String: OMEMOTrustGuard] = [:]
+    /// How far each account's encryption setup got on its current session. Only `receiveSetupEvent` sets it, so it
+    /// follows the account's event order.
+    var setupStates: [UUID: OMEMOSetupState] = [:]
+    /// The accounts whose setup the user asked to try again, until that attempt has its outcome or the session ends.
+    public internal(set) var retryingSetupAccounts: Set<UUID> = []
+    /// The conversations, per account, whose setup notice the user dismissed, until the account's next failed attempt.
+    var dismissedSetupProblems: [UUID: Set<String>] = [:]
 
     /// UI-supplied confirmation closure before the emergency-retract path publishes a singleton devicelist.
     /// Default `nil` preserves the pre-feature bail behavior. `@Sendable`; callers hop to `MainActor` inside.
@@ -94,6 +101,7 @@ public final class OMEMOService {
         let accountIDKey = accountID.uuidString
         accountJIDsByAccountID[accountIDKey] = jidString
         module.configureSeenDeviceClassificationProvider(self, accountID: accountIDKey)
+        module.configureIdentityPersister(self, accountID: accountIDKey)
         module.configureEmergencyRetract(
             confirmation: emergencyRetractConfirmation,
             guard: self,
@@ -181,8 +189,10 @@ public final class OMEMOService {
         case .connected:
             await handleConnected(accountID: accountID)
         case .streamResumed:
+            await retrySetupOnResume(accountID: accountID)
             await schedulePreKeyMaintenance(accountID: accountID, consumedPreKeyID: nil)
-        case .disconnected:
+        case .disconnected, .omemoSetupChanged:
+            // `receiveSetupEvent` takes both in order.
             break
         case .authenticationFailed, .plainSignInRefused,
              .messageReceived, .presenceReceived, .iqReceived,
@@ -391,70 +401,19 @@ public final class OMEMOService {
     }
 
     private func handleConnected(accountID: UUID) async {
-        guard let client = accountService?.connectedClient(for: accountID),
-              let omemoModule = await client.module(ofType: OMEMOModule.self), let accountJID = accountJIDString(for: accountID) else { return }
+        guard let client = accountService?.connectedClient(for: accountID) else { return }
 
         // Wait until initial presence + caps are on the wire so PEP publishes follow the server seeing
-        // this resource's caps (XEP-0163 §3.3.2). The identity poll below composes after this gate.
+        // this resource's caps (XEP-0163 §3.3.2).
         await client.awaitInitialPresenceSent()
-
-        await handleConnectedFirstTimePersistence(
-            provider: omemoModule,
-            accountJID: accountJID
-        )
 
         await schedulePreKeyMaintenance(accountID: accountID, consumedPreKeyID: nil)
     }
 
-    /// First-time identity persistence. Extracted so tests can drive the polling/persistence branches via a stub
-    /// `OMEMOIdentityProviding` and a short `pollTimeout` (bypassing the 40 s real wait).
-    package func handleConnectedFirstTimePersistence(
-        provider: any OMEMOIdentityProviding,
-        accountJID: String,
-        pollTimeout: Duration = .seconds(40)
-    ) async {
-        // Only a first-time identity needs persisting. A stored one is handed to the module, which installs it when the
-        // session is established. Skip both the readiness poll and the persistence writes. A store that could not be
-        // read is skipped too, since its identity is unknown rather than absent.
-        let existingIdentity: OMEMOStoredIdentity?
-        do {
-            existingIdentity = try await omemoStore.loadIdentity(for: accountJID)
-        } catch {
-            log.warning("OMEMO identity could not be read; skipping first-time persistence")
-            log.debug("OMEMO identity could not be read: \(error)")
-            return
-        }
-        if existingIdentity == nil {
-            // `.connected` is yielded before `OMEMOModule.handleConnect` runs,
-            // so `ownIdentityData` may still be `nil` on first-time generation,
-            // which waits on reading the account's device list. Poll up to
-            // `pollTimeout`, which outlasts that read's 30 s IQ timeout, so a
-            // slow server cannot leave a published identity unstored. Capture
-            // the identity inside the closure to avoid a re-read race with
-            // `handleDisconnect` nil'ing `ownIdentity`.
-            var captured: OMEMOModule.OMEMOIdentityData?
-            _ = await pollUntil(
-                {
-                    if let data = provider.ownIdentityData {
-                        captured = data
-                        return true
-                    }
-                    return false
-                },
-                timeout: pollTimeout,
-                interval: .milliseconds(50)
-            )
-            if let identityData = captured {
-                await persistFirstTimeIdentity(identityData, accountJID: accountJID)
-            } else {
-                log.warning("OMEMO identity not ready after \(pollTimeout) wait; skipping first-time persistence")
-            }
-        }
-    }
-
-    /// The keys are stored only after the identity is: without it they would be orphans whose ids the next new device
-    /// reuses. The pre-keys and the signed pre-key are each tried even when the other failed.
-    private func persistFirstTimeIdentity(_ identityData: OMEMOModule.OMEMOIdentityData, accountJID: String) async {
+    /// Stores a newly generated identity, then its keys, and returns whether the identity was stored. The keys are
+    /// stored only after the identity is: without it they would be orphans whose ids the next new device reuses. The
+    /// pre-keys and the signed pre-key are each tried even when the other failed.
+    private func persistFirstTimeIdentity(_ identityData: OMEMOModule.OMEMOIdentityData, accountJID: String) async -> Bool {
         let stored = OMEMOStoredIdentity(
             accountJID: accountJID,
             deviceID: identityData.deviceID,
@@ -466,7 +425,7 @@ public final class OMEMOService {
         } catch {
             log.warning("Could not store the new OMEMO identity")
             log.debug("Could not store the new OMEMO identity: \(error)")
-            return
+            return false
         }
 
         let preKeys = identityData.preKeys.map {
@@ -495,6 +454,7 @@ public final class OMEMOService {
             log.warning("Could not store the new OMEMO signed pre-key")
             log.debug("Could not store the new OMEMO signed pre-key: \(error)")
         }
+        return true
     }
 
     /// Runs pre-key upkeep for the account's current client. Runs coalesce: a trigger that arrives during a run is
@@ -761,6 +721,17 @@ extension OMEMOService: SeenDeviceClassificationProviding {
     }
 }
 
+// MARK: - OMEMOIdentityPersisting
+
+/// Runs inside the module's setup attempt rather than on an event task, so a requested disconnect's cancelled event
+/// consumer cannot drop it.
+extension OMEMOService: OMEMOIdentityPersisting {
+    package func persistNewIdentity(_ data: OMEMOModule.OMEMOIdentityData, accountID: String) async -> Bool {
+        guard let accountJID = accountJIDsByAccountID[accountID] else { return false }
+        return await persistFirstTimeIdentity(data, accountJID: accountJID)
+    }
+}
+
 // MARK: - EmergencyRetractGuarding
 
 extension OMEMOService: EmergencyRetractGuarding {
@@ -804,6 +775,7 @@ enum OMEMOServiceError: Error, LocalizedError {
     case conflictingFingerprints
     case noFingerprintToVerify
     case thisDeviceNotResettable
+    case encryptionNotSetUp
 
     var errorDescription: String? {
         switch self {
@@ -814,6 +786,7 @@ enum OMEMOServiceError: Error, LocalizedError {
         case .conflictingFingerprints: "This device has more than one fingerprint, so it cannot be trusted"
         case .noFingerprintToVerify: "The device's fingerprint is not known yet, so it cannot be verified"
         case .thisDeviceNotResettable: "This device has no encryption session with itself to reset"
+        case .encryptionNotSetUp: "This device's encryption setup is incomplete"
         }
     }
 }

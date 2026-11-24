@@ -72,7 +72,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log")
             ]
         ),
-        .testTarget(name: "DuckoCLITests", dependencies: ["DuckoCLI"]),
+        .testTarget(name: "DuckoCLITests", dependencies: ["DuckoCLI", "DuckoTestSupport"]),
 
         .testTarget(name: "DuckoScriptTests")
     ]

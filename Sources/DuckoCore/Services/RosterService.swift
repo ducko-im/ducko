@@ -7,13 +7,13 @@ public final class RosterService {
     /// account never drops another's. Source of truth behind the published merge — mutate slots
     /// through `setGroups`/`clearGroups` so the cache stays current.
     private var groupsByAccount: [UUID: [ContactGroup]] = [:]
-    /// Load-generation counter, bumped on every `clearGroups(for:)`. A suspended roster-load handler
-    /// captures the generation before its store read and re-checks it before publishing, so a teardown
-    /// during the await can't resurrect a just-cleared account. Mirrors `OMEMOService.seenDeviceLoadGeneration`.
+    /// Load-generation counter, bumped whenever an account's session ends. A suspended roster-load handler
+    /// captures the generation before its store read and re-checks it before writing or publishing, so an ended
+    /// session's handler can't write after it. Mirrors `OMEMOService.seenDeviceLoadGeneration`.
     private var groupsLoadGeneration: [UUID: UInt64] = [:]
-    /// Each account's groups as the contact list showed them before its last disconnect. The list empties then, but an
-    /// open chat still names the contact and shows their photo from here until the roster loads again.
-    private var groupsBeforeDisconnect: [UUID: [ContactGroup]] = [:]
+    /// Each account's groups as the contact list showed them before the account left it, disabled or deleted. An open
+    /// chat still names the contact and shows their photo from here until the roster loads again.
+    private var groupsBeforeRemoval: [UUID: [ContactGroup]] = [:]
     /// Each connected account's block list (XEP-0191), as the server last announced it.
     private var blockListByAccount: [UUID: [JID]] = [:]
 
@@ -79,11 +79,11 @@ public final class RosterService {
         groupsByAccount[accountID].flatMap { Self.contact(jidString: jidString, in: $0) }
     }
 
-    /// The contact as the roster holds them, or while the account is disconnected, as the contact list last showed
-    /// them. Read only their name and photo from it, since the rest may be out of date.
+    /// The contact as the roster holds them, or once the account left the contact list, as the list last showed them.
+    /// Read only their name and photo from it, since the rest may be out of date.
     public func knownContact(jidString: String, accountID: UUID) -> Contact? {
         contact(jidString: jidString, accountID: accountID)
-            ?? groupsBeforeDisconnect[accountID].flatMap { Self.contact(jidString: jidString, in: $0) }
+            ?? groupsBeforeRemoval[accountID].flatMap { Self.contact(jidString: jidString, in: $0) }
     }
 
     /// The known contact's name for an address that may name one of their devices.
@@ -119,15 +119,15 @@ public final class RosterService {
         loadRevisions[accountID, default: 0] &+= 1
         let revision = loadRevisions[accountID]
         let contacts = try await store.fetchContacts(for: accountID)
-        guard generationUnchanged(generationBeforeAwait, for: accountID), loadRevisions[accountID] == revision else { return }
+        guard generationUnchanged(generationBeforeAwait, for: accountID), loadRevisions[accountID] == revision, isListed(accountID) else { return }
         setGroups(ContactGroup.grouping(contacts), for: accountID)
     }
 
     /// The current content generation for `accountID`. An external caller that mutates a contact and then
-    /// refreshes the roster should capture this before its first `await`, re-check it before its own store
-    /// write, and reload via `loadContacts(for:ifGenerationUnchangedSince:)` — so a `purgeAccount`/disconnect
-    /// during the await can't republish a just-cleared account (plain `loadContacts` captures its own fresh
-    /// generation, so an unguarded reload after an await is the hazard this prevents).
+    /// refreshes the roster captures this before its first `await`, re-checks it before its own store write, and
+    /// reloads via `loadContacts(for:ifGenerationUnchangedSince:)`. A session that ended during the await then has
+    /// its change neither written nor republished. Plain `loadContacts` captures a fresh generation of its own, so it
+    /// cannot guard a reload after an await.
     public func contentGeneration(for accountID: UUID) -> UInt64 {
         groupsLoadGeneration[accountID, default: 0]
     }
@@ -290,7 +290,7 @@ public final class RosterService {
              .jingleFileTransferReceived, .jingleFileTransferCompleted,
              .jingleFileTransferFailed, .jingleFileTransferProgress,
              .jingleChecksumReceived,
-             .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial,
+             .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial, .omemoSetupChanged,
              .oobIQOfferReceived:
             break
         }
@@ -304,12 +304,12 @@ public final class RosterService {
         for contact in contacts {
             let shouldBeBlocked = blockedSet.contains(.bare(contact.jid))
             if contact.isBlocked != shouldBeBlocked {
-                // Re-check before each write: a clear/purge during an earlier await tore the account down.
+                // Re-check before each write: the session may have ended during an earlier await.
                 guard generationUnchanged(generationBeforeAwait, for: accountID) else { return }
                 try? await store.updateContactIfExists(contact.id, accountID: accountID, update: .blocked(shouldBeBlocked))
             }
         }
-        // Re-check before the republish so a purge during the writes can't resurrect the account via loadContacts.
+        // Re-check before the republish so a purge during the writes leaves the list as the ended session left it.
         guard generationUnchanged(generationBeforeAwait, for: accountID) else { return }
         try? await loadContacts(for: accountID)
     }
@@ -325,7 +325,7 @@ public final class RosterService {
         let contacts = await (try? store.fetchContacts(for: accountID)) ?? []
         guard let contact = contacts.first(where: { $0.jid == bareJID }), generationUnchanged(generationBeforeAwait, for: accountID) else { return }
         try? await store.updateContactIfExists(contact.id, accountID: accountID, update: .blocked(isBlocked))
-        // Re-check before the republish so a purge during the metadata update can't resurrect the account via loadContacts.
+        // Re-check before the republish so a purge during the metadata update leaves the list as the ended session left it.
         guard generationUnchanged(generationBeforeAwait, for: accountID) else { return }
         try? await loadContacts(for: accountID)
     }
@@ -375,12 +375,23 @@ public final class RosterService {
             }
         }
         blockListByAccount.removeValue(forKey: accountID)
+        invalidateLoads(for: accountID)
+        // A disabled account connected by hand shows its contacts only while its session lasts.
+        if !isListed(accountID) {
+            clearGroups(for: accountID)
+        }
+    }
+
+    /// Takes a disabled or deleted account's contacts off the contact list. A session of an enabled account that merely
+    /// ended leaves them listed, shown offline.
+    func removeFromContactList(_ accountID: UUID) {
+        purgeAccount(accountID)
         clearGroups(for: accountID)
     }
 
     /// Forgets what the contact list last showed for a deleted account.
     func forgetAccount(_ accountID: UUID) {
-        groupsBeforeDisconnect.removeValue(forKey: accountID)
+        groupsBeforeRemoval.removeValue(forKey: accountID)
     }
 
     func takePendingTasks() -> [Task<Void, Never>] {
@@ -398,25 +409,30 @@ public final class RosterService {
     /// per-account roster result so cross-account derived reads stay current.
     private func setGroups(_ groups: [ContactGroup], for accountID: UUID) {
         groupsByAccount[accountID] = groups
-        groupsBeforeDisconnect.removeValue(forKey: accountID)
+        groupsBeforeRemoval.removeValue(forKey: accountID)
         rebuildGroups()
     }
 
-    /// Moves one account's groups slot aside for `knownContact`, bumps the load generation so any in-flight load bails,
-    /// and republishes the merge. Both the `.disconnected` handler and `purgeAccount` route through here.
+    /// Moves one account's groups slot aside for `knownContact` and republishes the merge.
     private func clearGroups(for accountID: UUID) {
-        // A second teardown of an account already cleared keeps what the list showed before the first.
-        if let groups = groupsByAccount.removeValue(forKey: accountID) {
-            groupsBeforeDisconnect[accountID] = groups
-        }
-        groupsLoadGeneration[accountID, default: 0] &+= 1
+        // A second removal of an account already removed keeps what the list showed before the first.
+        guard let groups = groupsByAccount.removeValue(forKey: accountID) else { return }
+        groupsBeforeRemoval[accountID] = groups
         rebuildGroups()
     }
 
-    /// True when no `clearGroups`/`purgeAccount` ran for `accountID` since `captured` was read — i.e. the
-    /// account wasn't torn down during an intervening `store` await. A suspending handler captures the
-    /// generation before its await and re-checks via this before any store mutation or cache publish, so a
-    /// teardown can't resurrect a just-cleared account.
+    /// Bumps the load generation, so every handler of the ended session that is suspended in a store await bails.
+    private func invalidateLoads(for accountID: UUID) {
+        groupsLoadGeneration[accountID, default: 0] &+= 1
+    }
+
+    /// False for an account known to be disabled, so a store load never lists its contacts.
+    private func isListed(_ accountID: UUID) -> Bool {
+        accountService?.accounts.first { $0.id == accountID }?.isEnabled != false
+    }
+
+    /// True when no `purgeAccount` ran for `accountID` since `captured` was read, so the account's session did not
+    /// end during an intervening `store` await.
     private func generationUnchanged(_ captured: UInt64, for accountID: UUID) -> Bool {
         groupsLoadGeneration[accountID, default: 0] == captured
     }

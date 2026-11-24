@@ -269,6 +269,40 @@ struct ChatWindowStateTests {
         #expect(fixture.windowState.lastSendError == nil)
     }
 
+    /// Only a chat with encryption on tells that this Mac's setup is incomplete or refused, and not where it was dismissed.
+    @Test func `the encryption setup notice shows in an encrypted chat while setup is incomplete`() async throws {
+        let fixture = try await ChatWindowFixture.make()
+        fixture.environment.omemoService.receiveSetupEvent(.omemoSetupChanged(.incomplete), accountID: fixture.accountID)
+        #expect(fixture.windowState.omemoSetupProblem == nil)
+
+        try await fixture.store.updateConversation(fixture.conversationID) { $0.encryptionEnabled = true }
+        try await fixture.environment.chatService.loadConversations(for: fixture.accountID)
+        #expect(fixture.windowState.omemoSetupProblem == .incomplete)
+
+        fixture.windowState.dismissOMEMOSetupProblem()
+        #expect(fixture.windowState.omemoSetupProblem == nil)
+        fixture.environment.omemoService.receiveSetupEvent(.omemoSetupChanged(.refused(.forbidden)), accountID: fixture.accountID)
+        #expect(fixture.windowState.omemoSetupProblem == .refused)
+        // Not connected, so Try Again is off.
+        #expect(!fixture.windowState.canRetryOMEMOSetup)
+    }
+
+    /// Try Again is on while the chat's account is connected, and off while a retry runs.
+    @Test func `Try Again for the encryption setup is available while connected and no retry runs`() async throws {
+        let transport = MockTransport()
+        let fixture = try await ChatWindowFixture.make(clientFactory: MockXMPPClientFactory(transport: transport, modules: [ChatModule()]))
+        let session = MockServerSession(transport: transport)
+        try await session.connect(fixture.environment, accountID: fixture.accountID)
+        try await eventually { fixture.environment.accountService.connectedClient(for: fixture.accountID) != nil }
+        #expect(fixture.windowState.canRetryOMEMOSetup)
+        #expect(!fixture.windowState.isRetryingOMEMOSetup)
+
+        fixture.environment.omemoService.retryingSetupAccounts.insert(fixture.accountID)
+
+        #expect(fixture.windowState.isRetryingOMEMOSetup)
+        #expect(!fixture.windowState.canRetryOMEMOSetup)
+    }
+
     /// A connected chat tab whose contact asked for unencrypted messages while the chat's encryption is on.
     private static func tabBlockedByPlaintextRequest() async throws -> (ChatWindowFixture, MockServerSession) {
         let transport = MockTransport()

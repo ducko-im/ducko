@@ -92,6 +92,11 @@ struct JSONOutputProcessTests {
             let results = try jsonRecords(run.output).filter { $0["type"] == "command_result" }
             #expect(results == [["type": "command_result", "action": "block", "jid": "carol@example.com", "message": "Blocked carol@example.com."]],
                     Comment(rawValue: run.output))
+            // The command waited for the encryption setup attempt, which the server's bounced read left incomplete, but
+            // its outcome is for interactive sessions only. The session's other events still print.
+            let records = try jsonRecords(run.output)
+            #expect(!records.contains { $0["type"] == "omemo_setup" }, Comment(rawValue: run.output))
+            #expect(records.contains { $0["type"] == "connected" }, Comment(rawValue: run.output))
         }
     }
 
@@ -188,6 +193,18 @@ struct JSONOutputProcessTests {
             #expect(records.contains { $0["type"] == "connected" }, Comment(rawValue: run.output))
             // The interrupt ended the run, so the record came from a CLI still running, not one flushing at exit.
             #expect(run.reason == .uncaughtSignal && run.exitCode == SIGINT, Comment(rawValue: run.errors))
+        }
+    }
+
+    @Test
+    func `an interactive session prints the encryption setup outcome`() async throws {
+        try await withLoopbackServer(responder: NoReplies(), profile: "json-repl-setup") { _, profile in
+            let run = try await profile.run(
+                ["interactive", "--output", "json"], input: "", until: "\"type\":\"omemo_setup\"", atMarker: { _ in }, thenSignals: [SIGINT]
+            )
+
+            // The server bounces the read of the account's device list, so the attempt leaves setup incomplete.
+            #expect(try jsonRecords(run.output).contains { $0["type"] == "omemo_setup" && $0["status"] == "incomplete" }, Comment(rawValue: run.output))
         }
     }
 }

@@ -38,25 +38,9 @@ extension OMEMOModule {
         return true
     }
 
-    /// Retries adding this device to the server's list after the connect-time read failed, so a transient failure
-    /// does not leave the device unadvertised for the whole session.
-    func retryOwnDeviceRegistration(_ deviceID: OMEMODeviceID) {
-        let delays = registrationRetryDelays
-        let previous = state.withLock { state in
-            fillOwnListSlot(&state) { module in
-                for delay in delays {
-                    try? await Task.sleep(for: delay)
-                    guard !Task.isCancelled else { return }
-                    if await (try? module.ensureOwnDeviceInList(deviceID)) == true { return }
-                }
-            }
-        }
-        previous?.cancel()
-    }
-
     /// Adds this device back to the account's list, which a notification showed without it (XEP-0384). Waits while
-    /// the connect's own publishes of the list, a registration retry or another re-announce run: each reads the list,
-    /// changes it and publishes it, so two at once could put back a device the other removed.
+    /// the connection's first setup attempt, a later one or another re-announce runs: each reads the list, changes it
+    /// and publishes it, so two at once could put back a device the other removed.
     func reannounceOwnDevice() {
         state.withLock { state in
             guard let deviceID = state.ownIdentity?.deviceID else { return }
@@ -65,37 +49,23 @@ extension OMEMOModule {
                 return
             }
             state.reannouncePending = false
-            _ = fillOwnListSlot(&state) { module in await module.reannounce(deviceID) }
+            fillOwnListSlot(&state) { module in await module.reannounce(deviceID) }
         }
     }
 
-    /// Lets re-announces start once the connect's own publishes of the list are done, and runs one a notification
-    /// asked for meanwhile.
-    func settleConnect() {
-        let isPending = state.withLock { state in
-            state.isConnectSettled = true
-            return state.reannouncePending
-        }
-        if isPending {
-            reannounceOwnDevice()
-        }
-    }
-
-    /// Puts `work` in the slot for the one task that publishes this device's list after the connect, and returns the
-    /// task it replaced. Called under the lock, so a notification cannot start a second task meanwhile. A task cannot
-    /// be asked whether it ended, so each one empties the slot itself, after the re-announces asked for while it ran.
-    private func fillOwnListSlot(
+    /// Puts `work` in the slot for the one task that publishes this device's list after the connect. Called under the
+    /// lock, so a notification cannot start a second task meanwhile. A task cannot be asked whether it ended, so each
+    /// one empties the slot itself, after the re-announces asked for while it ran.
+    func fillOwnListSlot(
         _ state: inout State, with work: @escaping @Sendable (OMEMOModule) async -> Void
-    ) -> Task<Void, Never>? {
+    ) {
         state.ownListTaskGeneration &+= 1
         let generation = state.ownListTaskGeneration
-        let previous = state.ownListTask
         state.ownListTask = Task { [weak self] in
             guard let self else { return }
             await work(self)
             await runPendingReannounces(slotGeneration: generation)
         }
-        return previous
     }
 
     /// Runs each re-announce asked for while the slot's task ran, then empties the slot, unless a newer task took it.

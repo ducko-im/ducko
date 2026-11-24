@@ -33,9 +33,8 @@ actor CLIEventHandler {
             let typist: JID = messageType == .groupchat ? from : .bare(from.bareJID)
             handleChatState(from: typist, state: state)
             return
-        case .jingleFileTransferProgress,
-             .omemoDeviceListReceived, .omemoSessionEstablished, .omemoSessionAdvanced:
-            guard isInteractive else { break }
+        case .omemoSetupChanged:
+            guard isInteractive else { return }
         case .connected, .streamResumed, .disconnected, .authenticationFailed, .plainSignInRefused,
              .presenceReceived, .iqReceived,
              .rosterUpdated,
@@ -49,9 +48,10 @@ actor CLIEventHandler {
              .roomJoined, .roomOccupantJoined, .roomOccupantLeft,
              .roomOccupantNickChanged, .roomSubjectChanged, .roomDestroyed,
              .mucSelfPingFailed,
-             .jingleFileTransferCompleted, .jingleFileTransferFailed,
+             .jingleFileTransferProgress, .jingleFileTransferCompleted, .jingleFileTransferFailed,
              .jingleChecksumReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked,
+             .omemoDeviceListReceived, .omemoSessionEstablished, .omemoSessionAdvanced,
              // An encrypted message is presented once it is stored (`handleEncryptedMessage`), so a copy already
              // stored neither prints nor rings.
              .omemoEncryptedMessageReceived, .omemoRecipientsPartial:

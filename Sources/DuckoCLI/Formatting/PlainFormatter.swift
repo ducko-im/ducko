@@ -152,6 +152,7 @@ struct PlainFormatter: CLIFormatter {
         case let .omemoDeviceListReceived(jid, devices): "OMEMO devices for \(jid): \(devices.map(String.init).joined(separator: ", "))"
         case let .omemoSessionEstablished(jid, deviceID, _, _): "OMEMO session established with \(jid) device \(deviceID)"
         case let .omemoRecipientsPartial(conversation, dropped): "OMEMO: skipped \(dropped.count) device(s) for \(conversation) — bundles missing"
+        case let .omemoSetupChanged(status): omemoSetupLine(status)
         case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
         }
     }

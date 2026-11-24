@@ -199,7 +199,7 @@ public final class BookmarksService {
              .pepItemsPublished, .pepItemsRetracted,
              .vcardAvatarHashReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked,
-             .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial,
+             .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial, .omemoSetupChanged,
              .oobIQOfferReceived:
             break
         }

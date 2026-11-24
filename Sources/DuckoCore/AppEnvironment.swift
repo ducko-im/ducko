@@ -109,6 +109,11 @@ public final class AppEnvironment {
         accountService.onSessionStarting = { [weak chatService] accountID in
             await chatService?.captureCatchUpStart(accountID: accountID)
         }
+        wireTeardown()
+    }
+
+    /// What a requested disconnect, a disable and a delete each drop of an account's state.
+    private func wireTeardown() {
         accountService.onRequestedDisconnect = { [weak self] accountID in
             guard let self else { return }
             cancelDispatchTasks(for: accountID)
@@ -118,15 +123,21 @@ public final class AppEnvironment {
             bookmarksService.purgeAccount(accountID)
             avatarService.purgeAccount(accountID)
             fileTransferService.purgeAccount(accountID)
+            omemoService.clearSetupState(accountID: accountID)
+        }
+        accountService.onAccountDisabled = { [weak rosterService] accountID in
+            rosterService?.removeFromContactList(accountID)
         }
         // A delete also drops what a disconnect keeps showing of the account.
         accountService.onAccountDeleted = { [weak self] accountID in
             guard let self else { return }
+            rosterService.removeFromContactList(accountID)
             rosterService.forgetAccount(accountID)
             profileService.forgetAccount(accountID)
             chatService.forgetAccount(accountID)
-            // The OMEMO seen-device cache outlives a disconnect, so only a delete drops it.
+            // The OMEMO seen-device cache and setup dismissals outlive a disconnect, so only a delete drops them.
             omemoService.purgeSeenDeviceClassifications(accountID: accountID)
+            omemoService.forgetSetupDismissals(accountID: accountID)
         }
     }
 
@@ -137,6 +148,7 @@ public final class AppEnvironment {
         accountService.onEvent = { [weak self] event, accountID in
             guard let self else { return }
             rosterService.receiveRosterEvent(event, accountID: accountID)
+            omemoService.receiveSetupEvent(event, accountID: accountID)
             let taskID = UUID()
             dispatchTasksByAccount[accountID, default: [:]][taskID] = Task { @MainActor [weak self] in
                 defer { self?.dispatchTasksByAccount[accountID]?[taskID] = nil }

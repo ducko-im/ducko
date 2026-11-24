@@ -41,23 +41,35 @@ public final class OMEMOModule: XMPPModule, Sendable {
         var emergencyRetractGuard: (any EmergencyRetractGuarding)?
         var emergencyRetractConfirmation: EmergencyRetractConfirmation?
         var orphanDeviceRecordPurger: (any OrphanDeviceRecordPurging)?
-        /// The one task that reads, changes and publishes this device's list after the connect: a registration retry
-        /// or a re-announce. It empties the slot when it ends, unless a newer task took it.
+        /// The one task that reads, changes and publishes this device's list after the connect: a setup attempt or a
+        /// re-announce. It empties the slot when it ends, unless a newer task took it.
         var ownListTask: Task<Void, Never>?
         var ownListTaskGeneration: UInt64 = 0
-        /// Set once the connect's own publishes of the device list are done, so a re-announce cannot overlap them.
-        var isConnectSettled = false
         /// A notification left this device off the account's list while a re-announce could not start.
         var reannouncePending = false
         /// The senders whose list this connection fetched again for a device it left out.
         var refreshedListSenders: Set<BareJID> = []
+        var identityPersister: (any OMEMOIdentityPersisting)?
+        var identityPersisterAccountID: String?
+        /// Set from the session's establishment until it ends.
+        var isSessionEstablished = false
+        /// The running series of setup attempts. Only attempts of the current generation commit an outcome.
+        var setupLoopTask: Task<Void, Never>?
+        var setupGeneration: UInt64 = 0
+        /// Set once an attempt on this connection completed the setup.
+        var setupCompleted = false
+        var firstAttempt: SetupAttemptGate = .pending([])
+        /// Set while an attempt runs or is about to, so encryptions wait for the identity it installs.
+        var attemptInFlight = false
+        /// Encryptions and resets waiting for the running attempt to install an identity.
+        var identityWaiters: [CheckedContinuation<Void, Never>] = []
     }
 
     let state: OSAllocatedUnfairLock<State>
     let pepModule: PEPModule
     /// Tells room occupants' real addresses, whose sessions decrypt their room messages.
     let mucModule: MUCModule?
-    let registrationRetryDelays: [Duration]
+    let setupRetryDelays: [Duration]
     private let drawDeviceID: @Sendable () -> OMEMODeviceID
 
     public var features: [String] {
@@ -65,16 +77,16 @@ public final class OMEMOModule: XMPPModule, Sendable {
     }
 
     public convenience init(pepModule: PEPModule, mucModule: MUCModule? = nil) {
-        self.init(pepModule: pepModule, mucModule: mucModule, registrationRetryDelays: [.seconds(10), .seconds(60), .seconds(300)])
+        self.init(pepModule: pepModule, mucModule: mucModule, setupRetryDelays: [.seconds(10), .seconds(60), .seconds(300)])
     }
 
     init(
-        pepModule: PEPModule, mucModule: MUCModule? = nil, registrationRetryDelays: [Duration],
+        pepModule: PEPModule, mucModule: MUCModule? = nil, setupRetryDelays: [Duration],
         drawDeviceID: @escaping @Sendable () -> OMEMODeviceID = OMEMODeviceID.random
     ) {
         self.pepModule = pepModule
         self.mucModule = mucModule
-        self.registrationRetryDelays = registrationRetryDelays
+        self.setupRetryDelays = setupRetryDelays
         self.drawDeviceID = drawDeviceID
         self.state = OSAllocatedUnfairLock(initialState: State())
     }
@@ -88,71 +100,71 @@ public final class OMEMOModule: XMPPModule, Sendable {
     /// Installs the configured identity, because the session's stanzas can reach `handleMessage` before `handleConnect`
     /// runs, and a resumed session never runs it.
     public func handleSessionEstablished(resumed: Bool) {
-        guard !state.withLock({ $0.identityUnavailable }) else { return }
+        state.withLock { $0.isSessionEstablished = true }
+        guard !state.withLock({ $0.identityUnavailable }) else {
+            settleFirstAttempt()
+            return
+        }
         do {
             try installPendingIdentity()
         } catch {
             markIdentityUnavailable()
             log.warning("OMEMO identity could not be restored")
             log.debug("OMEMO identity could not be restored: \(error)")
+            settleFirstAttempt()
             return
         }
-        // A resumed session never runs `handleConnect`, so nothing of its own can overlap a re-announce.
-        if resumed, state.withLock({ $0.ownIdentity != nil }) {
-            settleConnect()
+        // Without an identity, an attempt installs one: the attempt `handleConnect` starts, or on a resumed session the
+        // one a `retrySetup()` call starts. Marking it in flight now makes an encryption that starts before that
+        // attempt's task wait for it, and that attempt settles the first-attempt gate. A resumed session with an
+        // identity starts no attempt of its own, so the gate settles here. An attempt a later `retrySetup()` starts
+        // runs after any re-announce, in the own-list slot.
+        let hasIdentity = state.withLock { state in
+            if state.ownIdentity == nil { state.attemptInFlight = true }
+            return state.ownIdentity != nil
+        }
+        if resumed, hasIdentity {
+            settleFirstAttempt()
         }
     }
 
+    /// Starts setting up this device's encryption and returns, so the session does not wait for it.
     public func handleConnect() async throws {
-        let connected: ConnectIdentity
-        do {
-            // A nil identity means the stored keys or the account's list were unreadable, which whoever found that has
-            // logged.
-            guard let connectIdentity = try await connectIdentity() else { return }
-            connected = connectIdentity
-        } catch {
-            throw OMEMOModuleError.translatingCryptoFailure(error)
+        let (isUnavailable, replaced) = state.withLock { state in
+            state.identityUnavailable ? (true, nil) : (false, startSetupLoop(&state))
         }
-        defer { settleConnect() }
-        let identity = connected.identity
-        let ownListKnown: Bool
-        do {
-            ownListKnown = try await ensureOwnDeviceInList(identity.deviceID, listed: connected.ownList)
-            try await republishBundle()
-        } catch {
-            throw OMEMOModuleError.translatingCryptoFailure(error)
-        }
-        let deviceID = identity.deviceID.value
-        log.info("OMEMO setup complete, device ID: \(deviceID)")
-        // Pruning against a guessed list would clear the seen-device records of every sibling device.
-        guard ownListKnown else {
-            retryOwnDeviceRegistration(identity.deviceID)
-            return
-        }
-
-        // Best-effort defense-in-depth pass against PEP entries whose bundles
-        // are missing — never aborts the connect chain.
-        let ownList = state.withLock { $0.deviceLists[identity.connectedJID.bareJID] ?? [deviceID] }
-        do {
-            _ = try await pruneStaleBundles(ownDeviceID: deviceID, ownDeviceList: ownList)
-        } catch let stanzaError as XMPPStanzaError {
-            log.warning("OMEMO stale-bundle pruning failed: \(stanzaError.condition.rawValue)")
-        } catch {
-            log.warning("OMEMO stale-bundle pruning failed")
-            log.debug("OMEMO stale-bundle pruning failed: \(error)")
+        replaced?.cancel()
+        if isUnavailable {
+            settleFirstAttempt()
         }
     }
 
     public func handleDisconnect() async {
-        let ownListTask = state.withLock { state in
-            defer { state.ownListTask = nil }
-            return state.ownListTask
+        let (ownListTask, setupLoopTask, waiters) = state.withLock { state in
+            defer {
+                state.ownListTask = nil
+                state.setupLoopTask = nil
+            }
+            state.setupGeneration &+= 1
+            state.setupCompleted = false
+            state.attemptInFlight = false
+            state.isSessionEstablished = false
+            var waiters = state.identityWaiters
+            state.identityWaiters.removeAll()
+            if case let .pending(attemptWaiters) = state.firstAttempt {
+                waiters += attemptWaiters
+            }
+            state.firstAttempt = .closed
+            return (state.ownListTask, state.setupLoopTask, waiters)
         }
         ownListTask?.cancel()
+        setupLoopTask?.cancel()
+        for waiter in waiters {
+            waiter.resume()
+        }
         state.withLock {
             $0.ownIdentity = nil
             $0.identityUnavailable = false
-            $0.isConnectSettled = false
             $0.reannouncePending = false
             $0.refreshedListSenders.removeAll()
             $0.deviceLists.removeAll()
@@ -168,6 +180,8 @@ public final class OMEMOModule: XMPPModule, Sendable {
             $0.emergencyRetractGuard = nil
             $0.emergencyRetractConfirmation = nil
             $0.orphanDeviceRecordPurger = nil
+            $0.identityPersister = nil
+            $0.identityPersisterAccountID = nil
         }
     }
 
@@ -179,20 +193,21 @@ public final class OMEMOModule: XMPPModule, Sendable {
     // MARK: - Public API
 
     public var ownIdentityData: OMEMOIdentityData? {
-        state.withLock { state in
-            guard let identity = state.ownIdentity else { return nil }
-            return OMEMOIdentityData(
-                deviceID: identity.deviceID.value,
-                identityKeyRaw: identity.identityKeyPair.rawRepresentation,
-                signedPreKeyID: identity.signedPreKey.keyID,
-                signedPreKeyRaw: identity.signedPreKey.rawRepresentation,
-                signedPreKeySignature: identity.signedPreKey.signature,
-                preKeys: identity.preKeys.map {
-                    OMEMOIdentityData.PreKeyData(keyID: $0.keyID, keyRaw: $0.rawRepresentation)
-                },
-                retainedSignedPreKeys: identity.retainedSignedPreKeys.map(\.identityData)
-            )
-        }
+        state.withLock { $0.ownIdentity.map(Self.identityData) }
+    }
+
+    static func identityData(of identity: OwnIdentity) -> OMEMOIdentityData {
+        OMEMOIdentityData(
+            deviceID: identity.deviceID.value,
+            identityKeyRaw: identity.identityKeyPair.rawRepresentation,
+            signedPreKeyID: identity.signedPreKey.keyID,
+            signedPreKeyRaw: identity.signedPreKey.rawRepresentation,
+            signedPreKeySignature: identity.signedPreKey.signature,
+            preKeys: identity.preKeys.map {
+                OMEMOIdentityData.PreKeyData(keyID: $0.keyID, keyRaw: $0.rawRepresentation)
+            },
+            retainedSignedPreKeys: identity.retainedSignedPreKeys.map(\.identityData)
+        )
     }
 
     /// Sets the identity to install when the next session is established, instead of generating a fresh one.
@@ -217,6 +232,14 @@ public final class OMEMOModule: XMPPModule, Sendable {
         state.withLock {
             $0.seenDeviceClassificationProvider = provider
             $0.seenDeviceClassificationAccountID = accountID
+        }
+    }
+
+    /// Wires the store a generated identity is saved to before anything uses it, under `accountID`.
+    package func configureIdentityPersister(_ persister: any OMEMOIdentityPersisting, accountID: String) {
+        state.withLock {
+            $0.identityPersister = persister
+            $0.identityPersisterAccountID = accountID
         }
     }
 
@@ -373,6 +396,7 @@ public final class OMEMOModule: XMPPModule, Sendable {
         ownDeviceIDs: [UInt32]?,
         conversation: BareJID
     ) async throws -> EncryptedMessageElements {
+        await awaitIdentityIfSettingUp()
         do {
             let identity = try requireOwnIdentity()
             let envelope = SCEEnvelope.build(content: content, time: time, to: conversation, from: identity.connectedJID.bareJID)
@@ -532,16 +556,18 @@ public final class OMEMOModule: XMPPModule, Sendable {
 
     // MARK: - Identity Generation
 
-    /// The identity a connect works with, and the account's device list when creating it read that list.
-    private struct ConnectIdentity {
+    /// The identity a setup attempt works with. `ownList` is the account's device list when the identity was generated
+    /// against it, and nil for an installed one. A generated identity is not installed yet.
+    struct ConnectIdentity {
         let identity: OwnIdentity
         let ownList: [UInt32]?
     }
 
-    /// The identity a fresh connect works with. Generates a new device only when none was configured, with an id the
+    /// The identity a setup attempt works with. Generates a new device only when none was configured, with an id the
     /// account's list does not hold (XEP-0384). Returns `nil` when the configured keys could not be read, since
-    /// replacing them would lose the device, or when the list could not be read, since a new id could then collide.
-    private func connectIdentity() async throws -> ConnectIdentity? {
+    /// replacing them would lose the device. Throws `ownDeviceListUnreadable` when the list could not be read, since a
+    /// new id could then collide. A later attempt reads it again.
+    func connectIdentity() async throws -> ConnectIdentity? {
         let (installed, unavailable) = state.withLock { ($0.ownIdentity, $0.identityUnavailable) }
         if unavailable { return nil }
         if let installed { return ConnectIdentity(identity: installed, ownList: nil) }
@@ -557,14 +583,11 @@ public final class OMEMOModule: XMPPModule, Sendable {
         do {
             ownList = try await fetchDeviceListFromPEP(nil) ?? []
         } catch {
-            markIdentityUnavailable()
-            log.warning("OMEMO own device list could not be read; no device is created on this connection")
+            log.warning("OMEMO own device list could not be read; no device is created yet")
             log.debug("OMEMO own device list could not be read: \(error)")
-            return nil
+            throw OMEMOSetupFailure.ownDeviceListUnreadable
         }
-        let generated = try generateOwnIdentity(avoiding: ownList)
-        state.withLock { $0.ownIdentity = generated }
-        return ConnectIdentity(identity: generated, ownList: ownList)
+        return try ConnectIdentity(identity: generateOwnIdentity(avoiding: ownList), ownList: ownList)
     }
 
     /// Returns `nil` when no identity is pending.
@@ -603,7 +626,7 @@ public final class OMEMOModule: XMPPModule, Sendable {
         )
     }
 
-    private func generateOwnIdentity(avoiding listedDeviceIDs: [UInt32]) throws -> OwnIdentity {
+    func generateOwnIdentity(avoiding listedDeviceIDs: [UInt32]) throws -> OwnIdentity {
         var deviceID = drawDeviceID()
         while listedDeviceIDs.contains(deviceID.value) {
             deviceID = drawDeviceID()
@@ -675,7 +698,7 @@ public final class OMEMOModule: XMPPModule, Sendable {
 
     // MARK: - Stale Bundle Pruning
 
-    private func pruneStaleBundles(ownDeviceID: UInt32, ownDeviceList: [UInt32]) async throws -> [UInt32] {
+    func pruneStaleBundles(ownDeviceID: UInt32, ownDeviceList: [UInt32]) async throws -> [UInt32] {
         let context = state.withLock { state in
             OMEMOMaintenance.PruneContext(
                 provider: state.seenDeviceClassificationProvider,
@@ -1059,20 +1082,20 @@ public extension OMEMOModule {
     }
 }
 
-// MARK: - Identity Provider Protocol
+// MARK: - Identity Persistence
 
-/// Read-only access to an OMEMO identity source. Lets `OMEMOService` read `ownIdentityData` and `consumedPreKeyIDs()`
-/// without holding a concrete module, so first-time persistence and pre-key upkeep can be exercised under unit tests.
-package protocol OMEMOIdentityProviding: Sendable {
-    var ownIdentityData: OMEMOModule.OMEMOIdentityData? { get }
-    func consumedPreKeyIDs() -> Set<UInt32>
+/// Stores a newly generated identity with its keys, keyed by the opaque `accountID` the module was configured with.
+/// Returns whether the identity was stored. With a persister configured, the module uses a new identity only once it
+/// was stored.
+package protocol OMEMOIdentityPersisting: Sendable {
+    func persistNewIdentity(_ data: OMEMOModule.OMEMOIdentityData, accountID: String) async -> Bool
 }
-
-extension OMEMOModule: OMEMOIdentityProviding {}
 
 /// What `OMEMOService` uses to keep the module's pre-keys and published bundle in step, as a protocol so unit tests can
 /// drive that upkeep through a stub.
-package protocol OMEMOPreKeyMaintaining: OMEMOIdentityProviding {
+package protocol OMEMOPreKeyMaintaining: Sendable {
+    var ownIdentityData: OMEMOModule.OMEMOIdentityData? { get }
+    func consumedPreKeyIDs() -> Set<UInt32>
     var bundleNeedsPublish: Bool { get }
     func addPreKeys(_ preKeys: [OMEMOPreKey])
     func retirePreKeys(_ keyIDs: Set<UInt32>)

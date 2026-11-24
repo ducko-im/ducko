@@ -28,6 +28,8 @@ enum CLIError: Error, LocalizedError {
     case malformedQuotedArgument(String)
     case omemoDeviceNotFound(deviceID: UInt32, jid: String)
     case omemoFingerprintMismatch(deviceID: UInt32, jid: String)
+    case accountNotConnected
+    case omemoSetupNotIncomplete
     case unlistedOption(String)
     case notYesOrNo(String)
     case registrationRedirected
@@ -88,6 +90,10 @@ enum CLIError: Error, LocalizedError {
             "Device \(deviceID) not found for \(jid)."
         case let .omemoFingerprintMismatch(deviceID, jid):
             "The fingerprint does not match the key of device \(deviceID) for \(jid)."
+        case .accountNotConnected:
+            "The account is not connected."
+        case .omemoSetupNotIncomplete:
+            "This device's encryption setup is not incomplete."
         case let .unlistedOption(value):
             "\(value) is not one of the listed options."
         case let .notYesOrNo(value):

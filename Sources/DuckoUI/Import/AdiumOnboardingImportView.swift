@@ -298,7 +298,7 @@ struct AdiumOnboardingImportView: View {
 
         var keychainPasswords: [String: String] = [:]
         for account in accounts {
-            if let pw = AdiumKeychainReader.password(for: account) {
+            if let pw = Self.usableKeychainPassword(AdiumKeychainReader.password(for: account)) {
                 keychainPasswords[account.id] = pw
             }
         }
@@ -310,12 +310,24 @@ struct AdiumOnboardingImportView: View {
         prefill(keychainPasswords)
     }
 
-    /// Fills in and selects every account whose password Adium's keychain supplied.
+    /// Fills in the passwords the keychain supplied and selects every account. A selected account without a password
+    /// shows its field.
     private func prefill(_ keychainPasswords: [String: String]) {
         for (id, pw) in keychainPasswords {
             passwords[id] = pw
         }
-        selectedAccountIDs = Set(keychainPasswords.keys)
+        selectedAccountIDs = Self.initialSelection(for: accounts)
+    }
+
+    /// Every discovered account starts selected, whether or not the keychain had its password.
+    static func initialSelection(for accounts: [AdiumAccount]) -> Set<AdiumAccount.ID> {
+        Set(accounts.map(\.id))
+    }
+
+    /// An empty keychain item counts as no password, so its account asks for one.
+    static func usableKeychainPassword(_ password: String?) -> String? {
+        guard let password, !password.isEmpty else { return nil }
+        return password
     }
 
     private func performImport() async {

@@ -272,8 +272,8 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     }
 
     /// Module lifecycle after handshake. Resume: `handleResume()` in dict order. Fresh: SM `<enable>` → `.connected`
-    /// → roster → non-PEP modules → caps-bearing initial presence → PEP publisher, per RFC 6121 / XEP-0163 ordering
-    /// invariants.
+    /// → roster → non-PEP modules → caps-bearing initial presence → PEP publisher start, per RFC 6121 / XEP-0163
+    /// ordering invariants.
     private func runPostHandshakeModules(resumed: Bool) async throws {
         try checkActiveSession()
         if resumed {
@@ -291,9 +291,10 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         let rosterKey = ObjectIdentifier(RosterModule.self)
         let presenceKey = ObjectIdentifier(PresenceModule.self)
         let smKey = ObjectIdentifier(StreamManagementModule.self)
-        // OMEMOModule is the only connect-time PEP *publisher* (device-list + bundle); it is sequenced after
-        // presence below. Every other module runs before presence, so non-PEP startup work, such as CarbonsModule
-        // enabling carbons on the SASL1 fallback path, completes before the resource is advertised as available.
+        // OMEMOModule is the only connect-time PEP *publisher* (device-list + bundle); it is started after presence
+        // below and publishes in the background, so the session does not wait for it. Every other module runs before
+        // presence, so non-PEP startup work, such as CarbonsModule enabling carbons on the SASL1 fallback path,
+        // completes before the resource is advertised as available.
         let omemoKey = ObjectIdentifier(OMEMOModule.self)
 
         // Drive SM `<enable>` before any other handleConnect so the race
@@ -330,7 +331,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             try await presenceModule.handleConnect()
             try checkActiveSession()
         }
-        // Caps is on the wire — release the gated PEP-reacting services, then run the PEP publisher module.
+        // Caps is on the wire — release the gated PEP-reacting services, then start the PEP publisher module.
         settleInitialPresenceReadiness(open: true)
         if let omemoModule = modules[omemoKey] {
             try await omemoModule.handleConnect()

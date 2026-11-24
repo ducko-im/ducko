@@ -4,14 +4,12 @@ import Testing
 
 extension OMEMOModuleTests {
     struct DeviceListFetchFailureTests {
-        private typealias SeenDevices = PruneStaleBundlesTests.StubSeenDeviceClassificationProvider
-
         private let mock = MockTransport()
         private let pepModule = PEPModule()
         private let omemoModule: OMEMOModule
 
         init() {
-            self.omemoModule = OMEMOModule(pepModule: pepModule, registrationRetryDelays: [.zero, .zero, .zero])
+            self.omemoModule = OMEMOModule(pepModule: pepModule, setupRetryDelays: [.zero, .zero, .zero])
         }
 
         private func startConnect() async -> (XMPPClient, Task<Void, any Error>) {
@@ -61,59 +59,58 @@ extension OMEMOModuleTests {
             }.xml
         }
 
+        private func nextBundlePublish() async throws -> String {
+            try await awaitOutgoingIQ(on: mock, type: .set, namespace: XMPPNamespaces.pubsub) {
+                $0.contains("node=\"\(XMPPNamespaces.omemoBundles)\"")
+            }.xml
+        }
+
         private func publishedDeviceID(in bundlePublish: String) throws -> Substring {
             let itemStart = try #require(bundlePublish.range(of: "<item id=\""))
             return bundlePublish[itemStart.upperBound...].prefix { $0.isNumber }
         }
 
-        /// A fetch that fails for any reason but a missing node publishes only the bundle and skips pruning. The device
-        /// is added afterwards from a fresh read, never over the unread list. Only an existing device gets this far: a new
-        /// one is not created over an unread list.
+        /// A fetch that fails for any reason but a missing node leaves the setup incomplete, and publishes nothing over
+        /// the unread list. The next attempt adds the device from a fresh read, then publishes the bundle. Only an
+        /// existing device gets this far: a new one is not created over an unread list.
         @Test(arguments: [false, true])
         func `A failed own device-list fetch registers the device from a fresh read`(failsAtSend: Bool) async throws {
             try omemoModule.configureIdentity(OMEMO2Fixtures.device("bob").identityData)
-            let seenDevices = SeenDevices(initial: [99])
-            omemoModule.configureSeenDeviceClassificationProvider(seenDevices, accountID: "acct-1")
             if failsAtSend {
-                // The failed send is never recorded, so the bundle publish becomes stanza 5.
+                // The connect's read fails at the send, so the first read the test answers is the retry's.
                 await mock.failNextSend(matching: XMPPNamespaces.omemoDevices, error: XMPPClientError.sendFailed("The connection was closed"))
             }
             let (client, connectTask) = await startConnect()
+            let statuses = SetupStatusRecorder(client: client)
+            try await connectTask.value
 
-            var bundleIndex = 5
             var answered: Set<String> = []
             if !failsAtSend {
                 let id = try #require(await extractIQID(from: sentStanza(5)))
                 await failDeviceListRead(id: id)
                 answered.insert(id)
-                bundleIndex = 6
             }
-            let bundlePublish = await sentStanza(bundleIndex)
-            #expect(bundlePublish.contains("<publish") && bundlePublish.contains(XMPPNamespaces.omemoBundles))
-            try await acknowledge(bundlePublish)
-            try await connectTask.value
-
             try await answerDeviceListRead(id: nextDeviceListRead(after: answered))
             let listPublish = try await nextDeviceListPublish()
+            try await acknowledge(listPublish)
+            let bundlePublish = try await nextBundlePublish()
             let deviceID = try publishedDeviceID(in: bundlePublish)
             #expect(listPublish.contains("<device id=\"99\"") && listPublish.contains("<device id=\"\(deviceID)\""))
-            try await acknowledge(listPublish)
+            try await acknowledge(bundlePublish)
 
-            #expect(await seenDevices.lastUpdate == nil)
-            #expect(await Set(seenDevices.snapshot.keys) == [99])
-
+            try await eventually { statuses.recorded == [.incomplete, .complete] }
             await disconnectFast(client)
         }
 
-        /// A retry whose read fails waits for the next delay. Retries stop after the first successful registration or
-        /// after the last delay.
+        /// An attempt whose read fails waits for the next delay. Attempts stop after the first that completes, or after
+        /// the last delay.
         @Test(arguments: [1, 3])
-        func `Registration retries stop after success or the last delay`(failedRetries: Int) async throws {
+        func `Setup retries stop after completion or the last delay`(failedRetries: Int) async throws {
             try omemoModule.configureIdentity(OMEMO2Fixtures.device("bob").identityData)
             let (client, connectTask) = await startConnect()
+            let statuses = SetupStatusRecorder(client: client)
             let connectReadID = try #require(await extractIQID(from: sentStanza(5)))
             await failDeviceListRead(id: connectReadID)
-            try await acknowledge(sentStanza(6))
             try await connectTask.value
 
             var answered: Set<String> = [connectReadID]
@@ -123,17 +120,22 @@ extension OMEMOModuleTests {
                 if attempt > failedRetries {
                     await answerDeviceListRead(id: id)
                     try await acknowledge(nextDeviceListPublish())
+                    try await acknowledge(nextBundlePublish())
                     break
                 }
                 await failDeviceListRead(id: id)
             }
 
+            let completes = failedRetries < 3
+            let expected = Array(repeating: OMEMOSetupStatus.incomplete, count: min(failedRetries, 3) + 1) + (completes ? [.complete] : [])
+            try await eventually { statuses.recorded == expected }
             try await Task.sleep(for: .milliseconds(200))
             let reads = await mock.sentBytes.count {
                 let stanza = String(decoding: $0, as: UTF8.self)
                 return stanza.contains("type=\"get\"") && stanza.contains(XMPPNamespaces.omemoDevices)
             }
             #expect(reads == 1 + min(failedRetries + 1, 3))
+            #expect(statuses.recorded == expected)
 
             await disconnectFast(client)
         }

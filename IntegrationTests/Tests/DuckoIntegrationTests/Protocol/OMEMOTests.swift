@@ -14,21 +14,27 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 let aliceJID = try harness.jid(for: TestCredentials.alice)
                 let aliceOMEMO = try await harness.module(OMEMOModule.self, for: "alice")
+                let accountID = try #require(harness.accounts["alice"]?.accountID)
 
-                // OMEMOModule.handleConnect ran synchronously inside the
-                // connect chain before setUp returned, so the module-level
-                // identity data is ready immediately. Avoid the service-level
-                // `ownDeviceInfo` path — that's behind an async persistence
-                // task that can lag behind connect.
-                let ownIdentity = try #require(aliceOMEMO.ownIdentityData)
-                let deviceID = ownIdentity.deviceID
+                // Setup runs beside the session, so the identity is ready once its first attempt had its outcome. The
+                // service learns the outcome from the account's events, which can trail the module by a moment.
+                try await harness.awaitOMEMOSetup(for: "alice")
+                let deadline = ContinuousClock.now + .seconds(5)
+                while harness.environment.omemoService.setupState(accountID: accountID) != .complete, ContinuousClock.now < deadline {
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+                #expect(harness.environment.omemoService.setupState(accountID: accountID) == .complete)
+                let deviceID = try #require(aliceOMEMO.ownIdentityData).deviceID
 
                 // Prosody's mod_pep doesn't send +notify back to the publisher's
                 // own resources, so assert via a fresh PEP items IQ get instead
                 // of waiting for `.pepItemsPublished`. PEP device lists are
                 // append-only — assert containment, not count.
-                let devices = try await aliceOMEMO.fetchDeviceList(for: aliceJID)
+                let devices = try await aliceOMEMO.fetchDeviceList(for: aliceJID, forceRefresh: true)
                 #expect(devices.contains(deviceID))
+                let pep = try await harness.module(PEPModule.self, for: "alice")
+                let bundles = try await pep.retrieveItems(node: XMPPNamespaces.omemoBundles, itemID: "\(deviceID)")
+                #expect(bundles.first?.payload.name == "bundle")
             }
         }
 
@@ -171,6 +177,10 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 let bobJID = ctx.bobJID
 
                 // Bob messages Alice first (plaintext) so Alice's ChatService locks Bob's bound resource (RFC 6121 §5.1).
+                // Bob's restored device can take up key exchanges Alice sent it in earlier tests, which would switch his
+                // chat with her to encrypted, so he switches it off.
+                let bobAliceConversation = try await harness.environment.chatService.openConversation(for: aliceJID, accountID: ctx.bob.accountID)
+                try await harness.environment.chatService.setEncryptionEnabled(false, for: bobAliceConversation.id, accountID: ctx.bob.accountID)
                 let lockBody = "lock-\(UUID().uuidString.prefix(8))"
                 try await harness.environment.chatService.sendMessage(to: aliceJID, body: lockBody, accountID: ctx.bob.accountID)
 
@@ -191,8 +201,9 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 let receivedTo = try await ctx.bob.waitForEvent(
                     extracting: { event -> JID? in
+                        // The priming reset's empty key exchange carries no payload, and went out before the lock.
                         guard case let .messageReceived(message) = event,
-                              message.element.child(named: "encrypted", namespace: XMPPNamespaces.omemo) != nil,
+                              message.element.child(named: "encrypted", namespace: XMPPNamespaces.omemo)?.child(named: "payload") != nil,
                               message.to?.bareJID == bobJID else { return nil }
                         return message.to
                     },
@@ -321,19 +332,23 @@ extension DuckoIntegrationTests.ProtocolLayer {
             return EncryptionContext(alice: alice, bob: bob, bobJID: bobJID)
         }
 
-        /// Refreshes alice's view of a peer's PEP device list, waits for the
-        /// fresh deviceID to land in alice's OMEMOStore (so TOFU picks it up),
-        /// opens the conversation, and flips encryption on.
+        /// Waits for both accounts' OMEMO setup, which `setUp` does not, so the
+        /// peer's device is published before alice refreshes its list.
         @MainActor
         private static func primePeerForEncryption(
             harness: TestHarness, aliceOMEMO: OMEMOModule, aliceID: UUID,
             peerLabel: String, peerJID: BareJID
         ) async throws {
+            try await harness.awaitOMEMOSetup(for: "alice")
+            try await harness.awaitOMEMOSetup(for: peerLabel)
             _ = try await aliceOMEMO.fetchDeviceList(for: peerJID, forceRefresh: true)
             try await awaitPeerDeviceInStore(
                 harness: harness, peerLabel: peerLabel,
                 accountID: aliceID, peerJID: peerJID
             )
+            // A device restored from its fixture comes back without its sessions, while alice may have taken up one
+            // of its key exchanges from an earlier test at sign-in. A reset starts both sides from a fresh key exchange.
+            _ = try await harness.environment.omemoService.resetSessions(peerJID: peerJID.description, deviceID: nil, accountID: aliceID)
             let conversation = try await harness.environment.chatService.openConversation(for: peerJID, accountID: aliceID)
             try await harness.environment.chatService.setEncryptionEnabled(true, for: conversation.id, accountID: aliceID)
         }
@@ -342,7 +357,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
         /// (as reported by the peer's own OMEMOModule) is present.
         ///
         /// Alice's view of peer devices is populated asynchronously: the peer
-        /// publishes in `handleConnect`, alice's server relays a PEP +notify,
+        /// publishes during its setup, alice's server relays a PEP +notify,
         /// and `OMEMOService.handleDeviceListReceived` persists via a detached
         /// task. Without this wait, encrypt can race the +notify and omit the
         /// peer's current device — the stanza goes out with no key for the

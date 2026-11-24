@@ -46,7 +46,16 @@ struct FormatterEventContractTests {
             .init(.omemoDeviceListReceived(jid: peer, devices: [12, 34]), "OMEMO devices for alice@example.com: 12, 34", "\u{001B}[2mOMEMO devices for alice@example.com: 12, 34\(reset)",
                   ["type": "omemo_device_list", "jid": peer.description, "devices": "12,34", "account": account]),
             .init(.omemoSessionEstablished(jid: peer, deviceID: 12, identityKey: [0, 0xAB, 0xFF], consumedPreKeyID: 7), "OMEMO session established with alice@example.com device 12", "\u{001B}[32mOMEMO session established with alice@example.com device 12\(reset)",
-                  ["type": "omemo_session_established", "jid": peer.description, "device_id": "12", "fingerprint": "00abff", "account": account])
+                  ["type": "omemo_session_established", "jid": peer.description, "device_id": "12", "fingerprint": "00abff", "account": account]),
+            .init(.omemoSetupChanged(.complete), "OMEMO: this device's encryption setup is complete",
+                  "\u{001B}[32mOMEMO: this device's encryption setup is complete\(reset)",
+                  ["type": "omemo_setup", "status": "complete", "account": account]),
+            .init(.omemoSetupChanged(.incomplete), "OMEMO: this device's encryption setup is incomplete; encrypted replies may not reach it",
+                  "\u{001B}[33mOMEMO: this device's encryption setup is incomplete; encrypted replies may not reach it\(reset)",
+                  ["type": "omemo_setup", "status": "incomplete", "account": account]),
+            .init(.omemoSetupChanged(.refused(.forbidden)), "OMEMO: the server refused this device's encryption keys: \(XMPPStanzaError.Condition.forbidden.displayText)",
+                  "\u{001B}[33mOMEMO: the server refused this device's encryption keys: \(XMPPStanzaError.Condition.forbidden.displayText)\(reset)",
+                  ["type": "omemo_setup", "status": "refused", "condition": "forbidden", "account": account])
         ]
         try expectFormats(cases)
     }

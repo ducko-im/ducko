@@ -25,6 +25,7 @@ package extension OMEMOModule {
     /// than its absence, or when the empty message cannot be sent.
     func resetSession(jid: BareJID, deviceID: UInt32) async throws -> SessionResetOutcome {
         let sessionKey = SessionKey(jid: jid, deviceID: deviceID)
+        await awaitIdentityIfSettingUp()
         let identity = try requireOwnIdentity()
         let bundle: OMEMOBundle
         do {

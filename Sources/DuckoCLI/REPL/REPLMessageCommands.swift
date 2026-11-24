@@ -280,6 +280,20 @@ func handleOMEMOResetREPLCommand(_ arguments: String, context: REPLContext) asyn
     }
 }
 
+func handleOMEMOSetupREPLCommand(context: REPLContext) async {
+    let outcome = await context.environment.omemoService.retrySetup(accountID: context.accountID)
+    print(omemoSetupRetryLine(outcome, accountID: context.accountID, formatter: context.formatter))
+}
+
+/// What `/omemo-setup` prints for `outcome`. The started attempt's own outcome arrives as an event.
+func omemoSetupRetryLine(_ outcome: OMEMOSetupRetryOutcome, accountID: UUID, formatter: any CLIFormatter) -> String {
+    switch outcome {
+    case .started: formatter.formatCommandResult(.omemoSetupRetried(accountID: accountID))
+    case .notConnected: formatter.formatError(CLIError.accountNotConnected)
+    case .notNeeded: formatter.formatError(CLIError.omemoSetupNotIncomplete)
+    }
+}
+
 /// The conversation `address` names: the private chat with the occupant `room@service/nick`, or the chat or room
 /// with a bare address.
 private func namedConversation(_ address: String, context: REPLContext) async throws -> Conversation {

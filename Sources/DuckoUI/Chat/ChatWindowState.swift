@@ -132,6 +132,23 @@ public final class ChatWindowState {
         liveConversation?.encryptionEnabled == true
     }
 
+    /// This Mac's incomplete or refused encryption setup for the chat's account, while encryption is on in the chat and
+    /// the user has not dismissed it here since the last failed attempt.
+    var omemoSetupProblem: OMEMOSetupState? {
+        guard liveConversation?.encryptionEnabled == true, let accountID = resolvedAccountID else { return nil }
+        return environment.omemoService.setupProblem(accountID: accountID, conversationJID: jidString)
+    }
+
+    /// Whether Try Again runs for the chat's account, which the banner shows as "Trying…".
+    var isRetryingOMEMOSetup: Bool {
+        resolvedAccountID.map { environment.omemoService.retryingSetupAccounts.contains($0) } ?? false
+    }
+
+    var canRetryOMEMOSetup: Bool {
+        guard let accountID = resolvedAccountID, case .connected = environment.accountService.connectionStates[accountID] else { return false }
+        return !isRetryingOMEMOSetup
+    }
+
     /// The files this chat's contact is sending right now, each of which gets a row at the end of the timeline until
     /// its message replaces it. A room's occupant shares the room's address, so only a chat with one contact has them.
     var receivingTransfers: [FileTransferService.ActiveTransfer] {
@@ -402,6 +419,18 @@ public final class ChatWindowState {
             log.warning("Encryption sessions could not be reset")
             log.debug("Resetting the encryption sessions failed with: \(error)")
         }
+    }
+
+    /// Sets this Mac's encryption up again for the chat's account, at once.
+    func retryOMEMOSetup() async {
+        guard let accountID = resolvedAccountID else { return }
+        await environment.omemoService.retrySetup(accountID: accountID)
+    }
+
+    /// Hides the setup banner in this chat until the account's next attempt fails.
+    func dismissOMEMOSetupProblem() {
+        guard let accountID = resolvedAccountID else { return }
+        environment.omemoService.dismissSetupProblem(accountID: accountID, conversationJID: jidString)
     }
 
     func setRoomSubject(_ subject: String) async {

@@ -10,7 +10,7 @@ struct REPLCommandTests {
 
     @Test(arguments: [
         "", "send", "/send a hi", "Send a hi", "/add", "/reply", "/remove", "/approve", "/deny", "/block", "/unblock", "/edit", "/retract", "/search", "/searchall", "/encrypt", "/omemo-verify", "/omemo-reset", "/pref", "/directed-presence",
-        "/roster extra", "/who extra", "/profile extra", "/blocklist extra", "/transfers extra", "/connection-info extra", "/unregister-account extra", "/change-password extra", "help extra", "quit extra", "exit extra",
+        "/roster extra", "/who extra", "/profile extra", "/blocklist extra", "/transfers extra", "/connection-info extra", "/omemo-setup extra", "/unregister-account extra", "/change-password extra", "help extra", "quit extra", "exit extra",
         "/joiner room", "/join\troom", "send\ta hi", "/pm\nAlice hi", "/unknown"
     ])
     func `unrecognized forms stay unknown`(input: String) {
@@ -126,6 +126,7 @@ Commands:
   /encrypt <jid> on|off    Toggle OMEMO encryption for a conversation
   /omemo-verify <jid> <id> <fingerprint>  Mark a device verified after comparing its fingerprint
   /omemo-reset <jid> [id]  Reset OMEMO sessions with a contact's or your other devices
+  /omemo-setup             Retry setting up this device's OMEMO encryption
   /pref chatstates on|off  Toggle chat state notifications
   /pref markers on|off      Toggle displayed markers (read receipts)
   help                     Show this help

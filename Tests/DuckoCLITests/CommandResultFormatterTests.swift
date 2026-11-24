@@ -49,6 +49,8 @@ struct CommandResultFormatterTests {
                     ["action": "set_encryption", "jid": "bob@example.com", "enabled": "true"]),
         Expectation(.encryption(jid: "bob@example.com", enabled: false), "Encryption disabled for bob@example.com.",
                     ["action": "set_encryption", "jid": "bob@example.com", "enabled": "false"]),
+        Expectation(.omemoSetupRetried(accountID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!), "Retrying OMEMO setup.",
+                    ["action": "retry_omemo_setup", "account": "00000000-0000-0000-0000-000000000001"]),
         Expectation(.directedPresenceSent(jid: "bob@example.com"), "Sent directed presence to bob@example.com.", ["action": "send_presence", "jid": "bob@example.com"]),
         Expectation(.subscriptionApproved(jid: "bob@example.com"), "Approved subscription from bob@example.com.",
                     ["action": "approve_subscription", "jid": "bob@example.com"]),

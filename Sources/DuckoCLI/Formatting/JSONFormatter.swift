@@ -262,6 +262,7 @@ struct JSONFormatter: CLIFormatter {
         case let .omemoDeviceListReceived(jid, devices): encode(["type": "omemo_device_list", "jid": jid.description, "devices": devices.map(String.init).joined(separator: ","), "account": account])
         case let .omemoSessionEstablished(jid, deviceID, identityKey, _): formatOMEMOSession(jid: jid, deviceID: deviceID, identityKey: identityKey, account: account)
         case let .omemoRecipientsPartial(conversation, dropped): formatOMEMORecipientsPartial(conversation: conversation, dropped: dropped, account: account)
+        case let .omemoSetupChanged(status): formatOMEMOSetup(status, account: account)
         case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
         }
     }
@@ -333,6 +334,18 @@ struct JSONFormatter: CLIFormatter {
             "fingerprint": omemoFingerprint(of: identityKey),
             "account": account
         ])
+    }
+
+    private func formatOMEMOSetup(_ status: OMEMOSetupStatus, account: String) -> String {
+        var dict = ["type": "omemo_setup", "account": account]
+        switch status {
+        case .complete: dict["status"] = "complete"
+        case .incomplete: dict["status"] = "incomplete"
+        case let .refused(condition):
+            dict["status"] = "refused"
+            dict["condition"] = condition.rawValue
+        }
+        return encode(dict)
     }
 
     /// Structured per-device drops so JSON consumers can parse without

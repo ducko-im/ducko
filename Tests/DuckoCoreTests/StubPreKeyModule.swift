@@ -20,7 +20,7 @@ func makeIdentityData(
     )
 }
 
-/// Plays the module for first-time persistence and pre-key upkeep: reports `identity` and `consumed`, records added and
+/// Plays the module for pre-key upkeep: reports `identity` and `consumed`, records added and
 /// retired pre-keys, takes installed signed pre-keys into its identity, and publishes with the outcome `publishFails`
 /// decides. The bundle needs publishing at first and again once keys are added or newly retired or the current signed
 /// pre-key is replaced, until a publish succeeds.

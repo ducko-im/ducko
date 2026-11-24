@@ -29,7 +29,7 @@ Each subcommand declares these options itself. Some reject them with "Unknown op
 
 ## Subcommands
 
-Unless noted otherwise, each subcommand connects, performs its action, and disconnects.
+Unless noted otherwise, each subcommand connects, waits for the first attempt to set up this device's OMEMO encryption, performs its action, and disconnects. The wait keeps a command from running before this device can encrypt, or exiting while its new keys are stored. A `presence` that holds a status does not wait.
 
 ### `send [--file <path>] [--method auto|http|jingle] <jid> [body]`
 
@@ -83,6 +83,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/encrypt <jid> on|off` — toggle OMEMO encryption for a conversation. `off` also keeps a contact's encrypted message from switching it back on.
 - `/omemo-verify <jid> <device-id> <fingerprint>` — mark a device verified after comparing its fingerprint, as `omemo verify` does
 - `/omemo-reset <jid> [device-id]` — reset the OMEMO sessions with the contact's devices, or with your other devices for your own JID, as `omemo reset` does
+- `/omemo-setup` — try setting up this device's OMEMO encryption again at once, after an attempt left it incomplete or the server refused it. It prints "Retrying OMEMO setup.", and the attempt's outcome follows as an `OMEMO:` line, as every attempt's outcome does. While the account is not connected, while its first attempt is still running, or once setup is complete, it prints an error instead
 - `/pref chatstates on|off` — toggle chat state notifications (typing indicators)
 - `/pref markers on|off` — toggle displayed markers (read receipts)
 - `/reply <jid> <message>` — reply to the last incoming message from JID, or in the room JID, skipping a room message without an id from the room. Ducko accepts a room's ids only when its disco#info lists `urn:xmpp:sid:0`. The reply starts with a quote of that message, unless the message was encrypted and the reply is not.
@@ -552,9 +553,11 @@ Empty lists emit one `<kind>_empty` record instead of text: `accounts_empty`, `r
 
 OMEMO commands emit `omemo_fingerprint` (`fingerprint` and `display_fingerprint`), `omemo_device` (`jid`, `device_id`, `trust`, and `fingerprint` and `display_fingerprint` when known), `omemo_trust` and `omemo_session_reset` records. `fingerprint` is the raw Ed25519 hex Ducko stores, and `display_fingerprint` is the grouped Curve25519 form the text output shows.
 
+`interactive` and `room join` print an `omemo_setup` record for each setup attempt's outcome, with `account`, `status` (`complete`, `incomplete` or `refused`) and, for `refused`, the server's `condition`. Other commands print none.
+
 A confirmation or single answer is a `command_result` record: an `action`, its fields and the human `message`. For example `{"action":"block","jid":"carol@example.com","message":"Blocked carol@example.com.","type":"command_result"}`. The actions are `block`, `unblock`, `add_bookmark`, `remove_bookmark`, `save_avatar` and `publish_avatar` (with `hash` and `size`, and `save_avatar` adding `path` and `mime_type`), and `register_account`.
 
-`interactive` adds `unregister_account` (with `result`: `cancelled`, or `unregistered` with `history_deleted`), `submit_registration`, `change_password`, `send_file_directly`, `accept_transfer`, `decline_transfer`, `cancel_transfer`, `retract`, `edit`, `get_preference` and `set_preference` (with `key` and `enabled`), `set_encryption`, `send_presence`, `approve_subscription`, `deny_subscription`, `leave_room`, `destroy_room`, `current_room`, `grant_voice`, `revoke_voice`, `kick`, `submit_room_config`, `moderate`, `send_private_message`, `own_avatar` and `avatar`. There, `help` prints one `{"text":"...","type":"help"}` record, and `/affiliations` prints an `affiliation_group` record (`affiliation`, `count`) before one `affiliation` record (`jid`, `affiliation`, `nickname`) per entry. `/transfers` prints one `transfer` record per transfer, with `file_name`, `file_size`, `file_size_bytes`, `direction`, `method`, `state` and `account`, and `sid` and `offer_id` once set. `state` is a token such as `transferring`, and `progress`, `bytes_per_second`, `seconds_remaining`, `url`, `reason` or `path` come in fields of their own.
+`interactive` adds `unregister_account` (with `result`: `cancelled`, or `unregistered` with `history_deleted`), `submit_registration`, `change_password`, `send_file_directly`, `accept_transfer`, `decline_transfer`, `cancel_transfer`, `retract`, `edit`, `get_preference` and `set_preference` (with `key` and `enabled`), `set_encryption`, `retry_omemo_setup` (with `account`), `send_presence`, `approve_subscription`, `deny_subscription`, `leave_room`, `destroy_room`, `current_room`, `grant_voice`, `revoke_voice`, `kick`, `submit_room_config`, `moderate`, `send_private_message`, `own_avatar` and `avatar`. There, `help` prints one `{"text":"...","type":"help"}` record, and `/affiliations` prints an `affiliation_group` record (`affiliation`, `count`) before one `affiliation` record (`jid`, `affiliation`, `nickname`) per entry. `/transfers` prints one `transfer` record per transfer, with `file_name`, `file_size`, `file_size_bytes`, `direction`, `method`, `state` and `account`, and `sid` and `offer_id` once set. `state` is a token such as `transferring`, and `progress`, `bytes_per_second`, `seconds_remaining`, `url`, `reason` or `path` come in fields of their own.
 
 Errors are `error` records with a `message`. In `interactive`, a usage mistake prints one carrying the usage line, and an unknown command one naming it. A mistake in the arguments themselves, caught before the command runs, prints only on stderr. A command that throws an error once it runs prints one on stdout, while stderr gets `Error: …` and the exit status is the same as in the other formats.
 

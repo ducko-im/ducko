@@ -81,6 +81,8 @@ extension DuckoIntegrationTests {
         ) async throws {
             try await TestHarness.withHarness(skipBootstrap: skipBootstrap) { harness in
                 try await harness.setUp(accounts: [credential.label: credential])
+                // A first registration still running could publish the old list again after the retract.
+                try await harness.awaitOMEMOSetup(for: credential.label)
 
                 let pep = try await harness.module(PEPModule.self, for: credential.label)
                 do {
@@ -102,6 +104,7 @@ extension DuckoIntegrationTests {
                     if case let .rosterUpdated(update) = event, update.isInitialResponse { return true }
                     return false
                 }, timeout: TestTimeout.connect)
+                try await harness.awaitOMEMOSetup(for: credential.label)
 
                 // Post-condition: the freshly-published devicelist must be a
                 // singleton — exactly the live device ID. Catches a regression
@@ -118,6 +121,8 @@ extension DuckoIntegrationTests {
                 let devices = items.first?.payload.children(named: "device") ?? []
                 try #require(devices.count == 1, "Expected singleton devicelist for \(credential.label), got \(devices.count) entries")
                 let liveDeviceID = try #require(devices.first?.attribute("id"), "Singleton devicelist for \(credential.label) is missing the `id` attribute")
+                let connectedDeviceID = try await harness.module(OMEMOModule.self, for: credential.label).ownIdentityData?.deviceID
+                try #require(liveDeviceID == connectedDeviceID.map(String.init), "The singleton devicelist for \(credential.label) is not the connected device")
 
                 try await Self.retractStaleBundles(
                     for: credential,

@@ -71,9 +71,10 @@ enum LifecyclePurgeTests {
             return (env, accountID)
         }
 
+        /// A disconnect keeps the account's contacts listed, shown offline, and a delete removes them.
         @MainActor
-        private func expectAllPurged(_ env: AppEnvironment, _ accountID: UUID) {
-            #expect(env.rosterService.groups.isEmpty)
+        private func expectAllPurged(_ env: AppEnvironment, _ accountID: UUID, contactsListed: Bool) {
+            #expect(env.rosterService.groups.isEmpty == !contactsListed)
             #expect(env.presenceService.contactPresences.isEmpty)
             #expect(env.presenceService.contactStatusMessages.isEmpty)
             #expect(env.chatService.pendingInvites.isEmpty)
@@ -89,7 +90,7 @@ enum LifecyclePurgeTests {
 
             await env.accountService.disconnect(accountID: accountID)
 
-            expectAllPurged(env, accountID)
+            expectAllPurged(env, accountID, contactsListed: true)
         }
 
         @Test
@@ -99,7 +100,7 @@ enum LifecyclePurgeTests {
 
             try await env.accountService.deleteAccount(accountID)
 
-            expectAllPurged(env, accountID)
+            expectAllPurged(env, accountID, contactsListed: false)
         }
     }
 }

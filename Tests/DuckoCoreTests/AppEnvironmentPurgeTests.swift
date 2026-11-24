@@ -79,17 +79,80 @@ enum AppEnvironmentPurgeTests {
 
 @MainActor
 extension AppEnvironmentPurgeTests {
-    @Test(arguments: [false, true])
-    static func `composed teardown clears the feature caches for only its account, and a delete also clears what stays shown offline`(delete: Bool) async throws {
+    enum Teardown: CaseIterable {
+        case disconnect
+        case disable
+        /// A disable whose refresh of the accounts afterwards fails.
+        case disableFailingRefresh
+        case delete
+
+        @MainActor
+        func run(on env: AppEnvironment, store: MockPersistenceStore, accountID: UUID) async throws {
+            switch self {
+            case .disconnect:
+                await env.accountService.disconnect(accountID: accountID)
+            case .disable, .disableFailingRefresh:
+                var account = try #require(env.accountService.accounts.first { $0.id == accountID })
+                account.isEnabled = false
+                if self == .disableFailingRefresh {
+                    try await store.saveAccount(account)
+                    await store.setFetchAccountsError(CancellationError())
+                    await #expect(throws: CancellationError.self) { try await env.accountService.updateAccount(account) }
+                    await store.setFetchAccountsError(nil)
+                } else {
+                    try await env.accountService.updateAccount(account)
+                }
+            case .delete:
+                try await env.accountService.deleteAccount(accountID)
+            }
+        }
+    }
+
+    /// A disconnect keeps the account's contacts listed, shown offline. A disable takes them off the list but keeps
+    /// what open chats show, and a delete drops that too.
+    @Test(arguments: Teardown.allCases)
+    static func `composed teardown clears the feature caches for only its account`(teardown: Teardown) async throws {
         let store = MockPersistenceStore()
         let env = makeEnvironment(store: store)
         let first = try await seedCaches(env, store: store, name: "first")
         let second = try await seedCaches(env, store: store, name: "second")
-        await assertCaches(env, account: first, present: true, shown: true)
-        await assertCaches(env, account: second, present: true, shown: true)
-        if delete { try await env.accountService.deleteAccount(first.id) } else { await env.accountService.disconnect(accountID: first.id) }
-        await assertCaches(env, account: first, present: false, shown: !delete)
-        await assertCaches(env, account: second, present: true, shown: true)
+        await assertCaches(env, account: first, present: true, listed: true, shown: true)
+        await assertCaches(env, account: second, present: true, listed: true, shown: true)
+        try await teardown.run(on: env, store: store, accountID: first.id)
+        await assertCaches(env, account: first, present: false, listed: teardown == .disconnect, shown: teardown != .delete)
+        await assertCaches(env, account: second, present: true, listed: true, shown: true)
+        await env.shutdown(within: .seconds(2))
+    }
+
+    /// The disable itself marks the account disabled, so a load that starts later, even after a failed refresh of the
+    /// accounts, leaves it off the list.
+    @Test(arguments: [Teardown.disable, .disableFailingRefresh])
+    static func `a contact-list load after a disable keeps the account off the list`(teardown: Teardown) async throws {
+        let store = MockPersistenceStore()
+        let env = makeEnvironment(store: store)
+        let account = try await seedCaches(env, store: store, name: "first")
+        try await teardown.run(on: env, store: store, accountID: account.id)
+
+        try await env.rosterService.loadContacts(for: account.id)
+
+        #expect(env.rosterService.contact(jidString: account.peer.description, accountID: account.id) == nil)
+        await env.shutdown(within: .seconds(2))
+    }
+
+    @Test(arguments: Teardown.allCases)
+    static func `a requested teardown clears the account's encryption setup notice`(teardown: Teardown) async throws {
+        let store = MockPersistenceStore()
+        let env = makeEnvironment(store: store)
+        let account = try await seedCaches(env, store: store, name: "first")
+        env.omemoService.receiveSetupEvent(.omemoSetupChanged(.incomplete), accountID: account.id)
+        env.omemoService.dismissSetupProblem(accountID: account.id, conversationJID: "room@example.com")
+        #expect(env.omemoService.setupProblem(accountID: account.id, conversationJID: account.peer.description) == .incomplete)
+
+        try await teardown.run(on: env, store: store, accountID: account.id)
+
+        #expect(env.omemoService.setupProblem(accountID: account.id, conversationJID: account.peer.description) == nil)
+        // Only a delete forgets what the user dismissed.
+        #expect((env.omemoService.dismissedSetupProblems[account.id] != nil) == (teardown != .delete))
         await env.shutdown(within: .seconds(2))
     }
 
@@ -140,11 +203,11 @@ extension AppEnvironmentPurgeTests {
         return (id, peer)
     }
 
-    /// `shown` covers what a disconnect keeps and a delete drops: the account's contact and your profile, which open
-    /// chats and the Contacts header still show; the OMEMO seen-device classifications; and which peers send no chat
-    /// states.
-    private static func assertCaches(_ env: AppEnvironment, account: (id: UUID, peer: BareJID), present: Bool, shown: Bool) async {
-        #expect((env.rosterService.contact(jidString: account.peer.description, accountID: account.id) != nil) == present)
+    /// `listed` is whether the contact list shows the account's contact. `shown` covers what a disconnect keeps and a
+    /// delete drops: the account's contact and your profile, which open chats and the Contacts header still show; the
+    /// OMEMO seen-device classifications; and which peers send no chat states.
+    private static func assertCaches(_ env: AppEnvironment, account: (id: UUID, peer: BareJID), present: Bool, listed: Bool, shown: Bool) async {
+        #expect((env.rosterService.contact(jidString: account.peer.description, accountID: account.id) != nil) == listed)
         #expect((env.rosterService.knownContact(jidString: account.peer.description, accountID: account.id) != nil) == shown)
         #expect(env.presenceService.pendingSubscriptionRequests.contains(account.peer) == present)
         #expect(env.chatService.pendingInvites.contains { $0.accountID == account.id } == present)

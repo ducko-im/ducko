@@ -1,3 +1,5 @@
+import Foundation
+
 /// The outcome of a command that changed something or answered a single question, which the human-readable formatters
 /// print as `message` and JSON as a `command_result` record.
 enum CLICommandResult {
@@ -16,6 +18,7 @@ enum CLICommandResult {
     /// A preference read, or set when `changed`.
     case preference(name: String, key: String, enabled: Bool, changed: Bool)
     case encryption(jid: String, enabled: Bool)
+    case omemoSetupRetried(accountID: UUID)
     case directedPresenceSent(jid: String)
     case subscriptionApproved(jid: String)
     case subscriptionDenied(jid: String)
@@ -52,6 +55,7 @@ enum CLICommandResult {
         case let .preference(name, _, enabled, changed):
             changed ? "\(name) \(enabled ? "enabled" : "disabled")." : "\(name): \(enabled ? "on" : "off")"
         case let .encryption(jid, enabled): "Encryption \(enabled ? "enabled" : "disabled") for \(jid)."
+        case .omemoSetupRetried: "Retrying OMEMO setup."
         case let .directedPresenceSent(jid): "Sent directed presence to \(jid)."
         case let .subscriptionApproved(jid): "Approved subscription from \(jid)."
         case let .subscriptionDenied(jid): "Denied subscription from \(jid)."

@@ -21,6 +21,8 @@ struct ChatView: View {
                 }
             }
 
+            OMEMOSetupBanner(windowState: windowState)
+
             IncomingFileTransferBanner()
 
             if windowState.isSearching {

@@ -1488,7 +1488,8 @@ struct OMEMOConnectArtifacts {
 
 /// Drives the standard handshake (4 stanzas) followed by OMEMO's connect-time
 /// PEP IQ flow: own device-list retrieve, device-list publish, bundle publish.
-/// After this returns, `omemoModule.ownIdentityData` is populated. The mock's
+/// It returns once the connection's first setup attempt has had its outcome, so
+/// `omemoModule.ownIdentityData` is populated. The mock's
 /// `sentBytes` is cleared so post-handshake tests can index from 0; the two
 /// publish IQ byte buffers (device-list publish, bundle publish) are returned
 /// via `OMEMOConnectArtifacts`. The own-device-list retrieve IQ is consumed
@@ -1528,6 +1529,7 @@ func makeConnectedClient(
     await mock.simulateReceive("<iq type=\"result\" id=\"\(id7)\"/>")
 
     try await connectTask.value
+    await omemoModule.awaitSetupAttempt()
     await mock.clearSentBytes()
 
     return (client, OMEMOConnectArtifacts(
@@ -1752,7 +1754,15 @@ private func makeConnectedClientWithDeviceList(
     )
 
     try await connectTask.value
+    await awaitOwnListSlotIdle(omemoModule)
     return (client, ownDeviceID)
+}
+
+/// Waits until the module's own-list slot is empty, so a setup attempt and the pruning after it have ended.
+func awaitOwnListSlotIdle(_ module: OMEMOModule) async {
+    while let task = module.state.withLock({ $0.ownListTask }) {
+        await task.value
+    }
 }
 
 private let pruneTestUserJID = BareJID(localPart: "user", domainPart: "example.com")!
@@ -1944,5 +1954,6 @@ private func makeConnectedClientWithOwnDeviceListed(
     await mock.simulateReceive("<iq type=\"result\" id=\"\(id6)\"/>")
 
     try await connectTask.value
+    await awaitOwnListSlotIdle(omemoModule)
     return client
 }

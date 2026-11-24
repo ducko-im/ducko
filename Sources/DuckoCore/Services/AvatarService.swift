@@ -137,7 +137,7 @@ public final class AvatarService {
              .jingleFileTransferFailed, .jingleFileTransferProgress,
              .jingleChecksumReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked,
-             .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial,
+             .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial, .omemoSetupChanged,
              .oobIQOfferReceived:
             break
         }

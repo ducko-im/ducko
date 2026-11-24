@@ -11,9 +11,14 @@ final class RosterServiceFixture {
     let service: RosterService
     private var receipts: [UUID: UInt64] = [:]
 
-    init(store: MockPersistenceStore, service: RosterService? = nil) {
+    /// With `accountService`, the service reads which accounts are enabled from it, and `prepare` loads the test
+    /// account into it enabled.
+    init(store: MockPersistenceStore, service: RosterService? = nil, accountService: AccountService? = nil) {
         self.store = store
         self.service = service ?? RosterService(store: store)
+        if let accountService {
+            self.service.setAccountService(accountService)
+        }
     }
 
     func prepare(accountID: UUID) async throws {

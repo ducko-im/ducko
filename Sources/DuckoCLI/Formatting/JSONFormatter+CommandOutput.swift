@@ -27,6 +27,7 @@ extension JSONFormatter {
         case let .preference(_, key, enabled, changed):
             ["action": changed ? "set_preference" : "get_preference", "key": key, "enabled": enabled ? "true" : "false"]
         case let .encryption(jid, enabled): ["action": "set_encryption", "jid": jid, "enabled": enabled ? "true" : "false"]
+        case let .omemoSetupRetried(accountID): ["action": "retry_omemo_setup", "account": accountID.uuidString]
         case let .directedPresenceSent(jid): ["action": "send_presence", "jid": jid]
         case let .subscriptionApproved(jid): ["action": "approve_subscription", "jid": jid]
         case let .subscriptionDenied(jid): ["action": "deny_subscription", "jid": jid]

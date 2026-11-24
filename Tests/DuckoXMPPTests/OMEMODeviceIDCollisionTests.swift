@@ -35,7 +35,7 @@ extension OMEMOModuleTests {
         @Test
         func `A new device draws its id again while the account's list holds the drawn one`() async throws {
             let draws = OSAllocatedUnfairLock(initialState: [UInt32(99), 4242])
-            let omemoModule = OMEMOModule(pepModule: pepModule, registrationRetryDelays: []) {
+            let omemoModule = OMEMOModule(pepModule: pepModule, setupRetryDelays: []) {
                 OMEMODeviceID(value: draws.withLock { $0.removeFirst() })
             }
             let (client, connectTask) = await startConnect(omemoModule)

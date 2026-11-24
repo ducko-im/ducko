@@ -89,7 +89,7 @@ extension DuckoCLI {
                             port: effectivePort,
                             allowsPLAIN: allowPlain
                         ) { accountID in
-                            try await waitForConnected(accountID: accountID, environment: env)
+                            try await waitForSetUp(accountID: accountID, environment: env)
                         }
                     } catch {
                         if AccountService.isPLAINRefusal(error) {
@@ -263,7 +263,7 @@ extension DuckoCLI {
                     host: endpoint.host,
                     port: endpoint.port ?? 5222
                 ) { accountID in
-                    try await waitForConnected(accountID: accountID, environment: context.environment)
+                    try await waitForSetUp(accountID: accountID, environment: context.environment)
                 }
                 let accountID = switch outcome {
                 case let .registered(accountID): accountID

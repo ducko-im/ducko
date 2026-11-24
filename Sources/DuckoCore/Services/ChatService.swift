@@ -952,7 +952,7 @@ public final class ChatService { // swiftlint:disable:this type_body_length
              .jingleFileTransferFailed, .jingleFileTransferProgress,
              .jingleChecksumReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked,
-             .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial,
+             .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial, .omemoSetupChanged,
              .oobIQOfferReceived:
             break
         }

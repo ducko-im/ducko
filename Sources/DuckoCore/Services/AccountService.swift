@@ -74,9 +74,13 @@ public final class AccountService {
     var onSessionStarting: (@MainActor (UUID) async -> Void)?
     /// Fired at the start of a user-initiated `disconnect(accountID:)`, before the per-account event task is
     /// cancelled. `AppEnvironment` first cancels that account's dispatch tasks, then purges its feature caches
-    /// synchronously, so stale events cannot repopulate cleared state. Not fired on
+    /// synchronously, so stale events cannot repopulate cleared state. The contact list keeps the account's contacts,
+    /// shown offline, until the account is disabled or deleted. Not fired on
     /// auto-reconnecting drops, which go through `handleDisconnect` and deliver `.disconnected` normally.
     var onRequestedDisconnect: ((UUID) -> Void)?
+    /// Fired once `updateAccount(_:)` has saved an account as disabled and disconnected it, to drop the state a
+    /// disconnect keeps showing.
+    var onAccountDisabled: ((UUID) -> Void)?
     /// Fired once `deleteAccount(_:)` has deleted the account's data, to drop the state a disconnect keeps.
     var onAccountDeleted: ((UUID) -> Void)?
 
@@ -278,6 +282,12 @@ public final class AccountService {
         try await store.saveAccount(account)
         if !account.isEnabled {
             await disconnect(accountID: account.id)
+            // In the same turn as the hook, so a load that starts afterwards reads the account as disabled even when
+            // the refresh below fails.
+            if let index = accounts.firstIndex(where: { $0.id == account.id }) {
+                accounts[index].isEnabled = false
+            }
+            onAccountDisabled?(account.id)
         }
         try await loadAccounts()
     }
@@ -669,7 +679,7 @@ public final class AccountService {
              .pepItemsPublished, .pepItemsRetracted,
              .vcardAvatarHashReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked,
-             .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial,
+             .omemoDeviceListReceived, .omemoEncryptedMessageReceived, .omemoSessionEstablished, .omemoSessionAdvanced, .omemoRecipientsPartial, .omemoSetupChanged,
              .oobIQOfferReceived:
             break
         }

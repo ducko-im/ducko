@@ -63,7 +63,18 @@ private func startDirectTransferFromREPL(filePath: String, recipientJID: BareJID
     print(context.formatter.formatCommandResult(.directTransferStarted(fileName: fileURL.lastPathComponent, jid: jidString)))
 }
 
-func handleAcceptREPLCommand(_ arguments: String, context: REPLContext) async {
+/// Accepts the incoming file offer into Downloads, or declines it.
+func handleOfferREPLCommand(_ arguments: String, context: REPLContext, declining: Bool) async {
+    guard !declining else {
+        await handleFileTransferREPLCommand(
+            arguments, context: context,
+            confirmation: { .transferDeclined(offerID: $0) },
+            action: { offerID, accountID in
+                try await context.environment.fileTransferService.declineIncomingTransfer(offerID, accountID: accountID)
+            }
+        )
+        return
+    }
     // `downloadsDirectory` is nonisolated, but reaching the service through `environment` is not.
     let downloadsPath = await MainActor.run { context.environment.fileTransferService.downloadsDirectory.path }
     await handleFileTransferREPLCommand(
@@ -71,16 +82,6 @@ func handleAcceptREPLCommand(_ arguments: String, context: REPLContext) async {
         confirmation: { .transferAccepted(offerID: $0, directory: downloadsPath) },
         action: { offerID, accountID in
             try await context.environment.fileTransferService.acceptIncomingTransfer(offerID, accountID: accountID)
-        }
-    )
-}
-
-func handleDeclineREPLCommand(_ arguments: String, context: REPLContext) async {
-    await handleFileTransferREPLCommand(
-        arguments, context: context,
-        confirmation: { .transferDeclined(offerID: $0) },
-        action: { offerID, accountID in
-            try await context.environment.fileTransferService.declineIncomingTransfer(offerID, accountID: accountID)
         }
     )
 }

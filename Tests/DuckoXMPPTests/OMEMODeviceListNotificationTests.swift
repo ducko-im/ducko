@@ -59,8 +59,8 @@ private struct OwnDeviceAccount {
     let pepModule = PEPModule()
     let module: OMEMOModule
 
-    init(registrationRetryDelays: [Duration] = [.seconds(10)]) throws {
-        self.module = OMEMOModule(pepModule: pepModule, registrationRetryDelays: registrationRetryDelays)
+    init(setupRetryDelays: [Duration] = [.seconds(10)]) throws {
+        self.module = OMEMOModule(pepModule: pepModule, setupRetryDelays: setupRetryDelays)
         try module.configureIdentity(makeTestOMEMOIdentity(deviceID: ownDeviceID, preKeyIDs: [1]).data)
     }
 
@@ -73,12 +73,15 @@ private struct OwnDeviceAccount {
         return (client, connectTask)
     }
 
-    /// Signs in with this device already on the account's list, so the connect publishes only the bundle.
+    /// Signs in with this device already on the account's list, so setup publishes only the bundle, and returns once
+    /// setup and the pruning after it have ended.
     func connect() async throws -> XMPPClient {
         let (client, connectTask) = await startConnect()
         try await answer(deviceListRequest(.get, at: 0), devices: [ownDeviceID])
         try await acknowledge(bundlePublish())
         try await connectTask.value
+        await module.awaitSetupAttempt()
+        await awaitOwnListSlotIdle(module)
         return client
     }
 
@@ -146,10 +149,10 @@ extension OMEMODeviceListNotificationTests {
             await disconnectFast(client)
         }
 
-        /// The connect reads, changes and publishes the list itself, so a re-announce meanwhile could undo its changes.
-        /// The connect's read may predate the notification, so the re-announce follows once the connect ends.
+        /// Setup reads, changes and publishes the list itself, so a re-announce meanwhile could undo its changes. Setup's
+        /// read may predate the notification, so the re-announce follows once setup ends.
         @Test
-        func `An own list without this device that comes during the connect is re-announced once the connect ends`() async throws {
+        func `An own list without this device that comes during setup is re-announced once setup ends`() async throws {
             let account = try OwnDeviceAccount()
             let (client, connectTask) = await account.startConnect()
             try await account.answer(account.deviceListRequest(.get, at: 0), devices: [ownDeviceID])
@@ -172,22 +175,23 @@ extension OMEMODeviceListNotificationTests {
         }
 
         @Test
-        func `An own list without this device that comes during a registration retry is re-announced after it`() async throws {
-            let account = try OwnDeviceAccount(registrationRetryDelays: [.zero])
+        func `An own list without this device that comes during a setup retry is re-announced after it`() async throws {
+            let account = try OwnDeviceAccount(setupRetryDelays: [.zero])
             let (client, connectTask) = await account.startConnect()
             try await account.fail(account.deviceListRequest(.get, at: 0))
-            try await account.acknowledge(account.bundlePublish())
             try await connectTask.value
             let retryRead = try await account.deviceListRequest(.get, at: 1)
 
             await account.notify([])
             try await Task.sleep(for: .milliseconds(200))
             #expect(await account.deviceListRequests(.get).count == 2)
-            try await account.answer(retryRead, devices: [99])
+            // An empty list leaves the pruning after setup no other device to probe.
+            try await account.answer(retryRead, devices: [])
             let retryPublish = try await account.deviceListRequest(.set, at: 0)
             try await Task.sleep(for: .milliseconds(200))
             #expect(await account.deviceListRequests(.get).count == 2)
             try await account.acknowledge(retryPublish)
+            try await account.acknowledge(account.bundlePublish())
             try await account.answer(account.deviceListRequest(.get, at: 2), devices: [99])
             let reannounce = try await account.deviceListRequest(.set, at: 1)
             try await account.acknowledge(reannounce)

@@ -86,7 +86,7 @@ actor MockOMEMOStore: OMEMOStore {
 
     /// Seeds the store with rows derived from `identity` for `accountJID`,
     /// keeping the persisted bytes in lock-step with what an
-    /// `OMEMOIdentityProviding` stub would advertise.
+    /// `OMEMOPreKeyMaintaining` stub would advertise.
     func seedFromIdentityData(_ identity: OMEMOModule.OMEMOIdentityData, accountJID: String) {
         seedIdentity(OMEMOStoredIdentity(
             accountJID: accountJID, deviceID: identity.deviceID,

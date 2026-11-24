@@ -19,6 +19,8 @@ extension OMEMOService {
             throw OMEMOServiceError.notConnected(accountID)
         }
         guard let module = await client.module(ofType: OMEMOModule.self) else { throw OMEMOServiceError.omemoNotAvailable }
+        await module.awaitIdentityIfSettingUp()
+        guard module.ownDeviceID != nil else { throw OMEMOServiceError.encryptionNotSetUp }
         // Another process may have stored a trust decision the guard has not taken in, such as an untrust from the CLI.
         _ = await loadAllDevicesMergingTrust(for: peer.description, accountJID: accountJID)
         let isOwn = peer.description == accountJID

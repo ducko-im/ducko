@@ -202,6 +202,29 @@ struct ChatServiceEncryptedSendTests {
     }
 }
 
+extension ChatServiceEncryptedSendTests {
+    /// A send started while this new device's setup reads the account's list waits for it, and never goes out in the clear.
+    @Test(arguments: [true, false])
+    func `an encrypted send on a new device waits for its setup`(setupSucceeds: Bool) async throws {
+        let harness = try await EncryptedSendHarness.connect(newDevice: true)
+        await harness.transport.waitForBlockedSend()
+
+        let send = Task { try await harness.chatService.sendMessage(to: contact, body: "secret", accountID: harness.accountID) }
+        try await eventually { await harness.identityWaiters() == 1 }
+        if setupSucceeds {
+            await harness.transport.releaseBlockedSends()
+            try await send.value
+            #expect(await harness.transport.waitForSent { $0.hasPrefix("<message") && $0.contains("<encrypted") } != nil)
+        } else {
+            await harness.transport.failBlockedSends(with: XMPPClientError.sendFailed("The connection was closed"))
+            await #expect(throws: (any Error).self) { try await send.value }
+        }
+        let sent = await harness.transport.sentBytes.map { String(decoding: $0, as: UTF8.self) }
+        #expect(!sent.contains { $0.hasPrefix("<message") && $0.contains("<body>secret</body>") })
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+}
+
 private func parsed(_ xml: String) throws -> DuckoXMPP.XMLElement {
     let events = XMPPStreamParser().parse(Array((testServerStreamOpen + xml).utf8))
     for case let .stanzaReceived(element) in events {
@@ -215,7 +238,8 @@ private func parsed(_ xml: String) throws -> DuckoXMPP.XMLElement {
 /// `archiving`, the account and the room keep archives the account can read. With `otherOwnDevices`, the server lists
 /// those devices next to device 100 and hands them out too. `deviceLists` holds the devices the server lists for other
 /// JIDs, which it hands out too. With `contactsDeviceListFails`, the server answers a read of bob's device list with an
-/// error.
+/// error. With `newDevice`, the account has no device yet, and its setup's read of the account's list is held until the
+/// test releases or fails it. With `holdsSetupRead`, that read is held the same way for device 100.
 @MainActor
 struct EncryptedSendHarness {
     let transport: MockTransport
@@ -233,7 +257,8 @@ struct EncryptedSendHarness {
 
     static func connect(
         encryptionEnabled: Bool = true, archiving: Bool = false, otherOwnDevices: [UInt32] = [], roomMembers: [BareJID] = [contact],
-        deviceLists: [BareJID: [UInt32]] = [:], contactsDeviceListFails: Bool = false
+        deviceLists: [BareJID: [UInt32]] = [:], contactsDeviceListFails: Bool = false, newDevice: Bool = false,
+        holdsSetupRead: Bool = false
     ) async throws -> EncryptedSendHarness {
         let store = MockPersistenceStore()
         let transport = MockTransport()
@@ -251,8 +276,7 @@ struct EncryptedSendHarness {
         let pepModule = PEPModule()
         let mucModule = MUCModule()
         let omemoModule = OMEMOModule(pepModule: pepModule, mucModule: mucModule)
-        let (ownBundle, ownKeys) = try device(100, preKeyID: 1)
-        omemoModule.configureIdentity(ownKeys)
+        let ownBundle = try await installOwnDevice(on: omemoModule, transport: transport, newDevice: newDevice, holdsSetupRead: holdsSetupRead)
         let modules: [any XMPPModule] = [ChatModule(), mucModule, pepModule, omemoModule] + (archiving ? [MAMModule()] : [])
         let factory = MockXMPPClientFactory(transport: transport, modules: modules)
         let accountService = makeAccountService(store: store, clientFactory: factory)
@@ -262,11 +286,7 @@ struct EncryptedSendHarness {
         chatService.featureSource = archiving
             ? FixedFeatureSource.archiving(roomFeatures: [XMPPNamespaces.mucNonAnonymous])
             : FixedFeatureSource(roomFeatures: [XMPPNamespaces.mucNonAnonymous])
-        let omemoStore = MockOMEMOStore()
-        let omemoService = OMEMOService(omemoStore: omemoStore)
-        omemoService.setAccountService(accountService)
-        omemoService.setChatService(chatService)
-        chatService.setOMEMOService(omemoService)
+        let (omemoService, omemoStore) = makeOMEMOService(accountService: accountService, chatService: chatService)
 
         let connectTask = Task { @MainActor in
             try await accountService.createAndConnect(jidString: testJIDString, password: "secret", host: "example.com", port: 5222)
@@ -285,6 +305,46 @@ struct EncryptedSendHarness {
             transport: transport, accountService: accountService, chatService: chatService, transcripts: transcripts, omemoService: omemoService,
             omemoStore: omemoStore, accountID: accountID, bob: bob, ownBundle: ownBundle
         )
+    }
+
+    /// A read of the account's own device list carries no `to`.
+    nonisolated static func isOwnListRead(_ stanza: String) -> Bool {
+        stanza.contains(XMPPNamespaces.omemoDevices) && stanza.contains("<items") && !stanza.contains(" to=")
+    }
+
+    /// Encryptions and resets parked until the account's running setup attempt installs an identity.
+    func identityWaiters() async -> Int {
+        let module = await accountService.connectedClient(for: accountID)?.module(ofType: OMEMOModule.self)
+        return module?.state.withLock { $0.identityWaiters.count } ?? 0
+    }
+
+    /// Returns device 100's `<bundle>`, and gives the module device 100 unless `newDevice`. For a new device, or with
+    /// `holdsSetupRead`, the setup's read of the account's list is held.
+    private static func installOwnDevice(
+        on module: OMEMOModule, transport: MockTransport, newDevice: Bool, holdsSetupRead: Bool
+    ) async throws -> DuckoXMPP.XMLElement {
+        let (ownBundle, ownKeys) = try device(100, preKeyID: 1)
+        if newDevice || holdsSetupRead {
+            await transport.blockSends(where: isOwnListRead)
+        }
+        if !newDevice {
+            module.configureIdentity(ownKeys)
+        }
+        return ownBundle
+    }
+
+    /// An OMEMO service wired to the account and chat services, which takes in the account's setup events in order but
+    /// handles no other events.
+    private static func makeOMEMOService(accountService: AccountService, chatService: ChatService) -> (OMEMOService, MockOMEMOStore) {
+        let omemoStore = MockOMEMOStore()
+        let omemoService = OMEMOService(omemoStore: omemoStore)
+        omemoService.setAccountService(accountService)
+        omemoService.setChatService(chatService)
+        chatService.setOMEMOService(omemoService)
+        accountService.onEvent = { [weak omemoService] event, accountID in
+            omemoService?.receiveSetupEvent(event, accountID: accountID)
+        }
+        return (omemoService, omemoStore)
     }
 
     /// The message inside the envelope of `stanza`, which the account sent, as bob's device reads it.

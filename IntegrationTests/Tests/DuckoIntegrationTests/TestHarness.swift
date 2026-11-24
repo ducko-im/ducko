@@ -437,6 +437,16 @@ final class TestHarness {
         return (mucModule, joinEvent)
     }
 
+    // MARK: - OMEMO Setup
+
+    /// Returns once the first OMEMO setup attempt of `label`'s session has had its outcome, or at once when it runs
+    /// none. `setUp` does not wait for it, so a test that needs this device's identity or its published bundle waits
+    /// here.
+    func awaitOMEMOSetup(for label: String) async throws {
+        guard let account = accounts[label] else { throw TestHarnessError.notConnected(label: label) }
+        await environment.omemoService.awaitSetupAttempt(accountID: account.accountID)
+    }
+
     // MARK: - Module/JID Lookup
 
     /// Returns the registered XMPP module of type `M` on the account registered
@@ -694,13 +704,12 @@ final class TestHarness {
     }
 
     /// Polls the OMEMO store for `credential`'s signed-prekey up to 10 s.
-    /// Presence of the signed prekey proves the identity + prekeys writes
-    /// already landed, since `OMEMOService.handleConnected` persists them in
-    /// that order.
+    /// Presence of the signed prekey proves the identity write already landed,
+    /// since a new identity's keys are stored only after it.
     ///
-    /// Mirrors `DuckoCore.pollUntil`'s contract — cooperatively cancellable
-    /// and does one final probe after the deadline to catch a signed-prekey
-    /// write that landed between the last in-loop probe and the deadline.
+    /// Cooperatively cancellable, and does one final probe after the deadline
+    /// to catch a signed-prekey write that landed between the last in-loop
+    /// probe and the deadline.
     private func waitForSignedPreKey(for credential: TestCredentials.Credential) async -> Bool {
         let deadline = ContinuousClock.now.advanced(by: .seconds(10))
         while ContinuousClock.now < deadline {

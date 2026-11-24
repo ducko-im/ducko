@@ -84,6 +84,8 @@ public enum XMPPEvent: Sendable {
     /// Fires for peer AND own devices. The outgoing stanza ID is omitted because encrypt runs before the stanza is built —
     /// correlate by `conversation` + temporal proximity.
     case omemoRecipientsPartial(conversation: BareJID, droppedDevices: [DroppedOMEMORecipient])
+    /// The outcome of one attempt to set up this device's encryption on this connection.
+    case omemoSetupChanged(OMEMOSetupStatus)
 
     /// OOB IQ (XEP-0066)
     case oobIQOfferReceived(OOBIQOffer)

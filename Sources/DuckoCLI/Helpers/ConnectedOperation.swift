@@ -39,7 +39,7 @@ enum ConnectedOperation {
     ) async throws -> Result {
         try await run(
             connect: { try await connectStored(environment, accountID: account.id, password: password) },
-            ready: { try await waitForConnected(accountID: account.id, environment: environment) },
+            ready: { try await waitForSetUp(accountID: account.id, environment: environment) },
             operation: operation,
             teardown: { await environment.accountService.disconnect(accountID: account.id) }
         )
@@ -81,6 +81,13 @@ func waitForConnected(accountID: UUID, environment: AppEnvironment) async throws
         }
     }
     throw CLIError.connectionTimeout
+}
+
+/// Waits for the account to connect, then for its first encryption setup attempt, so a one-shot command runs with
+/// whatever identity that attempt installed and never exits while its new keys are being stored.
+func waitForSetUp(accountID: UUID, environment: AppEnvironment) async throws {
+    try await waitForConnected(accountID: accountID, environment: environment)
+    await environment.omemoService.awaitSetupAttempt(accountID: accountID)
 }
 
 func resolveAccount(_ accountIDString: String?, environment: AppEnvironment) async throws -> DuckoCore.Account {

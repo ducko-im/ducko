@@ -518,21 +518,21 @@ enum RosterServiceTests {
     struct Disconnect {
         @Test
         @MainActor
-        func `Disconnect event clears the cached groups for the account`() async {
+        func `A disconnect keeps the account's contacts listed`() async {
             let store = makeStore()
             let fixture = RosterServiceFixture(store: store)
             let service = fixture.service
 
             await fixture.deliver(.snapshot([makeRosterItem(jid: contactJID1, name: "Alice")]), accountID: testAccountID)
-            #expect(!service.groups.isEmpty)
-
             service.receiveRosterEvent(.disconnected(.requested), accountID: testAccountID)
-            #expect(service.groups.isEmpty)
+
+            #expect(service.groups.flatMap(\.contacts).map(\.jid) == [contactJID1])
+            #expect(service.contact(jidString: contactJID1.description, accountID: testAccountID) != nil)
         }
 
         @Test
         @MainActor
-        func `Disconnect clears only the disconnected account's groups`() async {
+        func `Removing an account from the contact list leaves the other accounts' contacts`() async {
             let store = makeStore()
             let fixture = RosterServiceFixture(store: store)
             let service = fixture.service
@@ -543,8 +543,7 @@ enum RosterServiceTests {
             await fixture.deliver(.snapshot([makeRosterItem(jid: contactJID2, name: "Bob")]), accountID: accountB)
             #expect(service.groups.flatMap(\.contacts).count == 2)
 
-            // Tearing down account A must leave account B's contacts in the merged cache.
-            service.receiveRosterEvent(.disconnected(.requested), accountID: accountA)
+            service.removeFromContactList(accountA)
 
             let remaining = service.groups.flatMap(\.contacts)
             #expect(remaining.count == 1)
@@ -553,15 +552,14 @@ enum RosterServiceTests {
 
         @Test
         @MainActor
-        func `A disconnected account's contacts stay known until its roster loads again or it is deleted`() async throws {
+        func `A removed account's contacts stay known until its roster loads again or it is deleted`() async throws {
             let store = makeStore()
             let fixture = RosterServiceFixture(store: store)
             let service = fixture.service
             let alice = contactJID1.description
 
             await fixture.deliver(.snapshot([makeRosterItem(jid: contactJID1, name: "Alice")]), accountID: testAccountID)
-            service.receiveRosterEvent(.disconnected(.requested), accountID: testAccountID)
-            service.purgeAccount(testAccountID)
+            service.removeFromContactList(testAccountID)
 
             #expect(service.contact(jidString: alice, accountID: testAccountID) == nil)
             #expect(service.knownContact(jidString: alice, accountID: testAccountID)?.displayName == "Alice")
@@ -569,7 +567,7 @@ enum RosterServiceTests {
             #expect(service.knownContact(jidString: alice, accountID: testAccountID) == nil)
 
             try await service.loadContacts(for: testAccountID)
-            service.purgeAccount(testAccountID)
+            service.removeFromContactList(testAccountID)
             #expect(service.knownContact(jidString: alice, accountID: testAccountID) != nil)
             try await store.deleteContacts(for: testAccountID)
             try await service.loadContacts(for: testAccountID)
@@ -587,29 +585,77 @@ enum RosterServiceTests {
             #expect(fixture.service.knownContactName(jidString: "mallory@example.com/phone", accountID: testAccountID) == nil)
         }
 
-        @Test
+        /// The reload reads Bob where the list shows Alice, so what it would publish tells from what the list kept.
+        @Test(arguments: [false, true])
         @MainActor
-        func `A roster load racing a purge does not repopulate the cleared groups`() async throws {
+        func `A roster load racing a session's end or a removal publishes nothing`(removesAccount: Bool) async throws {
             let store = makeStore()
             let fixture = RosterServiceFixture(store: store)
             let service = fixture.service
-
-            // Seed a contact so a completed load would publish a non-empty merge.
             try await store.upsertContact(makeContact(jid: contactJID1, name: "Alice"))
+            try await service.loadContacts(for: testAccountID)
+            try await store.deleteContacts(for: testAccountID)
+            try await store.upsertContact(makeContact(jid: contactJID2, name: "Bob"))
 
             let entered = AsyncSemaphore()
             let release = AsyncSemaphore()
             await store.installFetchContactsGate(entered: entered, release: release)
-
             let load = Task { @MainActor in try await service.loadContacts(for: testAccountID) }
 
-            // Park the load at its store read, then tear the account down so the generation counter bumps.
+            // Park the load at its store read, then end the session so the generation counter bumps.
             await entered.wait()
-            service.purgeAccount(testAccountID)
-
-            // Release the read; the resumed load must observe the bumped generation and bail without publishing.
+            if removesAccount {
+                service.removeFromContactList(testAccountID)
+            } else {
+                service.receiveRosterEvent(.disconnected(.requested), accountID: testAccountID)
+            }
             await release.signal()
             try await load.value
+
+            #expect(service.groups.flatMap(\.contacts).map(\.jid) == (removesAccount ? [] : [contactJID1]))
+        }
+
+        @Test
+        @MainActor
+        func `A load that starts once a disabled account left the list publishes nothing`() async throws {
+            let store = makeStore()
+            let accountService = AccountService(store: store, credentialStore: NullCredentialStore())
+            let fixture = RosterServiceFixture(store: store, accountService: accountService)
+            let service = fixture.service
+            try await store.upsertContact(makeContact(jid: contactJID1, name: "Alice"))
+            try await fixture.prepare(accountID: testAccountID)
+            try await accountService.loadAccounts()
+            try await service.loadContacts(for: testAccountID)
+            #expect(!service.groups.isEmpty)
+
+            var account = try #require(accountService.accounts.first { $0.id == testAccountID })
+            account.isEnabled = false
+            try await accountService.updateAccount(account)
+            service.removeFromContactList(testAccountID)
+            try await service.loadContacts(for: testAccountID)
+
+            #expect(service.groups.isEmpty)
+        }
+
+        @Test
+        @MainActor
+        func `A disabled account's contacts leave the list when its session ends`() async throws {
+            let store = makeStore()
+            let accountService = AccountService(store: store, credentialStore: NullCredentialStore())
+            let fixture = RosterServiceFixture(store: store, accountService: accountService)
+            let service = fixture.service
+            try await store.upsertContact(makeContact(jid: contactJID1, name: "Alice"))
+            try await fixture.prepare(accountID: testAccountID)
+            try await accountService.loadAccounts()
+            try await service.loadContacts(for: testAccountID)
+
+            // Disabled without the contact list being told, as for an account connected by hand while disabled.
+            var account = try #require(accountService.accounts.first { $0.id == testAccountID })
+            account.isEnabled = false
+            try await accountService.updateAccount(account)
+            #expect(!service.groups.isEmpty)
+
+            service.receiveRosterEvent(.disconnected(.requested), accountID: testAccountID)
 
             #expect(service.groups.isEmpty)
         }
@@ -658,14 +704,14 @@ enum RosterServiceTests {
                 await fixture.deliver(.delta(makeRosterItem(jid: contactJID2, name: "Bob")), accountID: testAccountID)
             }
 
-            // Park at the first store read, tear the account down, then release. The pre-persistence guard
+            // Park at the first store read, end the session, then release. The pre-persistence guard
             // must bail before the upsert (and before the second fetch), so Bob is never written.
             await entered.wait()
             service.purgeAccount(testAccountID)
             await release.signal()
             await load.value
 
-            #expect(service.groups.isEmpty)
+            #expect(service.groups.flatMap(\.contacts).allSatisfy { $0.jid == contactJID1 })
             #expect(await !store.contacts.contains { $0.jid == contactJID2 })
         }
 
