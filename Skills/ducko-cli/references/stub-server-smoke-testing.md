@@ -1,6 +1,6 @@
 # Stub-Server Smoke Testing
 
-Exercise stream-level behavior (STARTTLS negotiation, stream features, sign-in failures, a rejected server certificate, injected or malformed server data) through the CLI against a local stub instead of a live server, or run a whole session against a stub that serves a made-up roster.
+Exercise stream-level behavior (STARTTLS negotiation, stream features, sign-in failures, a rejected server certificate, injected or malformed server data, a failure in the setup after sign-in) through the CLI against a local stub instead of a live server, or run a whole session against a stub that serves a made-up roster.
 
 ## Point the CLI at the Stub
 
@@ -87,3 +87,12 @@ Beyond Stub Requirements 1 to 5, a stub written from scratch has to:
 4. Send the contacts' `<presence>` after the client's first available presence.
 5. Answer the client's other requests: a result for carbons enable, `item-not-found` for PEP item requests, an empty result for PEP publishes, and a `vCard` for `vcard-temp`. Send an empty `<blocklist/>` when the server's disco#info lists `urn:xmpp:blocking`. Without that feature, the client requests no block list. Answer an archive query with `<fin xmlns='urn:xmpp:mam:2' complete='true'>`. The client sends one only when the disco#info of the user's bare JID lists `urn:xmpp:mam:2`. Answer any other IQ request with `service-unavailable`.
 6. Echo each request's `to` as the reply's `from`, and omit `from` when the request has no `to`. The client drops a reply to an addressed request that comes from any other JID.
+
+## Stage a Session-Setup Failure
+
+To check how a failure after the roster loads is handled, use a copy of `Skills/demo-screenshots/scripts/stub.py`. It signs in, serves a roster and presences, and answers joins of its rooms. Change the copy's `handle_iq` to return without answering a `set` in the `http://jabber.org/protocol/pubsub` namespace while `<workdir>/drop-pubsub` exists, and log each drop. The OMEMO publishes then go unanswered.
+
+- Launch the copy as `python3 stub.py <port> <workdir> <path to Skills/demo-screenshots/content.json>`. Its default content path is relative to the script, so a copy needs the explicit path.
+- Add its account as Stub a Whole Session does, under a unique `DUCKO_PROFILE`. For the GUI, also set `ZCONNECTONLAUNCH=1` in that profile's store as the demo-screenshots skill's account setup does, and run the stub copy and `content.json` inside the Lume VM, since the account points at `127.0.0.1`.
+- Create `drop-pubsub` after the account has signed in once without it.
+- With the drop file in place, the setup fails about 30 s after the roster loads and the session ends: `interactive` exits 1 with `Error: The server did not respond in time`, and the GUI reconnects. The stub checks the file on every IQ, so deleting it takes effect on the next publish.

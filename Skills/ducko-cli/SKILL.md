@@ -364,6 +364,8 @@ ducko account change-password alice@example.com
 
 Unregister an account from its server via XEP-0077 and remove it locally. With `--include-history`, also deletes stored chat transcripts for the account.
 
+It asks for confirmation and accepts only the full word: pipe `yes`, since `y` prints "Cancelled." and keeps the account.
+
 ```
 ducko account unregister alice@example.com
 ducko account unregister alice@example.com --include-history
@@ -558,7 +560,7 @@ Errors are `error` records with a `message`. In `interactive`, a usage mistake p
 
 Two failures get no such added record. A roster change prints its own record instead: an `error` record when it fails, or a `roster_command` record with `result: partial` and exit status 3 when it only partly succeeds. An interrupted `presence --for`/`--keep-alive` hold ends with exit status 130, 143 or 129 alone.
 
-Event records, such as `connected` or `omemo_device_list`, print from background tasks, so one can land between a command's own records or after its `error` record. Pick a command's records by `type` rather than by line position. `message` is the exception: `/history` rows and live messages share that type, and a live one carries a `timestamp` from after the command ran. Tell a one-shot command's failure by its exit status. `interactive` always exits 0, so there a command's failure shows only as its `error` record. `account register` and `/submit-registration` can print an `error` record for a refused attempt and still succeed. The exit status marks success, or for `/submit-registration` a `command_result` with `submit_registration`.
+Event records, such as `connected` or `omemo_device_list`, print from background tasks, so one can land between a command's own records or after its `error` record. Pick a command's records by `type` rather than by line position. `message` is the exception: `/history` rows and live messages share that type, and a live one carries a `timestamp` from after the command ran. Tell a one-shot command's failure by its exit status. `interactive` exits 0 once connected, so there a command's failure shows only as its `error` record; a failed connect exits 1. `account register` and `/submit-registration` can print an `error` record for a refused attempt and still succeed. The exit status marks success, or for `/submit-registration` a `command_result` with `submit_registration`.
 
 ## Throwaway Profiles
 
@@ -582,7 +584,7 @@ A copy also keeps the original's remembered rooms, and `interactive` rejoins the
 
 ## Live Smoke Testing
 
-Drive the REPL non-interactively against a live account by piping one command per line into `interactive`, ending with `quit`. Pass `--output plain`: the default format keys off stdout being a terminal, so piped stdin alone still yields ANSI. The session exits 0 even when commands fail, so read the transcript for the outcome.
+Drive the REPL non-interactively against a live account by piping one command per line into `interactive`, ending with `quit`. Pass `--output plain`: the default format keys off stdout being a terminal, so piped stdin alone still yields ANSI. The session exits 0 even when commands fail, so read the transcript for the outcome. Piped commands run only once the connect has completed. When the connect fails, the REPL exits 1 before reading them: stderr shows `Error: …` and no "Connected." line, and nothing runs.
 
 ```bash
 DUCKO_PROFILE=<unique> .build/debug/DuckoCLI account add --no-connect --password secret alice@example.com
@@ -614,7 +616,7 @@ Two profiles on one Mac reach each other directly, so to send such a transfer th
 
 ## Stream-Level Smoke Testing
 
-To exercise STARTTLS negotiation, stream features, sign-in failures, a rejected server certificate, injected server data, or a whole session with a made-up roster without a live server, follow [references/stub-server-smoke-testing.md](references/stub-server-smoke-testing.md).
+To exercise STARTTLS negotiation, stream features, sign-in failures, a rejected server certificate, injected server data, a failure in the setup after sign-in, or a whole session with a made-up roster without a live server, follow [references/stub-server-smoke-testing.md](references/stub-server-smoke-testing.md).
 
 ## Connection Smoke Testing
 
