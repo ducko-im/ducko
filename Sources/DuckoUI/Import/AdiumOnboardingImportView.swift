@@ -79,7 +79,7 @@ struct AdiumOnboardingImportView: View {
 
                 let totalFiles = logSources.reduce(0) { $0 + $1.fileCount }
                 if totalFiles > 0 {
-                    Text("\(logSources.count) account(s), \(totalFiles) log file(s) to import")
+                    Text(totalFiles == 1 ? "1 log file to import" : "\(totalFiles) log files to import")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Fix the first-run import counting its log folders as accounts
+
 ## [0.15.0] - 2026-11-26
 
 ### Added
