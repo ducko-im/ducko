@@ -10,113 +10,113 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Sign in through the browser on servers that offer it (XEP-0493). Add Account, the Login tab and an account's settings offer Sign In with Browser…, which opens the server's sign-in page, so Ducko keeps no password. Ducko renews the sign-in on its own and asks you to sign in again once the server stops accepting it. A password account can switch to it, and a server that needs a client ID from its administrator asks for one ([#6](https://github.com/ducko-im/ducko/issues/6))
-- Sign in through the browser from the CLI with `ducko account add <jid> --sso`, sign in again or switch a password account with `ducko account browser-sign-in <jid>`, print the sign-in page's address instead of opening it with `--no-browser`, and pass an administrator's client ID with `--client-id`. `ducko account list` shows each account's sign-in method ([#6](https://github.com/ducko-im/ducko/issues/6))
+- Sign in through the browser on servers that offer it (XEP-0493) ([#6](https://github.com/ducko-im/ducko/issues/6))
+- Sign in through the browser from the CLI with `ducko account add --sso` and `ducko account browser-sign-in` ([#6](https://github.com/ducko-im/ducko/issues/6))
 
 ### Fixed
 
-- Fix a crash when connecting an account whose port was set outside 1–65535. Account settings now refuse such a port, and the CLI refuses `--port 0`
-- Fix the same address ending up as two accounts when it is added twice at the same moment
+- Fix a crash when connecting an account whose port is outside 1–65535
+- Fix the same address ending up as two accounts when added twice at once
 
 ## [0.14.1] - 2026-11-24
 
 ### Changed
 
-- Keep an account's contacts listed, shown offline, while the account is offline or signing in. Disabling or deleting the account removes them, and a disabled account you connect by hand shows its contacts only while it stays connected ([#5](https://github.com/ducko-im/ducko/issues/5))
+- Keep an account's contacts listed as offline while the account is offline or signing in ([#5](https://github.com/ducko-im/ducko/issues/5))
 
 ### Fixed
 
-- Fix an account dropping its connection, and its contacts and presence no longer showing, when this Mac's encryption setup fails or the server is slow to answer it. The account now stays online and Ducko tries the setup again in the background. An encrypted chat shows a notice with Try Again until the setup succeeds. In the CLI, `ducko interactive` prints each attempt's outcome, and `/omemo-setup` tries again at once ([#5](https://github.com/ducko-im/ducko/issues/5))
-- Fix the import during onboarding leaving accounts without a saved password unticked. Every account starts ticked, and one without a saved password shows a field for it ([#5](https://github.com/ducko-im/ducko/issues/5))
+- Fix an account disconnecting when this Mac's encryption setup fails or the server is slow ([#5](https://github.com/ducko-im/ducko/issues/5))
+- Fix the onboarding import leaving accounts without a saved password unticked ([#5](https://github.com/ducko-im/ducko/issues/5))
 
 ## [0.14.0] - 2026-11-24
 
 ### Added
 
-- Mark a contact's OMEMO device verified from the CLI with `ducko omemo verify <jid> <device-id> <fingerprint>` or `/omemo-verify` in `ducko interactive`, after comparing its fingerprint with the one their device shows. A fingerprint that names another key is refused
-- Change an account's password from the CLI with `ducko account change-password <jid>` or `/change-password` in `ducko interactive`, which ask for the new password twice
+- Mark a contact's OMEMO device verified from the CLI with `ducko omemo verify` or `/omemo-verify`
+- Change an account's password from the CLI with `ducko account change-password` or `/change-password`
 
 ### Changed
 
-- Style messages the way XEP-0393 defines it, in the app and the CLI. A quote starts at any line beginning with `>`, and `>>` nests one quote in another. A code block may name its language after its opening backticks, and one with no closing line stays code. Styling never runs across a line break, and a run such as `***` or a word such as ``foo`bar` `` stays as typed
-- Check a directly received file with the strongest checksum the sender lists, SHA-512 included, so a file the sender checksummed with SHA-512 is no longer accepted unverified
-- Stop connecting to a domain's own address when its DNS says it offers no XMPP service. The sign-in then fails with "The domain does not offer an XMPP service"
-- Rename the CLI's JSON keys to snake_case, which breaks scripts that read the old names, and write the values Ducko defines the same way, such as `not_started` and a note's `kind`. The direct-transfer keys 0.13.0 added are now `offer_id`, `bytes_per_second` and `seconds_remaining`, and older keys change alike, such as `fileName` to `file_name`. A room's occupant groups read `owner`, `admin`, `member`, `outcast` or `none` instead of `Owner` … `Outcast` or `Other`
-- Print only JSON records on the CLI's standard output under `--output json`. Confirmations and empty lists get records of their own, as do usage mistakes and `help` in `ducko interactive`. A command that fails once it runs also prints an `error` record, while its message still goes to standard error. A roster change that fails or only partly succeeds prints its own record instead, and an interrupted presence hold still ends with its exit status alone. Prompts and guidance lines go to standard error in every format. Each record reaches a script reading the output as soon as it is printed
+- Style messages as XEP-0393 defines it, including nested quotes and code blocks that name a language
+- Check a directly received file with the strongest checksum the sender lists, including SHA-512
+- Stop connecting to a domain whose DNS says it offers no XMPP service
+- Rename the CLI's JSON keys and values to snake_case, which breaks scripts that read the old names
+- Print only JSON records on the CLI's standard output under `--output json`
 
 ### Fixed
 
-- Fix log lines going missing or being cut short when the app and the CLI, or two CLI sessions, run on the same profile, and keep each one logging to the current file after another rotates it, so `ducko logs show` prints its lines
+- Fix log lines going missing or cut short when the app and the CLI share a profile
 - Fix the HTTP upload size limit being taken from an unrelated form the upload service lists
-- Fix a sign-in refusal being misread as an unknown error when the server adds its own detail to it
-- Stop presenting Ducko to other clients as a file upload service, a pubsub service, or a server that keeps a block list
-- Fix a chat's offline notice promising that messages will send when you reconnect. Ducko doesn't keep a message written while offline, so the notice now says messages can't be sent until you're connected
-- Fix the Join Room sheet keeping an earlier error on screen after a new channel search starts
+- Fix a sign-in refusal being misread as an unknown error when the server adds its own detail
+- Stop presenting Ducko to other clients as a file upload, pubsub or block list service
+- Fix a chat's offline notice promising that messages will send when you reconnect
+- Fix the Join Room sheet keeping an earlier error after a new channel search starts
 
 ## [0.13.0] - 2026-11-18
 
 ### Added
 
-- Let a server that still stores only a SCRAM-SHA-1 password upgrade it to a stronger hash during sign-in (XEP-0480), so later sign-ins use SCRAM-SHA-256 or stronger. Ducko helps only on sign-ins bound to the encrypted connection, and only once the server has proved it knows the password ([#3](https://github.com/ducko-im/ducko/issues/3))
-- Show a server's registration CAPTCHA when creating an account, checking a registration, or registering from the CLI (XEP-0158, XEP-0221, XEP-0231). The image appears above its answer field, and the server's own web page is offered for a challenge Ducko can't show. Ducko solves a proof-of-work challenge itself, so a server that accepts it registers you without asking for the image. The CLI saves the image to a private file for you to open and deletes it when the command ends
-- Show a fresh form when a server refuses a registration, with its error and what you typed kept, so a wrong CAPTCHA answer can be tried again
-- Stop a direct file transfer with the stop button on its row, or with `/cancel` in `ducko interactive`. The contact is told, and both sides say who canceled: a sent file reads "You canceled the transfer" or "The transfer was canceled", and a file that did not arrive leaves a note in the chat saying why
-- Show how fast a direct file transfer is going and how long it has left, such as "2.1 MB/s · 15 sec left", on its row, in `ducko interactive` and in `/transfers`. The CLI's JSON progress records carry `bytesPerSecond` and `secondsRemaining`, and every JSON direct-transfer record carries `offerId`, which tells apart two transfers that reuse a `sid`
-- Type anywhere in a chat window to write in its message field, and get the keyboard back where you left it when you return to the window, switch tabs, or close the find bar. ⌘F puts the keyboard in the find bar, and Escape closes it
+- Let a server upgrade a stored SCRAM-SHA-1 password to a stronger hash during sign-in (XEP-0480) ([#3](https://github.com/ducko-im/ducko/issues/3))
+- Show a server's registration CAPTCHA in the app and the CLI (XEP-0158, XEP-0221, XEP-0231)
+- Show a fresh form after a refused registration, keeping its error and what you typed
+- Stop a direct file transfer from its row or with `/cancel` in `ducko interactive`
+- Show a direct file transfer's speed and time left, in the app and the CLI
+- Type anywhere in a chat window to write a message, and keep keyboard focus where you left it
 
 ### Changed
 
-- Show the server's registration form in a sheet over the Welcome window, without the note servers add for clients that can't show the form
-- End `ducko presence --for` and `--keep-alive` cleanly when the terminal closes, so contacts see you go offline right away. A hold started under `nohup` keeps running
-- Explain why a server refused a sign-in partway through: a rejected password or unknown account reads "Incorrect username or password" and is handled like any wrong password, a busy server is tried again later, and a mismatch in the connection's security details warns that the connection may be tampered with. The CLI's JSON `authentication_failed` record carries the server's reason as `condition`
-- Tell the contact when you quit Ducko, leave `ducko interactive` or take an account offline during a direct file transfer. Your side reads "The transfer stopped when you went offline", and a Ducko contact sees right away that you went offline instead of waiting for the file
-- End a direct file transfer you are receiving when the contact goes offline before it starts, or when an in-band transfer gets no data for 30 seconds, with a note in the chat saying the file did not arrive and why
-- Mark a direct send delivered only once the contact confirms it arrived. A send the contact does not confirm within 30 seconds fails with "The contact did not confirm the transfer"
-- Send in-band direct transfers in larger blocks, roughly four times as fast, and send large files without holding them in memory. A file edited or replaced after you click Send still goes out exactly as it was when you sent it
+- Show the server's registration form in a sheet over the Welcome window
+- End `ducko presence --for` and `--keep-alive` cleanly when the terminal closes
+- Explain why a server refused a sign-in partway through
+- Tell the contact when you go offline or quit during a direct file transfer
+- End a direct file transfer you are receiving when the contact goes offline or data stops arriving
+- Mark a direct send delivered only once the contact confirms it arrived
+- Send in-band direct transfers about four times as fast, without holding large files in memory
 
 ### Fixed
 
-- Fix direct file transfers through a server's file transfer proxy, such as Prosody's, stalling just before the end and failing, because the proxy held back the last of the file
-- Fix the app freezing when an accessibility tool such as VoiceOver reads a chat while a file transfer shows its progress
+- Fix direct file transfers through a server's file transfer proxy stalling just before the end
+- Fix the app freezing when VoiceOver reads a chat while a file transfer shows its progress
 
 ### Security
 
-- Refuse a sign-in when the server asks Ducko to hash the password more than 600,000 times (1,400,000 for SCRAM-SHA-1), so a hostile server can't keep Ducko busy for hours
-- Never send a password over a connection that isn't encrypted when changing your password or registering with a server or gateway while signed in
+- Refuse a sign-in when the server asks for excessive password hashing, so it can't stall Ducko
+- Never send a password over an unencrypted connection when changing it or registering while signed in
 
 ## [0.12.0] - 2026-11-15
 
 ### Added
 
-- Sign in with SCRAM-SHA-512 and SCRAM-SHA3-512 when the server offers them, preferring the strongest sign-in the server supports ([#1](https://github.com/ducko-im/ducko/issues/1))
-- Add `ducko account set <jid>` to allow or refuse sending the password and to require an encrypted connection without connecting, `--allow-plain` on `ducko account add`, and both settings in `ducko account list`
-- Reset the encryption sessions with a contact, one of their devices, or one of your own other devices, from the chat's encryption menu, the Device Fingerprints sheet, `ducko omemo reset` or the REPL's `/omemo-reset`, when their messages can't be decrypted. The chat notes which devices changed key or still need trusting
-- Mark a message decrypted from a device you haven't trusted with an orange shield, `[untrusted device]` in the CLI, or `"untrustedDevice":"true"` in JSON
-- Honour a contact's request for unencrypted messages: encrypted sends to them stop with a "Send Unencrypted" choice that switches encryption off and sends the held text once, and the chat notes when they later send encrypted messages again
-- Read encrypted messages that arrived while you were offline once the archive is caught up, and switch encryption on for the reply when a contact's first encrypted message arrives that way
+- Sign in with SCRAM-SHA-512 and SCRAM-SHA3-512 when the server offers them ([#1](https://github.com/ducko-im/ducko/issues/1))
+- Add `ducko account set` and `--allow-plain` to choose how an account may sign in
+- Reset the encryption sessions with a contact or device when their messages can't be decrypted
+- Mark messages decrypted from a device you haven't trusted, in the app and the CLI
+- Honour a contact's request to receive unencrypted messages
+- Read encrypted messages that arrived while you were offline once the archive is caught up
 
 ### Changed
 
-- Distribute Ducko under the GNU GPL v3 alone, without the additional permission to link with BoringSSL, since the bundled BoringSSL is now licensed under the Apache License 2.0
-- Never send an account's password to a server that offers only a sign-in that sends it, unless you allow that for the account from the Sign-In Refused alert, the account's Edit sheet in Preferences, the add-account forms or `ducko account set --allow-plain`. A sign-in that proves the server knows the password turns it off again. Accounts created by registering on a server start with it allowed
-- Report that refusal in the CLI's JSON `sign_in_refused` record with the reason `plain_not_allowed`
-- Wait up to two seconds for a group chat to describe itself before joining it, so its first messages are told apart by who sent them
-- Catch up on a group chat's archive once you have rejoined it, when the group chat identifies its members by occupant id
+- Distribute Ducko under the GNU GPL v3 alone, without the BoringSSL linking exception
+- Never send an account's password to a server offering only plain sign-in, unless you allow it
+- Report that refusal in the CLI's JSON `sign_in_refused` record as `plain_not_allowed`
+- Wait up to two seconds for a group chat to describe itself before joining it
+- Catch up on a group chat's archive once you have rejoined it
 - Read message archives only from servers and group chats that announce one
-- Explain in plain words why a sign-in failed when the server answers out of order, leaves out part of its reply, or refuses the sign-in partway, instead of showing internal names such as "Expected waitingForServerFirst"
-- Show encryption fingerprints in the standard OMEMO form, eight groups of eight characters, in the app and the CLI. Devices you trusted before keep their trust
-- Encrypt only to the devices on each recipient's current device list, and list only those devices in the Device Fingerprints sheet and `ducko omemo devices`
-- Encrypt to your own other devices only when they are trusted under the trust-on-first-use setting, as for contacts
-- Send an encrypted group message only in group chats that reveal their members' addresses and let Ducko read their member lists, and fetch those lists before each encrypted message
-- Replace your encryption device's signed key every week, keeping the previous one for another week so messages encrypted with it still decrypt
-- Keep your bookmarks working when the server's bookmark storage was set up by another app with different settings, and stop the server from re-sending your bookmarks at every sign-in
+- Explain in plain words why a sign-in failed instead of showing internal names
+- Show encryption fingerprints in the standard OMEMO form, keeping the trust you already gave
+- Encrypt only to the devices on each recipient's current device list
+- Encrypt to your own other devices only when they are trusted, as for contacts
+- Send encrypted group messages only in group chats that reveal their members' addresses
+- Replace your encryption device's signed key every week
+- Keep bookmarks working when another app set up the server's bookmark storage differently
 
 ### Fixed
 
-- Stop reading the same archive range twice from adding copies of messages already shown
-- Skip archive pages the server reports as still changing and load them on a later try, instead of keeping an incomplete page
-- Put your encryption device back on your account's device list when another app removes it, and never pick a new device id another of your devices already uses
-- Fetch a contact's device list again when a message comes from a device not on it, so that device can be trusted and encrypted to
+- Stop duplicate messages appearing when the same archive range is read twice
+- Skip archive pages the server reports as still changing and load them on a later try
+- Restore your encryption device when another app removes it, and never reuse another device's id
+- Fetch a contact's device list again when a message comes from a device not on it
 
 ### Removed
 
@@ -124,335 +124,335 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
-- Prevent someone who takes a group chat member's nickname from editing or retracting that member's messages, by checking the group chat's occupant ids, or the member's real address, before applying a correction or retraction
-- Show a group chat message someone else posted under your nickname as theirs, so its images wait for a click instead of loading as yours
+- Stop someone who takes a group chat member's nickname from editing or retracting their messages
+- Show a group chat message someone else posted under your nickname as theirs
 - Trust a message's server-assigned id only from a server or group chat that announces such ids
-- Stop a sign-in before the password proof goes out when the server's list of sign-in options or the connection's encryption version was changed on the way, which can mean the connection is being tampered with ([#2](https://github.com/ducko-im/ducko/issues/2), [#4](https://github.com/ducko-im/ducko/issues/4))
-- Tie sign-ins to the encrypted connection on servers such as Prosody that support only the newer TLS 1.3 form of this protection, so someone holding a trusted certificate for the server cannot pass your sign-in on
-- Refuse a sign-in when the server offers sign-in protection that Ducko cannot use on the connection, or when its sign-in options contradict each other, instead of signing in without that protection
-- Ignore a request for unencrypted messages that comes from a device you haven't trusted, so it cannot turn encryption off in a chat
-- Drop encrypted elements meant for the server, such as delivery hints and addresses, when they appear inside an encrypted message
+- Stop a sign-in whose options or encryption version were tampered with on the way ([#2](https://github.com/ducko-im/ducko/issues/2), [#4](https://github.com/ducko-im/ducko/issues/4))
+- Tie sign-ins to the encrypted connection on servers that support only the TLS 1.3 form
+- Refuse a sign-in instead of dropping protection the server offers but Ducko can't use
+- Ignore a request for unencrypted messages from a device you haven't trusted
+- Drop elements meant for the server, such as delivery hints, found inside an encrypted message
 
 ## [0.11.0] - 2026-10-23
 
 ### Added
 
-- Add a `nickname` field to the CLI's JSON typing and room subject records when a room occupant is typing or set the subject
-- Add `kind` and `condition` fields to the CLI's JSON `authentication_failed` record, telling a rejected password apart from a temporary server failure, and a `setup_failed` disconnect reason
+- Add a `nickname` field to the CLI's JSON typing and room subject records
+- Add `kind` and `condition` to the CLI's JSON `authentication_failed` record, and a `setup_failed` disconnect reason
 
 ### Changed
 
-- Offer Verify in Device Fingerprints only once a device's fingerprint is known, since there is nothing to compare before then
+- Offer Verify in Device Fingerprints only once a device's fingerprint is known
 
 ### Fixed
 
-- Keep reconnecting after a lost connection until the server is reachable again, instead of staying offline after one failed attempt, and stop reconnecting when the server ends the session for a reason that won't clear by itself, such as another session taking it over
-- Keep retrying an account that cannot connect at launch or after its server redirects it, and wait while there is no network instead of retrying, showing "No network connection" until it returns
-- Notice a lost network within seconds, and a server that stopped answering within 30 seconds of a keepalive ping, instead of only at the next five-minute ping
-- Say why a server's certificate is not trusted, such as that it was issued for a different server or has expired, and stop retrying a connection whose certificate was rejected
-- Ask for an imported account's password again only when the server rejects it, and list the account as failed with its own reason for any other sign-in failure
-- Show a warning instead of "Import Complete" when none of the accounts imported at first launch could connect
-- End a session whose setup fails after connecting and start a fresh one when the failure can clear by itself, instead of leaving the account half connected
-- Give up on a sign-in the server stops answering after a minute and try again, instead of waiting indefinitely
-- Keep the wait a server asks for between channel searches when the app and the CLI search at the same time, and honor a wait given in fractions of a second
-- Keep other apps' data in a bookmark as they wrote it when Ducko saves the bookmark again
-- Stop assuming a contact still supports what its client advertised earlier once it switches to a client whose capabilities Ducko cannot check
-- Accept incoming file transfers from clients that need the accepting side to state who sends the file
-- Name the occupant in the REPL's room typing and topic lines, and print no topic line when joining a room that has none
-- Report a room topic set from the REPL only once the room accepts it, instead of confirming a change the room then refuses
-- Find a contact's OMEMO devices with the CLI's `omemo devices`, `omemo trust` and `omemo untrust` whatever case the address is typed in
+- Keep reconnecting after a lost connection until the server is reachable again
+- Keep retrying an account that can't connect at launch, and wait while there is no network
+- Notice a lost network or a server that stopped answering within seconds instead of minutes
+- Say why a server's certificate is not trusted, and stop retrying a rejected certificate
+- Ask for an imported account's password again only when the server rejects it
+- Show a warning instead of "Import Complete" when no imported account could connect
+- Start a fresh session when setup fails after connecting, instead of staying half connected
+- Retry a sign-in the server stops answering after a minute, instead of waiting indefinitely
+- Keep a server's wait between channel searches when the app and the CLI search at once
+- Keep other apps' data in a bookmark when Ducko saves the bookmark again
+- Stop assuming a contact still supports what its earlier client advertised
+- Accept incoming file transfers from clients that need the receiver to name the sender
+- Name the occupant in the REPL's room typing and topic lines
+- Report a room topic set from the REPL only once the room accepts it
+- Find a contact's OMEMO devices in the CLI whatever case the address is typed in
 
 ### Security
 
-- Refuse an encrypted message that starts a new session from a device marked untrusted, or with an identity key other than the one already known for that device, and say why in place of the message, instead of silently replacing the session
-- Refuse a message that arrives through a session whose identity key does not match the device's known fingerprint, and say why in place of the message
-- Keep refusing a one-time pre-key once a message has used it, across reconnects and even when recording its use failed, so a recorded message cannot be replayed to start a new session while Ducko runs
-- Refuse to trust a device whose stored fingerprints disagree, saying "This device has more than one fingerprint, so it cannot be trusted"
+- Refuse an encrypted message that starts a new session from an untrusted device or unknown key
+- Refuse a message from a session whose identity key doesn't match the device's fingerprint
+- Keep refusing a used one-time pre-key, so a recorded message can't be replayed
+- Refuse to trust a device whose stored fingerprints disagree
 
 ## [0.10.0] - 2026-10-21
 
 ### Added
 
-- Add a `self` field to the CLI's JSON output when a room departure or nickname change is your own
-- Add Blocked Contacts to each account's Actions menu in Preferences ▸ Accounts, listing every blocked address, including one that blocks a single device of a contact, with a field to block any address and a button to unblock each one
+- Add a `self` field to the CLI's JSON output for your own room departures and nickname changes
+- Add Blocked Contacts to each account's Actions menu in Preferences ▸ Accounts
 - Add `ducko blocklist list`, `add` and `remove`, and the REPL commands `/block`, `/unblock` and `/blocklist`
-- Send replies that other XMPP apps show with their context: a reply starts with a quote of the message it answers, which apps that understand replies hide, and replies now work in rooms
-- Allow correcting, retracting and replying to messages in a private chat within a room, in the chat window and with `/edit`, `/retract` and `/reply` in the REPL
-- Create accounts on servers that ask for more than a username and password: Ducko fetches the server's form first and shows its further fields and instructions with what you typed filled in, or the web page the server sends you to, and registers only once every field the server asks for has a value. `ducko account register` and the REPL's `/submit-registration` prompt for those fields until each has a value, and name the web page instead of submitting an empty form
-- Show a form's title, instructions, fixed text, field descriptions and required fields in registration and room settings forms, in the app and the CLI, and keep Register, Submit and Save unavailable until every required field has a value
-- Count down in Join Room until a server that limits channel searches allows the next one, and report the wait from `ducko room list --search`. The wait survives quitting Ducko and applies to the app and the CLI alike
+- Send replies that other XMPP apps show with their context, including in rooms
+- Allow correcting, retracting and replying to messages in a private chat within a room
+- Create accounts on servers that ask for more than a username and password
+- Show a form's title, instructions, descriptions and required fields in registration and room settings
+- Count down in Join Room until a server that limits channel searches allows the next one
 - Follow avatar changes made on your account's other devices
-- Show why an encrypted message can't be read instead of dropping it: it was not encrypted for this device, it uses another method such as OpenPGP, it carries nothing to decrypt, or its room does not reveal who sent it. This includes room messages with no text of their own, announcement messages, corrections, which no longer replace a message's text with their fallback text, and messages you sent from another device under your room nickname
+- Show why an encrypted message can't be read instead of dropping it
 - Add a `message_type` field to the CLI's JSON correction and retraction records
 
 ### Changed
 
-- Send your Mac's name to the server when signing in with the newer sign-in method, so the server can name the device a session belongs to
-- Encrypt with the current OMEMO format, so encrypted chats work with other apps that use it. Encrypted chats with earlier versions of Ducko stop working until both sides update, and each encrypted chat starts a new session
-- Stop adding a plain-text hint to encrypted messages: apps that can't decrypt them show their own notice instead
-- Publish avatars as PNG pictures of at most 512 pixels on each side, scaling down a larger picture so you can choose one of up to 50 MB instead of 8 MB, and don't publish one on a server that cannot share it
-- Change the CLI's JSON `registration_form` record: a form's fields are listed as objects, and a data form is nested under `form`, replacing the `has_*` and `field_*` keys. In JSON, `/config` prints the room settings form as one `data_form` record
+- Send your Mac's name to the server when signing in with the newer sign-in method
+- Encrypt with the current OMEMO format, which earlier versions of Ducko can't read
+- Stop adding a plain-text hint to encrypted messages
+- Publish avatars as PNG pictures of at most 512 pixels, accepting pictures of up to 50 MB
+- Change the CLI's JSON `registration_form` record to list fields as objects and nest data forms
 
 ### Removed
 
-- Remove the service outage warning, which never appeared because it relied on an announcement servers don't send
+- Remove the service outage warning, which never appeared
 
 ### Fixed
 
-- Fix an encrypted message that decrypted on arrival gaining an undecryptable twin after the next archive sync, and show the text of a message stored as undecryptable once another copy of it decrypts
-- Keep contacts able to start encrypted chats with you: replace used one-time keys and publish the change during the session, including after a resumed connection, and erase a used key from storage
-- Ignore a repeated key exchange instead of showing an old encrypted message again, and reject one that names a key Ducko does not have
-- Keep your encryption device when its stored keys cannot be read at sign-in, instead of quietly creating a new one
-- Save the encryption sessions and contact fingerprints learned from messages the server replays after a resumed connection
+- Fix an encrypted message gaining an undecryptable twin after the next archive sync
+- Keep contacts able to start encrypted chats with you by replacing used one-time keys
+- Ignore a repeated key exchange instead of showing an old encrypted message again
+- Keep your encryption device when its stored keys can't be read at sign-in
+- Save encryption sessions and fingerprints learned from messages replayed after a resumed connection
 - Show a conversation's newest message as its preview, even when an older one arrives later
 - Stop counting your own messages sent from another device as unread
 - Keep unblocking everyone, background-state updates and roster pre-approval working after a resumed connection
 - Use the nickname a room assigns you when you join it
-- Change your nickname when you join a room you are already in under another one, instead of timing out, and finish at once when the nickname is the same
-- Stop another occupant who holds your earlier nickname from changing which room messages count as yours, or from turning off rejoining when they are kicked or renamed
+- Change your nickname when joining a room you're already in under another one, instead of timing out
+- Stop an occupant who takes your earlier nickname from being treated as you
 - Show your role controls in an open room window right after you rejoin under another nickname
 - Color room nicknames the way other XMPP clients do
-- Find channel search services that follow the published standard, and show rooms they mark as open as open
-- Show a room message that also carries a topic as a message instead of a topic change, and clear the room's topic when someone clears it
-- Tell the contact when a file link they offered cannot be downloaded, which ends the offer instead of leaving it open for another try
-- Keep your block list when another of your clients unblocks an address that names a device
-- Resume your session after a lost connection on servers that use the newer sign-in method, instead of starting a new one
-- Show messages you send or receive on another device even when the server can't turn on their copies during sign-in
-- Show private messages within a room that you send or receive on another device in that private chat, instead of a chat with the room's address, and stop saving invitations and error replies copied from your other devices as messages
-- Apply corrections and retractions made on your other devices, or by a contact on theirs, instead of ignoring them, and stop the CLI from printing the fallback text of a retraction made on another device
-- Apply corrections and retractions fetched from the server's archive instead of showing them as new messages or showing a retraction's fallback text
-- Fix other apps ignoring your retraction of a room message: it now names the id the room gave the message, and others' room retractions are matched the same way
+- Find channel search services that follow the published standard
+- Show a room message that also carries a topic as a message instead of a topic change
+- Tell the contact when a file link they offered can't be downloaded
+- Keep your block list when another client unblocks an address that names a device
+- Resume your session after a lost connection on servers that use the newer sign-in method
+- Show messages from your other devices even when the server can't enable their copies at sign-in
+- Show private messages within a room from your other devices in the right private chat
+- Apply corrections and retractions made on other devices instead of ignoring them
+- Apply corrections and retractions fetched from the server's archive instead of showing them as messages
+- Fix other apps ignoring your retraction of a room message
 - Keep the reply, attachment and receipt request of a message when you correct it
-- Stop a correction, retraction or reply from reaching another message that happens to share its id, by giving every message an id that's never reused and matching only messages from the same sender
-- Show messages delivered while you were offline, and the earlier messages a room shows when you join it, at the time they were sent, and stop the room's earlier messages from counting as unread or alerting you
-- Fetch every message the server's archive holds since you were last online when you reconnect, not only the newest 50 of each chat you already had, and open the chats that exist only on the server
-- Send typing notifications only when your typing changes, stop sending them to a contact whose messages carry none, even after reconnecting, and send them to rooms as room messages instead of one-to-one messages
-- Send your app's capabilities with every presence, including when you join a room or change your nickname there, and check the capabilities contacts announce before relying on them
-- Keep other apps' data in a bookmark when Ducko saves it, failing the save when that data can't be fetched first, tell your other clients when you remove one, and join or leave a room when another device turns its bookmark's auto-join on or off
-- Make direct file transfers work with more apps: accept one offered over the in-band fallback first, send in the smaller blocks the receiver asks for, try the receiver's connection offers too, settle on one fallback when both sides switch to it at once, refuse data sent after a transfer was closed, and answer every transfer request, including ones Ducko does not support
-- Decrypt encrypted messages you send or receive on another device and show them in the chat with the other person, instead of dropping them
-- Decrypt encrypted room messages and private messages within a room, and show them under the sender's nickname
+- Stop a correction, retraction or reply from reaching another message that shares its id
+- Show messages delivered while you were offline, and a room's earlier messages, at the time they were sent
+- Fetch every archived message since you were last online when you reconnect
+- Send typing notifications only when your typing changes and only to contacts who use them
+- Send your app's capabilities with every presence, including in rooms
+- Keep other apps' bookmark data when saving, and sync bookmark removal and auto-join across devices
+- Make direct file transfers work with more apps
+- Decrypt encrypted messages you send or receive on another device instead of dropping them
+- Decrypt encrypted room messages and private messages within a room
 - Sign in to an account `ducko account register` created through the `--host` and `--port` it was given
-- Hide what you type into a form's password fields, and keep every value of a field that takes several
-- Accept passwords longer than 128 characters at the CLI's password prompt, and refuse one too long to read whole instead of cutting it short
-- Remove your avatar on a server that cannot share avatars, by clearing it from your profile
-- Stop announcing a new avatar to contacts when it could not be saved to your profile, and stop a profile save from bringing back an avatar you changed elsewhere
-- Save your first avatar to your profile, and tell contacts when you have none, on servers that report a profile never saved before as missing
-- Name the file `ducko avatar get` saves, and the type it reports, after the picture's actual format instead of the type the profile claims
+- Hide what you type into a form's password fields, and keep every value of a multi-value field
+- Accept passwords longer than 128 characters at the CLI's password prompt
+- Remove your avatar on servers that can't share avatars
+- Stop announcing a new avatar to contacts when it couldn't be saved to your profile
+- Save your first avatar on servers that report a never-saved profile as missing
+- Name the file `ducko avatar get` saves after the picture's actual format
 
 ### Security
 
-- Refuse to save a bookmark, which can hold a room password, on a server that cannot keep it private
-- Send only the authorization, cookie and expiry headers an upload server asks for, with line breaks removed
-- Ignore published bookmarks, avatars and encryption device lists that come from a single device or room occupant instead of the account they belong to
-- Tie sign-in to the encrypted connection when the server lists a way of doing so that Ducko supports, though someone holding a certificate your Mac trusts for the server can still make Ducko sign in without it
+- Refuse to save bookmarks on a server that can't keep them private
+- Send only the headers an upload server is allowed to ask for, with line breaks removed
+- Ignore bookmarks, avatars and device lists published by a single device instead of the account
+- Tie sign-in to the encrypted connection when the server supports it
 - Never use the newer sign-in method over an unencrypted connection
-- Once an account has signed in without sending its password, refuse a later sign-in that would send it, which can mean someone is intercepting the connection. The Sign-In Refused alert lets you keep refusing or reset this, as does `ducko account reset-security`
-- Show an encrypted message as untrusted when the sender, recipient or time sealed inside it don't match how it arrived
-- Keep corrections and retractions of an encrypted message encrypted even after you turn encryption off, and refuse to send one that can't be encrypted instead of sending it in the clear
-- Stop showing a lock in a private chat within a room, which Ducko cannot encrypt: the chat offers no Encryption menu, and one whose encryption an earlier version turned on refuses to send until you turn it off
-- Show only the encrypted content of an encrypted message, ignoring unencrypted text, file links, reply references, corrections, retractions, room topics and invitations sent alongside it, including in private messages within a room, in messages fetched from the server's archive, and in the CLI's output for messages from your other devices
+- Refuse a sign-in that would send the password once an account has signed in without sending it
+- Show an encrypted message as untrusted when its sealed sender, recipient or time don't match
+- Keep corrections and retractions of an encrypted message encrypted, even after turning encryption off
+- Stop offering encryption in a private chat within a room, which Ducko can't encrypt
+- Show only the encrypted content of an encrypted message, ignoring unencrypted parts sent alongside it
 
 ## [0.9.0] - 2026-10-18
 
 ### Added
 
-- Show unread messages and typing on contacts in the Contacts window, where their status dot sits and as on chat tabs, so you can see who wrote or is writing without opening the chat window
+- Show unread messages and typing on contacts in the Contacts window
 
 ### Changed
 
-- Show a room's unread count in the Contacts window where its status dot sits, matching contacts and chat tabs
-- Keep a contact with unread messages in the Contacts window while Hide Offline Contacts is on, until you read them
+- Show a room's unread count in the Contacts window where its status dot sits
+- Keep a contact with unread messages listed while Hide Offline Contacts is on
 
 ### Fixed
 
 - Fix a contact's typing indicator staying on after they go offline
-- Fix interactive mode and `ducko room join` printing each room message, each private message from a room and the "Joined" line twice
-- Fix a room that refused your join (wrong password, banned, nickname taken) counting as joined, with you listed as its only occupant
-- Fix Ducko rejoining a room you had just left when a check of your presence in the room was answered at the same moment
-- Fix your own `/me` messages reading "* You waves" in a chat and showing the other person's address in Chat History: they now name you, by your nickname in a room and in a private chat within one
-- Fix an open chat losing the contact's name and photo, and the Contacts window losing your own photo, when you go offline
-- Fix room nicknames all showing in gray: each occupant's name and picture now has its own color, and the participant list colors names to match
-- Fix Chat History naming contacts by their address: conversations, days and `/me` lines now use the names your contact list shows
-- Fix a reply to a contact's message showing their address instead of their name, in its quote and in the bar above the message field, which now also says when you reply to yourself
-- Fix room invitations and offers of a file naming the sender by their address: they now use the name your contact list shows, and keep the address for someone not in it
+- Fix interactive mode and `ducko room join` printing room messages and the "Joined" line twice
+- Fix a room that refused your join counting as joined
+- Fix Ducko rejoining a room you had just left
+- Fix your own `/me` messages reading "* You waves" instead of naming you
+- Fix chats and the Contacts window losing names and photos when you go offline
+- Fix room nicknames all showing in gray
+- Fix Chat History naming contacts by their address instead of their contact list name
+- Fix a reply to a contact's message showing their address instead of their name
+- Fix room invitations and file offers naming the sender by their address
 - Fix Chat History listing a message that arrived late out of time order
-- Fix a private chat within a room showing "Couldn't load older messages: Invalid JID" when scrolled to its start
-- Fix messages you sent or received on another device going missing when the server sends their copies without a sender address
-- Fix messages in an encrypted chat that were fetched from the server's archive showing the sender's "This message is OMEMO encrypted" fallback as if they had written it: they now read "This message could not be decrypted"
-- Fix one-off CLI commands such as `ducko send` joining your bookmarked and remembered rooms, so everyone there saw you join and leave. Only `ducko interactive` joins them
-- Fix `ducko history <address> --search` accepting `--before` and `--server` and then ignoring them: both are now refused with `--search`
-- Stop Ducko asking the server's archive about a private chat within a room when you sign in, which could fill it with messages from the room's other private chats
-- Fix the name and size of a file you sent being hard to read on your message: they now sit on a darker card, and a file that is not on this Mac no longer looks grayed out
-- Fix the chat you were looking at counting as read after you opened another chat in a new tab, while that tab was still loading or for good when it failed to load
-- Fix encrypted messages reading "This message could not be decrypted" when they arrive after a dropped connection picks up where it left off, or right after you sign in
-- Fix a message that failed to send because the connection dropped or encryption failed vanishing without a word: the error now shows, your text comes back, and a reply or correction that fails stays one for another try
-- Fix My Profile and `ducko avatar set` publishing any chosen file as your picture: a file that is not a readable picture, or one over 8 MB, is now refused with a message saying so
-- Fix `ducko interactive` printing nothing for an incoming encrypted message: it now shows it as it arrives, like any other message
-- Fix a delivery mark in a room, or in a private chat within one, sometimes landing on an older message of yours instead of the one you just sent
+- Fix a private chat within a room showing "Couldn't load older messages: Invalid JID" at its start
+- Fix messages from your other devices going missing when the server omits their sender address
+- Fix archived encrypted messages showing the sender's OMEMO fallback text as if they wrote it
+- Fix one-off CLI commands such as `ducko send` joining your bookmarked and remembered rooms
+- Fix `ducko history --search` accepting `--before` and `--server` and then ignoring them
+- Stop asking the server's archive about private chats within a room when you sign in
+- Fix the name and size of a file you sent being hard to read on your message
+- Fix the chat you were looking at counting as read after opening another chat in a new tab
+- Fix encrypted messages failing to decrypt after a resumed connection or right after sign-in
+- Fix a message that failed to send vanishing without an error
+- Fix My Profile and `ducko avatar set` publishing files that aren't readable pictures
+- Fix `ducko interactive` printing nothing for an incoming encrypted message
+- Fix a delivery mark in a room sometimes landing on an older message of yours
 
 ### Security
 
-- Ignore copies of your messages that claim to come from another of your devices instead of from your server, so nothing but your server can add them to your chats
-- Keep the addresses of rooms, contacts, your account and the services you use, room nicknames and the senders of room invitations out of the log file at the default log level
+- Ignore copies of your messages that claim to come from another of your devices instead of your server
+- Keep addresses and nicknames out of the log file at the default log level
 
 ## [0.8.0] - 2026-10-08
 
 ### Added
 
-- Add a search over all conversations to the Chat History window, which lists each day with a match as soon as it is found and opens the first one
-- Add a find bar to the Chat History window (⌘F) that steps through the matches from day to day and shows how many there are
-- Highlight the searched word inside matching messages, in Chat History and in a chat's find, and mark the match you are on
+- Add a search over all conversations to the Chat History window
+- Add a find bar to the Chat History window (⌘F) that steps through matches across days
+- Highlight the searched word inside matching messages, in Chat History and in a chat's find
 - Allow selecting and copying part of a message's text, in chats and in Chat History
-- Add `ducko history --search` without an address to search every conversation of an account, and `/searchall` in interactive mode
+- Search every conversation of an account with `ducko history --search` or `/searchall`
 
 ### Changed
 
-- Rename the Chat Transcripts window to Chat History, and show the conversation's name once, as the window's title
-- Show every day of an account or an imported history when you select it in Chat History, and remember which of them you collapsed
-- Show a contact's photo next to each conversation in Chat History, and the conversation's photo and name on each day of an account, an imported history or a search
-- Open Chat History on your first account when you open it from the File menu
-- Search a conversation's whole history with `ducko history <address> --search`, instead of its newest 500 messages
-- Find messages by the name of an attached file in a chat's find, and never find retracted messages
+- Rename the Chat Transcripts window to Chat History
+- Show every day of an account or an imported history when you select it in Chat History
+- Show contact photos next to conversations and days in Chat History
+- Open Chat History on your first account from the File menu
+- Search a conversation's whole history with `ducko history --search`
+- Find messages by attached file name in a chat's find, and never find retracted messages
 
 ### Removed
 
 - Remove the conversation type filter from the Chat History toolbar
-- Remove the number of messages from each day and the date of the last message from each conversation in Chat History
+- Remove message counts and last-message dates from Chat History
 
 ### Fixed
 
-- Fix the arrow keys not moving the selection after you click a row in Chat History, Settings ▸ Accounts or Settings ▸ Status
+- Fix the arrow keys not moving the selection after clicking a row in Chat History or Settings
 
 ### Security
 
-- Prevent a received message that stacks thousands of accents on one letter from freezing Ducko while you search
+- Prevent a message that stacks thousands of accents on one letter from freezing search
 
 ## [0.7.0] - 2026-10-06
 
 ### Added
 
-- Add a Compact rows option in Settings ▸ Appearance that shows every contact and room on one line, without avatars, status lines or room topics
-- Add tooltips that show the full text of a name, status message, room topic or file name that is cut off
+- Add a Compact rows option in Settings ▸ Appearance that shows each contact and room on one line
+- Add tooltips that show the full text of a cut-off name, status message, room topic or file name
 
 ### Changed
 
 - Show the date above the first message of each day in a chat
-- Show a status message, room topic or reply preview that has several lines as one line, instead of only its first line
+- Show a multi-line status message, room topic or reply preview in full on one line
 
 ### Removed
 
-- Remove themes, including the theme picker, the three alternative themes and loading your own theme files, so Ducko always uses the look of the former Default theme
+- Remove themes, so Ducko always uses the former Default theme's look
 
 ### Fixed
 
-- Fix your status and avatar at the top of the Contacts window being pushed against the window's edges by a long status, which is now shortened to fit
-- Fix a long file name running past the edge of the placeholder for an image whose file is missing
-- Fix the chat window briefly showing its header cut off under the title bar and its tabs below the window's edge while a chat is opening
-- Fix rooms no longer showing new messages or their participants after your connection briefly drops, and show the messages sent during the drop
+- Fix a long status pushing your status and avatar against the Contacts window's edges
+- Fix a long file name overflowing the placeholder for a missing image
+- Fix the chat window briefly showing its header and tabs cut off while a chat opens
+- Fix rooms no longer showing new messages or participants after a brief connection drop
 - Fix room bookmarks staying empty after your connection briefly drops
 - Fix rooms not being joined when your connection drops while Ducko is signing in
 - Fix still appearing in a room to others after leaving it while your connection was down
-- Fix a room staying disconnected without notice when its server answers Ducko's periodic check with an unexpected error
+- Fix a room staying disconnected without notice after an unexpected error from its server
 
 ## [0.6.0] - 2026-10-04
 
 ### Added
 
-- Bring back the chat window after relaunching Ducko, with the same tabs in the same order and the same one selected
-- Rejoin the rooms you are in whenever Ducko connects, without an auto-join bookmark, until you leave them, including rooms joined with `/join` in `ducko interactive`
-- Add a button at the bottom of a chat that jumps to the newest message, shown while you are scrolled up
-- Keep each chat's reading position while the chat window is open, so switching tabs and back shows a chat where you left it
+- Bring back the chat window and its tabs after relaunching Ducko
+- Rejoin the rooms you are in whenever Ducko connects, until you leave them
+- Add a button that jumps to the newest message while you are scrolled up
+- Keep each chat's reading position when switching tabs
 
 ### Changed
 
-- Print a failed direct transfer in `ducko interactive` as `error: <reason> (sid: <id>)`, and mark a failed transfer in `/transfers` with `error:` as well
-- Say "the contact" instead of "the peer" in file transfer and encryption errors, call the list in Device Fingerprints "Contact's Devices", and end menu items and progress labels with a proper ellipsis
-- Keep what you are reading in place when older messages load, a message arrives, a link preview appears, or the window is resized, and keep the newest message in view when you are at the end of the chat
-- Count messages that arrive while you are scrolled up in a chat as unread, and send the read receipt only once you are back at the newest message
-- Show that a contact is typing on the chat's tab only, no longer as a row at the end of the chat
+- Mark a failed direct transfer with `error:` in `ducko interactive` and `/transfers`
+- Use clearer wording in file transfer and encryption errors, Device Fingerprints and menu items
+- Keep what you are reading in place when messages load or arrive, or the window resizes
+- Count messages that arrive while you are scrolled up in a chat as unread
+- Show that a contact is typing on the chat's tab only
 - Leave a little space between the newest message and the message field
 - Open chats, show incoming messages and resize the chat window faster in chats with a long history
 
 ### Fixed
 
-- Fix link preview cards missing from a chat after relaunching Ducko, and from older messages loaded by scrolling back, until the next message arrived
+- Fix link preview cards missing after relaunching Ducko or loading older messages
 - Fix a contact's subscription request disappearing when your connection briefly drops
-- Fix a folder being accepted for sending and failing only once the transfer had started, by refusing it right away
-- Fix a message changing height, and the chat shifting with it, when a remote image loads, a delivery mark arrives, or a direct file transfer moves from waiting to sending
-- Fix scrolling back in a chat skipping or repeating messages sent in the same second, and loading the oldest part of the server's history instead of the part right before what is shown, also in `ducko history --server`
+- Fix a folder being accepted for sending and failing only once the transfer started
+- Fix messages changing height, and the chat shifting, when images, delivery marks or transfer updates arrive
+- Fix scrolling back in a chat skipping or repeating messages, or loading the wrong part of history
 - Fix a read receipt being sent for a chat you had already switched away from
 
 ### Security
 
-- Prevent someone else from slipping messages into a chat's history while Ducko loads it from the server, by accepting history only from the archive that was asked and no more than was asked for
+- Prevent someone else from slipping messages into a chat's history while Ducko loads it from the server
 
 ## [0.5.0] - 2026-10-03
 
 ### Added
 
-- Send a file straight to one of a contact's devices with Send Directly in the attachment bar, or with `/senddirect` in `ducko interactive`, instead of uploading it to the server, with a note in encrypted chats that files are not end-to-end encrypted
-- Switch a chat's encryption on when the contact sends an encrypted message, with a note in the chat saying so, unless you switched it off yourself
-- Open a contact's chat when they write or offer a file, behind the window you are in, without taking the keyboard and without marking it read, and bounce the Dock icon once
-- Show delivered and read as separate checkmarks on your messages, print read markers as they arrive in `ducko interactive`, and mark read messages `[read]` in history
+- Send a file straight to one of a contact's devices with Send Directly or `/senddirect`
+- Switch a chat's encryption on when the contact sends an encrypted message
+- Open a contact's chat in the background when they write or offer a file
+- Show delivered and read as separate checkmarks on your messages, in the app and the CLI
 - Show a typing bubble in a chat's tab while the contact types
 
 ### Changed
 
-- Show a photo sent as a file as the photo itself instead of its link, in your own messages as well as received ones
-- Load photos from people in your contact list right away in one-to-one chats, and show anyone else's as a placeholder with the file name that loads when clicked
-- Trust a contact's new devices on first use by default, so a first encrypted message sends without verifying a fingerprint beforehand, and show those devices as Trusted in Device Fingerprints
-- Show an encrypted message that could not be decrypted as a muted notice with a warning lock instead of as text from the sender, and mark it as an error in `ducko` output, with an `undecryptable` field in JSON
+- Show a photo sent as a file as the photo itself instead of its link
+- Load photos from contacts right away in one-to-one chats, and anyone else's only when clicked
+- Trust a contact's new devices on first use by default
+- Show an undecryptable encrypted message as a muted notice instead of text from the sender
 - Offer Copy Link for a shared file in the message context menu, and no longer offer Edit for it
-- Show a code block in its own box with a copy button on hover, and show inline code in a monospaced font
-- Insert a line break in the message field with Shift or Option plus Return or Enter, and send with the keypad's Enter key as well as Return
+- Show code blocks in their own box with a copy button, and inline code in a monospaced font
+- Insert a line break with Shift or Option plus Return, and send with the keypad's Enter key
 - Show the typing indicator and a file being received as rows at the end of the chat
-- Show a chat's unread count at the start of its tab, in place of the status dot, instead of after the name
-- Count a chat as read only while its window is focused, so messages that arrive while it is behind another window or the app is in the background stay unread
-- Keep typing and presence updates coming while any Ducko window is on screen, also behind another app, and tell the server the app is inactive only once none is
+- Show a chat's unread count at the start of its tab, in place of the status dot
+- Count a chat as read only while its window is focused
+- Keep typing and presence updates coming while any Ducko window is on screen
 - Title notifications with the contact's name from your contact list
-- Upload a file with `ducko send --file` unless `--method jingle` is given, and accept a contact's bare address with `--method jingle`, which then picks one of their devices that takes direct transfers
+- Upload a file with `ducko send --file` by default, and send directly with `--method jingle`
 
 ### Fixed
 
-- Fix your profile picture disappearing for your contacts after you sign in or your connection briefly drops
+- Fix your profile picture disappearing for your contacts after you sign in or reconnect
 - Fix line breaks being lost in messages that use styling or mention you
 - Fix the status dot in a chat tab sitting further from the tab's edge than the name does
 - Fix link previews being unreadable inside your own message bubbles
-- Fix contacts showing as offline while online after one of their devices disconnects or after your connection briefly drops
+- Fix contacts showing as offline while online after one of their devices disconnects or you reconnect
 - Fix "Last seen" jumping to the moment you connect for contacts who were already offline
 - Fix unreadable text in history for imported messages that carry their own background color
 - Fix encrypted messages that carry no text showing up as undecryptable
 - Fix a failed file upload going unreported
 - Fix uploaded files losing their original name
 - Fix messages sent within the same second showing in the wrong order
-- Fix a delivery checkmark or send error landing on a received message instead of your own, or on your private message to another member of a room
+- Fix a delivery checkmark or send error landing on the wrong message
 - Fix a destroyed room reappearing when one of its messages arrives late
 
 ## [0.4.0] - 2026-09-24
 
 ### Added
 
-- Take a single account offline or back online from its own submenu in the status menus, which now list every enabled account, including offline ones
+- Take a single account offline or back online from its own submenu in the status menus
 
 ### Changed
 
-- Group the Contacts header status menu, the menu bar icon's menu, and the Status menu into All Accounts and Each Account sections when you have more than one account, with a dash beside a status only some of your accounts show
-- Show the header account's own status in the Contacts header, followed by how many accounts show another one, such as "Available · 1 Offline"
-- Connect every enabled account when you pick an online status for all accounts, including accounts that don't connect on launch
-- Keep the account you picked in the Contacts header while it is offline, and show that its name opens the account switcher
+- Group the status menus into All Accounts and Each Account sections when you have several accounts
+- Show the header account's own status in the Contacts header, with a count of accounts showing another
+- Connect every enabled account when you pick an online status for all accounts
+- Keep the account you picked in the Contacts header while it is offline
 - Turn on Connect on Launch for imported accounts unless their original settings turned it off
 
 ### Fixed
 
-- Show "Not connected to the server" instead of an internal account ID when something needs a connection while an account is offline, such as a contact's profile in Get Info
+- Show "Not connected to the server" instead of an internal account ID while an account is offline
 
 ## [0.3.0] - 2026-09-23
 
 ### Added
 
-- Add Get Info (⇧⌘I), History (⌘L), and Send File… (⇧⌘F) to the Contact menu for the selected contact or the active chat, and a ⌘⌫ shortcut for Remove Contact…
-- Add a Status menu to the menu bar with Available (⇧⌘Y), a ⌘Y toggle between Custom Away… and Available, and Custom…
+- Add Get Info (⇧⌘I), History (⌘L) and Send File… (⇧⌘F) to the Contact menu, and ⌘⌫ for Remove Contact…
+- Add a Status menu to the menu bar with Available (⇧⌘Y), a ⌘Y away toggle, and Custom…
 - Add Close All Chats (⌥⌘W) to the File menu
 - Add Select Next Tab (⌃⇥ or ⇧⌘]) and Select Previous Tab (⌃⇧⇥ or ⇧⌘[) to cycle through chat tabs
 - Add Show/Hide Contact List (⌘/) to the Window menu
@@ -460,15 +460,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- Fit the Settings window to the pane you are viewing, keeping the toolbar buttons in place as you switch panes
-- Gather the account actions in Settings ▸ Accounts into an Actions menu, so their labels read in full instead of being cut to a letter
+- Fit the Settings window to the pane you are viewing
+- Gather the account actions in Settings ▸ Accounts into an Actions menu
 - Show the account and saved-status lists as bordered lists with add and remove buttons beneath them
 - Ask for confirmation before removing a contact from the Contacts window
 - Show the same account's status in the menu bar icon as in the Contacts header
 
 ### Removed
 
-- Remove the Notifications settings pane, whose sound and Do Not Disturb switches had no effect
+- Remove the Notifications settings pane, whose switches had no effect
 
 ### Fixed
 
@@ -489,13 +489,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Save avatars from `avatar get` with the file extension matching their image type
 - Show the certificate issuer in Connection Info as readable names instead of raw certificate data
 - Let VoiceOver reach the buttons on file attachments, link previews, and incoming file offers individually
-- Remove incoming file offers once their account disconnects, instead of offering files that can no longer be accepted
-- Fail a direct file transfer after two minutes when the recipient accepts but never connects, instead of waiting forever
+- Remove incoming file offers once their account disconnects
+- Fail a direct file transfer after two minutes when the recipient accepts but never connects
 - Fail a direct file transfer that stalls for 30 seconds, instead of leaving it stuck
 
 ### Security
 
-- Accept block list updates only from your own server, ignoring ones sent by another client of your account or with a malformed sender
+- Accept block list updates only from your own server
 
 ## [0.2.0] - 2026-09-21
 
@@ -525,51 +525,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Keep delayed room-join updates from restoring participants after leaving
 - Close pending direct file-transfer connections when cancelling or going offline
 - Finish signing out without a half-second wait when the connection has already dropped
-- Prevent a failed OMEMO device list read from removing your other devices from encryption, and add this device once the list can be read again
+- Prevent a failed OMEMO device list read from removing your other devices from encryption
 
 ### Security
 
-- Accept replies to requests only from the address they were sent to, or from your own server, so another sender cannot answer them in its place
+- Accept replies to requests only from the address they were sent to or your own server
 
 ## [0.1.0] - 2026-09-16
 
 ### Added
 
-- Save files you accept to the Downloads folder and show them in the sender's conversation, where you can preview them with Quick Look and reveal them in Finder
+- Save files you accept to the Downloads folder and show them in the sender's conversation
 - List file offers sent as links next to direct transfers in the offer banner and the CLI
 
 ### Changed
 
-- Ask before loading an image a contact links to, so opening a chat doesn't reveal your address and reading time to the image's host
-- Accept or decline a file offer in the CLI by the id printed with it, taking the current account's newest offer when no id is given
-- Show whether you have joined a room in the contact list, and follow the avatar and status indicator settings for room rows
+- Ask before loading an image a contact links to
+- Accept or decline a file offer in the CLI by the id printed with it
+- Show whether you have joined a room in the contact list
 
 ### Removed
 
-- Remove requesting a file from a contact and adding or removing files in a running transfer, which never delivered those files
+- Remove requesting a file from a contact and changing files in a running transfer, which never worked
 
 ### Fixed
 
-- Show a readable reason when signing in fails, such as "Incorrect username or password", instead of internal error details
-- Show readable messages such as "Connection refused" when connecting, registering an account, transferring or uploading files, searching channels, or setting up OMEMO encryption fails, and when the server closes the connection
-- Fix Ducko quitting unexpectedly when the server connection or a file transfer drops while data is being sent
+- Show a readable reason when signing in fails instead of internal error details
+- Show readable error messages for connection, registration, file transfer, upload and encryption failures
+- Fix Ducko quitting unexpectedly when the server connection or a file transfer drops while sending
 - Fix Ducko crashing when the server closes an encrypted connection while messages are still being sent
-- Fix connecting hanging indefinitely when a server stops responding during the encrypted handshake, and keep a slow certificate check from delaying going offline
-- Fix connections staying open in the background after the server ends them, and going offline returning before the connection has actually closed
-- Fix direct file transfers hanging when the peer rejects the connection method, a file transfer proxy can't be activated, or the peer or proxy stops responding
-- Fix completed direct file transfers later showing as failed, and a second click on Accept stalling an incoming transfer
+- Fix connecting hanging indefinitely when a server stops responding during the encrypted handshake
+- Fix connections staying open in the background after the server ends them
+- Fix direct file transfers hanging when the contact or a proxy refuses or stops responding
+- Fix completed direct file transfers later showing as failed, and a second Accept click stalling one
 - Fix a rare crash in the update checker
-- Fix direct file transfers reporting success when the file arrived incomplete or corrupted, and failed transfers later showing as completed
-- Fix accepting a link offer reporting the transfer as complete without downloading anything, and refuse a download that ends early or arrives in a form whose size can't be checked
+- Fix direct file transfers reporting success when the file arrived incomplete or corrupted
+- Fix accepting a link offer reporting the transfer complete without downloading anything
 - Fix direct file transfers to clients such as Conversations stalling once they connect
-- Fix your status in the Contacts header, account menu and menu bar not reflecting an account's own status, or showing online while the account is disconnected
+- Fix your status in the Contacts header, account menu and menu bar not reflecting an account's own status
 
 ### Security
 
-- Prevent a peer from freezing or crashing a direct file transfer with an invalid transfer block size
-- Prevent an attacker on the network from slipping unencrypted messages into a connection while it switches to encryption, and refuse to connect when a server does so
-- Prevent anyone other than the person you are transferring with from cancelling, redirecting, feeding data into, or completing a direct file transfer
-- Prevent a contact from disguising a file's name with invisible characters or saving it outside the Downloads folder
+- Prevent a peer from freezing or crashing a direct file transfer with an invalid block size
+- Prevent an attacker from slipping unencrypted messages into a connection while it switches to encryption
+- Prevent anyone but the person you are transferring with from interfering with a direct file transfer
+- Prevent a contact from disguising a file's name or saving it outside the Downloads folder
 - Prevent a contact from opening a file on your own computer by sending a link to a local path
 - Prevent accepting one file offer from acting on another offer that reuses its id
 
@@ -581,7 +581,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- Fix signing in to servers that offer SASL2 authentication, which failed with an unexpected stream error
+- Fix signing in to servers that offer SASL2 authentication
 - Import Adium chat history for Facebook, MSN, and ICQ contacts whose IDs contain `@` or spaces
 - Show readable connection and server error messages instead of internal error codes
 
