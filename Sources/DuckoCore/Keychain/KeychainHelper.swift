@@ -26,37 +26,26 @@ enum KeychainHelper {
         ]
     }
 
+    /// Best effort: a failure is only logged.
     static func savePassword(_ password: String, for jid: String) {
-        let data = Data(password.utf8)
-        let query = baseQuery(for: jid)
-
-        let existing = SecItemCopyMatching(query as CFDictionary, nil)
-        if existing == errSecSuccess {
-            let update: [String: Any] = [kSecValueData as String: data]
-            SecItemUpdate(query as CFDictionary, update as CFDictionary)
-        } else {
-            var add = query
-            add[kSecValueData as String] = data
-            SecItemAdd(add as CFDictionary, nil)
+        do {
+            try saveSecret(Data(password.utf8), for: jid)
+        } catch {
+            log.error("Could not save a password: \(error)")
         }
     }
 
     static func loadPassword(for jid: String) -> String? {
-        var query = baseQuery(for: jid)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        guard let data = try? loadSecret(for: jid) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 
     /// Best effort: a password already gone counts as deleted, and any other failure is only logged.
     static func deletePassword(for jid: String) {
-        let status = SecItemDelete(baseQuery(for: jid) as CFDictionary)
-        if status != errSecSuccess, status != errSecItemNotFound {
-            log.error("Could not delete a stored password: OSStatus \(status)")
+        do {
+            try deleteSecret(for: jid)
+        } catch {
+            log.error("Could not delete a stored password: \(error)")
         }
     }
 
