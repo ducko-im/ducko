@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-26
+
 ### Added
 
 - Sign in through the browser on servers that offer it (XEP-0493). Add Account, the Login tab and an account's settings offer Sign In with Browser…, which opens the server's sign-in page, so Ducko keeps no password. Ducko renews the sign-in on its own and asks you to sign in again once the server stops accepting it. A password account can switch to it, and a server that needs a client ID from its administrator asks for one ([#6](https://github.com/ducko-im/ducko/issues/6))
@@ -587,7 +589,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release.
 
-[Unreleased]: https://github.com/ducko-im/ducko/compare/0.14.1...HEAD
+[Unreleased]: https://github.com/ducko-im/ducko/compare/0.15.0...HEAD
+[0.15.0]: https://github.com/ducko-im/ducko/compare/0.14.1...0.15.0
 [0.14.1]: https://github.com/ducko-im/ducko/compare/0.14.0...0.14.1
 [0.14.0]: https://github.com/ducko-im/ducko/compare/0.13.0...0.14.0
 [0.13.0]: https://github.com/ducko-im/ducko/compare/0.12.0...0.13.0
