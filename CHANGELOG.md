@@ -8,8 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Sign in through the browser on servers that offer it (XEP-0493). Add Account, the Login tab and an account's settings offer Sign In with Browser…, which opens the server's sign-in page, so Ducko keeps no password. Ducko renews the sign-in on its own and asks you to sign in again once the server stops accepting it. A password account can switch to it, and a server that needs a client ID from its administrator asks for one
-- Sign in through the browser from the CLI with `ducko account add <jid> --sso`, sign in again or switch a password account with `ducko account browser-sign-in <jid>`, print the sign-in page's address instead of opening it with `--no-browser`, and pass an administrator's client ID with `--client-id`. `ducko account list` shows each account's sign-in method
+- Sign in through the browser on servers that offer it (XEP-0493). Add Account, the Login tab and an account's settings offer Sign In with Browser…, which opens the server's sign-in page, so Ducko keeps no password. Ducko renews the sign-in on its own and asks you to sign in again once the server stops accepting it. A password account can switch to it, and a server that needs a client ID from its administrator asks for one ([#6](https://github.com/ducko-im/ducko/issues/6))
+- Sign in through the browser from the CLI with `ducko account add <jid> --sso`, sign in again or switch a password account with `ducko account browser-sign-in <jid>`, print the sign-in page's address instead of opening it with `--no-browser`, and pass an administrator's client ID with `--client-id`. `ducko account list` shows each account's sign-in method ([#6](https://github.com/ducko-im/ducko/issues/6))
 
 ### Fixed
 
@@ -20,12 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- Keep an account's contacts listed, shown offline, while the account is offline or signing in. Disabling or deleting the account removes them, and a disabled account you connect by hand shows its contacts only while it stays connected
+- Keep an account's contacts listed, shown offline, while the account is offline or signing in. Disabling or deleting the account removes them, and a disabled account you connect by hand shows its contacts only while it stays connected ([#5](https://github.com/ducko-im/ducko/issues/5))
 
 ### Fixed
 
-- Fix an account dropping its connection, and its contacts and presence no longer showing, when this Mac's encryption setup fails or the server is slow to answer it. The account now stays online and Ducko tries the setup again in the background. An encrypted chat shows a notice with Try Again until the setup succeeds. In the CLI, `ducko interactive` prints each attempt's outcome, and `/omemo-setup` tries again at once
-- Fix the import during onboarding leaving accounts without a saved password unticked. Every account starts ticked, and one without a saved password shows a field for it
+- Fix an account dropping its connection, and its contacts and presence no longer showing, when this Mac's encryption setup fails or the server is slow to answer it. The account now stays online and Ducko tries the setup again in the background. An encrypted chat shows a notice with Try Again until the setup succeeds. In the CLI, `ducko interactive` prints each attempt's outcome, and `/omemo-setup` tries again at once ([#5](https://github.com/ducko-im/ducko/issues/5))
+- Fix the import during onboarding leaving accounts without a saved password unticked. Every account starts ticked, and one without a saved password shows a field for it ([#5](https://github.com/ducko-im/ducko/issues/5))
 
 ## [0.14.0] - 2026-11-24
 
@@ -55,7 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Let a server that still stores only a SCRAM-SHA-1 password upgrade it to a stronger hash during sign-in (XEP-0480), so later sign-ins use SCRAM-SHA-256 or stronger. Ducko helps only on sign-ins bound to the encrypted connection, and only once the server has proved it knows the password
+- Let a server that still stores only a SCRAM-SHA-1 password upgrade it to a stronger hash during sign-in (XEP-0480), so later sign-ins use SCRAM-SHA-256 or stronger. Ducko helps only on sign-ins bound to the encrypted connection, and only once the server has proved it knows the password ([#3](https://github.com/ducko-im/ducko/issues/3))
 - Show a server's registration CAPTCHA when creating an account, checking a registration, or registering from the CLI (XEP-0158, XEP-0221, XEP-0231). The image appears above its answer field, and the server's own web page is offered for a challenge Ducko can't show. Ducko solves a proof-of-work challenge itself, so a server that accepts it registers you without asking for the image. The CLI saves the image to a private file for you to open and deletes it when the command ends
 - Show a fresh form when a server refuses a registration, with its error and what you typed kept, so a wrong CAPTCHA answer can be tried again
 - Stop a direct file transfer with the stop button on its row, or with `/cancel` in `ducko interactive`. The contact is told, and both sides say who canceled: a sent file reads "You canceled the transfer" or "The transfer was canceled", and a file that did not arrive leaves a note in the chat saying why
@@ -86,7 +86,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Sign in with SCRAM-SHA-512 and SCRAM-SHA3-512 when the server offers them, preferring the strongest sign-in the server supports
+- Sign in with SCRAM-SHA-512 and SCRAM-SHA3-512 when the server offers them, preferring the strongest sign-in the server supports ([#1](https://github.com/ducko-im/ducko/issues/1))
 - Add `ducko account set <jid>` to allow or refuse sending the password and to require an encrypted connection without connecting, `--allow-plain` on `ducko account add`, and both settings in `ducko account list`
 - Reset the encryption sessions with a contact, one of their devices, or one of your own other devices, from the chat's encryption menu, the Device Fingerprints sheet, `ducko omemo reset` or the REPL's `/omemo-reset`, when their messages can't be decrypted. The chat notes which devices changed key or still need trusting
 - Mark a message decrypted from a device you haven't trusted with an orange shield, `[untrusted device]` in the CLI, or `"untrustedDevice":"true"` in JSON
@@ -125,7 +125,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Prevent someone who takes a group chat member's nickname from editing or retracting that member's messages, by checking the group chat's occupant ids, or the member's real address, before applying a correction or retraction
 - Show a group chat message someone else posted under your nickname as theirs, so its images wait for a click instead of loading as yours
 - Trust a message's server-assigned id only from a server or group chat that announces such ids
-- Stop a sign-in before the password proof goes out when the server's list of sign-in options or the connection's encryption version was changed on the way, which can mean the connection is being tampered with
+- Stop a sign-in before the password proof goes out when the server's list of sign-in options or the connection's encryption version was changed on the way, which can mean the connection is being tampered with ([#2](https://github.com/ducko-im/ducko/issues/2), [#4](https://github.com/ducko-im/ducko/issues/4))
 - Tie sign-ins to the encrypted connection on servers such as Prosody that support only the newer TLS 1.3 form of this protection, so someone holding a trusted certificate for the server cannot pass your sign-in on
 - Refuse a sign-in when the server offers sign-in protection that Ducko cannot use on the connection, or when its sign-in options contradict each other, instead of signing in without that protection
 - Ignore a request for unencrypted messages that comes from a device you haven't trusted, so it cannot turn encryption off in a chat
