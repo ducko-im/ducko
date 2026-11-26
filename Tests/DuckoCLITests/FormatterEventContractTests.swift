@@ -60,6 +60,19 @@ struct FormatterEventContractTests {
         try expectFormats(cases)
     }
 
+    @Test func `browser sign-in failures carry their own kind`() throws {
+        let account = accountID.uuidString
+        let reset = "\u{001B}[0m"
+        try expectFormats([
+            .init(.authenticationFailed(AuthenticationFailure(kind: .browserSignInOnly, message: "browser only")),
+                  "authentication failed: browser only", "\u{001B}[31mauthentication failed: browser only\(reset)",
+                  ["type": "authentication_failed", "kind": "browser_sign_in_only", "message": "browser only", "account": account]),
+            .init(.authenticationFailed(AuthenticationFailure(kind: .accountMismatch, message: "other account")),
+                  "authentication failed: other account", "\u{001B}[31mauthentication failed: other account\(reset)",
+                  ["type": "authentication_failed", "kind": "account_mismatch", "message": "other account", "account": account])
+        ])
+    }
+
     @Test func `transfer progress carries the rate and time left only once they are known`() throws {
         let account = accountID.uuidString
         let reset = "\u{001B}[0m"

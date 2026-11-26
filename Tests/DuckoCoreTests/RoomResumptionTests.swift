@@ -466,7 +466,7 @@ struct RoomResumptionTests {
         let resuming = StreamResumeContext(streamManagement: carried.streamManagement, rooms: carried.rooms, accountInfo: accountInfo)
 
         let (client, _) = await DefaultXMPPClientFactory().makeClient(
-            account: account, password: "secret", resuming: resuming, requireTLSOverride: nil, omemoService: nil
+            account: account, secret: .password("secret"), resuming: resuming, requireTLSOverride: nil, omemoService: nil
         )
 
         let occupancy = try #require(await client.module(ofType: MUCModule.self)?.roomOccupancies[room])
@@ -480,7 +480,7 @@ struct RoomResumptionTests {
     @Test
     func `The production factory's chat module tells who sent a room private chat's correction`() async throws {
         let account = try Account(id: UUID(), jid: #require(BareJID.parse(testJIDString)), isEnabled: true, connectOnLaunch: false, createdAt: Date())
-        let (client, _) = await DefaultXMPPClientFactory().makeClient(account: account, password: "secret", resuming: nil, requireTLSOverride: nil, omemoService: nil)
+        let (client, _) = await DefaultXMPPClientFactory().makeClient(account: account, secret: .password("secret"), resuming: nil, requireTLSOverride: nil, omemoService: nil)
         let muc = try #require(await client.module(ofType: MUCModule.self))
         let chat = try #require(await client.module(ofType: ChatModule.self))
         let events = OSAllocatedUnfairLock<[XMPPEvent]>(initialState: [])
@@ -731,12 +731,12 @@ private actor RoomResumeFactory: XMPPClientFactory {
         self.accountFeatures = accountFeatures
     }
 
-    func makeClient(account: Account, password: String, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
+    func makeClient(account: Account, secret: SignInSecret, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
         let transport = transports[index]
         let isFirstSignIn = index == 0
         index += 1
         lastResuming = resuming
-        var builder = XMPPClientBuilder(domain: account.jid.domainPart, username: account.jid.localPart ?? "", password: password)
+        var builder = XMPPClientBuilder(domain: account.jid.domainPart, username: account.jid.localPart ?? "", secret: secret)
         builder.withTransport(transport)
         builder.withRequireTLS(false)
         builder.withAllowsPLAIN(true)

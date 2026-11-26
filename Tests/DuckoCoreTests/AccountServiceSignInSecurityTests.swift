@@ -247,7 +247,7 @@ struct AccountServiceSignInSecurityTests {
 
     @Test
     func `Only a refusal to send the password counts as a PLAIN refusal`() {
-        #expect(AccountService.isPLAINRefusal(XMPPClientError.plainSignInRefused))
+        #expect(AccountService.isPLAINRefusal(XMPPClientError.plainSignInRefused(browserSignInOffered: false)))
         #expect(!AccountService.isPLAINRefusal(XMPPClientError.tlsRequired))
         #expect(!AccountService.isPLAINRefusal(XMPPClientError.authenticationFailed(AuthenticationFailure(kind: .credentialsRejected, message: "denied"))))
     }

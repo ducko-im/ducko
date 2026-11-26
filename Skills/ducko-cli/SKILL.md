@@ -16,7 +16,13 @@ Default subcommand is `interactive` (REPL mode).
 
 ## Authentication
 
-Password lookup order: macOS Keychain first, then prompt on `/dev/tty` if stdin is a TTY. Accounts can be created with `ducko account add <jid>` or in DuckoApp — the CLI and GUI share the same SwiftData database and Keychain.
+Password lookup order: macOS Keychain first, then prompt on `/dev/tty` if stdin is a TTY. Accounts can be created with `ducko account add <jid>` or in DuckoApp — the CLI and GUI share the same SwiftData database and Keychain. An account that signs in through the browser (XEP-0493, `account add --sso`) is never asked for a password: it connects with its stored grant.
+
+When a connecting command's sign-in fails, stderr adds a hint naming the command that fixes it, before the final `Error: …` line, in every output mode:
+
+- a password sign-in that fails because the server offers sign-in through the browser but no password mechanism the account may use (OAUTHBEARER without SCRAM or PLAIN, or only PLAIN to an account that refuses it) prints `Run 'ducko account browser-sign-in <jid> --replace-password' to switch this account to browser sign-in.`
+- a browser account whose grant the provider no longer accepts prints `Run 'ducko account browser-sign-in <jid>' to sign in again.` After the session has connected, `interactive`, `room join` and a presence hold (`--for`/`--keep-alive`) also print it if the provider later rejects the grant.
+- a server that offers only PLAIN prints the `account set` hint (see `account set`).
 
 ## Global Options
 
@@ -157,25 +163,43 @@ ducko history --limit 5 -- '-123\40chat.example.com@facebook.adium-import'
 
 ### `account list`
 
-List all configured accounts. Supports `--output` format. Plain and ANSI lines end with the sign-in settings, such as `PLAIN: refused, TLS: required`. With `--output json` it prints one JSON object per line rather than an array, and `is_enabled`, `allows_plain` and `require_tls` are the strings `"true"` or `"false"`.
+List all configured accounts. Supports `--output` format. Plain and ANSI lines end with the sign-in settings: `Sign-in: password, PLAIN: refused, TLS: required` for a password account, `Sign-in: browser, TLS: optional` for a browser account. With `--output json` it prints one JSON object per line rather than an array. `sign_in_method` is `"password"` or `"browser"`, and `is_enabled`, `allows_plain` and `require_tls` are the strings `"true"` or `"false"`.
 
 ```
 ducko account list
 ducko account list --output json
 ```
 
-### `account add <jid> [--password <password>] [--host <host>] [--port <port>] [--no-connect] [--allow-plain]`
+### `account add <jid> [--password <password>] [--host <host>] [--port <port>] [--no-connect] [--allow-plain] [--sso [--client-id <id>] [--no-browser]]`
 
-Add a new XMPP account. By default it connects to verify credentials and saves the password. Password is prompted interactively if `--password` is omitted. `--host`/`--port` override the connection endpoint (a bare `--port` without `--host` is rejected). With `--no-connect` the account is persisted *without* connecting or verifying credentials — offline/manual setup; the password is still saved. `--allow-plain` lets the account send its password to a server that offers only PLAIN (see `account set`). Without it, Ducko refuses to sign in to such a server and rolls the new account back. Stderr then names the command that tries again, `ducko account add <jid> --host <host> --port <port> --allow-plain`, with only the `--host`/`--port` that were given.
+Add a new XMPP account. By default it connects to verify credentials and saves the password. Password is prompted interactively if `--password` is omitted. `--host`/`--port` override the connection endpoint. A bare `--port` without `--host` is rejected, and so is a port outside 1–65535. With `--no-connect` the account is persisted *without* connecting or verifying credentials — offline/manual setup; the password is still saved.
+
+`--allow-plain` lets the account send its password to a server that offers only PLAIN (see `account set`). Without it, Ducko refuses to sign in to such a server and rolls the new account back. Stderr then names the command that tries again, `ducko account add <jid> --host <host> --port <port> --allow-plain`, with only the `--host`/`--port` that were given. When the sign-in fails because the server offers sign-in through the browser but no password mechanism the account may use, stderr also names `ducko account add <jid> [--host <host> --port <port>] --sso`. A server that offers only PLAIN and the browser therefore gets both commands.
+
+With `--sso` the account signs in through the browser (XEP-0493) and stores no password. Stderr prints `Open this page to sign in: <url>`, which also opens in the default browser unless `--no-browser` is given. The command waits up to five minutes for the provider's redirect to a loopback port, then fails with `The sign-in was not completed in time`. It connects, and any failure removes the account and revokes its grant.
+
+`--client-id` passes a client the server's administrator set up at the provider. A provider that needs one fails the command, and stderr names the provider, both redirect addresses its client must allow (`im.ducko:/oauth/callback/<digest>` and `http://127.0.0.1/oauth/callback/<digest>`), and the `--client-id <id>` re-run. `--sso` rejects `--password`, `--allow-plain` and `--no-connect`, and `--client-id`/`--no-browser` need `--sso`.
 
 When authentication fails, the command exits 1 and prints `Error: Authentication failed: <reason>`, where the reason is readable text such as "Incorrect username or password".
 
-`account add` has no `--output` option, so to observe that failure as JSON, add the account with `--no-connect` and run a connecting subcommand with `--output json`, such as `profile`. It uses the first account unless `--account <uuid>` is passed. It emits `{"account":"<uuid>","condition":"not-authorized","kind":"credentials_rejected","message":"<reason>","type":"authentication_failed"}`. `kind` is `credentials_rejected` for a rejected password, `temporary` for a server failure that can clear by itself, and `other` for anything else. `condition` is the server's raw failure condition, either a SASL `<failure>` condition such as `not-authorized` or a SCRAM `e=` value such as `invalid-proof`. It is absent when the server sent neither.
+`account add` has no `--output` option, so to observe that failure as JSON, add the account with `--no-connect` and run a connecting subcommand with `--output json`, such as `profile`. It uses the first account unless `--account <uuid>` is passed. It emits `{"account":"<uuid>","condition":"not-authorized","kind":"credentials_rejected","message":"<reason>","type":"authentication_failed"}`. `kind` is `credentials_rejected` for a rejected password, `temporary` for a server failure that can clear by itself, `browser_sign_in_only` for a password sign-in to a server that offers only sign-in through the browser, `account_mismatch` for a browser sign-in that signed in to another account than the one entered, and `other` for anything else. `condition` is the server's raw failure condition, either a SASL `<failure>` condition such as `not-authorized` or a SCRAM `e=` value such as `invalid-proof`. It is absent when the server sent neither.
 
 ```
 ducko account add alice@example.com
 ducko account add alice@example.com --password secret
 ducko account add alice@example.com --password secret --host 127.0.0.1 --port 5222 --no-connect
+ducko account add alice@example.com --sso --no-browser
+```
+
+### `account browser-sign-in <jid> [--client-id <id>] [--no-browser] [--replace-password]`
+
+Signs a browser account in through the browser again, replacing its grant once the new one connects, then prints `Signed in through the browser: <jid>`. With `--replace-password` it switches a password account to browser sign-in instead and deletes the stored password only once the account has connected with its grant. A failure keeps the account as it was. `--client-id` and `--no-browser` work as in `account add --sso`, including the client ID hint.
+
+Run against an account that signs in the other way, it fails before opening any page, and stderr names the matching invocation: `--replace-password` for a password account, the plain form for a browser account.
+
+```
+ducko account browser-sign-in alice@example.com
+ducko account browser-sign-in alice@example.com --replace-password --client-id ducko
 ```
 
 ### `account delete <jid>`
@@ -331,7 +355,7 @@ ducko avatar set photo.png
 
 ### `account register --server <domain> --username <user> --password <pw> [--email <email>] [--host <host>] [--port <port>]`
 
-Register a new account on a server via XEP-0077 In-Band Registration. Fetches the server's form first and registers on the same connection, then saves the account locally and signs in. With `--host`, and `--port` when given, every connection goes through that endpoint. When the form asks for more than username, password and email, or for an email `--email` did not give, the command prints it. It does the same with a fresh form when the server refuses the registration. It then prompts for the form's fields as `/submit-registration` does, with the given values filled in. A form that only names a web page is printed, and the command exits 1. The new account starts with PLAIN allowed, since the registration already gave the server the password over TLS. A sign-in that verifies a SCRAM server signature turns it off (see `account set`).
+Register a new account on a server via XEP-0077 In-Band Registration. Fetches the server's form first and registers on the same connection, then saves the account locally and signs in. With `--host`, and `--port` when given, every connection goes through that endpoint. As in `account add`, a bare `--port` without `--host` is rejected, and `--port` must be between 1 and 65535. When the form asks for more than username, password and email, or for an email `--email` did not give, the command prints it. It does the same with a fresh form when the server refuses the registration. It then prompts for the form's fields as `/submit-registration` does, with the given values filled in. A form that only names a web page is printed, and the command exits 1. The new account starts with PLAIN allowed, since the registration already gave the server the password over TLS. A sign-in that verifies a SCRAM server signature turns it off (see `account set`).
 
 ```
 ducko account register --server example.com --username alice --password secret
@@ -340,7 +364,7 @@ ducko account register --server example.com --username alice --password secret -
 
 ### `account check-registration --server <domain> [--host <host>] [--port <port>]`
 
-Fetch and display a server's XEP-0077 registration form without registering: its instructions (a data form's own, not the reply's), the web page it names for registering (`Register at:`), and every field it asks for, with the password obscured. Useful for inspecting required fields or CAPTCHAs before calling `account register`. In JSON, the `registration_form` record carries `redirect_url`, a legacy form's `fields` as `{name, value}` objects (every one required), and a data form under `form`.
+Fetch and display a server's XEP-0077 registration form without registering: its instructions (a data form's own, not the reply's), the web page it names for registering (`Register at:`), and every field it asks for, with the password obscured. Useful for inspecting required fields or CAPTCHAs before calling `account register`. As in `account add`, a bare `--port` without `--host` is rejected, and `--port` must be between 1 and 65535. In JSON, the `registration_form` record carries `redirect_url`, a legacy form's `fields` as `{name, value}` objects (every one required), and a data form under `form`.
 
 ```
 ducko account check-registration --server example.com
@@ -348,7 +372,7 @@ ducko account check-registration --server example.com
 
 ### `account change-password <jid>`
 
-Change an account's password on its server via XEP-0077 and save the new one, then print `Password changed: <jid>`. It prompts twice for the new password, reading hidden input from the terminal.
+Change an account's password on its server via XEP-0077, then print `Password changed: <jid>`. A password account also saves the new password. A browser account keeps signing in with its grant, so nothing is stored. It prompts twice for the new password, reading hidden input from the terminal.
 
 It exits 1 without asking the server when:
 
@@ -535,7 +559,7 @@ Same as plain with color codes (green incoming, cyan outgoing, red errors, dim t
 
 ### JSON
 
-Every line on stdout is one JSON record. Prompts go to stderr in every format: registration and data form fields, CAPTCHA image paths, and the confirmations of `account unregister` and `/unregister-account`. So do guidance lines: the `interactive` banner, the hints of `room join`, the unjoined-room hint of `send`, and "Room created and locked".
+Every line on stdout is one JSON record. Prompts go to stderr in every format: registration and data form fields, CAPTCHA image paths, and the confirmations of `account unregister` and `/unregister-account`. So do guidance lines: the `interactive` banner, the hints of `room join`, the unjoined-room hint of `send`, the sign-in hints (see Authentication), and "Room created and locked".
 
 ```json
 {"body":"Hello","direction":"incoming","from":"alice@example.com","timestamp":"2026-02-27T10:00:00Z","type":"message"}

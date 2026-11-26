@@ -79,6 +79,14 @@ enum TestCredentials {
             && saslUpgradePort != nil
     }
 
+    /// Opt-in gate for `CLISSOTests`, which signs Alice and Bob in through the test server's OAuth provider. It changes
+    /// stored credentials only in throwaway profiles, but it adds grants at the provider and revokes one.
+    static var isSSOTestingEnabled: Bool {
+        env("DUCKO_TEST_SSO") == "1"
+            && isSet("DUCKO_TEST_ALICE_JID") && isSet("DUCKO_TEST_ALICE_PASSWORD")
+            && isSet("DUCKO_TEST_BOB_JID") && isSet("DUCKO_TEST_BOB_PASSWORD")
+    }
+
     /// High-entropy ephemeral username for the destructive registration
     /// round-trip, e.g. `ducko-it-3f2a1b9c1d2e`. Randomized so concurrent runs
     /// against the shared server do not collide; the test using it surfaces a

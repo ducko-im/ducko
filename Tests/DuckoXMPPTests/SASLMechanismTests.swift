@@ -106,6 +106,55 @@ struct SASLPlainTests {
     }
 }
 
+// MARK: - Selection by Sign-In Secret
+
+/// The secret decides the mechanism family: a token only ever goes out with OAUTHBEARER, and a password never does.
+struct SignInSecretSelectionTests {
+    @Test(arguments: SASLProfile.allCases)
+    func `A bearer secret never selects SCRAM or PLAIN, even with a channel-bound SCRAM and binding types offered`(
+        profile: SASLProfile
+    ) throws {
+        let features = try stanza(offer(["SCRAM-SHA-1-PLUS", "SCRAM-SHA-256", "PLAIN"], types: ["tls-exporter", "tls-server-end-point"]))
+        #expect(throws: SASLAuthError.browserSignInUnavailable) {
+            try profile.selectedMechanism(
+                on: features, secret: .bearerToken("token"), channelBindings: tls13Bindings, allowsPLAIN: true
+            )
+        }
+    }
+
+    @Test(arguments: SASLProfile.allCases)
+    func `A bearer secret selects OAUTHBEARER over every stronger-looking offer`(profile: SASLProfile) throws {
+        let features = try stanza(offer(
+            ["SCRAM-SHA-1-PLUS", "SCRAM-SHA-256", "PLAIN", "OAUTHBEARER"], types: ["tls-exporter", "tls-server-end-point"]
+        ))
+        let selected = try profile.selectedMechanism(
+            on: features, secret: .bearerToken("token"), channelBindings: tls13Bindings, allowsPLAIN: true
+        )
+        #expect(selected == "OAUTHBEARER")
+    }
+
+    @Test(arguments: SASLProfile.allCases, [(["OAUTHBEARER", "SCRAM-SHA-1"], "SCRAM-SHA-1"), (["OAUTHBEARER", "PLAIN"], "PLAIN")])
+    func `A password secret never selects OAUTHBEARER`(profile: SASLProfile, expectation: ([String], String)) throws {
+        let (mechanisms, expected) = expectation
+        let selected = try profile.selectedMechanism(on: stanza(offer(mechanisms)), secret: .password("pencil"), allowsPLAIN: true)
+        #expect(selected == expected)
+    }
+
+    @Test(arguments: SASLProfile.allCases)
+    func `A password secret on an offer of only OAUTHBEARER is told the server wants a browser sign-in`(profile: SASLProfile) throws {
+        #expect(throws: SASLAuthError.browserSignInOnly) {
+            try profile.selectedMechanism(on: stanza(offer(["OAUTHBEARER"])), secret: .password("pencil"), allowsPLAIN: true)
+        }
+    }
+
+    @Test(arguments: SASLProfile.allCases)
+    func `PLAIN and OAUTHBEARER to an account that refuses PLAIN is a PLAIN refusal`(profile: SASLProfile) throws {
+        #expect(throws: SASLAuthError.plainRefused) {
+            try profile.selectedMechanism(on: stanza(offer(["PLAIN", "OAUTHBEARER"])), secret: .password("pencil"))
+        }
+    }
+}
+
 // MARK: - SCRAM-SHA-1 Tests (RFC 5802 §5 test vector)
 
 struct SCRAMSHA1Tests {

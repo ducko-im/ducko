@@ -53,6 +53,26 @@ private func isStreamResumed(_ event: XMPPEvent) -> Bool {
     return false
 }
 
+/// SASL2 features offering OAUTHBEARER, with Bind 2 that can enable SM inline and an inline resume.
+private let bearerSASL2Features = """
+<features xmlns='http://etherx.jabber.org/streams'>\
+<authentication xmlns='urn:xmpp:sasl:2'>\
+<mechanism>OAUTHBEARER</mechanism>\
+<inline><bind xmlns='urn:xmpp:bind:0'><inline><feature var='urn:xmpp:sm:3'/></inline></bind><sm xmlns='urn:xmpp:sm:3'/></inline>\
+</authentication>\
+</features>
+"""
+
+/// A SASL2 success that starts a Bind 2 session as `jid`.
+private func boundSuccess(_ jid: String) -> String {
+    """
+    <success xmlns='urn:xmpp:sasl:2'>\
+    <authorization-identifier>\(jid)</authorization-identifier>\
+    <bound xmlns='urn:xmpp:bind:0'/>\
+    </success>
+    """
+}
+
 // MARK: - Tests
 
 enum XMPPClientSASL2Tests {
@@ -490,6 +510,85 @@ enum XMPPClientSASL2Tests {
             #expect(thrown.serverCondition == condition)
             #expect(emitted == thrown)
             #expect(await !(sentElements(on: mock).contains { $0.name == "abort" }))
+        }
+    }
+
+    struct BoundIdentity {
+        @Test(arguments: [
+            ("user@example.com/ducko", true),
+            ("USER@Example.COM/ducko", true),
+            ("other@example.com/ducko", false),
+            ("user@other.example/ducko", false)
+        ])
+        func `A bearer success naming another account fails before any session traffic`(jid: String, matches: Bool) async throws {
+            let mock = MockTransport()
+            let fixture = try await BearerSessionFixture(mock: mock)
+            let events = fixture.authenticationEvents()
+
+            let connectTask = Task { try await fixture.client.connectWithTLS(host: "example.com", port: 5223) }
+            await simulateSASL2Handshake(mock, features: bearerSASL2Features, replies: [boundSuccess(jid)], postAuthFeatures: matches ? testPostSASL2Features : nil)
+
+            let authenticate = try await sentAuthenticate(on: mock)
+            #expect(authenticate.attribute("mechanism") == "OAUTHBEARER")
+            if matches {
+                let outcome = try await boundedOutcome { try await connectTask.value }
+                try #require(outcome != nil)
+                try outcome?.get()
+                try await fixture.expectSessionTraffic(on: mock)
+                events.cancel()
+                await fixture.omemoModule.awaitSetupAttempt()
+                await disconnectFast(fixture.client)
+            } else {
+                try await fixture.expectAccountMismatch(connectTask, events: events, mock: mock)
+            }
+        }
+
+        @Test
+        func `A password sign-in is not held to the entered account`() async throws {
+            let mock = MockTransport()
+            let (client, _) = await makeClient(mock: mock)
+            let events = Task { try await collectEvents(from: client) { if case .connected = $0 { true } else { false } } }
+
+            let connectTask = Task { try await client.connectWithTLS(host: "example.com", port: 5223) }
+            await simulateSASL2Handshake(mock, features: testFeaturesSASL2, replies: [boundSuccess("other@example.com/ducko")])
+            try await connectTask.value
+
+            guard case let .connected(jid) = try await events.value.last else {
+                Issue.record("Expected a connected event")
+                return
+            }
+            #expect(jid.description == "other@example.com/ducko")
+            await disconnectFast(client)
+        }
+
+        @Test(arguments: [("user@example.com", true), ("other@example.com", false), ("other@example.com/ducko", false)])
+        func `A bearer resume naming another account fails before the queued stanza is resent`(
+            authorizationIdentifier: String, matches: Bool
+        ) async throws {
+            let mock = MockTransport()
+            let sm = try StreamManagementModule(previousState: carriedState())
+            let fixture = try await BearerSessionFixture(mock: mock, sm: sm)
+            let events = fixture.authenticationEvents()
+
+            let connectTask = Task { try await fixture.client.connectWithTLS(host: "example.com", port: 5223) }
+            await simulateSASL2Handshake(
+                mock, features: bearerSASL2Features,
+                replies: [testSASL2SuccessResumed(authorizationIdentifier: authorizationIdentifier)], postAuthFeatures: nil
+            )
+
+            let resume = try await sentAuthenticate(on: mock).child(named: "resume", namespace: XMPPNamespaces.sm)
+            #expect(resume?.attribute("previd") == "sm-resume-1")
+            if matches {
+                let outcome = try await boundedOutcome { try await connectTask.value }
+                try #require(outcome != nil)
+                try outcome?.get()
+                #expect(await sentElements(on: mock).contains { $0.name == "message" && $0.attribute("id") == "queued" })
+                events.cancel()
+                await mock.ackSyncRequests(from: sm)
+                await disconnectFast(fixture.client)
+            } else {
+                try await fixture.expectAccountMismatch(connectTask, events: events, mock: mock)
+            }
         }
     }
 

@@ -23,8 +23,13 @@ private struct EmptyPersistenceStore: PersistenceStore {
     }
 
     func saveAccount(_: Account) async throws {}
+    func insertAccount(_: Account) async throws -> Bool {
+        true
+    }
+
     func deleteAccount(_: UUID) async throws {}
     func setAllowsPLAIN(_: Bool, accountID _: UUID) async throws {}
+    func setSignInMethod(_: SignInMethod, accountID _: UUID) async throws {}
     func fetchChannelSearchLimits(accountID _: UUID) async throws -> [String: ChannelSearchLimit] {
         [:]
     }
@@ -77,6 +82,12 @@ private struct InMemoryCredentialStore: CredentialStore {
     }
 
     func deletePassword(for _: String) {}
+    func saveSecret(_: Data, for _: String) throws {}
+    func loadSecret(for _: String) throws -> Data? {
+        nil
+    }
+
+    func deleteSecret(for _: String) throws {}
 }
 
 // MARK: - Tests

@@ -18,8 +18,9 @@ struct NoReplies: LoopbackIQResponder {
     }
 }
 
-/// A plaintext XMPP server on a loopback port that signs in any PLAIN credentials and binds `alice@example.com/fixture`.
-/// It confirms other sets, bounces other gets with `service-unavailable`, and lets `responder` answer first.
+/// A plaintext XMPP server on a loopback port that offers `mechanisms`, signs in any credentials and binds
+/// `alice@example.com/fixture`. It confirms other sets, bounces other gets with `service-unavailable`, and lets
+/// `responder` answer first.
 actor LoopbackXMPPServer<Responder: LoopbackIQResponder> {
     private let queue = DispatchQueue(label: "ducko.loopback-xmpp")
     private var listener: NWListener?
@@ -27,10 +28,12 @@ actor LoopbackXMPPServer<Responder: LoopbackIQResponder> {
     private var parser = XMPPStreamParser()
     private(set) var authenticated = false
     private var responder: Responder
+    private let mechanisms: [String]
     private(set) var sawStreamClose = false
 
-    init(responder: Responder) {
+    init(responder: Responder, mechanisms: [String] = ["PLAIN"]) {
         self.responder = responder
+        self.mechanisms = mechanisms
     }
 
     /// The responder as its replies so far left it.
@@ -77,7 +80,7 @@ actor LoopbackXMPPServer<Responder: LoopbackIQResponder> {
             for event in parser.parse(Array(data)) {
                 switch event {
                 case .streamOpened:
-                    send("<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' from='example.com' version='1.0'><stream:features>" + (authenticated ? "<bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/>" : "<mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism></mechanisms>") + "</stream:features>")
+                    send("<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' from='example.com' version='1.0'><stream:features>" + (authenticated ? "<bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/>" : offeredMechanisms) + "</stream:features>")
                 case let .stanzaReceived(element): handle(element)
                 case .streamClosed:
                     sawStreamClose = true
@@ -87,6 +90,10 @@ actor LoopbackXMPPServer<Responder: LoopbackIQResponder> {
             }
         }
         if !ended { receive() }
+    }
+
+    private var offeredMechanisms: String {
+        "<mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>" + mechanisms.map { "<mechanism>\($0)</mechanism>" }.joined() + "</mechanisms>"
     }
 
     private func handle(_ element: DuckoXMPP.XMLElement) {
@@ -119,15 +126,17 @@ actor LoopbackXMPPServer<Responder: LoopbackIQResponder> {
     }
 }
 
-/// Runs `body` against a `LoopbackXMPPServer` answering with `responder`, in a throwaway profile named after
-/// `profileName` that holds an account signing in to it. The server stops and the profile goes on every exit.
+/// Runs `body` against a `LoopbackXMPPServer` answering with `responder` and offering `mechanisms`, in a throwaway
+/// profile named after `profileName` that holds an account signing in to it. The server stops and the profile goes on
+/// every exit.
 @MainActor
 func withLoopbackServer<Responder: LoopbackIQResponder, T>(
     responder: Responder,
+    mechanisms: [String] = ["PLAIN"],
     profile profileName: String,
     _ body: (LoopbackXMPPServer<Responder>, ThrowawayProfile) async throws -> T
 ) async throws -> T {
-    let server = LoopbackXMPPServer(responder: responder)
+    let server = LoopbackXMPPServer(responder: responder, mechanisms: mechanisms)
     let port = try await server.start()
     do {
         let profile = try ThrowawayProfile(named: profileName)

@@ -16,7 +16,7 @@ public struct StreamResumeContext: Sendable {
 public protocol XMPPClientFactory: Sendable {
     func makeClient(
         account: Account,
-        password: String,
+        secret: SignInSecret,
         resuming: StreamResumeContext?,
         requireTLSOverride: Bool?,
         omemoService: OMEMOService?

@@ -7,7 +7,10 @@ extension DuckoCLI {
     struct Account: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Manage XMPP accounts",
-            subcommands: [List.self, Add.self, Set.self, Delete.self, Unregister.self, Register.self, CheckRegistration.self, ChangePassword.self],
+            subcommands: [
+                List.self, Add.self, Set.self, Delete.self, Unregister.self, Register.self, CheckRegistration.self, ChangePassword.self,
+                BrowserSignIn.self
+            ],
             defaultSubcommand: List.self
         )
 
@@ -59,9 +62,28 @@ extension DuckoCLI {
             @Flag(name: .long, help: "Send the password to a server that offers only PLAIN")
             var allowPlain = false
 
+            @Flag(name: .long, help: "Sign in through the browser instead of with a password")
+            var sso = false
+
+            @OptionGroup var browserSignIn: BrowserSignInOptions
+
+            func validate() throws {
+                if sso, password != nil || allowPlain || noConnect {
+                    throw ValidationError("--sso cannot be combined with --password, --allow-plain or --no-connect.")
+                }
+                if !sso, browserSignIn.clientID != nil || browserSignIn.noBrowser {
+                    throw ValidationError("--client-id and --no-browser need --sso.")
+                }
+            }
+
             func run() async throws {
                 guard BareJID.parse(jid) != nil else {
                     throw CLIError.invalidJID(jid)
+                }
+
+                if sso {
+                    try await addBrowserAccount()
+                    return
                 }
 
                 guard let resolvedPassword = try password ?? CredentialHelper.getPassword() else {
@@ -92,14 +114,37 @@ extension DuckoCLI {
                             try await waitForSetUp(accountID: accountID, environment: env)
                         }
                     } catch {
-                        if AccountService.isPLAINRefusal(error) {
-                            printToStandardError(plainRefusalHint(.accountAdd(host: endpoint.host, port: endpoint.port), jid: jid))
+                        for hint in signInFailureHints(for: error, .accountAdd(host: endpoint.host, port: endpoint.port), jid: jid) {
+                            printToStandardError(hint)
                         }
                         throw error
                     }
                     await env.accountService.disconnect(accountID: accountID)
                 }
 
+                print("Account added: \(jid)")
+            }
+
+            private func addBrowserAccount() async throws {
+                let context = try await MainActor.run {
+                    try CLIBootstrap.setUp(formatter: PlainFormatter(), opensBrowser: !browserSignIn.noBrowser)
+                }
+                let env = context.environment
+                let effectivePort = endpoint.host == nil ? nil : Int(endpoint.port ?? 5222)
+                let accountID: UUID
+                do {
+                    accountID = try await env.accountService.addBrowserAccount(
+                        address: jid, host: endpoint.host, port: effectivePort, clientID: browserSignIn.clientID
+                    ) { accountID in
+                        try await waitForSetUp(accountID: accountID, environment: env)
+                    }
+                } catch {
+                    for hint in browserSignInFailureHints(for: error, jid: jid) {
+                        printToStandardError(hint)
+                    }
+                    throw error
+                }
+                await env.accountService.disconnect(accountID: accountID)
                 print("Account added: \(jid)")
             }
         }
@@ -209,9 +254,7 @@ extension DuckoCLI {
                     return
                 }
 
-                guard let password = try CredentialHelper.getPassword(for: account.jid.description, using: env.credentialStore) else {
-                    throw CLIError.noPassword
-                }
+                let password = try CredentialHelper.storedSignInPassword(for: account, using: env.credentialStore)
 
                 try await ConnectedOperation.run(environment: env, account: account, password: password) {
                     try await env.cancelAccount(account.id, includeHistory: includeHistory)
@@ -320,9 +363,7 @@ extension DuckoCLI {
                 let env = context.environment
 
                 let account = try await resolveAccount(byJID: jid, environment: env)
-                guard let password = try CredentialHelper.getPassword(for: account.jid.description, using: env.credentialStore) else {
-                    throw CLIError.noPassword
-                }
+                let password = try CredentialHelper.storedSignInPassword(for: account, using: env.credentialStore)
                 let newPassword = try CredentialHelper.readNewPassword()
 
                 try await ConnectedOperation.run(environment: env, account: account, password: password) {
@@ -331,7 +372,57 @@ extension DuckoCLI {
                 }
             }
         }
+
+        struct BrowserSignIn: AsyncParsableCommand {
+            static let configuration = CommandConfiguration(
+                commandName: "browser-sign-in",
+                abstract: "Sign an account in through the browser again, or switch a password account to it"
+            )
+
+            @Argument(help: "The bare JID of the account")
+            var jid: String
+
+            @OptionGroup var browserSignIn: BrowserSignInOptions
+
+            @Flag(name: .long, help: "Switch a password account to sign-in through the browser and delete its stored password")
+            var replacePassword = false
+
+            func run() async throws {
+                let context = try await MainActor.run {
+                    try CLIBootstrap.setUp(formatter: PlainFormatter(), opensBrowser: !browserSignIn.noBrowser)
+                }
+                let env = context.environment
+                let account = try await resolveAccount(byJID: jid, environment: env)
+
+                do {
+                    if replacePassword {
+                        try await env.accountService.switchToBrowserSignIn(accountID: account.id, clientID: browserSignIn.clientID)
+                    } else {
+                        try await env.accountService.signInWithBrowser(accountID: account.id, clientID: browserSignIn.clientID)
+                    }
+                    try await ConnectedOperation.run(
+                        connect: {},
+                        ready: { try await waitForSetUp(accountID: account.id, environment: env) },
+                        operation: { print("Signed in through the browser: \(jid)") },
+                        teardown: { await env.accountService.disconnect(accountID: account.id) }
+                    )
+                } catch {
+                    for hint in browserSignInFailureHints(for: error, jid: jid) {
+                        printToStandardError(hint)
+                    }
+                    throw error
+                }
+            }
+        }
     }
+}
+
+struct BrowserSignInOptions: ParsableArguments {
+    @Option(name: .long, help: "A client ID the server's administrator set up for Ducko at the sign-in provider")
+    var clientID: String?
+
+    @Flag(name: .long, help: "Print the sign-in page instead of opening it in the default browser")
+    var noBrowser = false
 }
 
 struct ConnectionEndpointOptions: ParsableArguments {
@@ -346,6 +437,9 @@ struct ConnectionEndpointOptions: ParsableArguments {
     func validate() throws {
         if port != nil, host == nil {
             throw ValidationError("--port requires --host")
+        }
+        if port == 0 {
+            throw ValidationError("--port must be between 1 and 65535")
         }
     }
 }

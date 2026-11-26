@@ -49,9 +49,23 @@ enum SASLAuthError: Error, Equatable {
     case malformedUpgradeTask
     /// The server offers only PLAIN, which sends the password itself, to an account that does not allow it.
     case plainRefused
+    /// The server refused an OAUTHBEARER sign-in. `challenge` is the error challenge it sent first (RFC 7628 §3.2.2),
+    /// which names its authorization server.
+    case bearerTokenRejected(challenge: String?, condition: String, text: String?)
+    /// A password sign-in found OAUTHBEARER on offer but no SCRAM or PLAIN.
+    case browserSignInOnly
+    /// A browser sign-in found no OAUTHBEARER on offer.
+    case browserSignInUnavailable
+    /// A browser sign-in would send its token over a connection without TLS.
+    case browserSignInNeedsTLS
+    /// The access token holds a byte that cannot travel in an OAUTHBEARER message.
+    case unsendableBearerToken
+    /// A browser sign-in bound an account other than the one entered. The token, not the entered address, decides which
+    /// account the server binds.
+    case accountMismatch(bound: String, expected: String)
 
-    /// A `.serverFailure` prefers the server's non-blank `text`, then a phrase for a known condition, then a general
-    /// refusal.
+    /// A `.serverFailure` or `.bearerTokenRejected` prefers the server's non-blank `text`, then a phrase for a known
+    /// condition, then a general refusal.
     var displayText: String {
         switch self {
         case .noSupportedMechanism: "The server offers no supported authentication mechanism"
@@ -60,7 +74,7 @@ enum SASLAuthError: Error, Equatable {
         case .invalidServerNonce: "The server sent an invalid nonce"
         case .serverProofMissing: "The server left out its proof that it knows the password"
         case .serverSignatureMismatch: "The server could not prove it knows the password"
-        case let .serverFailure(condition, text):
+        case let .serverFailure(condition, text), let .bearerTokenRejected(_, condition, text):
             if let text, !text.allSatisfy(\.isWhitespace) { text } else { Condition(rawValue: condition)?.displayText ?? "The server refused the sign-in" }
         case let .scramServerError(value): SCRAMErrorValue(serverValue: value).displayText
         case .unexpectedReply: "The server sent a sign-in reply out of order"
@@ -79,6 +93,11 @@ enum SASLAuthError: Error, Equatable {
         case .unsupportedSignInStep: "The server asked for an extra authentication step that is not supported"
         case .malformedUpgradeTask: "The server sent an incomplete request to upgrade how it stores the password"
         case .plainRefused: "The server offers only a sign-in that sends the password, which this account does not allow"
+        case .browserSignInOnly: "The server offers only sign-in through a browser"
+        case .browserSignInUnavailable: "The server does not offer sign-in through a browser"
+        case .browserSignInNeedsTLS: "Sign-in through a browser needs an encrypted connection"
+        case .unsendableBearerToken: "The sign-in provider issued a token that cannot be sent to the server"
+        case let .accountMismatch(bound, expected): "Signed in as \(bound), not \(expected)"
         }
     }
 
@@ -255,4 +274,19 @@ func selectSASLMechanism(
     if let selected = preferenceOrder.first(where: { offered.contains($0) }) { return selected }
     if !allowsPLAIN, offered.contains(SASLPlain.mechanismName) { throw .plainRefused }
     throw .noSupportedMechanism
+}
+
+/// OAUTHBEARER when offered. It binds to no channel, so the XEP-0440 rules that govern SCRAM do not apply.
+func selectBearerMechanism(offered: Set<String>) throws(SASLAuthError) -> String {
+    guard offered.contains(SASLOAuthBearer.mechanismName) else { throw .browserSignInUnavailable }
+    return SASLOAuthBearer.mechanismName
+}
+
+/// Refuses a password sign-in to an offer of OAUTHBEARER with no SCRAM or PLAIN, before the channel-binding rules could
+/// fail it for a reason that hides the browser sign-in.
+func refuseBrowserOnlyOffer(_ offered: Set<String>) throws(SASLAuthError) {
+    let offersPasswordSignIn = offered.contains { $0.hasPrefix("SCRAM-") || $0 == SASLPlain.mechanismName }
+    if offered.contains(SASLOAuthBearer.mechanismName), !offersPasswordSignIn {
+        throw .browserSignInOnly
+    }
 }

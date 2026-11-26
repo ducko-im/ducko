@@ -10,8 +10,8 @@ public enum XMPPClientError: Error {
     case untrustedCertificate(CertificateTrustFailure)
     case authenticationFailed(AuthenticationFailure)
     /// The server offers only a sign-in that sends the password, which this account does not allow, so the password
-    /// was not sent.
-    case plainSignInRefused
+    /// was not sent. `browserSignInOffered` tells whether the server also offers sign-in through a browser.
+    case plainSignInRefused(browserSignInOffered: Bool)
     case bindingFailed(String)
     case sessionFailed(String)
     case unexpectedStreamState(String)

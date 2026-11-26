@@ -110,6 +110,12 @@ DUCKO_TEST_REGISTRATION=1 swift test --package-path IntegrationTests --filter CL
 swift test --package-path IntegrationTests --filter SASLUpgradeTests
 ```
 
+`CLISSOTests` checks sign-in through the browser (XEP-0493) against the test server's own OAuth provider. It runs only when `DUCKO_TEST_SSO=1` and the Alice and Bob credentials are set. The test acts as the browser: it submits the provider's login and consent forms for the URL the CLI prints with `--no-browser`, and delivers the redirect to the CLI's loopback port. It adds grants at the provider and revokes one. Run the suite with:
+
+```
+DUCKO_TEST_SSO=1 swift test --package-path IntegrationTests --filter CLISSOTests
+```
+
 `TestHarness` runs a bootstrap probe before the first test executes and auto-runs the OMEMO reset when any account's PEP devicelist crosses `autoResetDevicelistThreshold` (32 entries). `ResetTestServerState` remains useful for non-OMEMO drift (roster subscription baselines, the dave-empty invariant) since the auto-reset only touches the OMEMO devicelist path.
 
 ## Packaging

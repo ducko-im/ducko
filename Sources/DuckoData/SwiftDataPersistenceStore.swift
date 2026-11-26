@@ -35,9 +35,23 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
             record.update(from: account)
             record.rosterVersion = account.rosterVersion
             record.allowsPLAIN = account.allowsPLAIN
+            record.signInMethod = account.signInMethod.rawValue
             modelContext.insert(record)
         }
         try modelContext.save()
+    }
+
+    public func insertAccount(_ account: Account) throws -> Bool {
+        guard try !fetchAccounts().contains(where: { $0.jid == account.jid }) else { return false }
+        do {
+            try saveAccount(account)
+        } catch {
+            // Fetches include unsaved changes, so a failed insert left in the context would refuse the address and
+            // could be saved by the next unrelated write.
+            modelContext.rollback()
+            throw error
+        }
+        return true
     }
 
     public func deleteAccount(_ id: UUID) throws {
@@ -51,6 +65,17 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
         guard let record = try accountRecord(id: accountID) else { return }
         record.allowsPLAIN = allowsPLAIN
         try modelContext.save()
+    }
+
+    public func setSignInMethod(_ method: SignInMethod, accountID: UUID) throws {
+        guard let record = try accountRecord(id: accountID) else { throw AccountService.AccountServiceError.accountNotFound(accountID) }
+        record.signInMethod = method.rawValue
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
     }
 
     public func fetchChannelSearchLimits(accountID: UUID) throws -> [String: ChannelSearchLimit] {

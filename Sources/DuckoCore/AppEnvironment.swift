@@ -36,6 +36,7 @@ public final class AppEnvironment {
         downloadsDirectory: URL = .downloadsDirectory,
         clientFactory: any XMPPClientFactory = DefaultXMPPClientFactory(),
         networkPath: NetworkPathSource? = nil,
+        browserAuthorizer: any BrowserAuthorizer = NoOpBrowserAuthorizer(),
         onExternalEvent: (@Sendable (XMPPEvent, UUID) -> Void)? = nil
     ) {
         let resolvedCredentialStore = credentialStore ?? CredentialStoreFactory.makeDefault()
@@ -45,7 +46,8 @@ public final class AppEnvironment {
         let presenceService = PresenceService()
         let rosterService = RosterService(store: store)
         let accountService = AccountService(
-            store: store, credentialStore: resolvedCredentialStore, clientFactory: clientFactory, networkPath: networkPath
+            store: store, credentialStore: resolvedCredentialStore, clientFactory: clientFactory, networkPath: networkPath,
+            browserAuthorizer: browserAuthorizer
         )
         accountService.retriesFailedConnects = true
         let bookmarksService = BookmarksService()

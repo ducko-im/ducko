@@ -1,3 +1,4 @@
+import AppKit
 import DuckoCore
 import DuckoData
 import SwiftData
@@ -8,7 +9,8 @@ struct CLIContext {
 
 @MainActor
 enum CLIBootstrap {
-    static func setUp(formatter: any CLIFormatter, isInteractive: Bool = false) throws -> CLIContext {
+    /// `opensBrowser` opens a sign-in through the browser in the default browser. Its page is printed either way.
+    static func setUp(formatter: any CLIFormatter, isInteractive: Bool = false, opensBrowser: Bool = true) throws -> CLIContext {
         LoggingConfiguration.bootstrap()
         let container = try ModelContainerFactory.makeContainer()
         let store = SwiftDataPersistenceStore(modelContainer: container)
@@ -16,6 +18,9 @@ enum CLIBootstrap {
         let eventHandler = CLIEventHandler(formatter: formatter, isInteractive: isInteractive)
 
         let transcripts = FileTranscriptStore.makeDefault()
+        let browserAuthorizer = LoopbackBrowserAuthorizer(openURL: opensBrowser ? openInDefaultBrowser : nil) { url in
+            printToStandardError("Open this page to sign in: \(url.absoluteString)")
+        }
 
         let environment = AppEnvironment(
             store: store,
@@ -23,6 +28,7 @@ enum CLIBootstrap {
             omemoStore: omemoStore,
             // Only a session that stays connected watches the network.
             networkPath: isInteractive ? .system : nil,
+            browserAuthorizer: browserAuthorizer,
             onExternalEvent: { event, accountID in
                 Task {
                     await eventHandler.handleEvent(event, accountID: accountID)
@@ -48,5 +54,12 @@ enum CLIBootstrap {
         }
 
         return CLIContext(environment: environment)
+    }
+
+    @Sendable
+    private nonisolated static func openInDefaultBrowser(_ url: URL) {
+        Task { @MainActor in
+            NSWorkspace.shared.open(url)
+        }
     }
 }

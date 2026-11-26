@@ -15,7 +15,7 @@ struct AccountConnectionResourceTests {
         let id = try await service.createAccount(jidString: "alice@example.com")
         let connection = Task { try await service.connect(accountID: id, password: "secret") }
         let request = try await factory.nextRequest()
-        #expect(request.password == "secret")
+        #expect(request.secret == .password("secret"))
         await service.disconnect(accountID: id)
         await release.signal()
         await #expect(throws: CancellationError.self) { try await connection.value }
@@ -51,7 +51,7 @@ struct AccountConnectionResourceTests {
         await #expect(throws: AccountConnectionFactoryProbe.Failure.self) { try await service.connect(accountID: id, password: "replacement") }
         let fresh = try await factory.nextRequest()
         #expect(fresh.resume == nil)
-        #expect(fresh.password == "replacement")
+        #expect(fresh.secret == .password("replacement"))
         await service.disconnect(accountID: id)
     }
 
@@ -151,7 +151,7 @@ struct AccountConnectionResourceTests {
         await original.simulateReceive("<error><see-other-host xmlns='urn:ietf:params:xml:ns:xmpp-streams'>redirect.example.com:5223</see-other-host></error>")
         let request = try await factory.nextRequest()
         #expect(request.requireTLS == true)
-        #expect(request.password == "secret")
+        #expect(request.secret == .password("secret"))
         #expect(request.resume == nil)
         await service.disconnect(accountID: id)
         await release.signal()

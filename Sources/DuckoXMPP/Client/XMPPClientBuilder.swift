@@ -11,8 +11,12 @@ public struct XMPPClientBuilder {
     private var userAgent = SASL2UserAgent()
 
     public init(domain: String, username: String, password: String) {
+        self.init(domain: domain, username: username, secret: .password(password))
+    }
+
+    public init(domain: String, username: String, secret: SignInSecret) {
         self.domain = domain
-        self.credentials = XMPPClient.Credentials(username: username, password: password)
+        self.credentials = XMPPClient.Credentials(username: username, secret: secret)
     }
 
     /// Sets whether TLS is required (default: `true`).

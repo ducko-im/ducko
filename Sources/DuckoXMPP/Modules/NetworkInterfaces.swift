@@ -7,7 +7,7 @@ enum NetworkInterfaces {
         let isIPv4: Bool
     }
 
-    /// Returns non-loopback, non-link-local addresses for all active interfaces.
+    /// Returns the non-loopback addresses of all running interfaces, without IPv6 link-local ones.
     static func localAddresses() -> [Address] {
         var ifaddrs: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddrs) == 0, let first = ifaddrs else { return [] }

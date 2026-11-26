@@ -19,15 +19,14 @@ extension DuckoCLI {
             await MainActor.run { env.bookmarksService.autoJoinEnabled = true }
             let selectedAccount = prepared.account
             let password = prepared.password
+            let accountJID = selectedAccount.jid
 
-            try await connectStored(env, accountID: selectedAccount.id, password: password)
-            try await waitForConnected(accountID: selectedAccount.id, environment: env)
+            try await connectHeldSession(env, account: selectedAccount, password: password)
 
             printToStandardError("Connected. Type 'help' for commands, 'quit' to exit.")
 
             // Run readLine loop in Task.detached (blocking I/O must not run on cooperative thread)
             let accountID = selectedAccount.id
-            let accountJID = selectedAccount.jid
             await Task.detached {
                 await runREPL(formatter: formatter, environment: env, accountID: accountID, accountJID: accountJID)
             }.value

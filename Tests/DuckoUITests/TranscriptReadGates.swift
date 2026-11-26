@@ -179,12 +179,20 @@ struct GatedTranscriptPersistenceStore: PersistenceStore {
         try await mock.saveAccount(account)
     }
 
+    func insertAccount(_ account: Account) async throws -> Bool {
+        try await mock.insertAccount(account)
+    }
+
     func deleteAccount(_ id: UUID) async throws {
         try await mock.deleteAccount(id)
     }
 
     func setAllowsPLAIN(_ allowsPLAIN: Bool, accountID: UUID) async throws {
         try await mock.setAllowsPLAIN(allowsPLAIN, accountID: accountID)
+    }
+
+    func setSignInMethod(_ method: SignInMethod, accountID: UUID) async throws {
+        try await mock.setSignInMethod(method, accountID: accountID)
     }
 
     func fetchChannelSearchLimits(accountID: UUID) async throws -> [String: ChannelSearchLimit] {

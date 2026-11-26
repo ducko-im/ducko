@@ -155,6 +155,7 @@ struct JSONFormatter: CLIFormatter {
             "id": account.id.uuidString,
             "jid": account.jid.description,
             "is_enabled": account.isEnabled ? "true" : "false",
+            "sign_in_method": account.signInMethod.rawValue,
             "allows_plain": account.allowsPLAIN ? "true" : "false",
             "require_tls": account.requireTLS ? "true" : "false"
         ])
@@ -221,7 +222,7 @@ struct JSONFormatter: CLIFormatter {
         case let .streamResumed(jid): encode(["type": "stream_resumed", "jid": jid.description, "account": account])
         case let .disconnected(reason): formatDisconnect(reason, account: account)
         case let .authenticationFailed(failure): formatAuthenticationFailure(failure, account: account)
-        case .plainSignInRefused: encode(["type": "sign_in_refused", "reason": "plain_not_allowed", "message": XMPPClientError.plainSignInRefused.localizedDescription, "account": account])
+        case .plainSignInRefused: encode(["type": "sign_in_refused", "reason": "plain_not_allowed", "message": plainSignInRefusedLine, "account": account])
         case let .messageReceived(message): formatIncomingMessage(message, account: account)
         case let .messageCarbonReceived(forwarded): formatCarbonEvent(forwarded, isOutgoing: false, account: account)
         case let .messageCarbonSent(forwarded): formatCarbonEvent(forwarded, isOutgoing: true, account: account)
@@ -271,6 +272,8 @@ struct JSONFormatter: CLIFormatter {
         let kind = switch failure.kind {
         case .credentialsRejected: "credentials_rejected"
         case .temporary: "temporary"
+        case .browserSignInOnly: "browser_sign_in_only"
+        case .accountMismatch: "account_mismatch"
         case .other: "other"
         }
         var dict = ["type": "authentication_failed", "kind": kind, "message": failure.message, "account": account]

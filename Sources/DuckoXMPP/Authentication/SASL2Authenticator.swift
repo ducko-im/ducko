@@ -44,8 +44,9 @@ public struct SASL2UserAgent: Sendable {
 struct SASL2Authenticator {
     /// Result of a successful SASL2 authentication.
     enum AuthResult {
-        /// The `<resumed/>` answering an inline `<resume/>`. The stream keeps the JID of the session it resumes.
-        case resumed(XMLElement)
+        /// The `<resumed/>` answering an inline `<resume/>`, with the `<authorization-identifier>` the success named. The
+        /// stream keeps the JID of the session it resumes.
+        case resumed(XMLElement, identifier: JID)
         case session(FullJID, bound: XMLElement?)
     }
 
@@ -94,15 +95,16 @@ struct SASL2Authenticator {
 
     // MARK: - Negotiation
 
-    /// Selects the strongest mechanism and produces the `<authenticate>` element.
-    /// A channel-bound SCRAM sign-in asks for the strongest offered upgrade to a stronger hash.
-    /// The `inlinePayloads` are added as children (e.g., Bind 2 request). Unless `allowsPLAIN`, an offer that leaves
-    /// only PLAIN is refused. `tlsVersion` is the negotiated TLS version's wire code, which a SCRAM server may confirm
-    /// (XEP-0515).
+    /// Selects the mechanism for `secret` and produces the `<authenticate>` element. A bearer token goes out only over TLS
+    /// and only with OAUTHBEARER, which binds to no channel and asks for no upgrade. For a password, a channel-bound SCRAM
+    /// sign-in asks for the strongest offered upgrade to a stronger hash. Unless `allowsPLAIN`, a password offer that
+    /// leaves only PLAIN is refused. The `inlinePayloads` are added as children (e.g., Bind 2 request). `tlsVersion` is
+    /// the negotiated TLS version's wire code, which a SCRAM server may confirm (XEP-0515).
     mutating func begin(
         features: XMLElement,
         authcid: String,
-        password: String,
+        secret: SignInSecret,
+        tlsActive: Bool,
         inlinePayloads: [XMLElement],
         userAgent: SASL2UserAgent = SASL2UserAgent(),
         channelBindings: [ChannelBindingType: [UInt8]] = [:],
@@ -113,40 +115,62 @@ struct SASL2Authenticator {
             throw SASLAuthError.noSupportedMechanism
         }
 
-        let channelBinding = try chooseChannelBinding(
-            bindings: channelBindings,
-            advertisedTypes: parseChannelBindingTypes(features),
-            offeredMechanisms: sasl2Features.mechanisms,
-            isSASL2: true
-        )
-        let selected = try selectSASLMechanism(
-            offered: sasl2Features.mechanisms, channelBinding: channelBinding, allowsPLAIN: allowsPLAIN
-        )
-        let downgradeContext = SCRAMDowngradeContext(
-            advertisedMechanisms: advertisedSASL2Mechanisms(features),
-            channelBindingTypes: advertisedChannelBindingTypeList(features),
-            tlsVersion: tlsVersion
-        )
-
-        let (mechanism, initialPayload) = startMechanism(
-            selected, authcid: authcid, password: password, channelBinding: channelBinding, downgradeContext: downgradeContext
-        )
-        activeMechanism = mechanism
+        let selected: String
+        let initialPayload: [UInt8]
+        var upgradeRequest: XMLElement?
+        switch secret {
+        case let .bearerToken(token):
+            let start = try SASLOAuthBearer.start(token: token, offered: sasl2Features.mechanisms, tlsActive: tlsActive)
+            selected = start.mechanism
+            initialPayload = start.initialResponse
+            activeMechanism = .oauthBearer(start.bearer)
+        case let .password(password):
+            try refuseBrowserOnlyOffer(sasl2Features.mechanisms)
+            let channelBinding = try chooseChannelBinding(
+                bindings: channelBindings,
+                advertisedTypes: parseChannelBindingTypes(features),
+                offeredMechanisms: sasl2Features.mechanisms,
+                isSASL2: true
+            )
+            selected = try selectSASLMechanism(
+                offered: sasl2Features.mechanisms, channelBinding: channelBinding, allowsPLAIN: allowsPLAIN
+            )
+            let downgradeContext = SCRAMDowngradeContext(
+                advertisedMechanisms: advertisedSASL2Mechanisms(features),
+                channelBindingTypes: advertisedChannelBindingTypeList(features),
+                tlsVersion: tlsVersion
+            )
+            let (mechanism, payload) = startMechanism(
+                selected, authcid: authcid, password: password, channelBinding: channelBinding, downgradeContext: downgradeContext
+            )
+            activeMechanism = mechanism
+            initialPayload = Array(payload.utf8)
+            if let hash = selectSCRAMUpgrade(
+                offered: sasl2Features.upgrades, selectedMechanism: selected, channelBinding: channelBinding
+            ) {
+                var request = XMLElement(name: "upgrade", namespace: XMPPNamespaces.saslUpgrade)
+                request.addText(hash.upgradeTaskName)
+                upgradeRequest = request
+                upgrade = .requested(hash, password: password)
+            }
+        }
         mechanismName = selected
+        return Self.authenticateElement(
+            mechanism: selected, initialPayload: initialPayload, upgradeRequest: upgradeRequest, userAgent: userAgent,
+            inlinePayloads: inlinePayloads
+        )
+    }
 
+    private static func authenticateElement(
+        mechanism: String, initialPayload: [UInt8], upgradeRequest: XMLElement?, userAgent: SASL2UserAgent, inlinePayloads: [XMLElement]
+    ) -> XMLElement {
         var authenticate = XMLElement(
             name: "authenticate",
             namespace: XMPPNamespaces.sasl2,
-            attributes: ["mechanism": selected]
+            attributes: ["mechanism": mechanism]
         )
-
-        if let hash = selectSCRAMUpgrade(
-            offered: sasl2Features.upgrades, selectedMechanism: selected, channelBinding: channelBinding
-        ) {
-            var request = XMLElement(name: "upgrade", namespace: XMPPNamespaces.saslUpgrade)
-            request.addText(hash.upgradeTaskName)
-            authenticate.addChild(request)
-            upgrade = .requested(hash, password: password)
+        if let upgradeRequest {
+            authenticate.addChild(upgradeRequest)
         }
 
         var initialResponse = XMLElement(name: "initial-response")
@@ -173,7 +197,7 @@ struct SASL2Authenticator {
         case "success":
             handleSuccess(stanza, mechanism: &mechanism)
         case "failure":
-            .failure(.parse(failure: stanza))
+            handleFailure(stanza, mechanism: mechanism)
         case "continue":
             handleContinue(stanza, mechanism: &mechanism)
         case "task-data":
@@ -212,18 +236,30 @@ struct SASL2Authenticator {
     }
 
     private func handleChallenge(_ stanza: XMLElement, mechanism: inout ActiveMechanism) -> Response {
-        guard let encoded = stanza.textContent,
-              let decoded = Base64.decodeString(encoded) else {
-            return .failure(.invalidBase64)
-        }
-
         switch mechanism {
         case var .scram(scram):
+            guard let encoded = stanza.textContent, let decoded = Base64.decodeString(encoded) else {
+                return .failure(.invalidBase64)
+            }
             let response = scramChallengeResponse(decoded, scram: &scram)
             mechanism = .scram(scram)
             return response
         case .plain:
             return .failure(.unsupportedSignInStep)
+        case var .oauthBearer(bearer):
+            let result = bearer.respond(to: stanza, namespace: XMPPNamespaces.sasl2)
+            mechanism = .oauthBearer(bearer)
+            switch result {
+            case let .success(response): return .continueWith(response)
+            case let .failure(error): return .failure(error)
+            }
+        }
+    }
+
+    private func handleFailure(_ stanza: XMLElement, mechanism: ActiveMechanism) -> Response {
+        switch mechanism {
+        case .scram, .plain: .failure(.parse(failure: stanza))
+        case let .oauthBearer(bearer): .failure(bearer.handleFailure(stanza))
         }
     }
 
@@ -236,6 +272,8 @@ struct SASL2Authenticator {
             if let error = verifyScramSignature(stanza, scram: scram, mechanism: &mechanism) { return error }
         case .plain:
             break
+        case let .oauthBearer(bearer):
+            if let error = bearer.handleSuccess() { return .failure(error) }
         }
 
         return parseSuccess(stanza)
@@ -309,8 +347,8 @@ struct SASL2Authenticator {
     private func parseSuccess(_ stanza: XMLElement) -> Response {
         let jid = stanza.childText(named: "authorization-identifier")
         if let resumed = stanza.child(named: "resumed", namespace: XMPPNamespaces.sm),
-           let jid, JID.parse(jid) != nil {
-            return .success(.resumed(resumed))
+           let identifier = jid.flatMap(JID.parse) {
+            return .success(.resumed(resumed, identifier: identifier))
         }
         guard let fullJID = jid.flatMap(FullJID.parse) else {
             return .failure(.accountAddressMissing)
@@ -323,6 +361,7 @@ struct SASL2Authenticator {
     private enum ActiveMechanism {
         case scram(any SCRAMSession)
         case plain
+        case oauthBearer(SASLOAuthBearer)
     }
 
     // MARK: - SCRAM Upgrade

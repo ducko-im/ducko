@@ -86,7 +86,18 @@ struct JSONFormatterTests {
         #expect(json["jid"] == "alice@example.com")
         #expect(json["id"] == accountID.uuidString)
         #expect(json["is_enabled"] == "true")
+        #expect(json["sign_in_method"] == "password")
         #expect(json["allows_plain"] == "false")
+        #expect(json["require_tls"] == "true")
+    }
+
+    @Test func `a browser account's record names its sign-in method`() throws {
+        let jid = try #require(BareJID.parse("alice@example.com"))
+        let account = Account(id: UUID(), jid: jid, isEnabled: true, connectOnLaunch: false, signInMethod: .browser, createdAt: Date())
+        let output = formatter.formatAccount(account)
+        expectSnakeCaseKeys(output)
+        let json = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: String])
+        #expect(json["sign_in_method"] == "browser")
         #expect(json["require_tls"] == "true")
     }
 

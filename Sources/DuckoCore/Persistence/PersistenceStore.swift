@@ -5,10 +5,16 @@ public protocol PersistenceStore: Sendable {
 
     func fetchAccounts() async throws -> [Account]
     func saveAccount(_ account: Account) async throws
+    /// Saves a new account unless one with its address is stored, checking and saving in one step. Returns whether it
+    /// saved the account.
+    func insertAccount(_ account: Account) async throws -> Bool
     func deleteAccount(_ id: UUID) async throws
     /// Writes only whether the account sends its password to a server offering only PLAIN, which `saveAccount` leaves
     /// as stored.
     func setAllowsPLAIN(_ allowsPLAIN: Bool, accountID: UUID) async throws
+    /// Writes only how the account signs in, which `saveAccount` leaves as stored. Throws when the account does not
+    /// exist, and keeps the stored method when the write fails.
+    func setSignInMethod(_ method: SignInMethod, accountID: UUID) async throws
     /// The channel search services' rate limits the account waits out, by service address.
     func fetchChannelSearchLimits(accountID: UUID) async throws -> [String: ChannelSearchLimit]
     /// Changes only the account's channel search rate limits, which `saveAccount` leaves as stored. `change` gets them as

@@ -45,6 +45,7 @@
         <implements rdf:resource="https://www.rfc-editor.org/rfc/rfc5929"/>
         <implements rdf:resource="https://www.rfc-editor.org/rfc/rfc7590"/>
         <implements rdf:resource="https://www.rfc-editor.org/rfc/rfc7622"/>
+        <implements rdf:resource="https://www.rfc-editor.org/rfc/rfc7628"/>
         <implements rdf:resource="https://www.rfc-editor.org/rfc/rfc9266"/>
 
         <implements>
@@ -459,6 +460,14 @@
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0480.html"/>
                 <xmpp:status>complete</xmpp:status>
                 <xmpp:note xml:lang="en">Ducko requests one upgrade per sign-in, to the strongest offered SCRAM hash that is stronger than the one it signs in with. Because the returned hash is password-equivalent, it asks only on sign-ins bound to the TLS channel, and answers the task only after the server has proved it knows the password</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0493.html"/>
+                <xmpp:version>0.1.1</xmpp:version>
+                <xmpp:status>complete</xmpp:status>
+                <xmpp:note xml:lang="en">Sign-in keeps the account signed in with OAuth refresh tokens, not FAST. Where the provider does not allow client registration, Ducko asks for a client ID set up by the server admin. Over SASL2 it is used only when the server also offers Bind 2; otherwise SASL1 is used</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>

@@ -296,7 +296,7 @@ struct ChannelBindingChoiceTests {
         var sasl1 = SASLAuthenticator()
         let sasl1Outcome = Self.outcome(Result { () throws(SASLAuthError) -> XMLElement in
             try sasl1.begin(
-                features: features, authcid: "user", password: "pencil", channelBindings: offer.bindings, allowsPLAIN: offer.allowsPLAIN
+                features: features, authcid: "user", secret: .password("pencil"), tlsActive: true, channelBindings: offer.bindings, allowsPLAIN: offer.allowsPLAIN
             )
         }, initialResponse: \.textContent)
         #expect(sasl1Outcome == offer.sasl1)
@@ -304,7 +304,7 @@ struct ChannelBindingChoiceTests {
         var sasl2 = SASL2Authenticator()
         let sasl2Outcome = Self.outcome(Result { () throws(SASLAuthError) -> XMLElement in
             try sasl2.begin(
-                features: features, authcid: "user", password: "pencil", inlinePayloads: [], channelBindings: offer.bindings,
+                features: features, authcid: "user", secret: .password("pencil"), tlsActive: true, inlinePayloads: [], channelBindings: offer.bindings,
                 allowsPLAIN: offer.allowsPLAIN
             )
         }, initialResponse: { $0.childText(named: "initial-response") })

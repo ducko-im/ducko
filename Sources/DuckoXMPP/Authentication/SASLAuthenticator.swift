@@ -14,18 +14,33 @@ struct SASLAuthenticator {
 
     // MARK: - Negotiation
 
-    /// Parses `<mechanisms>` from stream features, selects the strongest available,
-    /// and produces the initial `<auth>` element. Unless `allowsPLAIN`, an offer that leaves only PLAIN is refused.
-    /// `tlsVersion` is the negotiated TLS version's wire code, which a SCRAM server may confirm (XEP-0515).
+    /// Parses `<mechanisms>` from stream features, selects the mechanism for `secret`, and produces the initial `<auth>`
+    /// element. A bearer token goes out only over TLS and only with OAUTHBEARER. For a password, unless `allowsPLAIN`,
+    /// an offer that leaves only PLAIN is refused. `tlsVersion` is the negotiated TLS version's wire code, which a
+    /// SCRAM server may confirm (XEP-0515).
     mutating func begin(
         features: XMLElement,
         authcid: String,
-        password: String,
+        secret: SignInSecret,
+        tlsActive: Bool,
         channelBindings: [ChannelBindingType: [UInt8]] = [:],
         tlsVersion: UInt16? = nil,
         allowsPLAIN: Bool = false
     ) throws(SASLAuthError) -> XMLElement {
-        let offeredNames = parseMechanisms(features)
+        let offeredNames = Self.parseMechanisms(features)
+        let password: String
+        switch secret {
+        case let .bearerToken(token):
+            let start = try SASLOAuthBearer.start(token: token, offered: offeredNames, tlsActive: tlsActive)
+            activeMechanism = .oauthBearer(start.bearer)
+            var auth = XMLElement(name: "auth", namespace: saslNamespace, attributes: ["mechanism": start.mechanism])
+            auth.addText(Base64.encode(start.initialResponse))
+            return auth
+        case let .password(value):
+            password = value
+        }
+
+        try refuseBrowserOnlyOffer(offeredNames)
         let channelBinding = try chooseChannelBinding(
             bindings: channelBindings,
             advertisedTypes: parseChannelBindingTypes(features),
@@ -41,9 +56,18 @@ struct SASLAuthenticator {
             tlsVersion: tlsVersion
         )
 
-        var mechanism = createMechanism(selected, channelBinding: channelBinding, downgradeContext: downgradeContext)
-        let auth = mechanism.start(authcid: authcid, password: password)
-        activeMechanism = mechanism
+        if let session = makeSCRAMSession(selected, channelBinding: channelBinding, downgradeContext: downgradeContext) {
+            var scram = SCRAM(mechanismName: selected, session: session)
+            let auth = scram.start(authcid: authcid, password: password)
+            activeMechanism = .scram(scram)
+            return auth
+        }
+        guard selected == SASLPlain.mechanismName else {
+            preconditionFailure("Unsupported mechanism \(selected) passed to begin")
+        }
+        var plain = SASLPlain()
+        let auth = plain.start(authcid: authcid, password: password)
+        activeMechanism = .plain(plain)
         return auth
     }
 
@@ -59,7 +83,7 @@ struct SASLAuthenticator {
         case "success":
             mechanism.handleSuccess(stanza)
         case "failure":
-            .failure(.parse(failure: stanza))
+            mechanism.handleFailure(stanza)
         default:
             .failure(.unknownReply(element: stanza.name))
         }
@@ -71,22 +95,8 @@ struct SASLAuthenticator {
         return response
     }
 
-    private func createMechanism(
-        _ name: String,
-        channelBinding: ChannelBindingMode,
-        downgradeContext: SCRAMDowngradeContext
-    ) -> ActiveMechanism {
-        if let session = makeSCRAMSession(name, channelBinding: channelBinding, downgradeContext: downgradeContext) {
-            return .scram(SCRAM(mechanismName: name, session: session))
-        }
-        guard name == SASLPlain.mechanismName else {
-            preconditionFailure("Unsupported mechanism \(name) passed to createMechanism")
-        }
-        return .plain(SASLPlain())
-    }
-
     /// Extracts `<mechanism>NAME</mechanism>` children from `<mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl">`. Names uppercased per RFC 4422 §3.1.
-    private func parseMechanisms(_ features: XMLElement) -> Set<String> {
+    static func parseMechanisms(_ features: XMLElement) -> Set<String> {
         Set(advertisedSASL1Mechanisms(features).map { $0.uppercased() })
     }
 
@@ -96,25 +106,13 @@ struct SASLAuthenticator {
     enum ActiveMechanism {
         case scram(SCRAM)
         case plain(SASLPlain)
+        case oauthBearer(SASLOAuthBearer)
 
         /// Its name when it is SCRAM, whose success carries the server's proof of knowing the password.
         var scramMechanismName: String? {
             switch self {
             case let .scram(m): m.mechanismName
-            case .plain: nil
-            }
-        }
-
-        mutating func start(authcid: String, password: String) -> XMLElement {
-            switch self {
-            case var .scram(m):
-                let result = m.start(authcid: authcid, password: password)
-                self = .scram(m)
-                return result
-            case var .plain(m):
-                let result = m.start(authcid: authcid, password: password)
-                self = .plain(m)
-                return result
+            case .plain, .oauthBearer: nil
             }
         }
 
@@ -128,6 +126,13 @@ struct SASLAuthenticator {
                 let result = m.handleChallenge(challenge)
                 self = .plain(m)
                 return result
+            case var .oauthBearer(m):
+                let result = m.respond(to: challenge, namespace: saslNamespace)
+                self = .oauthBearer(m)
+                switch result {
+                case let .success(response): return .continueWith(response)
+                case let .failure(error): return .failure(error)
+                }
             }
         }
 
@@ -141,6 +146,15 @@ struct SASLAuthenticator {
                 let result = m.handleSuccess(success)
                 self = .plain(m)
                 return result
+            case let .oauthBearer(m):
+                return m.handleSuccess().map(SASLAuthResponse.failure) ?? .success
+            }
+        }
+
+        func handleFailure(_ failure: XMLElement) -> SASLAuthResponse {
+            switch self {
+            case .scram, .plain: .failure(.parse(failure: failure))
+            case let .oauthBearer(m): .failure(m.handleFailure(failure))
             }
         }
     }

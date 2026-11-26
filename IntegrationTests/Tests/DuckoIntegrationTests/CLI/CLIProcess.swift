@@ -435,6 +435,25 @@ actor CLISpawnHandle {
         throw TestHarnessError.timeout
     }
 
+    /// Waits until the child's stderr contains `substring` and returns stderr as captured so far, as `waitForStdout`
+    /// does for stdout.
+    func waitForStderr(
+        containing substring: String,
+        timeout: Duration = TestTimeout.cliCommand
+    ) async throws -> String {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if let snapshot = await stderrBuffer.snapshotIfContains(substring) {
+                return snapshot
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        if let snapshot = await stderrBuffer.snapshotIfContains(substring) {
+            return snapshot
+        }
+        throw TestHarnessError.timeout
+    }
+
     /// Waits for the child to exit (escalating SIGTERM→SIGKILL on timeout), drains the readers, and returns
     /// its captured output and `terminationStatus`/`terminationReason`.
     func awaitExit(timeout: Duration = TestTimeout.cliCommand) async throws -> CLIOutput {

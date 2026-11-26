@@ -11,7 +11,7 @@ struct OnboardingImportFailureTests {
 
     @Test
     func `a refusal to send the password asks whether to allow it`() {
-        #expect(OnboardingImportFailure.classify(XMPPClientError.plainSignInRefused) == .plainNotAllowed)
+        #expect(OnboardingImportFailure.classify(XMPPClientError.plainSignInRefused(browserSignInOffered: false)) == .plainNotAllowed)
     }
 
     @Test(arguments: [

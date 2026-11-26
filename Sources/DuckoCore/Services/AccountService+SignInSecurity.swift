@@ -41,8 +41,8 @@ public extension AccountService {
         return true
     }
 
-    /// An account in its first sign-in from `createAndConnect` gets no warning: the account is rolled back when that
-    /// sign-in fails, so the form that added it reports the refusal.
+    /// An account in its first sign-in gets no warning: the account is rolled back when that sign-in fails, so the form
+    /// that added it reports the refusal.
     internal func publishSignInSecurityWarning(accountID: UUID) {
         guard !accountsInFirstSignIn.contains(accountID),
               let account = accounts.first(where: { $0.id == accountID }) else { return }

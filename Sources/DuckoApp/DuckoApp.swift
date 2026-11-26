@@ -34,7 +34,8 @@ struct DuckoApp: App {
             let omemoStore = SwiftDataOMEMOStore(modelContainer: container)
             let transcripts = FileTranscriptStore.makeDefault()
             let env = AppEnvironment(
-                store: store, transcripts: transcripts, omemoStore: omemoStore, linkPreviewFetcher: LPLinkPreviewFetcher(), networkPath: .system
+                store: store, transcripts: transcripts, omemoStore: omemoStore, linkPreviewFetcher: LPLinkPreviewFetcher(), networkPath: .system,
+                browserAuthorizer: WebAuthenticationSessionAuthorizer()
             )
             self.environment = env
             let chatContainer = ChatContainerState(environment: env, defaults: PreferencesDefaults.store)

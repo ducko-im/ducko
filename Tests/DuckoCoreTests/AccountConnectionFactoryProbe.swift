@@ -7,7 +7,7 @@ import Testing
 actor AccountConnectionFactoryProbe: XMPPClientFactory {
     enum Failure: Error { case connect, timeout }
     struct Request {
-        let password: String
+        let secret: SignInSecret
         let resume: StreamResumeContext?
         let requireTLS: Bool?
         let allowsPLAIN: Bool
@@ -42,12 +42,12 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
         self.allowsPLAIN = allowsPLAIN
     }
 
-    func makeClient(account: Account, password: String, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
+    func makeClient(account: Account, secret: SignInSecret, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?) async -> (XMPPClient, StreamManagementModule) {
         let index = requestCount
         requestCount += 1
         let transport = index < transports.count ? transports[index] : MockTransport(connectError: Failure.connect)
         let sm = StreamManagementModule(previousState: resuming?.streamManagement ?? (index == 0 ? initialResume : nil))
-        var builder = XMPPClientBuilder(domain: account.jid.domainPart, username: account.jid.localPart ?? "", password: password)
+        var builder = XMPPClientBuilder(domain: account.jid.domainPart, username: account.jid.localPart ?? "", secret: secret)
         builder.withTransport(transport)
         builder.withRequireTLS(requireTLSOverride ?? false)
         builder.withAllowsPLAIN(allowsPLAIN ?? account.allowsPLAIN)
@@ -67,7 +67,7 @@ actor AccountConnectionFactoryProbe: XMPPClientFactory {
         await transport.ackSyncRequests(from: sm)
         let client = await builder.build()
         requests.continuation.yield(Request(
-            password: password, resume: resuming, requireTLS: requireTLSOverride, allowsPLAIN: allowsPLAIN ?? account.allowsPLAIN
+            secret: secret, resume: resuming, requireTLS: requireTLSOverride, allowsPLAIN: allowsPLAIN ?? account.allowsPLAIN
         ))
         if index == 0 { await firstRelease?.wait() } else { await laterRelease?.wait() }
         return (client, sm)

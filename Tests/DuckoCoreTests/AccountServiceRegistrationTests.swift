@@ -27,10 +27,10 @@ private struct SignInRecorder: XMPPClientFactory {
     let destinations: Destinations
 
     func makeClient(
-        account: Account, password: String, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?
+        account: Account, secret: SignInSecret, resuming: StreamResumeContext?, requireTLSOverride: Bool?, omemoService: OMEMOService?
     ) async -> (XMPPClient, StreamManagementModule) {
         await destinations.recordSignIn(host: account.host, port: account.port)
-        var builder = XMPPClientBuilder(domain: "", username: "", password: password)
+        var builder = XMPPClientBuilder(domain: "", username: "", secret: secret)
         builder.withTransport(MockTransport())
         let sm = StreamManagementModule()
         builder.withModule(sm)

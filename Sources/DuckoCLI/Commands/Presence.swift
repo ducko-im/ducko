@@ -106,7 +106,7 @@ private struct PresenceHoldContext {
     let formatter: any CLIFormatter
     let environment: AppEnvironment
     let account: DuckoCore.Account
-    let password: String
+    let password: String?
 }
 
 /// Holds a broadcast presence open for an explicit lifetime so subscribers observe it as durable state, then
@@ -179,8 +179,7 @@ private func performHoldWork(
 ) async throws {
     let env = context.environment
     let accountID = context.account.id
-    try await connectStored(env, accountID: accountID, password: context.password)
-    try await waitForConnected(accountID: accountID, environment: env)
+    try await connectHeldSession(env, account: context.account, password: context.password)
     await applyPresence(status, message: message, environment: env, accountID: accountID)
     print(context.formatter.formatPresence(jid: context.account.jid, status: status.rawValue, message: message))
     switch lifetime {

@@ -15,6 +15,9 @@ public struct Account: Sendable, Identifiable {
     public var certificateFingerprint: String?
     /// Whether a server offering only PLAIN gets the password. Off by default; a verified SCRAM sign-in turns it off.
     public var allowsPLAIN: Bool
+    /// Set when the account is created and changed only by switching it to browser sign-in. Saving the account keeps the
+    /// stored method, so a stale copy cannot undo a switch.
+    public var signInMethod: SignInMethod
     public var importedFrom: String?
     public var createdAt: Date
 
@@ -31,6 +34,7 @@ public struct Account: Sendable, Identifiable {
         rosterVersion: String? = nil,
         certificateFingerprint: String? = nil,
         allowsPLAIN: Bool = false,
+        signInMethod: SignInMethod = .password,
         importedFrom: String? = nil,
         createdAt: Date
     ) {
@@ -46,6 +50,7 @@ public struct Account: Sendable, Identifiable {
         self.rosterVersion = rosterVersion
         self.certificateFingerprint = certificateFingerprint
         self.allowsPLAIN = allowsPLAIN
+        self.signInMethod = signInMethod
         self.importedFrom = importedFrom
         self.createdAt = createdAt
     }

@@ -65,6 +65,7 @@ struct AccountsPreferencesView: View {
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Add Account")
+                .accessibilityIdentifier("account-add-button")
 
                 Button {
                     guard selectedAccountID != nil else { return }
@@ -92,6 +93,8 @@ struct AccountsPreferencesView: View {
                 account: account,
                 onEdit: { editingAccount = account }
             )
+            // Each account gets its own sign-in state rather than the previous selection's.
+            .id(account.id)
         } else {
             Text("Select an account")
                 .foregroundStyle(.secondary)
@@ -148,6 +151,7 @@ private struct AccountDetailView: View {
     @State private var isShowingRegistrationForm = false
     @State private var isCancelAccountConfirmPresented = false
     @State private var cancelAccountError: String?
+    @State private var browserSignIn = BrowserSignInState()
     let account: Account
     let onEdit: () -> Void
 
@@ -191,7 +195,10 @@ private struct AccountDetailView: View {
                 LabeledContent("Enabled", value: account.isEnabled ? "Yes" : "No")
                 LabeledContent("Connect on Launch", value: account.connectOnLaunch ? "Yes" : "No")
                 LabeledContent("Require TLS", value: account.requireTLS ? "Yes" : "No")
-                LabeledContent("Allow Sending Password", value: account.allowsPLAIN ? "Yes" : "No")
+                LabeledContent("Sign-In", value: account.signInMethod == .browser ? "Browser" : "Password")
+                if account.signInMethod == .password {
+                    LabeledContent("Allow Sending Password", value: account.allowsPLAIN ? "Yes" : "No")
+                }
                 LabeledContent("Connection") {
                     Text(connectionLabel)
                         .foregroundStyle(isError ? Color.red : .secondary)
@@ -212,6 +219,15 @@ private struct AccountDetailView: View {
                     Spacer()
 
                     connectionButton
+                }
+
+                if account.signInMethod == .browser {
+                    BrowserSignInControl(
+                        label: "Sign In with Browser…",
+                        identifier: "sso-detail-sign-in-button",
+                        state: browserSignIn,
+                        start: signInWithBrowser
+                    )
                 }
             }
         }
@@ -321,6 +337,14 @@ private struct AccountDetailView: View {
         }
     }
 
+    private func signInWithBrowser() {
+        Task {
+            await browserSignIn.signIn { clientID in
+                try await environment.accountService.signInWithBrowser(accountID: account.id, clientID: clientID)
+            }
+        }
+    }
+
     private func cancelAccount(includeHistory: Bool) {
         Task {
             do {
@@ -334,6 +358,14 @@ private struct AccountDetailView: View {
 
 // MARK: - Account Edit Sheet
 
+/// The text of a port field.
+enum AccountPortField {
+    /// Whether the text is empty, which means no port, or a port from 1 to 65535.
+    static func isValid(_ text: String) -> Bool {
+        text.isEmpty || Int(text).map { (1 ... 65535).contains($0) } == true
+    }
+}
+
 private struct AccountEditSheet: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
@@ -346,9 +378,12 @@ private struct AccountEditSheet: View {
     @State private var isEnabled: Bool
     @State private var requireTLS: Bool
     @State private var allowsPLAIN: Bool
+    @State private var isSwitchConfirmPresented = false
+    @State private var browserSignIn = BrowserSignInState()
 
     private let accountID: UUID
     private let initialAllowsPLAIN: Bool
+    private let signsInWithPassword: Bool
 
     init(account: Account) {
         self.accountID = account.id
@@ -361,6 +396,7 @@ private struct AccountEditSheet: View {
         _requireTLS = State(initialValue: account.requireTLS)
         _allowsPLAIN = State(initialValue: account.allowsPLAIN)
         self.initialAllowsPLAIN = account.allowsPLAIN
+        self.signsInWithPassword = account.signInMethod == .password
     }
 
     var body: some View {
@@ -369,6 +405,11 @@ private struct AccountEditSheet: View {
                 TextField("Display Name", text: $displayName)
                 TextField("Host (optional)", text: $host)
                 TextField("Port (optional)", text: $portString)
+                if !AccountPortField.isValid(portString) {
+                    Text("Enter a port from 1 to 65535, or leave it empty.")
+                        .foregroundStyle(.red)
+                        .font(.callout)
+                }
                 TextField("Resource (optional)", text: $resource)
                 Toggle("Connect on Launch", isOn: $connectOnLaunch)
                 Toggle("Require TLS", isOn: $requireTLS)
@@ -379,6 +420,15 @@ private struct AccountEditSheet: View {
                 }
                 .accessibilityIdentifier("allowPlainToggle")
                 Toggle("Enabled", isOn: $isEnabled)
+
+                if signsInWithPassword {
+                    BrowserSignInControl(
+                        label: "Switch to Browser Sign-In…",
+                        identifier: "sso-switch-button",
+                        state: browserSignIn,
+                        start: { isSwitchConfirmPresented = true }
+                    )
+                }
             }
             .formStyle(.grouped)
 
@@ -394,10 +444,28 @@ private struct AccountEditSheet: View {
                     save()
                 }
                 .keyboardShortcut(.defaultAction)
+                .disabled(!AccountPortField.isValid(portString))
             }
             .padding()
         }
         .frame(width: 400)
+        .confirmationDialog("Switch to sign-in through the browser?", isPresented: $isSwitchConfirmPresented) {
+            Button("Switch to Browser Sign-In") {
+                switchSignIn()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Once the account has signed in through the browser, Ducko deletes its stored password.")
+        }
+    }
+
+    private func switchSignIn() {
+        Task {
+            await browserSignIn.signIn { clientID in
+                try await environment.accountService.switchToBrowserSignIn(accountID: accountID, clientID: clientID)
+                dismiss()
+            }
+        }
     }
 
     private func save() {
@@ -429,25 +497,44 @@ private struct AccountAddSheet: View {
     @State private var isAdding = false
     /// Whether the first sign-in was refused because the server offers only PLAIN.
     @State private var isPLAINRefused = false
+    /// Whether the password sign-in failed where the server offers sign-in through a browser.
+    @State private var isBrowserSignInOffered = false
+    @State private var browserSignIn = BrowserSignInState()
+
+    /// Whether a password sign-in or a sign-in through the browser is in progress.
+    private var isBusy: Bool {
+        isAdding || browserSignIn.isSigningIn
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             Form {
                 TextField("JID (e.g. alice@example.com)", text: $jid)
                     .textContentType(.username)
+                    // A sign-in in progress keeps the address it started with, so its outcome never lands on another one.
+                    .disabled(isBusy)
+                    .onChange(of: jid) { browserSignIn.reset() }
                 SecureField("Password", text: $password)
 
-                if let errorMessage {
+                if let errorMessage = errorMessage ?? browserSignIn.errorMessage {
                     Text(errorMessage)
                         .foregroundStyle(.red)
                         .font(.callout)
                 }
 
-                if isPLAINRefused, !isAdding {
+                if isPLAINRefused, !isBusy {
                     PlainRefusalRetry {
                         addAccount(allowsPLAIN: true)
                     }
                 }
+
+                if isBrowserSignInOffered, !isBusy {
+                    BrowserSignInOffer {
+                        addBrowserAccount()
+                    }
+                }
+
+                BrowserSignInClientIDSlot(state: browserSignIn)
             }
             .formStyle(.grouped)
 
@@ -459,11 +546,17 @@ private struct AccountAddSheet: View {
 
                 Spacer()
 
+                Button("Sign In with Browser…") {
+                    addBrowserAccount()
+                }
+                .disabled(isBusy || !JIDValidation.isValidUserOrRoomJID(jid))
+                .accessibilityIdentifier("sso-sign-in-button")
+
                 Button("Add") {
                     addAccount()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(jid.isEmpty || password.isEmpty || isAdding)
+                .disabled(jid.isEmpty || password.isEmpty || isBusy)
             }
             .padding()
         }
@@ -473,6 +566,8 @@ private struct AccountAddSheet: View {
     private func addAccount(allowsPLAIN: Bool = false) {
         errorMessage = nil
         isPLAINRefused = false
+        isBrowserSignInOffered = false
+        browserSignIn.reset()
         isAdding = true
         Task {
             do {
@@ -484,7 +579,20 @@ private struct AccountAddSheet: View {
             } catch {
                 errorMessage = error.localizedDescription
                 isPLAINRefused = AccountService.isPLAINRefusal(error)
+                isBrowserSignInOffered = AccountService.isBrowserSignInOffered(error)
                 isAdding = false
+            }
+        }
+    }
+
+    private func addBrowserAccount() {
+        errorMessage = nil
+        isPLAINRefused = false
+        isBrowserSignInOffered = false
+        Task {
+            await browserSignIn.signIn { clientID in
+                _ = try await environment.accountService.addBrowserAccount(address: jid, clientID: clientID)
+                dismiss()
             }
         }
     }

@@ -17,6 +17,7 @@ extension AccountRecord {
             rosterVersion: rosterVersion,
             certificateFingerprint: certificateFingerprint,
             allowsPLAIN: allowsPLAIN,
+            signInMethod: SignInMethod(rawValue: signInMethod) ?? .password,
             importedFrom: importedFrom,
             createdAt: createdAt
         )

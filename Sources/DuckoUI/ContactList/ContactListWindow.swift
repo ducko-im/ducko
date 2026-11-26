@@ -153,6 +153,7 @@ struct ContactListWindow: View {
             }
         }
         .signInSecurityAlert()
+        .browserSignInAlert()
     }
 }
 

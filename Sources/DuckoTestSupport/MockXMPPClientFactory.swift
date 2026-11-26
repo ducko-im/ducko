@@ -30,7 +30,7 @@ public struct MockXMPPClientFactory: XMPPClientFactory {
     /// that carries state across a resume has to be seeded by a factory of the test's own.
     public func makeClient(
         account: Account,
-        password: String,
+        secret: SignInSecret,
         resuming: StreamResumeContext?,
         requireTLSOverride: Bool?,
         omemoService: OMEMOService?
@@ -38,7 +38,7 @@ public struct MockXMPPClientFactory: XMPPClientFactory {
         var builder = XMPPClientBuilder(
             domain: account.jid.domainPart,
             username: account.jid.localPart ?? "",
-            password: password
+            secret: secret
         )
         builder.withTransport(transportForAccount(account))
         builder.withRequireTLS(false)

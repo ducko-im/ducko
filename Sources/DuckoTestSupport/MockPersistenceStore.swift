@@ -6,6 +6,7 @@ public actor MockPersistenceStore: PersistenceStore {
     public var channelSearchLimits: [UUID: [String: ChannelSearchLimit]] = [:]
     private var fetchAccountsError: Error?
     private var fetchChannelSearchLimitsError: Error?
+    private var signInMethodWriteError: Error?
 
     public func setFetchAccountsError(_ error: Error?) {
         fetchAccountsError = error
@@ -13,6 +14,37 @@ public actor MockPersistenceStore: PersistenceStore {
 
     public func setFetchChannelSearchLimitsError(_ error: Error?) {
         fetchChannelSearchLimitsError = error
+    }
+
+    public func setSignInMethodWriteError(_ error: Error?) {
+        signInMethodWriteError = error
+    }
+
+    /// Makes the first `fetchAccounts` after the next successful `setSignInMethod` throw `error`, once.
+    public func failFetchAccountsOnceAfterSignInMethodWrite(_ error: Error) {
+        fetchAccountsErrorAfterSignInMethodWrite = (error, armed: false)
+    }
+
+    private var fetchAccountsErrorAfterSignInMethodWrite: (error: Error, armed: Bool)?
+    private var signInMethodWriteGate: (entered: AsyncSemaphore, release: AsyncSemaphore)?
+
+    /// Holds the next `setSignInMethod` until `release` is signaled, signaling `entered` once it is held.
+    public func installSignInMethodWriteGate(entered: AsyncSemaphore, release: AsyncSemaphore) {
+        signInMethodWriteGate = (entered, release)
+    }
+
+    private var deleteAccountError: Error?
+    private var accountInsertedAlongside: Account?
+
+    /// Makes every `deleteAccount` throw `error` from now on, or stop throwing.
+    public func setDeleteAccountError(_ error: Error?) {
+        deleteAccountError = error
+    }
+
+    /// Stores `account` right after the next `insertAccount` stores its own, as another process inserting the same
+    /// address at the same time would.
+    public func insertAlongsideNextInsert(_ account: Account) {
+        accountInsertedAlongside = account
     }
 
     public var contacts: [Contact] = []
@@ -121,7 +153,21 @@ public actor MockPersistenceStore: PersistenceStore {
             await gate.release.wait()
         }
         if let fetchAccountsError { throw fetchAccountsError }
+        if let failure = fetchAccountsErrorAfterSignInMethodWrite, failure.armed {
+            fetchAccountsErrorAfterSignInMethodWrite = nil
+            throw failure.error
+        }
         return accounts
+    }
+
+    public func insertAccount(_ account: Account) async throws -> Bool {
+        guard try await !fetchAccounts().contains(where: { $0.jid == account.jid }) else { return false }
+        try await saveAccount(account)
+        if let other = accountInsertedAlongside {
+            accountInsertedAlongside = nil
+            accounts.append(other)
+        }
+        return true
     }
 
     public func saveAccount(_ account: Account) async throws {
@@ -130,12 +176,14 @@ public actor MockPersistenceStore: PersistenceStore {
             accounts[index] = account
             accounts[index].rosterVersion = stored.rosterVersion
             accounts[index].allowsPLAIN = stored.allowsPLAIN
+            accounts[index].signInMethod = stored.signInMethod
         } else {
             accounts.append(account)
         }
     }
 
     public func deleteAccount(_ id: UUID) async throws {
+        if let deleteAccountError { throw deleteAccountError }
         accounts.removeAll { $0.id == id }
         channelSearchLimits[id] = nil
     }
@@ -143,6 +191,20 @@ public actor MockPersistenceStore: PersistenceStore {
     public func setAllowsPLAIN(_ allowsPLAIN: Bool, accountID: UUID) async throws {
         guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
         accounts[index].allowsPLAIN = allowsPLAIN
+    }
+
+    public func setSignInMethod(_ method: SignInMethod, accountID: UUID) async throws {
+        if let gate = signInMethodWriteGate {
+            signInMethodWriteGate = nil
+            await gate.entered.signal()
+            await gate.release.wait()
+        }
+        if let signInMethodWriteError { throw signInMethodWriteError }
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else {
+            throw AccountService.AccountServiceError.accountNotFound(accountID)
+        }
+        accounts[index].signInMethod = method
+        fetchAccountsErrorAfterSignInMethodWrite?.armed = true
     }
 
     public func fetchChannelSearchLimits(accountID: UUID) async throws -> [String: ChannelSearchLimit] {

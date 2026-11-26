@@ -15,6 +15,8 @@ final class AccountRecord {
     var rosterVersion: String?
     var certificateFingerprint: String?
     var allowsPLAIN = false
+    /// The account's `SignInMethod` raw value.
+    var signInMethod = "password"
     /// The account's `[String: ChannelSearchLimit]`, JSON-encoded.
     var channelSearchLimits: Data?
     var importedFrom: String?

@@ -5,6 +5,10 @@ import Foundation
 // `error.localizedDescription` renders as "The operation couldn't be completed. (DuckoXMPP.XMPPClientError error 4.)".
 
 extension XMPPClientError: LocalizedError {
+    /// The text of `plainSignInRefused`, which does not depend on whether browser sign-in is offered.
+    public static let plainSignInRefusedDescription =
+        "Sign-in refused: the server offers only a sign-in that sends the password, which this account does not allow"
+
     public var errorDescription: String? {
         switch self {
         case .notConnected: notConnectedDescription
@@ -15,8 +19,7 @@ extension XMPPClientError: LocalizedError {
         case let .tlsNegotiationFailed(reason): "Secure connection failed: \(reason)"
         case let .untrustedCertificate(reason): "The server's certificate is not trusted: \(reason.displayText)"
         case let .authenticationFailed(failure): "Authentication failed: \(failure.message)"
-        case .plainSignInRefused:
-            "Sign-in refused: the server offers only a sign-in that sends the password, which this account does not allow"
+        case .plainSignInRefused: Self.plainSignInRefusedDescription
         case let .bindingFailed(reason): "The server did not bind a resource: \(reason)"
         case let .sessionFailed(reason): "The server did not establish a session: \(reason)"
         case let .unexpectedStreamState(reason): "Unexpected response from the server: \(reason)"

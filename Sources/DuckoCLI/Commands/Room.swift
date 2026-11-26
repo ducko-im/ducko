@@ -70,8 +70,7 @@ extension DuckoCLI {
                 let selectedAccount = prepared.account
                 let password = prepared.password
 
-                try await connectStored(env, accountID: selectedAccount.id, password: password)
-                try await waitForConnected(accountID: selectedAccount.id, environment: env)
+                try await connectHeldSession(env, account: selectedAccount, password: password)
 
                 let nick = nickname ?? defaultNickname(for: selectedAccount)
                 try await env.chatService.joinRoomAwaitingEcho(

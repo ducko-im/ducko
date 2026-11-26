@@ -68,11 +68,15 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
     public struct Credentials: Sendable {
         public let username: String
-        public let password: String
+        public let secret: SignInSecret
 
         public init(username: String, password: String) {
+            self.init(username: username, secret: .password(password))
+        }
+
+        public init(username: String, secret: SignInSecret) {
             self.username = username
-            self.password = password
+            self.secret = secret
         }
     }
 
@@ -93,6 +97,9 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     private let allowsPLAIN: Bool
     private let preferredResource: String?
     private let userAgent: SASL2UserAgent
+    /// Whether this stream offers OAUTHBEARER on a profile a browser sign-in would use, which a refused PLAIN sign-in
+    /// reports.
+    private var browserSignInOffered = false
 
     public init(
         domain: String,
@@ -249,7 +256,12 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     /// Ends a sign-in that failed with `error` and returns what the connect throws. Once the reader has started, the
     /// session's modules have too, so it ends the way any session does.
     private func endFailedSignIn(_ error: any Error, readerStarted: Bool) async -> any Error {
-        log.error("Handshake failed: \(error)")
+        if case .bearerToken("") = credentials.secret {
+            // A browser sign-in's empty-token probe, which the server refuses by design to name its sign-in provider.
+            log.debug("Handshake of a browser sign-in probe ended: \(error)")
+        } else {
+            log.error("Handshake failed: \(error)")
+        }
         if disconnectInFlight {
             await disconnect()
             return error
@@ -350,20 +362,53 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     /// Returns `true` if the session was resumed (skip `handleConnect` on modules).
     private func performHandshake(reader: EventReader) async throws -> Bool {
         // 1. Open initial stream
-        try await openStream()
+        try await openStream(tlsActive: connection.isDirectTLS)
         let features1 = try await reader.awaitFeatures()
 
         // 2. TLS — skip STARTTLS if direct TLS is already active
         let (postTLSFeatures, isTLSActive) = try await negotiateTLSIfNeeded(features1, reader: reader)
 
-        // 3. Prefer SASL2 + Bind 2 when both available, and only over TLS (XEP-0388 §3)
-        if isTLSActive, let sasl2Features = SASL2Authenticator.parseFeatures(postTLSFeatures),
-           sasl2Features.supportsBind2 {
+        // 3. SASL2 + Bind 2 when the credential can use it, and only over TLS (XEP-0388 §3); otherwise SASL1 +
+        // sequential bind
+        switch try signInProfile(postTLSFeatures, tlsActive: isTLSActive) {
+        case let .sasl2(sasl2Features):
             return try await performSASL2Flow(postTLSFeatures, sasl2Features: sasl2Features, reader: reader)
+        case .sasl1:
+            return try await performSASL1Flow(postTLSFeatures, tlsActive: isTLSActive, reader: reader)
         }
+    }
 
-        // 4. Fallback: SASL1 + sequential bind
-        return try await performSASL1Flow(postTLSFeatures, reader: reader)
+    private enum SignInProfile {
+        case sasl2(SASL2Features)
+        case sasl1
+    }
+
+    /// A password signs in over SASL2 whenever TLS is active and SASL2 comes with Bind 2. A bearer token does so only
+    /// when that SASL2 also offers OAUTHBEARER, and otherwise over SASL1 when that offers it.
+    private func signInProfile(_ features: XMLElement, tlsActive: Bool) throws -> SignInProfile {
+        let sasl2Features = tlsActive ? SASL2Authenticator.parseFeatures(features).flatMap { $0.supportsBind2 ? $0 : nil } : nil
+        let sasl2OffersBearer = sasl2Features?.mechanisms.contains(SASLOAuthBearer.mechanismName) == true
+        let sasl1OffersBearer = SASLAuthenticator.parseMechanisms(features).contains(SASLOAuthBearer.mechanismName)
+        browserSignInOffered = tlsActive && (sasl2OffersBearer || sasl1OffersBearer)
+        switch credentials.secret {
+        case .password:
+            if let sasl2Features { return .sasl2(sasl2Features) }
+            return .sasl1
+        case .bearerToken:
+            guard tlsActive else { throw authenticationFailure(.browserSignInNeedsTLS) }
+            if let sasl2Features, sasl2OffersBearer { return .sasl2(sasl2Features) }
+            guard sasl1OffersBearer else { throw authenticationFailure(.browserSignInUnavailable) }
+            return .sasl1
+        }
+    }
+
+    /// A browser sign-in must bind the account that was entered. The token decides whom the server signs in, so a
+    /// provider login as someone else would otherwise hand the session to that account.
+    private func checkBoundIdentity(_ bound: BareJID) throws {
+        guard case .bearerToken = credentials.secret else { return }
+        let expected = "\(credentials.username)@\(domain)"
+        guard bound != BareJID.parse(expected) else { return }
+        throw authenticationFailure(.accountMismatch(bound: bound.description, expected: expected))
     }
 
     /// Handles TLS negotiation (STARTTLS or direct TLS). Returns post-TLS features and whether TLS is active.
@@ -400,7 +445,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             }
             let info = await connection.tlsInfo
             tlsInfoLock.withLock { $0 = info }
-            try await openStream()
+            try await openStream(tlsActive: true)
             return try await (reader.awaitFeatures(), true)
         } else {
             return (features, false)
@@ -435,9 +480,11 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         let fullJID: FullJID
         let bound: XMLElement?
         switch authResult {
-        case let .resumed(resumed):
+        case let .resumed(resumed, identifier):
+            try checkBoundIdentity(identifier.bareJID)
             return try await completeInlineResume(resumed, sm: sm)
         case let .session(jid, boundElement):
+            try checkBoundIdentity(jid.bareJID)
             fullJID = jid
             bound = boundElement
         }
@@ -490,14 +537,14 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
     }
 
     /// Performs the legacy SASL1 + sequential bind flow.
-    private func performSASL1Flow(_ features: XMLElement, reader: EventReader) async throws -> Bool {
+    private func performSASL1Flow(_ features: XMLElement, tlsActive: Bool, reader: EventReader) async throws -> Bool {
         state = .authenticating
-        try await authenticate(features: features, reader: reader)
+        try await authenticate(features: features, tlsActive: tlsActive, reader: reader)
         log.info("Authenticated")
 
         // Post-auth stream (reset parser for new XML document)
         await connection.resetStream()
-        try await openStream()
+        try await openStream(tlsActive: tlsActive)
         let features3 = try await reader.awaitFeatures()
         serverStreamLock.withLock { $0.features = features3 }
 
@@ -509,6 +556,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         // Resource binding
         state = .bindingResource
         let fullJID = try await bindResource(reader: reader)
+        try checkBoundIdentity(fullJID.bareJID)
 
         // Session establishment (if required)
         if let session = features3.child(named: "session", namespace: XMPPNamespaces.session),
@@ -706,9 +754,10 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
     // MARK: - Private: Stream Negotiation
 
-    private func openStream() async throws {
-        let bareJID = "\(credentials.username)@\(domain)"
-        try await connection.send(XMPPStreamWriter.streamOpening(to: domain, from: bareJID))
+    /// The header names the account only once TLS protects it (RFC 6120 §4.7.1, XEP-0493 §2.3.1).
+    private func openStream(tlsActive: Bool) async throws {
+        let from = tlsActive ? "\(credentials.username)@\(domain)" : nil
+        try await connection.send(XMPPStreamWriter.streamOpening(to: domain, from: from))
     }
 
     private func requestTLS(reader: EventReader) async throws {
@@ -746,14 +795,14 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
 
     // MARK: - Private: Authentication
 
-    private func authenticate(features: XMLElement, reader: EventReader) async throws {
+    private func authenticate(features: XMLElement, tlsActive: Bool, reader: EventReader) async throws {
         var authenticator = SASLAuthenticator()
         let bindings = await connection.channelBindings
         let tlsVersion = await connection.tlsInfo?.wireVersion
         let authElement: XMLElement
         do {
             authElement = try authenticator.begin(
-                features: features, authcid: credentials.username, password: credentials.password,
+                features: features, authcid: credentials.username, secret: credentials.secret, tlsActive: tlsActive,
                 channelBindings: bindings, tlsVersion: tlsVersion, allowsPLAIN: allowsPLAIN
             )
         } catch {
@@ -804,7 +853,8 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
             authElement = try authenticator.begin(
                 features: features,
                 authcid: credentials.username,
-                password: credentials.password,
+                secret: credentials.secret,
+                tlsActive: true,
                 inlinePayloads: inlinePayloads,
                 userAgent: userAgent,
                 channelBindings: bindings,
@@ -843,7 +893,7 @@ public actor XMPPClient { // swiftlint:disable:this type_body_length
         log.debug("The sign-in failed with \(error)")
         if error == .plainRefused {
             eventContinuation.yield(.plainSignInRefused)
-            return .plainSignInRefused
+            return .plainSignInRefused(browserSignInOffered: browserSignInOffered)
         }
         let failure = AuthenticationFailure(error)
         eventContinuation.yield(.authenticationFailed(failure))

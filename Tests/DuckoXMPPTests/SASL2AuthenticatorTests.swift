@@ -72,7 +72,7 @@ private func plainResponse(to success: XMLElement) throws -> SASL2Authenticator.
     _ = try auth.begin(
         features: sasl2Features(mechanisms: ["PLAIN"]),
         authcid: "user",
-        password: "pencil",
+        secret: .password("pencil"), tlsActive: true,
         inlinePayloads: [],
         allowsPLAIN: true
     )
@@ -131,7 +131,7 @@ enum SASL2AuthenticatorTests {
             let element = try auth.begin(
                 features: sasl2Features(mechanisms: ["PLAIN", "SCRAM-SHA-1", "SCRAM-SHA-256"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: []
             )
             #expect(element.attribute("mechanism") == "SCRAM-SHA-256")
@@ -143,7 +143,7 @@ enum SASL2AuthenticatorTests {
             let element = try auth.begin(
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: [],
                 allowsPLAIN: true
             )
@@ -156,7 +156,7 @@ enum SASL2AuthenticatorTests {
             let element = try auth.begin(
                 features: sasl2Features(mechanisms: ["SCRAM-SHA-256", "PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: []
             )
             #expect(element.attribute("mechanism") == "SCRAM-SHA-256")
@@ -166,7 +166,7 @@ enum SASL2AuthenticatorTests {
         func `By default, an offer of only PLAIN is refused`() {
             var auth = SASL2Authenticator()
             #expect(throws: SASLAuthError.plainRefused) {
-                try auth.begin(features: sasl2Features(mechanisms: ["PLAIN"]), authcid: "user", password: "pencil", inlinePayloads: [])
+                try auth.begin(features: sasl2Features(mechanisms: ["PLAIN"]), authcid: "user", secret: .password("pencil"), tlsActive: true, inlinePayloads: [])
             }
         }
 
@@ -177,7 +177,7 @@ enum SASL2AuthenticatorTests {
                 try auth.begin(
                     features: sasl2Features(mechanisms: ["EXTERNAL"]),
                     authcid: "user",
-                    password: "pencil",
+                    secret: .password("pencil"), tlsActive: true,
                     inlinePayloads: []
                 )
             }
@@ -191,7 +191,7 @@ enum SASL2AuthenticatorTests {
             let element = try auth.begin(
                 features: sasl2Features(mechanisms: ["SCRAM-SHA-256-PLUS", "PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: [],
                 allowsPLAIN: true
             )
@@ -204,7 +204,7 @@ enum SASL2AuthenticatorTests {
             let element = try auth.begin(
                 features: sasl2Features(mechanisms: ["EXTERNAL", "SCRAM-SHA-256"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: []
             )
             #expect(element.attribute("mechanism") == "SCRAM-SHA-256")
@@ -223,7 +223,7 @@ enum SASL2AuthenticatorTests {
                     ["SCRAM-SHA-1", "SCRAM-SHA-1-PLUS"] + mechanisms, types: ["tls-exporter"], upgrades: ["UPGR-SCRAM-SHA-256"]
                 )),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: [],
                 channelBindings: channelBindings
             )
@@ -258,7 +258,7 @@ enum SASL2AuthenticatorTests {
             let authElement = try auth.begin(
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: [],
                 allowsPLAIN: true
             )
@@ -277,6 +277,121 @@ enum SASL2AuthenticatorTests {
         }
     }
 
+    struct BearerSignIn {
+        @Test
+        func `Full OAUTHBEARER flow with SASL2 framing asks for no upgrade`() throws {
+            var auth = SASL2Authenticator()
+            let bind = buildBind2Request()
+            let authElement = try auth.begin(
+                features: stanza(offer(
+                    ["SCRAM-SHA-1", "SCRAM-SHA-1-PLUS", "OAUTHBEARER"], types: ["tls-exporter"], upgrades: ["UPGR-SCRAM-SHA-256"]
+                )),
+                authcid: "user",
+                secret: .bearerToken("token"), tlsActive: true,
+                inlinePayloads: [bind],
+                channelBindings: tls13Bindings
+            )
+
+            #expect(authElement.name == "authenticate")
+            #expect(authElement.namespace == XMPPNamespaces.sasl2)
+            #expect(authElement.attribute("mechanism") == "OAUTHBEARER")
+            #expect(authElement.childText(named: "initial-response").flatMap(Base64.decode) == Array("n,,\u{1}auth=Bearer token\u{1}\u{1}".utf8))
+            #expect(authElement.children(named: "upgrade").isEmpty)
+            #expect(authElement.child(named: "bind", namespace: XMPPNamespaces.bind2) != nil)
+
+            let response = auth.receive(sasl2Success(jid: "user@example.com/res1", bound: XMLElement(name: "bound", namespace: XMPPNamespaces.bind2)))
+            guard case let .success(.session(fullJID, bound)) = response else {
+                Issue.record("Expected a new session, got \(response)")
+                return
+            }
+            #expect(fullJID.description == "user@example.com/res1")
+            #expect(bound != nil)
+            #expect(auth.verifiedSCRAMMechanism == nil)
+        }
+
+        @Test
+        func `A bearer secret without TLS fails before any authenticate is produced`() {
+            var auth = SASL2Authenticator()
+            #expect(throws: SASLAuthError.browserSignInNeedsTLS) {
+                try auth.begin(
+                    features: sasl2Features(mechanisms: ["OAUTHBEARER"]), authcid: "user", secret: .bearerToken("token"),
+                    tlsActive: false, inlinePayloads: []
+                )
+            }
+            guard case .failure(.unexpectedReply) = auth.receive(sasl2Success(jid: "user@example.com/res")) else {
+                Issue.record("Expected no active mechanism")
+                return
+            }
+        }
+
+        @Test
+        func `A bearer secret on an offer without OAUTHBEARER finds no browser sign-in`() {
+            var auth = SASL2Authenticator()
+            #expect(throws: SASLAuthError.browserSignInUnavailable) {
+                try auth.begin(
+                    features: sasl2Features(mechanisms: ["SCRAM-SHA-256", "PLAIN"]), authcid: "user", secret: .bearerToken("token"),
+                    tlsActive: true, inlinePayloads: [], allowsPLAIN: true
+                )
+            }
+        }
+
+        @Test
+        func `A password secret on an OAUTHBEARER-only offer that lists binding types is told the server wants a browser sign-in`() throws {
+            let bindingTypes = ["tls-exporter", "tls-server-end-point"]
+            var control = SASL2Authenticator()
+            #expect(throws: SASLAuthError.channelBindingMechanismMissing) {
+                try control.begin(
+                    features: stanza(offer(["SCRAM-SHA-256"], types: bindingTypes)), authcid: "user", secret: .password("pencil"),
+                    tlsActive: true, inlinePayloads: [], channelBindings: tls13Bindings
+                )
+            }
+
+            var auth = SASL2Authenticator()
+            #expect(throws: SASLAuthError.browserSignInOnly) {
+                try auth.begin(
+                    features: stanza(offer(["OAUTHBEARER"], types: bindingTypes)), authcid: "user", secret: .password("pencil"),
+                    tlsActive: true, inlinePayloads: [], channelBindings: tls13Bindings
+                )
+            }
+        }
+
+        @Test
+        func `A feature set that fails SCRAM for missing binding types still starts OAUTHBEARER`() throws {
+            let features = try stanza(offer(["SCRAM-SHA-256-PLUS", "OAUTHBEARER"]))
+            var control = SASL2Authenticator()
+            #expect(throws: SASLAuthError.channelBindingTypesMissing) {
+                try control.begin(
+                    features: features, authcid: "user", secret: .password("pencil"), tlsActive: true, inlinePayloads: [],
+                    channelBindings: tls13Bindings
+                )
+            }
+
+            var auth = SASL2Authenticator()
+            let element = try auth.begin(
+                features: features, authcid: "user", secret: .bearerToken("token"), tlsActive: true, inlinePayloads: [],
+                channelBindings: tls13Bindings
+            )
+            #expect(element.name == "authenticate")
+            #expect(element.attribute("mechanism") == "OAUTHBEARER")
+        }
+
+        @Test
+        func `An OAUTHBEARER challenge that is not UTF-8 is answered with nothing but a failure`() throws {
+            var auth = SASL2Authenticator()
+            _ = try auth.begin(
+                features: sasl2Features(mechanisms: ["OAUTHBEARER"]), authcid: "user", secret: .bearerToken("token"),
+                tlsActive: true, inlinePayloads: []
+            )
+            var challenge = XMLElement(name: "challenge", namespace: XMPPNamespaces.sasl2)
+            challenge.addText(Base64.encode([0xC3, 0x28]))
+            guard case .failure(.invalidBase64) = auth.receive(challenge) else {
+                Issue.record("Expected invalidBase64")
+                return
+            }
+            #expect(SASL2Authenticator.answersFailureWithAbort(challenge))
+        }
+    }
+
     struct SuccessParsing {
         @Test
         func `Parses authorization-identifier as bound JID`() throws {
@@ -284,7 +399,7 @@ enum SASL2AuthenticatorTests {
             _ = try auth.begin(
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: [],
                 allowsPLAIN: true
             )
@@ -304,11 +419,12 @@ enum SASL2AuthenticatorTests {
         func `Parses the answer to an inline resume`() throws {
             let resumed = XMLElement(name: "resumed", namespace: XMPPNamespaces.sm, attributes: ["previd": "sm-1", "h": "3"])
             let response = try plainResponse(to: sasl2Success(jid: "user@example.com/res", streamManagement: resumed))
-            guard case let .success(.resumed(element)) = response else {
+            guard case let .success(.resumed(element, identifier)) = response else {
                 Issue.record("Expected a resumed stream, got \(response)")
                 return
             }
             #expect(element.attribute("h") == "3")
+            #expect(identifier.description == "user@example.com/res")
         }
 
         /// A resumed success may name only the bare JID (XEP-0388 Example 9), but it must name a valid one.
@@ -342,7 +458,7 @@ enum SASL2AuthenticatorTests {
             _ = try auth.begin(
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: [],
                 allowsPLAIN: true
             )
@@ -363,7 +479,7 @@ enum SASL2AuthenticatorTests {
             _ = try auth.begin(
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: [],
                 allowsPLAIN: true
             )
@@ -385,7 +501,7 @@ enum SASL2AuthenticatorTests {
             _ = try auth.begin(
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: [],
                 allowsPLAIN: true
             )
@@ -430,7 +546,7 @@ enum SASL2AuthenticatorTests {
             let element = try auth.begin(
                 features: sasl2Features(mechanisms: ["PLAIN"], supportsBind2: true, supportsSM: true),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: [bind],
                 allowsPLAIN: true
             )
@@ -448,7 +564,7 @@ enum SASL2AuthenticatorTests {
             let element = try auth.begin(
                 features: sasl2Features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 inlinePayloads: [],
                 userAgent: SASL2UserAgent(software: "Ducko", device: device),
                 allowsPLAIN: true

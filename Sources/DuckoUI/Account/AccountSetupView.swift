@@ -16,6 +16,9 @@ struct AccountSetupView: View {
     @State private var errorMessage: String?
     /// Whether the login's first sign-in was refused because the server offers only PLAIN.
     @State private var isPLAINRefused = false
+    /// Whether the login's password sign-in failed where the server offers sign-in through a browser.
+    @State private var isBrowserSignInOffered = false
+    @State private var browserSignIn = BrowserSignInState()
     /// A registration whose server asked for more than the username, password and email, shown in a sheet while it
     /// holds its connection open.
     @State private var pendingRegistration: PendingRegistrationSheet.Item?
@@ -73,20 +76,38 @@ struct AccountSetupView: View {
                 }
 
                 if mode != .importAdium {
-                    if let errorMessage {
+                    if let errorMessage = errorMessage ?? browserSignIn.errorMessage {
                         Text(errorMessage)
                             .foregroundStyle(.red)
                             .font(.callout)
                             .accessibilityIdentifier("setup-error")
                     }
 
-                    if mode == .login, isPLAINRefused, !isConnecting {
+                    if mode == .login, isPLAINRefused, !isBusy {
                         PlainRefusalRetry {
                             Task { await connectAccount(allowsPLAIN: true) }
                         }
                     }
 
+                    if mode == .login, isBrowserSignInOffered, !isBusy {
+                        BrowserSignInOffer {
+                            Task { await signInWithBrowser() }
+                        }
+                    }
+
+                    if mode == .login {
+                        BrowserSignInClientIDSlot(state: browserSignIn)
+                    }
+
                     HStack {
+                        if mode == .login {
+                            Button("Sign In with Browser…") {
+                                Task { await signInWithBrowser() }
+                            }
+                            .disabled(isBusy || !JIDValidation.isValidUserOrRoomJID(jidString))
+                            .accessibilityIdentifier("sso-sign-in-button")
+                        }
+
                         Button {
                             Task {
                                 switch mode {
@@ -99,7 +120,7 @@ struct AccountSetupView: View {
                                 }
                             }
                         } label: {
-                            if isConnecting {
+                            if isBusy {
                                 ProgressView()
                                     .controlSize(.small)
                             } else {
@@ -137,6 +158,9 @@ struct AccountSetupView: View {
             .textFieldStyle(.roundedBorder)
             .textContentType(.username)
             .accessibilityIdentifier("jid-field")
+            // A sign-in in progress keeps the address it started with, so its outcome never lands on another one.
+            .disabled(isBusy)
+            .onChange(of: jidString) { browserSignIn.reset() }
 
         SecureField("Password", text: $password)
             .textFieldStyle(.roundedBorder)
@@ -177,8 +201,13 @@ struct AccountSetupView: View {
         }
     }
 
+    /// Whether a password sign-in, a registration or a sign-in through the browser is in progress.
+    private var isBusy: Bool {
+        isConnecting || browserSignIn.isSigningIn
+    }
+
     private var isActionDisabled: Bool {
-        if isConnecting { return true }
+        if isBusy { return true }
         switch mode {
         case .importAdium:
             return true
@@ -195,6 +224,8 @@ struct AccountSetupView: View {
         isConnecting = true
         errorMessage = nil
         isPLAINRefused = false
+        isBrowserSignInOffered = false
+        browserSignIn.reset()
         defer { isConnecting = false }
 
         do {
@@ -202,12 +233,23 @@ struct AccountSetupView: View {
         } catch {
             errorMessage = error.localizedDescription
             isPLAINRefused = AccountService.isPLAINRefusal(error)
+            isBrowserSignInOffered = AccountService.isBrowserSignInOffered(error)
+        }
+    }
+
+    private func signInWithBrowser() async {
+        errorMessage = nil
+        isPLAINRefused = false
+        isBrowserSignInOffered = false
+        await browserSignIn.signIn { clientID in
+            _ = try await environment.accountService.addBrowserAccount(address: jidString, clientID: clientID)
         }
     }
 
     private func registerAccount() async {
         isConnecting = true
         errorMessage = nil
+        browserSignIn.reset()
         defer { isConnecting = false }
 
         do {

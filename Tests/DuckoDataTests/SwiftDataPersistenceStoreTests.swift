@@ -1,4 +1,6 @@
+import DuckoTestSupport
 import Foundation
+import SwiftData
 import Testing
 @testable import DuckoCore
 @testable import DuckoData
@@ -117,6 +119,18 @@ struct SwiftDataPersistenceStoreTests {
         }
 
         @Test
+        func `insertAccount saves a new address and refuses one already stored`() async throws {
+            let store = try outer.makeStore()
+            let first = outer.makeAccount()
+            let second = outer.makeAccount(jid: "User@Example.com")
+
+            #expect(try await store.insertAccount(first))
+            #expect(try await !store.insertAccount(second))
+
+            #expect(try await store.fetchAccounts().map(\.id) == [first.id])
+        }
+
+        @Test
         func `setAllowsPLAIN sets and clears the permission`() async throws {
             let store = try outer.makeStore()
             let account = outer.makeAccount()
@@ -127,6 +141,74 @@ struct SwiftDataPersistenceStoreTests {
 
             try await store.setAllowsPLAIN(false, accountID: account.id)
             #expect(try await store.fetchAccounts().first?.allowsPLAIN == false)
+        }
+
+        @Test
+        func `setSignInMethod stores the method`() async throws {
+            let store = try outer.makeStore()
+            let account = outer.makeAccount()
+            try await store.saveAccount(account)
+
+            try await store.setSignInMethod(.browser, accountID: account.id)
+
+            #expect(try await store.fetchAccounts().first?.signInMethod == .browser)
+        }
+
+        @Test
+        func `A stale save keeps a sign-in method set since`() async throws {
+            let store = try outer.makeStore()
+            var account = outer.makeAccount()
+            try await store.saveAccount(account)
+            try await store.setSignInMethod(.browser, accountID: account.id)
+
+            account.displayName = "Renamed"
+            #expect(account.signInMethod == .password)
+            try await store.saveAccount(account)
+
+            let saved = try #require(try await store.fetchAccounts().first)
+            #expect(saved.signInMethod == .browser)
+            #expect(saved.displayName == "Renamed")
+        }
+
+        @Test
+        func `setSignInMethod throws for a missing account`() async throws {
+            let store = try outer.makeStore()
+            let id = UUID()
+
+            let error = await #expect(throws: AccountService.AccountServiceError.self) {
+                try await store.setSignInMethod(.browser, accountID: id)
+            }
+
+            guard case .accountNotFound(id) = error else {
+                Issue.record("Expected accountNotFound, got \(String(describing: error))")
+                return
+            }
+        }
+
+        @Test
+        func `setSignInMethod rolls back a failed save`() async throws {
+            try await withTemporaryDirectory { directory in
+                let account = outer.makeAccount()
+                try await SwiftDataPersistenceStore(modelContainer: ModelContainerFactory.makeContainer(at: directory)).saveAccount(account)
+                // A read-only container makes every save fail, while its context still holds what the failed write set.
+                let readOnly = try ModelContainer(
+                    for: ModelContainerFactory.schema,
+                    configurations: [ModelConfiguration(url: directory.appendingPathComponent("default.store"), allowsSave: false)]
+                )
+                let store = SwiftDataPersistenceStore(modelContainer: readOnly)
+
+                await #expect(throws: (any Error).self) { try await store.setSignInMethod(.browser, accountID: account.id) }
+
+                // The same context's fetch returns its unsaved changes, so it reads what the next save would write.
+                #expect(try await store.fetchAccounts().first?.signInMethod == .password)
+                let reopened = try SwiftDataPersistenceStore(modelContainer: ModelContainerFactory.makeContainer(at: directory))
+                var renamed = account
+                renamed.displayName = "Renamed"
+                try await reopened.saveAccount(renamed)
+                let saved = try #require(try await reopened.fetchAccounts().first)
+                #expect(saved.signInMethod == .password)
+                #expect(saved.displayName == "Renamed")
+            }
         }
 
         @Test

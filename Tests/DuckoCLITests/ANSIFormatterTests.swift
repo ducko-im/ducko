@@ -56,11 +56,22 @@ struct ANSIFormatterTests {
         #expect(output.contains("alice@example.com"))
     }
 
-    @Test(arguments: [(false, true, "PLAIN: refused, TLS: required"), (true, false, "PLAIN: allowed, TLS: optional")])
-    func `account shows its sign-in settings`(allowsPLAIN: Bool, requireTLS: Bool, expected: String) throws {
+    @Test(arguments: [
+        (SignInMethod.password, false, true, "Sign-in: password, PLAIN: refused, TLS: required"),
+        (SignInMethod.password, true, false, "Sign-in: password, PLAIN: allowed, TLS: optional"),
+        (SignInMethod.browser, true, true, "Sign-in: browser, TLS: required"),
+        (SignInMethod.browser, false, false, "Sign-in: browser, TLS: optional")
+    ])
+    func `account shows its sign-in settings`(signInMethod: SignInMethod, allowsPLAIN: Bool, requireTLS: Bool, expected: String) throws {
         let jid = try #require(BareJID.parse("alice@example.com"))
-        let account = Account(id: UUID(), jid: jid, isEnabled: true, connectOnLaunch: false, requireTLS: requireTLS, allowsPLAIN: allowsPLAIN, createdAt: Date())
-        #expect(formatter.formatAccount(account).contains(expected))
+        let account = Account(
+            id: UUID(), jid: jid, isEnabled: true, connectOnLaunch: false, requireTLS: requireTLS, allowsPLAIN: allowsPLAIN, signInMethod: signInMethod,
+            createdAt: Date()
+        )
+        let output = formatter.formatAccount(account)
+        #expect(output.contains(expected), Comment(rawValue: output))
+        // A browser account sends no password, so its PLAIN setting is not shown.
+        #expect(output.contains("PLAIN") == (signInMethod == .password))
     }
 
     @Test func `error uses red code`() {

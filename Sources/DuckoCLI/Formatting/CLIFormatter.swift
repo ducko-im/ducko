@@ -103,11 +103,17 @@ enum CLIEmptyResult {
 
 /// What the human-readable formatters print when a sign-in is refused because the server offered only PLAIN. A command
 /// whose own connect is refused follows it with a hint on standard error.
-let plainSignInRefusedLine = XMPPClientError.plainSignInRefused.localizedDescription
+let plainSignInRefusedLine = XMPPClientError.plainSignInRefusedDescription
 
 /// An account's sign-in settings as the human-readable formatters list them.
 func accountSecurityText(_ account: Account) -> String {
-    "PLAIN: \(account.allowsPLAIN ? "allowed" : "refused"), TLS: \(account.requireTLS ? "required" : "optional")"
+    let tls = "TLS: \(account.requireTLS ? "required" : "optional")"
+    switch account.signInMethod {
+    case .password:
+        return "Sign-in: password, PLAIN: \(account.allowsPLAIN ? "allowed" : "refused"), \(tls)"
+    case .browser:
+        return "Sign-in: browser, \(tls)"
+    }
 }
 
 /// `message` with its sender written as a room line names them: `room/nick` in a room, after `[PM]` in a room's private

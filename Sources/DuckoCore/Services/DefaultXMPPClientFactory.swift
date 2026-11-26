@@ -7,7 +7,7 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
 
     public func makeClient(
         account: Account,
-        password: String,
+        secret: SignInSecret,
         resuming: StreamResumeContext?,
         requireTLSOverride: Bool?,
         omemoService: OMEMOService?
@@ -15,7 +15,7 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
         var builder = XMPPClientBuilder(
             domain: account.jid.domainPart,
             username: account.jid.localPart ?? "",
-            password: password
+            secret: secret
         )
         builder.withRequireTLS(requireTLSOverride ?? account.requireTLS)
         builder.withAllowsPLAIN(account.allowsPLAIN)

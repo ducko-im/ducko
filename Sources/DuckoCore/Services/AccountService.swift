@@ -11,8 +11,16 @@ public final class AccountService {
     /// Published on every connect attempt refused because the server offered only PLAIN to an account that does not
     /// allow it.
     public internal(set) var signInSecurityWarnings: [UUID: SignInSecurityWarning] = [:]
-    /// Accounts `createAndConnect` is signing in to for the first time.
+    /// Accounts in their first sign-in through `runFirstSignIn`, which a failure removes again.
     var accountsInFirstSignIn: Set<UUID> = []
+    /// Browser accounts whose grant the provider no longer accepts, until their next browser sign-in, a dismissal, or a
+    /// relaunch.
+    public internal(set) var browserSignInNeeded: Set<UUID> = []
+    /// Fired when an account joins `browserSignInNeeded`.
+    public var onBrowserSignInNeeded: ((UUID) -> Void)?
+    /// Each account's count of requested connects and disconnects. A browser sign-in compares it to tell whether
+    /// someone else took the account over while it held it. Retries and redirects are not counted.
+    var requestedChanges: [UUID: Int] = [:]
 
     public struct CertificateWarning: Sendable {
         public let accountJID: String
@@ -21,8 +29,11 @@ public final class AccountService {
     }
 
     let store: any PersistenceStore
-    private let credentialStore: any CredentialStore
+    let credentialStore: any CredentialStore
     private let clientFactory: any XMPPClientFactory
+    let ssoSignIn: SSOSignInService
+    let ssoTokens: SSOTokenProvider
+    let ssoTokenClient: SSOTokenClient
     /// Opens the unauthenticated connection a registration goes out on, to the server's address or, given one, `host`.
     var openRegistrationSession: @Sendable (_ domain: String, _ host: String?, _ port: UInt16) async throws -> RegistrationSession = {
         try await RegistrationSession.open(domain: $0, host: $1, port: $2)
@@ -51,6 +62,12 @@ public final class AccountService {
         var reconnectTask: Task<Void, Never>?
         var reconnectAttempts = 0
         var redirectCount = 0
+        /// The connect attempt a browser sign-in's candidate grant makes, while it is in flight. Nothing retries it.
+        var candidateAttemptID: UUID?
+        /// Set while a stored grant's first client signs in, so a rejection waits until a forced refresh decides whether
+        /// it stands.
+        var holdsCredentialsRejection = false
+        var heldCredentialsRejection: XMPPEvent?
         /// When the scheduled retry is due, from scheduling until it starts connecting.
         var retryDue: ContinuousClock.Instant?
 
@@ -99,6 +116,10 @@ public final class AccountService {
         case notConnected(UUID)
         case moduleNotAvailable(UUID)
         case unencryptedConnection
+        case notBrowserAccount(String)
+        case alreadyBrowserAccount(String)
+        /// A configured port outside 1...65535.
+        case invalidPort(Int)
 
         public var errorDescription: String? {
             switch self {
@@ -109,18 +130,39 @@ public final class AccountService {
             case .notConnected: notConnectedDescription
             case let .moduleNotAvailable(id): "Module not available: \(id)"
             case .unencryptedConnection: "Sending a password needs an encrypted connection"
+            case let .notBrowserAccount(jid): "\(jid) does not sign in through a browser"
+            case let .alreadyBrowserAccount(jid): "\(jid) already signs in through a browser"
+            case let .invalidPort(port): "The port \(port) is not between 1 and 65535"
             }
         }
     }
 
     /// With `networkPath`, retries wait while no route exists and live sessions are checked on every network change.
-    public init(
+    /// `browserAuthorizer` shows the provider's page for a sign-in through the browser.
+    public convenience init(
         store: any PersistenceStore, credentialStore: any CredentialStore, clientFactory: any XMPPClientFactory = DefaultXMPPClientFactory(),
-        networkPath: NetworkPathSource? = nil
+        networkPath: NetworkPathSource? = nil, browserAuthorizer: any BrowserAuthorizer = NoOpBrowserAuthorizer()
+    ) {
+        self.init(
+            store: store, credentialStore: credentialStore, clientFactory: clientFactory, networkPath: networkPath,
+            browserAuthorizer: browserAuthorizer, ssoHTTPClient: URLSessionSSOHTTPClient()
+        )
+    }
+
+    init(
+        store: any PersistenceStore, credentialStore: any CredentialStore, clientFactory: any XMPPClientFactory,
+        networkPath: NetworkPathSource?, browserAuthorizer: any BrowserAuthorizer, ssoHTTPClient: any SSOHTTPClient
     ) {
         self.store = store
         self.credentialStore = credentialStore
         self.clientFactory = clientFactory
+        let tokenClient = SSOTokenClient(http: ssoHTTPClient, credentialStore: credentialStore)
+        self.ssoTokenClient = tokenClient
+        self.ssoSignIn = SSOSignInService(
+            clientFactory: clientFactory, credentialStore: credentialStore, http: ssoHTTPClient, tokenClient: tokenClient,
+            browserAuthorizer: browserAuthorizer
+        )
+        self.ssoTokens = SSOTokenProvider(credentialStore: credentialStore, tokenClient: tokenClient)
         if let networkPath {
             startNetworkMonitoring(networkPath)
         }
@@ -137,14 +179,16 @@ public final class AccountService {
 
     public func connect(accountID: UUID, password: String) async throws {
         connectionResources[accountID, default: AccountConnectionResources()].password = password
-        connectionResources[accountID]?.redirectCount = 0
-        cancelReconnect(for: accountID, resetAttempts: true)
-        try await performConnect(accountID: accountID)
+        try await startConnect(accountID: accountID)
     }
 
     public func connect(accountID: UUID) async throws {
         guard let account = accounts.first(where: { $0.id == accountID }) else {
             throw AccountServiceError.accountNotFound(accountID)
+        }
+        if account.signInMethod == .browser {
+            try await startConnect(accountID: accountID)
+            return
         }
         let jid = account.jid.description
         guard let password = credentialStore.loadPassword(for: jid) else {
@@ -177,12 +221,19 @@ public final class AccountService {
         // Composition cancels queued dispatch and purges feature state synchronously, before connection
         // teardown suspends. Stream-loss reconnect uses handleDisconnect and preserves its distinct policy.
         onRequestedDisconnect?(accountID)
+        noteRequestedChange(for: accountID)
         certificateWarnings[accountID] = nil
         signInSecurityWarnings[accountID] = nil
         let detached = detachConnectionResources(for: accountID, terminal: true)
         // Published before the teardown suspends, so a status pick made meanwhile sees the account as disconnected.
         connectionStates[accountID] = .disconnected
         await detached?.client?.disconnect()
+    }
+
+    /// Records a connect or disconnect someone asked for, before it suspends, so a browser sign-in holding the account
+    /// sees it.
+    func noteRequestedChange(for accountID: UUID) {
+        requestedChanges[accountID, default: 0] += 1
     }
 
     /// Detaches owned work synchronously; awaited cleanup uses the returned snapshot only.
@@ -241,12 +292,26 @@ public final class AccountService {
         importedFrom: String? = nil,
         allowsPLAIN: Bool = false
     ) async throws -> UUID {
+        try await createAccount(
+            jidString: jidString, displayName: displayName, host: host, port: port, resource: resource, requireTLS: requireTLS,
+            connectOnLaunch: connectOnLaunch, importedFrom: importedFrom, allowsPLAIN: allowsPLAIN, signInMethod: .password
+        )
+    }
+
+    func createAccount(
+        jidString: String,
+        displayName: String? = nil,
+        host: String? = nil,
+        port: Int? = nil,
+        resource: String? = nil,
+        requireTLS: Bool = true,
+        connectOnLaunch: Bool = true,
+        importedFrom: String? = nil,
+        allowsPLAIN: Bool = false,
+        signInMethod: SignInMethod
+    ) async throws -> UUID {
         guard let jid = BareJID.parse(jidString) else {
             throw AccountServiceError.invalidJID(jidString)
-        }
-        let existing = try await store.fetchAccounts()
-        if existing.contains(where: { $0.jid == jid }) {
-            throw AccountServiceError.duplicateJID(jidString)
         }
         let account = Account(
             id: UUID(),
@@ -259,23 +324,50 @@ public final class AccountService {
             resource: resource,
             requireTLS: requireTLS,
             allowsPLAIN: allowsPLAIN,
+            signInMethod: signInMethod,
             importedFrom: importedFrom,
             createdAt: Date()
         )
-        try await store.saveAccount(account)
+        guard try await store.insertAccount(account) else {
+            throw AccountServiceError.duplicateJID(jidString)
+        }
 
-        // Auto-link imported conversations whose source JID matches this account
-        let imported = try await store.fetchConversations(importSourceJID: jidString)
-        for conversation in imported {
-            let accountID = account.id
-            try await store.updateConversation(conversation.id) {
-                $0.accountID = accountID
-                $0.importSourceJID = nil
+        // Refuse an address another process inserted at the same time, then auto-link imported conversations whose
+        // source JID matches this account. A failure removes the account again, since the caller never learns its ID.
+        do {
+            try await refuseDuplicate(of: account, jidString: jidString)
+            let imported = try await store.fetchConversations(importSourceJID: jidString)
+            for conversation in imported {
+                let accountID = account.id
+                try await store.updateConversation(conversation.id) {
+                    $0.accountID = accountID
+                    $0.importSourceJID = nil
+                }
             }
+        } catch {
+            try? await store.unlinkConversations(for: account.id, restoreImportSourceJID: jidString)
+            try? await store.deleteAccount(account.id)
+            throw error
         }
 
         try? await loadAccounts()
         return account.id
+    }
+
+    /// Another process using the store can insert the same address at the same time, since each checks only what it
+    /// sees. An add that then sees a second row for the address fails as a duplicate and its row is removed, so no
+    /// address keeps two rows. Both adds can fail.
+    private func refuseDuplicate(of account: Account, jidString: String) async throws {
+        if try await store.fetchAccounts().contains(where: { $0.jid == account.jid && $0.id != account.id }) {
+            throw AccountServiceError.duplicateJID(jidString)
+        }
+    }
+
+    /// Updates the account's sign-in method in `accounts` once the store holds it, ahead of the next reload.
+    func showSignInMethod(_ method: SignInMethod, for accountID: UUID) {
+        if let index = accounts.firstIndex(where: { $0.id == accountID }) {
+            accounts[index].signInMethod = method
+        }
     }
 
     public func updateAccount(_ account: Account) async throws {
@@ -325,8 +417,17 @@ public final class AccountService {
         // Disconnect first so the services' connected-client/generation guards see the account gone and no
         // event task keeps delivering; composition also clears feature caches through onRequestedDisconnect.
         await disconnect(accountID: id)
+        // An account added while the last reload failed is stored but not yet in `accounts`, and its grant ends too.
+        var account = accounts.first { $0.id == id }
+        if account == nil {
+            account = try? await store.fetchAccounts().first { $0.id == id }
+        }
         try await store.deleteAccount(id)
+        if let account {
+            await deleteBrowserGrant(accountID: id, jid: account.jid)
+        }
         deletePassword(accountID: id)
+        browserSignInNeeded.remove(id)
         onAccountDeleted?(id)
         try await loadAccounts()
     }
@@ -379,19 +480,10 @@ public final class AccountService {
             importedFrom: importedFrom,
             allowsPLAIN: allowsPLAIN
         )
-        accountsInFirstSignIn.insert(accountID)
-        defer { accountsInFirstSignIn.remove(accountID) }
-        do {
+        try await runFirstSignIn(accountID: accountID, address: jidString) {
             try await connect(accountID: accountID, password: password)
             try await afterConnect?(accountID)
             await savePassword(accountID: accountID)
-            try await loadAccounts()
-        } catch {
-            await disconnect(accountID: accountID)
-            try? await store.unlinkConversations(for: accountID, restoreImportSourceJID: jidString)
-            try? await store.deleteContacts(for: accountID)
-            try? await deleteAccount(accountID)
-            throw error
         }
         return accountID
     }
@@ -407,6 +499,8 @@ public final class AccountService {
         let regModule = try await registrationModule(for: accountID)
         try requireEncryptedStream(accountID: accountID)
         try await regModule.changePassword(newPassword: newPassword)
+        // A browser account signs in with its grant, so Ducko keeps no password for it.
+        guard accounts.first(where: { $0.id == accountID })?.signInMethod != .browser else { return }
         connectionResources[accountID]?.password = newPassword
         await savePassword(accountID: accountID)
     }
@@ -509,22 +603,28 @@ public final class AccountService {
 
     /// Rejects the new certificate, clears the warning, and disconnects.
     public func rejectNewCertificate(for accountID: UUID) async {
+        noteRequestedChange(for: accountID)
         certificateWarnings[accountID] = nil
         cancelReconnect(for: accountID, resetAttempts: true)
         await connectionResources[accountID]?.client?.disconnect()
         connectionStates[accountID] = .disconnected
     }
 
-    // MARK: - Private: Connection
+    // MARK: - Connection
 
-    func performConnect(accountID: UUID) async throws {
+    /// `candidate` is a browser sign-in's grant, used for this attempt only. Returns the attempt's ID.
+    @discardableResult
+    func performConnect(accountID: UUID, candidate: SSOGrant? = nil) async throws -> UUID {
         guard connectionResources[accountID] != nil else { throw CancellationError() }
         let attemptID = UUID()
         connectionResources[accountID]?.attemptID = attemptID
+        // A connect without a candidate clears the marker, so its attempt retries as usual.
+        connectionResources[accountID]?.candidateAttemptID = candidate == nil ? nil : attemptID
         // Published before the store fetch, so a requested teardown sees the attempt while the fetch is pending.
         connectionStates[accountID] = .connecting
 
         let account: Account
+        let secret: ResolvedSecret
         do {
             let storedAccounts = try await store.fetchAccounts()
             guard let found = storedAccounts.first(where: { $0.id == accountID }) else {
@@ -532,27 +632,25 @@ public final class AccountService {
             }
             try Task.checkCancellation()
             account = found
+            guard connectionResources[accountID]?.attemptID == attemptID else { throw CancellationError() }
+            await onSessionStarting?(accountID)
+            // Before the resume state is taken, so a provider that cannot be reached leaves it for the next retry.
+            secret = try await resolveSecret(for: account, candidate: candidate)
         } catch {
             // Only the current attempt settles its own `.connecting`. A connect that superseded it, or a teardown such
             // as rejecting a certificate, has already published the state.
             if connectionResources[accountID]?.attemptID == attemptID, case .connecting = connectionStates[accountID] {
                 connectionStates[accountID] = Task.isCancelled ? .disconnected : .error(error.localizedDescription)
+                settleFailedConnect(error, accountID: accountID, candidate: candidate)
             }
             throw error
         }
         guard connectionResources[accountID]?.attemptID == attemptID else { throw CancellationError() }
-        await onSessionStarting?(accountID)
 
         let resuming = connectionResources[accountID]?.resumeState
         connectionResources[accountID]?.resumeState = nil
-        let (client, sm) = await buildClient(account: account, resuming: resuming)
-        guard await attach(client, streamManagement: sm, accountID: accountID, attemptID: attemptID) else {
-            await client.disconnect()
-            throw CancellationError()
-        }
-
         do {
-            try await signIn(with: client, accountID: accountID) {
+            try await signInAttempt(account: account, attemptID: attemptID, secret: secret, resuming: resuming) { client in
                 try await connect(client, account: account, resumeState: resuming?.streamManagement)
             }
         } catch {
@@ -563,15 +661,13 @@ public final class AccountService {
             let resumeState = Self.resumeContext(of: connectionResources[accountID])
             connectionResources[accountID]?.resumeState = resumeState
             connectionStates[accountID] = .error(error.localizedDescription)
-            // A running retry is the account's reconnect task, and its own failure reschedules it.
-            if retriesFailedConnects, Self.isRetryable(error), connectionResources[accountID]?.reconnectTask == nil {
-                scheduleReconnect(accountID: accountID)
-            }
+            settleFailedConnect(error, accountID: accountID, candidate: candidate)
             throw error
         }
         if connectionResources[accountID]?.attemptID == attemptID {
             connectionResources[accountID]?.reconnectAttempts = 0
         }
+        return attemptID
     }
 
     private func connect(_ client: XMPPClient, account: Account, resumeState: SMResumeState?) async throws {
@@ -580,16 +676,14 @@ public final class AccountService {
             let host = String(parts[0])
             let port = parts.count > 1 ? UInt16(parts[1]) ?? 5222 : 5222
             try await client.connect(host: host, port: port)
-        } else if let host = account.host, let port = account.port {
-            try await client.connect(host: host, port: UInt16(port))
         } else {
-            try await client.connect()
+            try await client.connect(to: account)
         }
     }
 
     /// Makes `client` the account's session unless the task was cancelled or `attemptID` superseded meanwhile, and
     /// returns whether it did.
-    private func attach(_ client: XMPPClient, streamManagement sm: StreamManagementModule, accountID: UUID, attemptID: UUID) async -> Bool {
+    func attach(_ client: XMPPClient, streamManagement sm: StreamManagementModule, accountID: UUID, attemptID: UUID) async -> Bool {
         let muc = await client.module(ofType: MUCModule.self)
         let disco = await client.module(ofType: ServiceDiscoveryModule.self)
         guard !Task.isCancelled, connectionResources[accountID]?.attemptID == attemptID else { return false }
@@ -608,20 +702,20 @@ public final class AccountService {
         return StreamResumeContext(streamManagement: state, rooms: resources?.muc?.resumeState, accountInfo: resources?.disco?.knownAccountInfo)
     }
 
-    private func buildClient(
-        account: Account, resuming: StreamResumeContext?,
+    func buildClient(
+        account: Account, secret: SignInSecret, resuming: StreamResumeContext?,
         requireTLSOverride: Bool? = nil
     ) async -> (XMPPClient, StreamManagementModule) {
         await clientFactory.makeClient(
             account: account,
-            password: connectionResources[account.id]?.password ?? "",
+            secret: secret,
             resuming: resuming,
             requireTLSOverride: requireTLSOverride,
             omemoService: omemoService
         )
     }
 
-    // MARK: - Private: Event Consumption
+    // MARK: - Event Consumption
 
     private func applyCSIState(to client: XMPPClient) async {
         guard let csiModule = await client.module(ofType: CSIModule.self) else { return }
@@ -646,7 +740,7 @@ public final class AccountService {
         }
     }
 
-    private func handleEvent(_ event: XMPPEvent, accountID: UUID) {
+    func handleEvent(_ event: XMPPEvent, accountID: UUID) {
         switch event {
         case let .connected(jid), let .streamResumed(jid):
             connectionStates[accountID] = .connected(jid)
@@ -657,9 +751,13 @@ public final class AccountService {
         case let .disconnected(reason):
             handleDisconnect(reason, accountID: accountID)
         case let .authenticationFailed(failure):
+            if failure.kind == .credentialsRejected, connectionResources[accountID]?.holdsCredentialsRejection == true {
+                connectionResources[accountID]?.heldCredentialsRejection = event
+                return
+            }
             connectionStates[accountID] = .error(XMPPClientError.authenticationFailed(failure).localizedDescription)
         case .plainSignInRefused:
-            connectionStates[accountID] = .error(XMPPClientError.plainSignInRefused.localizedDescription)
+            connectionStates[accountID] = .error(XMPPClientError.plainSignInRefusedDescription)
             publishSignInSecurityWarning(accountID: accountID)
         case .messageReceived, .presenceReceived, .iqReceived,
              .rosterUpdated,
@@ -706,6 +804,8 @@ public final class AccountService {
 
     private func handleDisconnect(_ reason: DisconnectReason, accountID: UUID) {
         let detached = detachConnectionResources(for: accountID, terminal: false)
+        // A browser sign-in's candidate makes one attempt only, and its failure ends that sign-in.
+        let reconnects = connectionResources[accountID]?.candidateAttemptID == nil
         switch reason {
         case .requested:
             connectionResources[accountID]?.resumeState = nil
@@ -714,16 +814,20 @@ public final class AccountService {
         case let .streamError(condition, text):
             connectionResources[accountID]?.resumeState = Self.resumeContext(of: detached)
             connectionStates[accountID] = .error(Self.streamErrorMessage(condition: condition, text: text))
-            if Self.isRetryable(condition) {
+            if reconnects, Self.isRetryable(condition) {
                 scheduleReconnect(accountID: accountID)
             }
         case let .connectionLost(detail):
             connectionResources[accountID]?.resumeState = Self.resumeContext(of: detached)
             connectionStates[accountID] = .error(Self.connectionLostMessage(detail))
-            scheduleReconnect(accountID: accountID)
+            if reconnects {
+                scheduleReconnect(accountID: accountID)
+            }
         case let .redirect(host, port):
             let count = (connectionResources[accountID]?.redirectCount ?? 0) + 1
-            if count > 3 {
+            if !reconnects {
+                connectionStates[accountID] = .error(Self.streamErrorMessage(condition: .seeOtherHost, text: nil))
+            } else if count > 3 {
                 connectionResources[accountID]?.redirectCount = 0
                 connectionStates[accountID] = .error("The server redirected too many times")
             } else {
@@ -734,7 +838,7 @@ public final class AccountService {
             // A session whose setup did not complete is never resumed.
             connectionResources[accountID]?.resumeState = nil
             connectionStates[accountID] = .error(error.localizedDescription)
-            if Self.isTransient(error) {
+            if reconnects, Self.isTransient(error) {
                 scheduleReconnect(accountID: accountID)
             }
         }
@@ -768,9 +872,9 @@ public final class AccountService {
         }
     }
 
-    // MARK: - Private: Reconnection
+    // MARK: - Reconnection
 
-    private func cancelReconnect(for accountID: UUID, resetAttempts: Bool) {
+    func cancelReconnect(for accountID: UUID, resetAttempts: Bool) {
         connectionResources[accountID]?.reconnectTask?.cancel()
         connectionResources[accountID]?.reconnectTask = nil
         connectionResources[accountID]?.retryDue = nil
@@ -797,13 +901,12 @@ public final class AccountService {
                     account.allowsPLAIN = false
                 }
                 await onSessionStarting?(accountID)
+                let secret = try await resolveSecret(for: account, candidate: nil)
+                guard !Task.isCancelled, connectionResources[accountID]?.attemptID == attemptID else { return }
                 // Force TLS for redirects to prevent plaintext credential exposure via see-other-host injection.
-                let (client, sm) = await buildClient(account: account, resuming: nil, requireTLSOverride: true)
-                guard await attach(client, streamManagement: sm, accountID: accountID, attemptID: attemptID) else {
-                    await client.disconnect()
-                    return
-                }
-                try await signIn(with: client, accountID: accountID) {
+                try await signInAttempt(
+                    account: account, attemptID: attemptID, secret: secret, resuming: nil, requireTLSOverride: true
+                ) { client in
                     try await client.connect(host: host, port: port ?? 5222)
                 }
                 guard connectionResources[accountID]?.attemptID == attemptID else { return }
@@ -813,6 +916,7 @@ public final class AccountService {
                 onRosterSessionEnded?(accountID, attemptID)
                 guard !Task.isCancelled, connectionResources[accountID]?.attemptID == attemptID else { return }
                 connectionStates[accountID] = .error(error.localizedDescription)
+                noteGrantInvalid(error, accountID: accountID)
                 // The retry dials the configured host and keeps the redirect count, so a server that goes on
                 // redirecting to an unreachable host is still cut off.
                 if Self.isRetryable(error) {
@@ -831,9 +935,19 @@ public final class AccountService {
         startScheduledRetry(for: accountID)
     }
 
-    /// Whether a failed reconnect can succeed later without the user changing the account or the password.
+    /// Whether a failed reconnect can succeed later without the user changing the account, its password, or its
+    /// browser sign-in.
     nonisolated static func isRetryable(_ error: any Error) -> Bool {
         if error is CancellationError || error is AccountServiceError { return false }
+        if let ssoError = error as? SSOError {
+            switch ssoError {
+            case .providerUnreachable:
+                return true
+            case .serverUnsupported, .clientIDRequired, .registrationUnavailable, .authorizationDenied, .cancelled, .timedOut, .browserUnavailable,
+                 .grantInvalid, .malformedResponse, .storeFailed:
+                return false
+            }
+        }
         guard let clientError = error as? XMPPClientError else { return true }
         switch clientError {
         case let .authenticationFailed(failure):

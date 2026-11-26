@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Sign in through the browser on servers that offer it (XEP-0493). Add Account, the Login tab and an account's settings offer Sign In with Browser…, which opens the server's sign-in page, so Ducko keeps no password. Ducko renews the sign-in on its own and asks you to sign in again once the server stops accepting it. A password account can switch to it, and a server that needs a client ID from its administrator asks for one
+- Sign in through the browser from the CLI with `ducko account add <jid> --sso`, sign in again or switch a password account with `ducko account browser-sign-in <jid>`, print the sign-in page's address instead of opening it with `--no-browser`, and pass an administrator's client ID with `--client-id`. `ducko account list` shows each account's sign-in method
+
+### Fixed
+
+- Fix a crash when connecting an account whose port was set outside 1–65535. Account settings now refuse such a port, and the CLI refuses `--port 0`
+- Fix the same address ending up as two accounts when it is added twice at the same moment
+
 ## [0.14.1] - 2026-11-24
 
 ### Changed

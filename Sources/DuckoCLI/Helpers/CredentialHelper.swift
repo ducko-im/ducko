@@ -16,6 +16,17 @@ enum CredentialHelper {
         return try readHiddenLine(prompt: "Password: ")
     }
 
+    /// The password a stored account signs in with, or nil for one that signs in through the browser.
+    static func storedSignInPassword(for account: DuckoCore.Account, using store: any CredentialStore) throws -> String? {
+        switch account.signInMethod {
+        case .browser:
+            return nil
+        case .password:
+            guard let password = try getPassword(for: account.jid.description, using: store) else { throw CLIError.noPassword }
+            return password
+        }
+    }
+
     /// Reads a new password twice from the terminal without echoing it, refusing an empty one or a differing second entry.
     static func readNewPassword() throws -> String {
         guard let password = try readHiddenLine(prompt: "New password: ") else {

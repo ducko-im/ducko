@@ -7,16 +7,15 @@ enum ConnectedOperation {
     struct Preparation {
         let environment: AppEnvironment
         let account: DuckoCore.Account
-        let password: String
+        /// Nil for an account that signs in through the browser.
+        let password: String?
     }
 
     /// Bootstraps the environment and resolves the selected account and its password without connecting.
     static func prepare(formatter: any CLIFormatter, account: String?, isInteractive: Bool = false) async throws -> Preparation {
         let environment = try CLIBootstrap.setUp(formatter: formatter, isInteractive: isInteractive).environment
         let selectedAccount = try await resolveAccount(account, environment: environment)
-        guard let password = try CredentialHelper.getPassword(for: selectedAccount.jid.description, using: environment.credentialStore) else {
-            throw CLIError.noPassword
-        }
+        let password = try CredentialHelper.storedSignInPassword(for: selectedAccount, using: environment.credentialStore)
         return Preparation(environment: environment, account: selectedAccount, password: password)
     }
 
@@ -34,7 +33,7 @@ enum ConnectedOperation {
     static func run<Result: Sendable>(
         environment: AppEnvironment,
         account: DuckoCore.Account,
-        password: String,
+        password: String?,
         operation: @MainActor () async throws -> Result
     ) async throws -> Result {
         try await run(
@@ -118,4 +117,36 @@ func resolveAccount(byJID jid: String, environment: AppEnvironment) async throws
         throw CLIError.accountNotFound(jid)
     }
     return account
+}
+
+/// Connects a stored account, printing `signInFailureHints` on standard error before a failure is rethrown. Without
+/// `password`, it connects with what is stored for the account: its password or its browser grant.
+@MainActor
+func connectStored(_ environment: AppEnvironment, accountID: UUID, password: String? = nil) async throws {
+    do {
+        if let password {
+            try await environment.accountService.connect(accountID: accountID, password: password)
+        } else {
+            try await environment.accountService.connect(accountID: accountID)
+        }
+    } catch {
+        if let jid = environment.accountService.accounts.first(where: { $0.id == accountID })?.jid.description {
+            let needed = environment.accountService.browserSignInNeeded.contains(accountID)
+            for hint in signInFailureHints(for: error, .storedAccount, jid: jid, browserSignInNeeded: needed) {
+                printToStandardError(hint)
+            }
+        }
+        throw error
+    }
+}
+
+/// Connects a stored account for a command that keeps its session, then waits until it is connected. From the first
+/// connect on, a grant that needs a new sign-in prints `browserSignInAgainHint`; a failed first connect prints its hints
+/// through `connectStored` instead.
+@MainActor
+func connectHeldSession(_ environment: AppEnvironment, account: DuckoCore.Account, password: String?) async throws {
+    try await connectStored(environment, accountID: account.id, password: password)
+    // Installed before anything else runs, so a refusal published while the session sets up prints too.
+    installBrowserSignInNeededHint(on: environment.accountService, jid: account.jid.description)
+    try await waitForConnected(accountID: account.id, environment: environment)
 }

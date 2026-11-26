@@ -27,7 +27,7 @@ enum SASLAuthenticatorTests {
             let element = try auth.begin(
                 features: features(mechanisms: ["PLAIN", "SCRAM-SHA-1", "SCRAM-SHA-256"]),
                 authcid: "user",
-                password: "pencil"
+                secret: .password("pencil"), tlsActive: true
             )
             #expect(element.attribute("mechanism") == "SCRAM-SHA-256")
         }
@@ -38,7 +38,7 @@ enum SASLAuthenticatorTests {
             let element = try auth.begin(
                 features: features(mechanisms: ["PLAIN", "SCRAM-SHA-1"]),
                 authcid: "user",
-                password: "pencil"
+                secret: .password("pencil"), tlsActive: true
             )
             #expect(element.attribute("mechanism") == "SCRAM-SHA-1")
         }
@@ -49,7 +49,7 @@ enum SASLAuthenticatorTests {
             let element = try auth.begin(
                 features: features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 allowsPLAIN: true
             )
             #expect(element.attribute("mechanism") == "PLAIN")
@@ -61,7 +61,7 @@ enum SASLAuthenticatorTests {
             let element = try auth.begin(
                 features: features(mechanisms: ["plain", "scram-sha-1"]),
                 authcid: "user",
-                password: "pencil"
+                secret: .password("pencil"), tlsActive: true
             )
             #expect(element.attribute("mechanism") == "SCRAM-SHA-1")
         }
@@ -75,7 +75,7 @@ enum SASLAuthenticatorTests {
             let element = try auth.begin(
                 features: features(mechanisms: offered),
                 authcid: "user",
-                password: "pencil"
+                secret: .password("pencil"), tlsActive: true
             )
             #expect(element.attribute("mechanism") == expected)
         }
@@ -84,7 +84,7 @@ enum SASLAuthenticatorTests {
         func `By default, an offer of only PLAIN is refused`() {
             var auth = SASLAuthenticator()
             #expect(throws: SASLAuthError.plainRefused) {
-                try auth.begin(features: features(mechanisms: ["PLAIN"]), authcid: "user", password: "pencil")
+                try auth.begin(features: features(mechanisms: ["PLAIN"]), authcid: "user", secret: .password("pencil"), tlsActive: true)
             }
         }
 
@@ -95,7 +95,7 @@ enum SASLAuthenticatorTests {
                 try auth.begin(
                     features: features(mechanisms: ["EXTERNAL", "GSSAPI"]),
                     authcid: "user",
-                    password: "pencil"
+                    secret: .password("pencil"), tlsActive: true
                 )
             }
         }
@@ -105,7 +105,7 @@ enum SASLAuthenticatorTests {
             var auth = SASLAuthenticator()
             let emptyFeatures = XMLElement(name: "stream:features")
             #expect(throws: SASLAuthError.self) {
-                try auth.begin(features: emptyFeatures, authcid: "user", password: "pencil")
+                try auth.begin(features: emptyFeatures, authcid: "user", secret: .password("pencil"), tlsActive: true)
             }
         }
     }
@@ -117,7 +117,7 @@ enum SASLAuthenticatorTests {
             let element = try auth.begin(
                 features: features(mechanisms: ["SCRAM-SHA-256-PLUS", "PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 allowsPLAIN: true
             )
             // Without CB data, PLUS is not in preference list, so falls through to PLAIN
@@ -130,7 +130,7 @@ enum SASLAuthenticatorTests {
             let element = try auth.begin(
                 features: features(mechanisms: ["EXTERNAL", "SCRAM-SHA-256", "PLAIN"]),
                 authcid: "user",
-                password: "pencil"
+                secret: .password("pencil"), tlsActive: true
             )
             #expect(element.attribute("mechanism") == "SCRAM-SHA-256")
         }
@@ -142,7 +142,7 @@ enum SASLAuthenticatorTests {
                 try auth.begin(
                     features: features(mechanisms: ["EXTERNAL"]),
                     authcid: "user",
-                    password: "pencil"
+                    secret: .password("pencil"), tlsActive: true
                 )
             }
         }
@@ -155,7 +155,7 @@ enum SASLAuthenticatorTests {
             let authElement = try auth.begin(
                 features: features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 allowsPLAIN: true
             )
 
@@ -171,6 +171,92 @@ enum SASLAuthenticatorTests {
         }
     }
 
+    struct BearerSignIn {
+        @Test
+        func `Full OAUTHBEARER flow: begin → success`() throws {
+            var auth = SASLAuthenticator()
+            let authElement = try auth.begin(
+                features: features(mechanisms: ["SCRAM-SHA-256", "PLAIN", "OAUTHBEARER"]),
+                authcid: "user",
+                secret: .bearerToken("token"), tlsActive: true,
+                allowsPLAIN: true
+            )
+
+            #expect(authElement.name == "auth")
+            #expect(authElement.namespace == saslNamespace)
+            #expect(authElement.attribute("mechanism") == "OAUTHBEARER")
+            #expect(authElement.textContent.flatMap(Base64.decode) == Array("n,,\u{1}auth=Bearer token\u{1}\u{1}".utf8))
+
+            let response = auth.receive(XMLElement(name: "success", namespace: saslNamespace))
+            guard case .success = response else {
+                Issue.record("Expected success, got \(response)")
+                return
+            }
+            #expect(auth.verifiedSCRAMMechanism == nil)
+        }
+
+        @Test
+        func `A bearer secret without TLS fails before any auth is produced`() {
+            var auth = SASLAuthenticator()
+            #expect(throws: SASLAuthError.browserSignInNeedsTLS) {
+                try auth.begin(features: features(mechanisms: ["OAUTHBEARER"]), authcid: "user", secret: .bearerToken("token"), tlsActive: false)
+            }
+            // Nothing started, so the authenticator has no exchange to answer.
+            guard case .failure(.unexpectedReply) = auth.receive(XMLElement(name: "success", namespace: saslNamespace)) else {
+                Issue.record("Expected no active mechanism")
+                return
+            }
+        }
+
+        @Test
+        func `A bearer secret on an offer without OAUTHBEARER finds no browser sign-in`() {
+            var auth = SASLAuthenticator()
+            #expect(throws: SASLAuthError.browserSignInUnavailable) {
+                try auth.begin(features: features(mechanisms: ["SCRAM-SHA-256", "PLAIN"]), authcid: "user", secret: .bearerToken("token"), tlsActive: true)
+            }
+        }
+
+        /// Under XEP-0440 rule 5, the listed binding types alone would fail a password sign-in with
+        /// `channelBindingMechanismMissing`, which would hide that the server wants a browser sign-in.
+        @Test
+        func `A password secret on an OAUTHBEARER-only offer that lists binding types is told the server wants a browser sign-in`() throws {
+            let bindingTypes = ["tls-exporter", "tls-server-end-point"]
+            var control = SASLAuthenticator()
+            #expect(throws: SASLAuthError.channelBindingMechanismMissing) {
+                try control.begin(
+                    features: stanza(offer(["SCRAM-SHA-256"], types: bindingTypes)), authcid: "user",
+                    secret: .password("pencil"), tlsActive: true, channelBindings: tls13Bindings
+                )
+            }
+
+            var auth = SASLAuthenticator()
+            #expect(throws: SASLAuthError.browserSignInOnly) {
+                try auth.begin(
+                    features: stanza(offer(["OAUTHBEARER"], types: bindingTypes)), authcid: "user",
+                    secret: .password("pencil"), tlsActive: true, channelBindings: tls13Bindings
+                )
+            }
+        }
+
+        /// A `-PLUS` offer with no binding types and no `tls-server-end-point` data fails SCRAM, but OAUTHBEARER binds no
+        /// channel.
+        @Test
+        func `A bearer secret ignores the channel-binding rules that would fail SCRAM`() throws {
+            let features = try stanza(offer(["SCRAM-SHA-256-PLUS", "OAUTHBEARER"]))
+            let bindings: [ChannelBindingType: [UInt8]] = [.tlsExporter: exporterBinding]
+            var control = SASLAuthenticator()
+            #expect(throws: SASLAuthError.channelBindingUnavailable) {
+                try control.begin(features: features, authcid: "user", secret: .password("pencil"), tlsActive: true, channelBindings: bindings)
+            }
+
+            var auth = SASLAuthenticator()
+            let element = try auth.begin(
+                features: features, authcid: "user", secret: .bearerToken("token"), tlsActive: true, channelBindings: bindings
+            )
+            #expect(element.attribute("mechanism") == "OAUTHBEARER")
+        }
+    }
+
     struct FailureHandling {
         @Test
         func `Server failure with condition and text`() throws {
@@ -178,7 +264,7 @@ enum SASLAuthenticatorTests {
             _ = try auth.begin(
                 features: features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 allowsPLAIN: true
             )
 
@@ -203,7 +289,7 @@ enum SASLAuthenticatorTests {
             _ = try auth.begin(
                 features: features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 allowsPLAIN: true
             )
 
@@ -245,7 +331,7 @@ enum SASLAuthenticatorTests {
             _ = try auth.begin(
                 features: features(mechanisms: ["PLAIN"]),
                 authcid: "user",
-                password: "pencil",
+                secret: .password("pencil"), tlsActive: true,
                 allowsPLAIN: true
             )
 
