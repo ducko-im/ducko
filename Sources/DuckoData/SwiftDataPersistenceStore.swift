@@ -62,14 +62,17 @@ public actor SwiftDataPersistenceStore: PersistenceStore {
     }
 
     public func setAllowsPLAIN(_ allowsPLAIN: Bool, accountID: UUID) throws {
-        guard let record = try accountRecord(id: accountID) else { return }
-        record.allowsPLAIN = allowsPLAIN
-        try modelContext.save()
+        try updateAccountRecord(accountID) { $0.allowsPLAIN = allowsPLAIN }
     }
 
     public func setSignInMethod(_ method: SignInMethod, accountID: UUID) throws {
+        try updateAccountRecord(accountID) { $0.signInMethod = method.rawValue }
+    }
+
+    /// Fetches include unsaved changes, so a failed save is rolled back rather than left for the next write to persist.
+    private func updateAccountRecord(_ accountID: UUID, _ change: (AccountRecord) -> Void) throws {
         guard let record = try accountRecord(id: accountID) else { throw AccountService.AccountServiceError.accountNotFound(accountID) }
-        record.signInMethod = method.rawValue
+        change(record)
         do {
             try modelContext.save()
         } catch {

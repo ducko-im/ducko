@@ -170,13 +170,35 @@ struct SwiftDataPersistenceStoreTests {
             #expect(saved.displayName == "Renamed")
         }
 
-        @Test
-        func `setSignInMethod throws for a missing account`() async throws {
+        enum AccountFieldWriter: String, CaseIterable, Sendable {
+            case signInMethod, allowsPLAIN
+
+            func write(to store: SwiftDataPersistenceStore, accountID: UUID) async throws {
+                switch self {
+                case .signInMethod:
+                    try await store.setSignInMethod(.browser, accountID: accountID)
+                case .allowsPLAIN:
+                    try await store.setAllowsPLAIN(true, accountID: accountID)
+                }
+            }
+
+            func isWritten(in account: Account) -> Bool {
+                switch self {
+                case .signInMethod:
+                    account.signInMethod == .browser
+                case .allowsPLAIN:
+                    account.allowsPLAIN
+                }
+            }
+        }
+
+        @Test(arguments: AccountFieldWriter.allCases)
+        func `An account field writer throws for a missing account`(writer: AccountFieldWriter) async throws {
             let store = try outer.makeStore()
             let id = UUID()
 
             let error = await #expect(throws: AccountService.AccountServiceError.self) {
-                try await store.setSignInMethod(.browser, accountID: id)
+                try await writer.write(to: store, accountID: id)
             }
 
             guard case .accountNotFound(id) = error else {
@@ -185,8 +207,8 @@ struct SwiftDataPersistenceStoreTests {
             }
         }
 
-        @Test
-        func `setSignInMethod rolls back a failed save`() async throws {
+        @Test(arguments: AccountFieldWriter.allCases)
+        func `An account field writer rolls back a failed save`(writer: AccountFieldWriter) async throws {
             try await withTemporaryDirectory { directory in
                 let account = outer.makeAccount()
                 try await SwiftDataPersistenceStore(modelContainer: ModelContainerFactory.makeContainer(at: directory)).saveAccount(account)
@@ -197,16 +219,17 @@ struct SwiftDataPersistenceStoreTests {
                 )
                 let store = SwiftDataPersistenceStore(modelContainer: readOnly)
 
-                await #expect(throws: (any Error).self) { try await store.setSignInMethod(.browser, accountID: account.id) }
+                await #expect(throws: (any Error).self) { try await writer.write(to: store, accountID: account.id) }
 
                 // The same context's fetch returns its unsaved changes, so it reads what the next save would write.
-                #expect(try await store.fetchAccounts().first?.signInMethod == .password)
+                let unsaved = try #require(try await store.fetchAccounts().first)
+                #expect(!writer.isWritten(in: unsaved))
                 let reopened = try SwiftDataPersistenceStore(modelContainer: ModelContainerFactory.makeContainer(at: directory))
                 var renamed = account
                 renamed.displayName = "Renamed"
                 try await reopened.saveAccount(renamed)
                 let saved = try #require(try await reopened.fetchAccounts().first)
-                #expect(saved.signInMethod == .password)
+                #expect(!writer.isWritten(in: saved))
                 #expect(saved.displayName == "Renamed")
             }
         }

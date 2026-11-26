@@ -10,7 +10,7 @@ public protocol PersistenceStore: Sendable {
     func insertAccount(_ account: Account) async throws -> Bool
     func deleteAccount(_ id: UUID) async throws
     /// Writes only whether the account sends its password to a server offering only PLAIN, which `saveAccount` leaves
-    /// as stored.
+    /// as stored. Throws when the account does not exist, and keeps the stored setting when the write fails.
     func setAllowsPLAIN(_ allowsPLAIN: Bool, accountID: UUID) async throws
     /// Writes only how the account signs in, which `saveAccount` leaves as stored. Throws when the account does not
     /// exist, and keeps the stored method when the write fails.

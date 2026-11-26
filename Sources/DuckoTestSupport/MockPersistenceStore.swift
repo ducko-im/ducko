@@ -189,7 +189,9 @@ public actor MockPersistenceStore: PersistenceStore {
     }
 
     public func setAllowsPLAIN(_ allowsPLAIN: Bool, accountID: UUID) async throws {
-        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else {
+            throw AccountService.AccountServiceError.accountNotFound(accountID)
+        }
         accounts[index].allowsPLAIN = allowsPLAIN
     }
 
