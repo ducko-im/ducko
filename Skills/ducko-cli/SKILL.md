@@ -16,7 +16,7 @@ Default subcommand is `interactive` (REPL mode).
 
 ## Authentication
 
-Password lookup order: macOS Keychain first, then prompt on `/dev/tty` if stdin is a TTY. Accounts can be created with `ducko account add <jid>` or in DuckoApp — the CLI and GUI share the same SwiftData database and Keychain. An account that signs in through the browser (XEP-0493, `account add --sso`) is never asked for a password: it connects with its stored grant.
+Password lookup order: the credential store first, then prompt on `/dev/tty` if stdin is a TTY. A release build's store is the macOS Keychain service `im.ducko.credentials.Ducko`. A debug build's is a file under `Ducko-Dev[-<profile>]/` unless `DUCKO_USE_KEYCHAIN=1`, which switches it to the Keychain service `im.ducko.credentials.Ducko-Dev[-<profile>]`. To confirm a Keychain item exists without a prompt, run `security find-generic-password -s <service> -a <jid>` without `-w` or `-g`; it exits 44 when there is none. Accounts can be created with `ducko account add <jid>` or in DuckoApp — a CLI and an app of the same build configuration and profile share the same SwiftData database and credential store. An account that signs in through the browser (XEP-0493, `account add --sso`) is never asked for a password: it connects with its stored grant.
 
 When a connecting command's sign-in fails, stderr adds a hint naming the command that fixes it, before the final `Error: …` line, in every output mode:
 
