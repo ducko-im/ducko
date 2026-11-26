@@ -170,3 +170,21 @@ func tearDown() async {
 ```
 
 If the caller is **outside** the awaited task (e.g. a SwiftUI menu action, not a closure dispatched from the read loop), `await task.value` is safe. The pitfall only applies when the await would block the task that needs to complete to fulfill the await.
+
+
+## Main-actor closure called on a framework's own queue
+
+**Failure:** A non-`@Sendable` closure written inside a `@MainActor` type or function is inferred `@MainActor`. It may be passed to an Objective-C API whose callback parameter is not `@Sendable` (check the generated interface, not whether the framework is annotated elsewhere), and that API may call it on a queue of its own. In Swift 6 language mode the runtime isolation check then traps, for example with `EXC_BREAKPOINT` in `_dispatch_assert_queue_fail`. It compiles without a warning. `ASWebAuthenticationSession`'s completion handler is one such callback: Apple documents no queue for it, and it was observed off the main queue when the user cancelled the sign-in.
+
+**Fix:** Declare the closure's type explicitly `@Sendable`, so it stays nonisolated, and hop to the actor inside it:
+
+```swift
+let completion: @Sendable (URL?, (any Error)?) -> Void = { url, error in
+    Task { @MainActor in
+        handleSignInResult(url: url, error: error)
+    }
+}
+let session = ASWebAuthenticationSession(url: url, callback: callback, completionHandler: completion)
+```
+
+When the closure only resumes a continuation, resume it directly; no hop is needed. See `bridging.md`.
