@@ -49,15 +49,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - Style messages as XEP-0393 defines it, including nested quotes and code blocks that name a language
-- Check a directly received file with the strongest checksum the sender lists, including SHA-512
-- Stop connecting to a domain whose DNS says it offers no XMPP service
+- Check a directly received file with the strongest checksum the sender lists, including SHA-512 (XEP-0300)
+- Stop connecting to a domain whose DNS says it offers no XMPP service (XEP-0368)
 - Rename the CLI's JSON keys and values to snake_case, which breaks scripts that read the old names
 - Print only JSON records on the CLI's standard output under `--output json`
 
 ### Fixed
 
 - Fix log lines going missing or cut short when the app and the CLI share a profile
-- Fix the HTTP upload size limit being taken from an unrelated form the upload service lists
+- Fix the HTTP upload size limit being taken from an unrelated form the upload service lists (XEP-0363)
 - Fix a sign-in refusal being misread as an unknown error when the server adds its own detail
 - Stop presenting Ducko to other clients as a file upload, pubsub or block list service
 - Fix a chat's offline notice promising that messages will send when you reconnect
@@ -81,18 +81,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Explain why a server refused a sign-in partway through
 - Tell the contact when you go offline or quit during a direct file transfer
 - End a direct file transfer you are receiving when the contact goes offline or data stops arriving
-- Mark a direct send delivered only once the contact confirms it arrived
+- Mark a direct send delivered only once the contact confirms it arrived (XEP-0234)
 - Send in-band direct transfers about four times as fast, without holding large files in memory
 
 ### Fixed
 
-- Fix direct file transfers through a server's file transfer proxy stalling just before the end
+- Fix direct file transfers through a server's file transfer proxy stalling just before the end (XEP-0065)
 - Fix the app freezing when VoiceOver reads a chat while a file transfer shows its progress
 
 ### Security
 
 - Refuse a sign-in when the server asks for excessive password hashing, so it can't stall Ducko
-- Never send a password over an unencrypted connection when changing it or registering while signed in
+- Never send a password over an unencrypted connection when changing it or registering while signed in (XEP-0077)
 
 ## [0.12.0] - 2026-11-15
 
@@ -100,10 +100,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Sign in with SCRAM-SHA-512 and SCRAM-SHA3-512 when the server offers them ([#1](https://github.com/ducko-im/ducko/issues/1))
 - Add `ducko account set` and `--allow-plain` to choose how an account may sign in
-- Reset the encryption sessions with a contact or device when their messages can't be decrypted
-- Mark messages decrypted from a device you haven't trusted, in the app and the CLI
-- Honour a contact's request to receive unencrypted messages
-- Read encrypted messages that arrived while you were offline once the archive is caught up
+- Reset the encryption sessions with a contact or device when their messages can't be decrypted (XEP-0384)
+- Mark messages decrypted from a device you haven't trusted, in the app and the CLI (XEP-0384)
+- Honour a contact's request to receive unencrypted messages (XEP-0384)
+- Read encrypted messages that arrived while you were offline once the archive is caught up (XEP-0384)
 
 ### Changed
 
@@ -111,22 +111,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Never send an account's password to a server offering only plain sign-in, unless you allow it
 - Report that refusal in the CLI's JSON `sign_in_refused` record as `plain_not_allowed`
 - Wait up to two seconds for a group chat to describe itself before joining it
-- Catch up on a group chat's archive once you have rejoined it
-- Read message archives only from servers and group chats that announce one
+- Catch up on a group chat's archive once you have rejoined it (XEP-0313)
+- Read message archives only from servers and group chats that announce one (XEP-0313)
 - Explain in plain words why a sign-in failed instead of showing internal names
-- Show encryption fingerprints in the standard OMEMO form, keeping the trust you already gave
-- Encrypt only to the devices on each recipient's current device list
-- Encrypt to your own other devices only when they are trusted, as for contacts
-- Send encrypted group messages only in group chats that reveal their members' addresses
-- Replace your encryption device's signed key every week
-- Keep bookmarks working when another app set up the server's bookmark storage differently
+- Show encryption fingerprints in the standard OMEMO form, keeping the trust you already gave (XEP-0384)
+- Encrypt only to the devices on each recipient's current device list (XEP-0384)
+- Encrypt to your own other devices only when they are trusted, as for contacts (XEP-0384)
+- Send encrypted group messages only in group chats that reveal their members' addresses (XEP-0384)
+- Replace your encryption device's signed key every week (XEP-0384)
+- Keep bookmarks working when another app set up the server's bookmark storage differently (XEP-0402)
 
 ### Fixed
 
-- Stop duplicate messages appearing when the same archive range is read twice
-- Skip archive pages the server reports as still changing and load them on a later try
-- Restore your encryption device when another app removes it, and never reuse another device's id
-- Fetch a contact's device list again when a message comes from a device not on it
+- Stop duplicate messages appearing when the same archive range is read twice (XEP-0313)
+- Skip archive pages the server reports as still changing and load them on a later try (XEP-0313)
+- Restore your encryption device when another app removes it, and never reuse another device's id (XEP-0384)
+- Fetch a contact's device list again when a message comes from a device not on it (XEP-0384)
 
 ### Removed
 
@@ -134,14 +134,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
-- Stop someone who takes a group chat member's nickname from editing or retracting their messages
-- Show a group chat message someone else posted under your nickname as theirs
-- Trust a message's server-assigned id only from a server or group chat that announces such ids
-- Stop a sign-in whose options or encryption version were tampered with on the way ([#2](https://github.com/ducko-im/ducko/issues/2), [#4](https://github.com/ducko-im/ducko/issues/4))
-- Tie sign-ins to the encrypted connection on servers that support only the TLS 1.3 form
-- Refuse a sign-in instead of dropping protection the server offers but Ducko can't use
-- Ignore a request for unencrypted messages from a device you haven't trusted
-- Drop elements meant for the server, such as delivery hints, found inside an encrypted message
+- Stop someone who takes a group chat member's nickname from editing or retracting their messages (XEP-0308, XEP-0424, XEP-0421)
+- Show a group chat message someone else posted under your nickname as theirs (XEP-0421)
+- Trust a message's server-assigned id only from a server or group chat that announces such ids (XEP-0359)
+- Stop a sign-in whose options or encryption version were tampered with on the way (XEP-0474, XEP-0515) ([#2](https://github.com/ducko-im/ducko/issues/2), [#4](https://github.com/ducko-im/ducko/issues/4))
+- Tie sign-ins to the encrypted connection on servers that support only the TLS 1.3 form (XEP-0440)
+- Refuse a sign-in instead of dropping protection the server offers but Ducko can't use (XEP-0440)
+- Ignore a request for unencrypted messages from a device you haven't trusted (XEP-0384)
+- Drop elements meant for the server, such as delivery hints, found inside an encrypted message (XEP-0420)
 
 ## [0.11.0] - 2026-10-23
 
@@ -164,19 +164,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Show a warning instead of "Import Complete" when no imported account could connect
 - Start a fresh session when setup fails after connecting, instead of staying half connected
 - Retry a sign-in the server stops answering after a minute, instead of waiting indefinitely
-- Keep a server's wait between channel searches when the app and the CLI search at once
-- Keep other apps' data in a bookmark when Ducko saves the bookmark again
-- Stop assuming a contact still supports what its earlier client advertised
-- Accept incoming file transfers from clients that need the receiver to name the sender
+- Keep a server's wait between channel searches when the app and the CLI search at once (XEP-0433)
+- Keep other apps' data in a bookmark when Ducko saves the bookmark again (XEP-0402)
+- Stop assuming a contact still supports what its earlier client advertised (XEP-0115, XEP-0390)
+- Accept incoming file transfers from clients that need the receiver to name the sender (XEP-0166)
 - Name the occupant in the REPL's room typing and topic lines
 - Report a room topic set from the REPL only once the room accepts it
 - Find a contact's OMEMO devices in the CLI whatever case the address is typed in
 
 ### Security
 
-- Refuse an encrypted message that starts a new session from an untrusted device or unknown key
-- Refuse a message from a session whose identity key doesn't match the device's fingerprint
-- Keep refusing a used one-time pre-key, so a recorded message can't be replayed
+- Refuse an encrypted message that starts a new session from an untrusted device or unknown key (XEP-0384)
+- Refuse a message from a session whose identity key doesn't match the device's fingerprint (XEP-0384)
+- Keep refusing a used one-time pre-key, so a recorded message can't be replayed (XEP-0384)
 - Refuse to trust a device whose stored fingerprints disagree
 
 ## [0.10.0] - 2026-10-21
@@ -184,84 +184,84 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Add a `self` field to the CLI's JSON output for your own room departures and nickname changes
-- Add Blocked Contacts to each account's Actions menu in Preferences ▸ Accounts
+- Add Blocked Contacts to each account's Actions menu in Preferences ▸ Accounts (XEP-0191)
 - Add `ducko blocklist list`, `add` and `remove`, and the REPL commands `/block`, `/unblock` and `/blocklist`
-- Send replies that other XMPP apps show with their context, including in rooms
-- Allow correcting, retracting and replying to messages in a private chat within a room
-- Create accounts on servers that ask for more than a username and password
-- Show a form's title, instructions, descriptions and required fields in registration and room settings
-- Count down in Join Room until a server that limits channel searches allows the next one
-- Follow avatar changes made on your account's other devices
-- Show why an encrypted message can't be read instead of dropping it
+- Send replies that other XMPP apps show with their context, including in rooms (XEP-0461)
+- Allow correcting, retracting and replying to messages in a private chat within a room (XEP-0308, XEP-0424, XEP-0461)
+- Create accounts on servers that ask for more than a username and password (XEP-0077)
+- Show a form's title, instructions, descriptions and required fields in registration and room settings (XEP-0004)
+- Count down in Join Room until a server that limits channel searches allows the next one (XEP-0433)
+- Follow avatar changes made on your account's other devices (XEP-0153)
+- Show why an encrypted message can't be read instead of dropping it (XEP-0380)
 - Add a `message_type` field to the CLI's JSON correction and retraction records
 
 ### Changed
 
-- Send your Mac's name to the server when signing in with the newer sign-in method
-- Encrypt with the current OMEMO format, which earlier versions of Ducko can't read
-- Stop adding a plain-text hint to encrypted messages
-- Publish avatars as PNG pictures of at most 512 pixels, accepting pictures of up to 50 MB
+- Send your Mac's name to the server when signing in with the newer sign-in method (XEP-0388)
+- Encrypt with the current OMEMO format, which earlier versions of Ducko can't read (XEP-0384)
+- Stop adding a plain-text hint to encrypted messages (XEP-0420)
+- Publish avatars as PNG pictures of at most 512 pixels, accepting pictures of up to 50 MB (XEP-0084)
 - Change the CLI's JSON `registration_form` record to list fields as objects and nest data forms
 
 ### Removed
 
-- Remove the service outage warning, which never appeared
+- Remove the service outage warning, which never appeared (XEP-0455)
 
 ### Fixed
 
 - Fix an encrypted message gaining an undecryptable twin after the next archive sync
-- Keep contacts able to start encrypted chats with you by replacing used one-time keys
-- Ignore a repeated key exchange instead of showing an old encrypted message again
+- Keep contacts able to start encrypted chats with you by replacing used one-time keys (XEP-0384)
+- Ignore a repeated key exchange instead of showing an old encrypted message again (XEP-0384)
 - Keep your encryption device when its stored keys can't be read at sign-in
 - Save encryption sessions and fingerprints learned from messages replayed after a resumed connection
 - Show a conversation's newest message as its preview, even when an older one arrives later
 - Stop counting your own messages sent from another device as unread
 - Keep unblocking everyone, background-state updates and roster pre-approval working after a resumed connection
-- Use the nickname a room assigns you when you join it
-- Change your nickname when joining a room you're already in under another one, instead of timing out
-- Stop an occupant who takes your earlier nickname from being treated as you
+- Use the nickname a room assigns you when you join it (XEP-0045)
+- Change your nickname when joining a room you're already in under another one, instead of timing out (XEP-0045)
+- Stop an occupant who takes your earlier nickname from being treated as you (XEP-0045)
 - Show your role controls in an open room window right after you rejoin under another nickname
-- Color room nicknames the way other XMPP clients do
-- Find channel search services that follow the published standard
-- Show a room message that also carries a topic as a message instead of a topic change
-- Tell the contact when a file link they offered can't be downloaded
-- Keep your block list when another client unblocks an address that names a device
-- Resume your session after a lost connection on servers that use the newer sign-in method
-- Show messages from your other devices even when the server can't enable their copies at sign-in
-- Show private messages within a room from your other devices in the right private chat
-- Apply corrections and retractions made on other devices instead of ignoring them
-- Apply corrections and retractions fetched from the server's archive instead of showing them as messages
-- Fix other apps ignoring your retraction of a room message
-- Keep the reply, attachment and receipt request of a message when you correct it
-- Stop a correction, retraction or reply from reaching another message that shares its id
-- Show messages delivered while you were offline, and a room's earlier messages, at the time they were sent
-- Fetch every archived message since you were last online when you reconnect
-- Send typing notifications only when your typing changes and only to contacts who use them
-- Send your app's capabilities with every presence, including in rooms
-- Keep other apps' bookmark data when saving, and sync bookmark removal and auto-join across devices
-- Make direct file transfers work with more apps
-- Decrypt encrypted messages you send or receive on another device instead of dropping them
-- Decrypt encrypted room messages and private messages within a room
+- Color room nicknames the way other XMPP clients do (XEP-0392)
+- Find channel search services that follow the published standard (XEP-0433)
+- Show a room message that also carries a topic as a message instead of a topic change (XEP-0045)
+- Tell the contact when a file link they offered can't be downloaded (XEP-0066)
+- Keep your block list when another client unblocks an address that names a device (XEP-0191)
+- Resume your session after a lost connection on servers that use the newer sign-in method (XEP-0198)
+- Show messages from your other devices even when the server can't enable their copies at sign-in (XEP-0280, XEP-0386)
+- Show private messages within a room from your other devices in the right private chat (XEP-0280)
+- Apply corrections and retractions made on other devices instead of ignoring them (XEP-0308, XEP-0424, XEP-0280)
+- Apply corrections and retractions fetched from the server's archive instead of showing them as messages (XEP-0308, XEP-0424, XEP-0313)
+- Fix other apps ignoring your retraction of a room message (XEP-0424)
+- Keep the reply, attachment and receipt request of a message when you correct it (XEP-0308)
+- Stop a correction, retraction or reply from reaching another message that shares its id (XEP-0308, XEP-0424, XEP-0461)
+- Show messages delivered while you were offline, and a room's earlier messages, at the time they were sent (XEP-0203)
+- Fetch every archived message since you were last online when you reconnect (XEP-0313)
+- Send typing notifications only when your typing changes and only to contacts who use them (XEP-0085)
+- Send your app's capabilities with every presence, including in rooms (XEP-0115, XEP-0390)
+- Keep other apps' bookmark data when saving, and sync bookmark removal and auto-join across devices (XEP-0402)
+- Make direct file transfers work with more apps (XEP-0166, XEP-0260, XEP-0261)
+- Decrypt encrypted messages you send or receive on another device instead of dropping them (XEP-0280, XEP-0384)
+- Decrypt encrypted room messages and private messages within a room (XEP-0384)
 - Sign in to an account `ducko account register` created through the `--host` and `--port` it was given
-- Hide what you type into a form's password fields, and keep every value of a multi-value field
+- Hide what you type into a form's password fields, and keep every value of a multi-value field (XEP-0004)
 - Accept passwords longer than 128 characters at the CLI's password prompt
-- Remove your avatar on servers that can't share avatars
-- Stop announcing a new avatar to contacts when it couldn't be saved to your profile
-- Save your first avatar on servers that report a never-saved profile as missing
+- Remove your avatar on servers that can't share avatars (XEP-0153)
+- Stop announcing a new avatar to contacts when it couldn't be saved to your profile (XEP-0153)
+- Save your first avatar on servers that report a never-saved profile as missing (XEP-0153)
 - Name the file `ducko avatar get` saves after the picture's actual format
 
 ### Security
 
-- Refuse to save bookmarks on a server that can't keep them private
-- Send only the headers an upload server is allowed to ask for, with line breaks removed
-- Ignore bookmarks, avatars and device lists published by a single device instead of the account
-- Tie sign-in to the encrypted connection when the server supports it
-- Never use the newer sign-in method over an unencrypted connection
+- Refuse to save bookmarks on a server that can't keep them private (XEP-0223)
+- Send only the headers an upload server is allowed to ask for, with line breaks removed (XEP-0363)
+- Ignore bookmarks, avatars and device lists published by a single device instead of the account (XEP-0163)
+- Tie sign-in to the encrypted connection when the server supports it (XEP-0440)
+- Never use the newer sign-in method over an unencrypted connection (XEP-0388)
 - Refuse a sign-in that would send the password once an account has signed in without sending it
-- Show an encrypted message as untrusted when its sealed sender, recipient or time don't match
+- Show an encrypted message as untrusted when its sealed sender, recipient or time don't match (XEP-0420)
 - Keep corrections and retractions of an encrypted message encrypted, even after turning encryption off
 - Stop offering encryption in a private chat within a room, which Ducko can't encrypt
-- Show only the encrypted content of an encrypted message, ignoring unencrypted parts sent alongside it
+- Show only the encrypted content of an encrypted message, ignoring unencrypted parts sent alongside it (XEP-0420)
 
 ## [0.9.0] - 2026-10-18
 
@@ -288,11 +288,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix room invitations and file offers naming the sender by their address
 - Fix Chat History listing a message that arrived late out of time order
 - Fix a private chat within a room showing "Couldn't load older messages: Invalid JID" at its start
-- Fix messages from your other devices going missing when the server omits their sender address
+- Fix messages from your other devices going missing when the server omits their sender address (XEP-0280)
 - Fix archived encrypted messages showing the sender's OMEMO fallback text as if they wrote it
 - Fix one-off CLI commands such as `ducko send` joining your bookmarked and remembered rooms
 - Fix `ducko history --search` accepting `--before` and `--server` and then ignoring them
-- Stop asking the server's archive about private chats within a room when you sign in
+- Stop asking the server's archive about private chats within a room when you sign in (XEP-0313)
 - Fix the name and size of a file you sent being hard to read on your message
 - Fix the chat you were looking at counting as read after opening another chat in a new tab
 - Fix encrypted messages failing to decrypt after a resumed connection or right after sign-in
@@ -303,7 +303,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
-- Ignore copies of your messages that claim to come from another of your devices instead of your server
+- Ignore copies of your messages that claim to come from another of your devices instead of your server (XEP-0280)
 - Keep addresses and nicknames out of the log file at the default log level
 
 ## [0.8.0] - 2026-10-08
@@ -363,7 +363,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix room bookmarks staying empty after your connection briefly drops
 - Fix rooms not being joined when your connection drops while Ducko is signing in
 - Fix still appearing in a room to others after leaving it while your connection was down
-- Fix a room staying disconnected without notice after an unexpected error from its server
+- Fix a room staying disconnected without notice after an unexpected error from its server (XEP-0410)
 
 ## [0.6.0] - 2026-10-04
 
@@ -395,7 +395,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
-- Prevent someone else from slipping messages into a chat's history while Ducko loads it from the server
+- Prevent someone else from slipping messages into a chat's history while Ducko loads it from the server (XEP-0313)
 
 ## [0.5.0] - 2026-10-03
 
@@ -404,7 +404,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Send a file straight to one of a contact's devices with Send Directly or `/senddirect`
 - Switch a chat's encryption on when the contact sends an encrypted message
 - Open a contact's chat in the background when they write or offer a file
-- Show delivered and read as separate checkmarks on your messages, in the app and the CLI
+- Show delivered and read as separate checkmarks on your messages, in the app and the CLI (XEP-0184, XEP-0333)
 - Show a typing bubble in a chat's tab while the contact types
 
 ### Changed
@@ -419,24 +419,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Show the typing indicator and a file being received as rows at the end of the chat
 - Show a chat's unread count at the start of its tab, in place of the status dot
 - Count a chat as read only while its window is focused
-- Keep typing and presence updates coming while any Ducko window is on screen
+- Keep typing and presence updates coming while any Ducko window is on screen (XEP-0352)
 - Title notifications with the contact's name from your contact list
 - Upload a file with `ducko send --file` by default, and send directly with `--method jingle`
 
 ### Fixed
 
-- Fix your profile picture disappearing for your contacts after you sign in or reconnect
+- Fix your profile picture disappearing for your contacts after you sign in or reconnect (XEP-0153)
 - Fix line breaks being lost in messages that use styling or mention you
 - Fix the status dot in a chat tab sitting further from the tab's edge than the name does
 - Fix link previews being unreadable inside your own message bubbles
 - Fix contacts showing as offline while online after one of their devices disconnects or you reconnect
 - Fix "Last seen" jumping to the moment you connect for contacts who were already offline
 - Fix unreadable text in history for imported messages that carry their own background color
-- Fix encrypted messages that carry no text showing up as undecryptable
+- Fix encrypted messages that carry no text showing up as undecryptable (XEP-0384)
 - Fix a failed file upload going unreported
 - Fix uploaded files losing their original name
 - Fix messages sent within the same second showing in the wrong order
-- Fix a delivery checkmark or send error landing on the wrong message
+- Fix a delivery checkmark or send error landing on the wrong message (XEP-0184)
 - Fix a destroyed room reappearing when one of its messages arrives late
 
 ## [0.4.0] - 2026-09-24
@@ -505,7 +505,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
-- Accept block list updates only from your own server
+- Accept block list updates only from your own server (XEP-0191)
 
 ## [0.2.0] - 2026-09-21
 
@@ -528,14 +528,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Allow closing Connection Info with Done, Return, or Escape
 - Prevent a failed message-history write from crashing Ducko
 - Preserve account and conversation settings when first saving them
-- Preserve reply context in synced and archived messages
+- Preserve reply context in synced and archived messages (XEP-0461)
 - Keep conversation history aligned with the latest conversation, date and search selection
 - Keep contact changes and the saved roster version consistent across disconnects, reconnections, and local save failures
 - Prevent a connection attempt from restoring an account after it has been disconnected
 - Keep delayed room-join updates from restoring participants after leaving
 - Close pending direct file-transfer connections when cancelling or going offline
 - Finish signing out without a half-second wait when the connection has already dropped
-- Prevent a failed OMEMO device list read from removing your other devices from encryption
+- Prevent a failed OMEMO device list read from removing your other devices from encryption (XEP-0384)
 
 ### Security
 
@@ -556,7 +556,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Removed
 
-- Remove requesting a file from a contact and changing files in a running transfer, which never worked
+- Remove requesting a file from a contact and changing files in a running transfer, which never worked (XEP-0234)
 
 ### Fixed
 
@@ -576,7 +576,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
-- Prevent a peer from freezing or crashing a direct file transfer with an invalid block size
+- Prevent a peer from freezing or crashing a direct file transfer with an invalid block size (XEP-0047)
 - Prevent an attacker from slipping unencrypted messages into a connection while it switches to encryption
 - Prevent anyone but the person you are transferring with from interfering with a direct file transfer
 - Prevent a contact from disguising a file's name or saving it outside the Downloads folder
@@ -591,7 +591,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- Fix signing in to servers that offer SASL2 authentication
+- Fix signing in to servers that offer SASL2 authentication (XEP-0388)
 - Import Adium chat history for Facebook, MSN, and ICQ contacts whose IDs contain `@` or spaces
 - Show readable connection and server error messages instead of internal error codes
 
