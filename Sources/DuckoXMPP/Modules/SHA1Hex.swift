@@ -15,7 +15,7 @@ func hexString(_ bytes: some Sequence<UInt8>) -> String {
 }
 
 /// Reads ASCII hex digits of either case as bytes, or nil on an odd count or a non-hex digit.
-func decodeHex(_ digits: some Collection<UInt8>) -> [UInt8]? {
+package func decodeHex(_ digits: some Collection<UInt8>) -> [UInt8]? {
     guard digits.count.isMultiple(of: 2) else { return nil }
     var bytes: [UInt8] = []
     bytes.reserveCapacity(digits.count / 2)

@@ -9,7 +9,7 @@ struct REPLCommandTests {
     }
 
     @Test(arguments: [
-        "", "send", "/send a hi", "Send a hi", "/add", "/reply", "/remove", "/approve", "/deny", "/block", "/unblock", "/edit", "/retract", "/search", "/searchall", "/encrypt", "/omemo-verify", "/omemo-reset", "/pref", "/directed-presence",
+        "", "send", "/send a hi", "Send a hi", "/add", "/reply", "/remove", "/approve", "/deny", "/block", "/unblock", "/edit", "/retract", "/search", "/searchall", "/encrypt", "/omemo-devices", "/omemo-verify", "/omemo-reset", "/pref", "/directed-presence", "/savefile",
         "/roster extra", "/who extra", "/profile extra", "/blocklist extra", "/transfers extra", "/connection-info extra", "/omemo-setup extra", "/unregister-account extra", "/change-password extra", "help extra", "quit extra", "exit extra",
         "/joiner room", "/join\troom", "send\ta hi", "/pm\nAlice hi", "/unknown"
     ])
@@ -24,8 +24,8 @@ struct REPLCommandTests {
         ("/edit alice@example.com revised", .edit), ("/search alice@example.com query", .search), ("/searchall two words", .searchAll),
         ("/approve alice@example.com", .approve), ("/deny alice@example.com", .deny),
         ("/block alice@example.com/laptop", .block), ("/unblock alice@example.com", .unblock), ("/blocklist", .blocklist),
-        ("/directed-presence alice@example.com", .directedPresence),
-        ("/encrypt alice@example.com on", .encrypt), ("/omemo-verify alice@example.com 7 d9f71a68 33945da8", .omemoVerify),
+        ("/directed-presence alice@example.com", .directedPresence), ("/savefile alice@example.com", .savefile),
+        ("/encrypt alice@example.com on", .encrypt), ("/omemo-devices alice@example.com", .omemoDevices), ("/omemo-verify alice@example.com 7 d9f71a68 33945da8", .omemoVerify),
         ("/omemo-reset alice@example.com 7", .omemoReset), ("/pref chatstates off", .pref)
     ])
     func `argument requiring commands retain their grammar`(input: String, expected: REPLCommand.Kind) {
@@ -120,10 +120,12 @@ Commands:
   /decline [id]            Decline incoming file transfer
   /cancel [sid]            Cancel a direct file transfer
   /transfers               List active transfers
+  /savefile <jid>          Save the last encrypted file from a chat to Downloads
   /rooms [service]         Discover available rooms
   /avatar [jid]            View avatar info (own or contact's)
   /connection-info         Show TLS connection info
   /encrypt <jid> on|off    Toggle OMEMO encryption for a conversation
+  /omemo-devices <jid>     List a contact's or your own OMEMO devices
   /omemo-verify <jid> <id> <fingerprint>  Mark a device verified after comparing its fingerprint
   /omemo-reset <jid> [id]  Reset OMEMO sessions with a contact's or your other devices
   /omemo-setup             Retry setting up this device's OMEMO encryption

@@ -17,18 +17,16 @@ struct ChatServiceEncryptedSendTests {
     func `an encrypted message carries no body or other content outside its envelope, and names OMEMO without a name`(inRoom: Bool) async throws {
         let harness = try await EncryptedSendHarness.connect()
 
-        if inRoom {
-            try await harness.chatService.sendGroupMessage(to: room, body: "secret", accountID: harness.accountID)
-        } else {
-            try await harness.chatService.sendMessage(to: contact, body: "secret", accountID: harness.accountID)
-        }
+        try await harness.send("secret", inRoom: inRoom)
 
         let sent = try parsed(#require(await harness.transport.waitForSent { $0.hasPrefix("<message") && $0.contains("<encrypted") }))
-        let children = sent.children.compactMap { if case let .element(child) = $0 { child } else { nil } }
-        #expect(sent.child(named: "body") == nil)
-        #expect(children.map(\.name).sorted() == ["encrypted", "encryption", "origin-id", "store"])
+        #expect(outerShape(of: sent) == omemo2OuterShape)
         let encryption = try #require(sent.child(named: "encryption", namespace: XMPPNamespaces.eme))
         #expect(encryption.attributes == ["namespace": XMPPNamespaces.omemo])
+        let inner = try #require(try harness.read(sent, asDeviceWith: harness.bob, of: contact))
+        #expect(inner.body == "secret")
+        #expect(inner.element.child(named: "markable", namespace: XMPPNamespaces.chatMarkers) != nil)
+        #expect((inner.element.child(named: "request", namespace: XMPPNamespaces.receipts) != nil) == !inRoom)
         await harness.accountService.disconnect(accountID: harness.accountID)
     }
 
@@ -104,6 +102,7 @@ struct ChatServiceEncryptedSendTests {
         try await harness.chatService.sendCorrection(of: original, newBody: "Look at this", in: chat, accountID: harness.accountID)
 
         let sent = try parsed(#require(await harness.transport.waitForSent { $0.hasPrefix("<message") && $0.contains("<encrypted") }))
+        #expect(outerShape(of: sent) == omemo2OuterShape)
         let correction = try #require(try harness.readAsBob(sent))
         #expect(correction.body == "> secret\nLook at this")
         #expect(correction.element.child(named: "replace", namespace: XMPPNamespaces.messageCorrect)?.attribute("id") == "m1")
@@ -138,10 +137,11 @@ struct ChatServiceEncryptedSendTests {
         await harness.accountService.disconnect(accountID: harness.accountID)
     }
 
-    /// Who would receive the message is unknown, so nothing goes out rather than missing one of their devices.
-    @Test(arguments: [false, true])
-    func `an encrypted send is refused when a recipient's device list cannot be read`(inRoom: Bool) async throws {
-        let harness = try await EncryptedSendHarness.connect(contactsDeviceListFails: true)
+    /// Who would receive the message is unknown, so nothing goes out rather than missing one of their devices, whichever
+    /// of the recipient's two lists fails.
+    @Test(arguments: [false, true], [OMEMOWireFormat.omemo2, .legacy])
+    func `an encrypted send is refused when a recipient's device list cannot be read`(inRoom: Bool, failingList: OMEMOWireFormat) async throws {
+        let harness = try await EncryptedSendHarness.connect(failingContactList: failingList)
 
         await #expect {
             if inRoom {
@@ -225,7 +225,157 @@ extension ChatServiceEncryptedSendTests {
     }
 }
 
-private func parsed(_ xml: String) throws -> DuckoXMPP.XMLElement {
+/// Each device receives a message in the newest OMEMO version it lists (XEP-0384). A legacy element encrypts the body
+/// alone, so the requests and references a legacy device reads travel beside it, as legacy clients send them.
+extension ChatServiceEncryptedSendTests {
+    @Test(arguments: [false, true])
+    func `a message to devices of both versions carries an element for each, and no body`(inRoom: Bool) async throws {
+        let harness = try await EncryptedSendHarness.connect(legacyDeviceLists: [contact: [201]])
+
+        try await harness.send("secret", inRoom: inRoom)
+
+        let sent = try parsed(#require(await harness.transport.waitForSent { $0.hasPrefix("<message") && $0.contains("<encrypted") }))
+        #expect(sent.child(named: "body") == nil)
+        #expect(sent.child(named: "encryption", namespace: XMPPNamespaces.eme)?.attribute("namespace") == XMPPNamespaces.omemo)
+        #expect(omemo2KeyRIDs(in: sent, for: contact) == ["200"])
+        #expect(legacyKeyRIDs(in: sent) == ["201"])
+        #expect(try harness.read(sent, asDeviceWith: harness.bob, of: contact)?.body == "secret")
+        let legacy = try #require(try harness.readAsLegacyDevice(201, of: contact, sent))
+        #expect(legacy.body == "secret")
+        #expect(legacy.element.child(named: "markable", namespace: XMPPNamespaces.chatMarkers) != nil)
+        #expect((legacy.element.child(named: "request", namespace: XMPPNamespaces.receipts) != nil) == !inRoom)
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
+    @Test(arguments: [false, true])
+    func `a message to devices that list only legacy OMEMO names it and carries a fallback body`(inRoom: Bool) async throws {
+        let harness = try await EncryptedSendHarness.connect(contactDevices: [], legacyDeviceLists: [contact: [201]])
+
+        try await harness.send("secret", inRoom: inRoom)
+
+        let sent = try parsed(#require(await harness.transport.waitForSent { $0.hasPrefix("<message") && $0.contains("<encrypted") }))
+        #expect(sent.child(named: "encrypted", namespace: XMPPNamespaces.omemo) == nil)
+        #expect(sent.child(named: "body")?.textContent == ChatService.legacyFallbackBody)
+        #expect(sent.child(named: "encryption", namespace: XMPPNamespaces.eme)?.attribute("namespace") == XMPPNamespaces.omemoLegacy)
+        #expect(sent.child(named: "store", namespace: XMPPNamespaces.processingHints) != nil)
+        #expect(sent.children(named: "markable").count == 1)
+        #expect(legacyKeyRIDs(in: sent) == ["201"])
+        let legacy = try #require(try harness.readAsLegacyDevice(201, of: contact, sent))
+        #expect(legacy.body == "secret")
+        #expect(legacy.element.child(named: "markable", namespace: XMPPNamespaces.chatMarkers) != nil)
+        #expect((legacy.chatState == .active) == !inRoom)
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
+    /// The user's own phone on a legacy client gets the message too, though the contact's device lists OMEMO 2.
+    @Test func `the account's own legacy device receives a legacy element beside the contact's OMEMO 2 one`() async throws {
+        let account = try #require(BareJID.parse(testJIDString))
+        let harness = try await EncryptedSendHarness.connect(legacyDeviceLists: [account: [101]])
+
+        try await harness.send("secret", inRoom: false)
+
+        let sent = try parsed(#require(await harness.transport.waitForSent { $0.hasPrefix("<message") && $0.contains("<encrypted") }))
+        #expect(sent.child(named: "body") == nil)
+        #expect(omemo2KeyRIDs(in: sent, for: contact) == ["200"])
+        #expect(legacyKeyRIDs(in: sent) == ["101"])
+        #expect(try harness.readAsLegacyDevice(101, of: account, sent)?.body == "secret")
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
+    /// The user's own devices never stand in for the contact's, so a message only they could read is not sent.
+    @Test func `a send whose only device to receive it is the account's own legacy device fails`() async throws {
+        let account = try #require(BareJID.parse(testJIDString))
+        let harness = try await EncryptedSendHarness.connect(
+            contactDevices: [], legacyDeviceLists: [contact: [201], account: [101]], missingLegacyBundles: [201]
+        )
+
+        await #expect(throws: OMEMOModuleError.noUsableRecipientDevices) {
+            try await harness.send("secret", inRoom: false)
+        }
+
+        let sent = await harness.transport.sentBytes.map { String(decoding: $0, as: UTF8.self) }
+        #expect(!sent.contains { $0.hasPrefix("<message") })
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
+    /// A legacy client reads the correction and retraction references beside the payload, and applies them in place.
+    @Test(arguments: [false, true])
+    func `a correction or retraction to a legacy device names its message beside the payload`(isRetraction: Bool) async throws {
+        let harness = try await EncryptedSendHarness.connect(contactDevices: [], legacyDeviceLists: [contact: [201]])
+        let chat = try #require(harness.chatService.openConversations.first { $0.jid == contact })
+        let original = ChatMessage(
+            id: UUID(), conversationID: chat.id, stanzaID: "m1", fromJID: contact.description, body: "secret", timestamp: Date(),
+            isOutgoing: true, isDelivered: false, isEdited: false, type: "chat", isEncrypted: true
+        )
+        await harness.transcripts.addMessage(original)
+
+        if isRetraction {
+            try await harness.chatService.retractMessage(original, in: chat, accountID: harness.accountID)
+        } else {
+            try await harness.chatService.sendCorrection(of: original, newBody: "fixed", in: chat, accountID: harness.accountID)
+        }
+
+        let sent = try parsed(#require(await harness.transport.waitForSent { $0.hasPrefix("<message") && $0.contains("<encrypted") }))
+        #expect(sent.child(named: "body")?.textContent == ChatService.legacyFallbackBody)
+        if isRetraction {
+            #expect(sent.child(named: "retract", namespace: XMPPNamespaces.messageRetract)?.attribute("id") == "m1")
+            #expect(sent.child(named: "fallback", namespace: XMPPNamespaces.fallbackIndication)?.attribute("for") == XMPPNamespaces.messageRetract)
+        } else {
+            #expect(sent.child(named: "replace", namespace: XMPPNamespaces.messageCorrect)?.attribute("id") == "m1")
+        }
+        let legacy = try #require(try harness.readAsLegacyDevice(201, of: contact, sent))
+        #expect(legacy.body == (isRetraction ? retractionFallbackBody : "fixed"))
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
+    /// A legacy client reads the reply reference and the marker of its quote beside the payload, which holds the quote.
+    @Test func `a reply to a legacy device names the quoted message beside the payload`() async throws {
+        let harness = try await EncryptedSendHarness.connect(contactDevices: [], legacyDeviceLists: [contact: [201]])
+        let chat = try #require(harness.chatService.openConversations.first { $0.jid == contact })
+        let quoted = ChatMessage(
+            id: UUID(), conversationID: chat.id, stanzaID: "q1", fromJID: contact.description, body: "secret", timestamp: Date(),
+            isOutgoing: false, isDelivered: true, isEdited: false, type: "chat", isEncrypted: true
+        )
+
+        try await harness.chatService.sendMessage("ok", in: chat, replyingTo: quoted, accountID: harness.accountID)
+
+        let sent = try parsed(#require(await harness.transport.waitForSent { $0.hasPrefix("<message") && $0.contains("<encrypted") }))
+        #expect(sent.child(named: "reply", namespace: XMPPNamespaces.messageReply)?.attribute("id") == "q1")
+        #expect(sent.child(named: "fallback", namespace: XMPPNamespaces.fallbackIndication)?.attribute("for") == XMPPNamespaces.messageReply)
+        #expect(try harness.readAsLegacyDevice(201, of: contact, sent)?.body == "> secret\nok")
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+}
+
+/// The namespace and name of each element `stanza` carries, sorted.
+private func outerShape(of stanza: DuckoXMPP.XMLElement) -> [String] {
+    stanza.children.compactMap { child in
+        guard case let .element(element) = child else { return nil }
+        return "\(element.namespace ?? "") \(element.name)"
+    }.sorted()
+}
+
+/// What a message to devices that all list OMEMO 2 carries beside its envelope: its id, its element, the method's name
+/// and the store hint, and no body, request, marker, chat state, reference or fallback.
+private let omemo2OuterShape = [
+    "\(XMPPNamespaces.eme) encryption", "\(XMPPNamespaces.processingHints) store", "\(XMPPNamespaces.omemo) encrypted",
+    "\(XMPPNamespaces.stanzaID) origin-id"
+].sorted()
+
+/// The `rid` of each key the legacy element of `stanza` lists, which lists them by device alone.
+private func legacyKeyRIDs(in stanza: DuckoXMPP.XMLElement) -> [String] {
+    let header = stanza.child(named: "encrypted", namespace: XMPPNamespaces.omemoLegacy)?.child(named: "header")
+    return header?.children(named: "key").compactMap { $0.attribute("rid") } ?? []
+}
+
+/// The `rid` of each key the OMEMO 2 element of `stanza` lists for `jid`.
+private func omemo2KeyRIDs(in stanza: DuckoXMPP.XMLElement, for jid: BareJID) -> [String] {
+    let header = stanza.child(named: "encrypted", namespace: XMPPNamespaces.omemo)?.child(named: "header")
+    let keys = header?.children(named: "keys").first { $0.attribute("jid") == jid.description }
+    return keys?.children(named: "key").compactMap { $0.attribute("rid") } ?? []
+}
+
+func parsed(_ xml: String) throws -> DuckoXMPP.XMLElement {
     let events = XMPPStreamParser().parse(Array((testServerStreamOpen + xml).utf8))
     for case let .stanzaReceived(element) in events {
         return element
@@ -233,13 +383,21 @@ private func parsed(_ xml: String) throws -> DuckoXMPP.XMLElement {
     throw XMPPClientError.unexpectedStreamState("No stanza in \(xml)")
 }
 
-/// A connected account, on device 100, whose OMEMO module talks to a server that answers every PubSub request, lists
-/// and hands out bob's device, and lists `roomMembers`, bob by default, as the members of the non-anonymous room. With
-/// `archiving`, the account and the room keep archives the account can read. With `otherOwnDevices`, the server lists
-/// those devices next to device 100 and hands them out too. `deviceLists` holds the devices the server lists for other
-/// JIDs, which it hands out too. With `contactsDeviceListFails`, the server answers a read of bob's device list with an
-/// error. With `newDevice`, the account has no device yet, and its setup's read of the account's list is held until the
-/// test releases or fails it. With `holdsSetupRead`, that read is held the same way for device 100.
+/// A connected account, on device 100, whose OMEMO module talks to a server that answers every PubSub request. The
+/// server lists `contactDevices` for bob (his device 200 by default) and hands out device 200's bundle. It lists
+/// `roomMembers` (bob by default) as the members of the non-anonymous room.
+/// - `archiving`: the account and the room keep archives the account can read.
+/// - `otherOwnDevices`: the server lists these next to device 100 and hands out their bundles.
+/// - `deviceLists`: the devices the server lists for other JIDs, whose bundles it hands out.
+/// - `legacyDeviceLists`: the legacy device lists of any JID, the account's included. The server hands out a legacy
+///   bundle for each listed device except those in `missingLegacyBundles`, listing no pre-key for those in
+///   `legacyBundlesWithoutPreKeys`.
+/// - `legacySharesBobsKey`: bob's device 200's legacy bundle carries the key of its OMEMO 2 one. Every other legacy
+///   device has a key of its own.
+/// - `failingContactList`: the server answers a read of bob's device list in that version with an error.
+/// - `newDevice`: the account has no device yet, and its setup's read of the account's list is held until the test
+///   releases or fails it.
+/// - `holdsSetupRead`: that read is held the same way for device 100.
 @MainActor
 struct EncryptedSendHarness {
     let transport: MockTransport
@@ -254,11 +412,17 @@ struct EncryptedSendHarness {
     let bob: OMEMOModule.OMEMOIdentityData
     /// The `<bundle>` of the account's device 100.
     let ownBundle: DuckoXMPP.XMLElement
+    /// The keys of the account's device 100.
+    let ownKeys: OMEMOModule.OMEMOIdentityData
+    /// The keys of each device on a legacy list, by id.
+    let legacyKeys: [UInt32: OMEMOModule.OMEMOIdentityData]
 
     static func connect(
         encryptionEnabled: Bool = true, archiving: Bool = false, otherOwnDevices: [UInt32] = [], roomMembers: [BareJID] = [contact],
-        deviceLists: [BareJID: [UInt32]] = [:], contactsDeviceListFails: Bool = false, newDevice: Bool = false,
-        holdsSetupRead: Bool = false
+        contactDevices: [UInt32] = [200], deviceLists: [BareJID: [UInt32]] = [:], legacyDeviceLists: [BareJID: [UInt32]] = [:],
+        missingLegacyBundles: Set<UInt32> = [], legacyBundlesWithoutPreKeys: Set<UInt32> = [], legacySharesBobsKey: Bool = false,
+        failingContactList: OMEMOWireFormat? = nil,
+        newDevice: Bool = false, holdsSetupRead: Bool = false
     ) async throws -> EncryptedSendHarness {
         let store = MockPersistenceStore()
         let transport = MockTransport()
@@ -267,16 +431,22 @@ struct EncryptedSendHarness {
         for deviceID in otherOwnDevices + deviceLists.values.joined() {
             bundles["\(deviceID)"] = try device(deviceID, preKeyID: 1).bundle.xmlString
         }
+        let (legacyKeys, legacyBundles) = try legacyDevices(
+            Array(legacyDeviceLists.values.joined()), withoutBundle: missingLegacyBundles, withoutPreKeys: legacyBundlesWithoutPreKeys,
+            sharing: legacySharesBobsKey ? [200: bob] : [:]
+        )
         let ownDevices = otherOwnDevices.isEmpty ? nil : [100] + otherOwnDevices
         let server = ServerFixture(
-            bundles: bundles, ownDevices: ownDevices, roomMembers: roomMembers.map(\.description),
-            deviceLists: Dictionary(uniqueKeysWithValues: deviceLists.map { ($0.key.description, $0.value) }), contactsDeviceListFails: contactsDeviceListFails
+            bundles: bundles, legacyBundles: legacyBundles, ownDevices: ownDevices, contactDevices: contactDevices, roomMembers: roomMembers.map(\.description),
+            deviceLists: Dictionary(uniqueKeysWithValues: deviceLists.map { ($0.key.description, $0.value) }),
+            legacyDeviceLists: Dictionary(uniqueKeysWithValues: legacyDeviceLists.map { ($0.key.description, $0.value) }),
+            failingContactList: failingContactList
         )
         await transport.autoReply { stanza in reply(to: stanza, server: server) }
         let pepModule = PEPModule()
         let mucModule = MUCModule()
         let omemoModule = OMEMOModule(pepModule: pepModule, mucModule: mucModule)
-        let ownBundle = try await installOwnDevice(on: omemoModule, transport: transport, newDevice: newDevice, holdsSetupRead: holdsSetupRead)
+        let (ownBundle, ownKeys) = try await installOwnDevice(on: omemoModule, transport: transport, newDevice: newDevice, holdsSetupRead: holdsSetupRead)
         let modules: [any XMPPModule] = [ChatModule(), mucModule, pepModule, omemoModule] + (archiving ? [MAMModule()] : [])
         let factory = MockXMPPClientFactory(transport: transport, modules: modules)
         let accountService = makeAccountService(store: store, clientFactory: factory)
@@ -303,8 +473,17 @@ struct EncryptedSendHarness {
         try await chatService.loadConversations(for: accountID)
         return EncryptedSendHarness(
             transport: transport, accountService: accountService, chatService: chatService, transcripts: transcripts, omemoService: omemoService,
-            omemoStore: omemoStore, accountID: accountID, bob: bob, ownBundle: ownBundle
+            omemoStore: omemoStore, accountID: accountID, bob: bob, ownBundle: ownBundle, ownKeys: ownKeys, legacyKeys: legacyKeys
         )
+    }
+
+    /// Sends `body` to bob, or to the room when `inRoom`.
+    func send(_ body: String, inRoom: Bool) async throws {
+        if inRoom {
+            try await chatService.sendGroupMessage(to: room, body: body, accountID: accountID)
+        } else {
+            try await chatService.sendMessage(to: contact, body: body, accountID: accountID)
+        }
     }
 
     /// A read of the account's own device list carries no `to`.
@@ -318,11 +497,11 @@ struct EncryptedSendHarness {
         return module?.state.withLock { $0.identityWaiters.count } ?? 0
     }
 
-    /// Returns device 100's `<bundle>`, and gives the module device 100 unless `newDevice`. For a new device, or with
-    /// `holdsSetupRead`, the setup's read of the account's list is held.
+    /// Returns device 100's `<bundle>` and keys, and gives the module device 100 unless `newDevice`. For a new device,
+    /// or with `holdsSetupRead`, the setup's read of the account's list is held.
     private static func installOwnDevice(
         on module: OMEMOModule, transport: MockTransport, newDevice: Bool, holdsSetupRead: Bool
-    ) async throws -> DuckoXMPP.XMLElement {
+    ) async throws -> (bundle: DuckoXMPP.XMLElement, keys: OMEMOModule.OMEMOIdentityData) {
         let (ownBundle, ownKeys) = try device(100, preKeyID: 1)
         if newDevice || holdsSetupRead {
             await transport.blockSends(where: isOwnListRead)
@@ -330,7 +509,7 @@ struct EncryptedSendHarness {
         if !newDevice {
             module.configureIdentity(ownKeys)
         }
-        return ownBundle
+        return (ownBundle, ownKeys)
     }
 
     /// An OMEMO service wired to the account and chat services, which takes in the account's setup events in order but
@@ -370,6 +549,35 @@ struct EncryptedSendHarness {
         }.first
     }
 
+    /// The message inside `stanza`, which the account sent, as `jid`'s device with `keys` reads it: the envelope of the
+    /// OMEMO 2 element when that has a key for the device, else the legacy element's body and what beside it a legacy
+    /// device takes in. It is read as an archive returns it, naming the account as its sender, so a room's message needs
+    /// no occupants to be read. A room's message comes from the room's echo of the account, any other from the account.
+    func read(_ stanza: DuckoXMPP.XMLElement, asDeviceWith keys: OMEMOModule.OMEMOIdentityData, of jid: BareJID) throws -> XMPPMessage? {
+        let context = ModuleContext(
+            sendStanza: { _, onAccepted in onAccepted?() }, sendIQ: { _, _ in nil }, emitEvent: { _ in }, generateID: { "legacy-1" },
+            connectedJID: { FullJID.parse("\(jid)/legacy") }, domain: "example.com"
+        )
+        let pepModule = PEPModule()
+        pepModule.setUp(context)
+        let module = OMEMOModule(pepModule: pepModule)
+        module.setUp(context)
+        module.configureIdentity(keys)
+        module.handleSessionEstablished(resumed: true)
+        var message = XMPPMessage(element: stanza)
+        message.from = message.messageType == .groupchat ? JID.parse("\(room)/me") : JID.parse("\(testJIDString)/ducko")
+        let account = try #require(BareJID.parse(testJIDString))
+        guard case let .decrypted(decrypted) = module.receiveArchivedMessage(
+            message, sender: account, isRoomPrivateMessage: false, allowsKeyExchange: true
+        ) else { return nil }
+        return decrypted.message
+    }
+
+    /// `stanza` as the legacy device `deviceID` of `jid` reads it, as `read` reads it.
+    func readAsLegacyDevice(_ deviceID: UInt32, of jid: BareJID, _ stanza: DuckoXMPP.XMLElement) throws -> XMPPMessage? {
+        try read(stanza, asDeviceWith: #require(legacyKeys[deviceID]), of: jid)
+    }
+
     /// A chat message from bob's desktop to the account, which bob's device 200 encrypted for the account's device 100.
     func sentByBob(_ text: String, id: String) async throws -> XMPPMessage {
         let bundle = ownBundle
@@ -396,8 +604,8 @@ struct EncryptedSendHarness {
         body.addText(text)
         let account = try #require(BareJID.parse(testJIDString))
         let encrypted = try await module.encryptMessage(
-            content: [body], time: Date().formatted(.iso8601), to: account, recipientDeviceIDs: [100], ownDeviceIDs: []
-        ).encrypted
+            content: [body], legacyBody: nil, time: Date().formatted(.iso8601), to: account, recipientDeviceIDs: [100], ownDeviceIDs: []
+        ).omemo2
         var message = XMPPMessage(type: .chat, to: JID.parse("\(testJIDString)/ducko"), id: id)
         message.from = JID.parse("\(contact)/desktop")
         message.element.addChild(encrypted)
@@ -420,15 +628,45 @@ struct EncryptedSendHarness {
         return (OMEMOModule(pepModule: PEPModule()).buildBundleElement(bundle), keys)
     }
 
-    /// What the server answers with. `bundles` holds each device's `<bundle>` by its id. `ownDevices` is the account's
-    /// device list, or nil to answer it with no items. `deviceLists` holds other JIDs' device lists by JID, and a JID
-    /// without one is answered with no items.
+    /// The keys of each of `deviceIDs`, those in `sharing` or new ones, and the legacy `<bundle>` of each but those
+    /// `withoutBundle`, by id, listing no pre-key for those `withoutPreKeys`.
+    private static func legacyDevices(
+        _ deviceIDs: [UInt32], withoutBundle: Set<UInt32>, withoutPreKeys: Set<UInt32>, sharing: [UInt32: OMEMOModule.OMEMOIdentityData]
+    ) throws -> (keys: [UInt32: OMEMOModule.OMEMOIdentityData], bundles: [String: String]) {
+        var keys: [UInt32: OMEMOModule.OMEMOIdentityData] = [:]
+        var bundles: [String: String] = [:]
+        for deviceID in deviceIDs {
+            let deviceKeys = try sharing[deviceID] ?? device(deviceID, preKeyID: 1).keys
+            keys[deviceID] = deviceKeys
+            if !withoutBundle.contains(deviceID) {
+                bundles["\(deviceID)"] = try legacyBundle(of: deviceKeys, listsPreKeys: !withoutPreKeys.contains(deviceID)).xmlString
+            }
+        }
+        return (keys, bundles)
+    }
+
+    /// The legacy `<bundle>` of the device with `keys`, listing its pre-keys unless `listsPreKeys` is false.
+    static func legacyBundle(of keys: OMEMOModule.OMEMOIdentityData, listsPreKeys: Bool = true) throws -> DuckoXMPP.XMLElement {
+        let bundle = try OMEMOPreKeyManager.buildLegacyBundle(
+            deviceID: OMEMODeviceID(value: keys.deviceID), identityKeyPair: OMEMOIdentityKeyPair(rawRepresentation: keys.identityKeyRaw),
+            signedPreKey: OMEMOSignedPreKey(keyID: keys.signedPreKeyID, rawRepresentation: keys.signedPreKeyRaw, signature: keys.signedPreKeySignature),
+            preKeys: listsPreKeys ? keys.preKeys.map { try OMEMOPreKey(keyID: $0.keyID, rawRepresentation: $0.keyRaw) } : []
+        )
+        return OMEMOModule(pepModule: PEPModule()).buildLegacyBundleElement(bundle)
+    }
+
+    /// What the server answers with. `bundles` and `legacyBundles` hold each device's `<bundle>` in that version by its
+    /// id. `ownDevices` is the account's device list, or nil to answer it with no items. `deviceLists` holds other JIDs'
+    /// device lists by JID, and `legacyDeviceLists` any JID's legacy one. A JID without a list is answered with no items.
     private struct ServerFixture {
         let bundles: [String: String]
+        let legacyBundles: [String: String]
         let ownDevices: [UInt32]?
+        let contactDevices: [UInt32]
         let roomMembers: [String]
         let deviceLists: [String: [UInt32]]
-        let contactsDeviceListFails: Bool
+        let legacyDeviceLists: [String: [UInt32]]
+        let failingContactList: OMEMOWireFormat?
     }
 
     /// The server's answer to a PubSub or room-affiliation request; nil for anything else.
@@ -441,12 +679,23 @@ struct EncryptedSendHarness {
             return "<iq type=\"result\" id=\"\(id)\"\(from)><pubsub xmlns=\"\(XMPPNamespaces.pubsub)\"><items node=\"\(XMPPNamespaces.omemoBundles)\">"
                 + "<item id=\"\(itemID)\">\(bundle)</item></items></pubsub></iq>"
         }
-        if server.contactsDeviceListFails, to == contact.description, stanza.contains(XMPPNamespaces.omemoDevices) {
+        if stanza.contains("\(XMPPNamespaces.omemoLegacy).bundles:"), stanza.contains("<items"),
+           let deviceID = value(after: ".bundles:", in: stanza), let bundle = server.legacyBundles[deviceID] {
+            return "<iq type=\"result\" id=\"\(id)\"\(from)><pubsub xmlns=\"\(XMPPNamespaces.pubsub)\"><items node=\"\(XMPPNamespaces.omemoLegacy).bundles:\(deviceID)\">"
+                + "<item id=\"current\">\(bundle)</item></items></pubsub></iq>"
+        }
+        let failingNode = server.failingContactList.map { $0 == .omemo2 ? XMPPNamespaces.omemoDevices : XMPPNamespaces.omemoLegacyDeviceList }
+        if let failingNode, to == contact.description, stanza.contains(failingNode) {
             return "<iq type=\"error\" id=\"\(id)\"\(from)><error type=\"cancel\">"
                 + "<internal-server-error xmlns=\"urn:ietf:params:xml:ns:xmpp-stanzas\"/></error></iq>"
         }
+        if stanza.contains(XMPPNamespaces.omemoLegacyDeviceList), stanza.contains("<items"), let listed = server.legacyDeviceLists[to ?? testJIDString] {
+            let devices = listed.map { "<device id=\"\($0)\"/>" }.joined()
+            return "<iq type=\"result\" id=\"\(id)\"\(from)><pubsub xmlns=\"\(XMPPNamespaces.pubsub)\"><items node=\"\(XMPPNamespaces.omemoLegacyDeviceList)\">"
+                + "<item id=\"current\"><list xmlns=\"\(XMPPNamespaces.omemoLegacy)\">\(devices)</list></item></items></pubsub></iq>"
+        }
         let listed: [UInt32]? = if to == contact.description {
-            [200]
+            server.contactDevices
         } else if to == nil || to == testJIDString {
             server.ownDevices
         } else {

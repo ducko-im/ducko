@@ -13,6 +13,7 @@ enum OMEMOCryptoError: Error {
     case sessionNotInitialized
     case tooManySkippedMessages
     case hmacVerificationFailed
+    case wireFormatMismatch
 
     var displayText: String {
         switch self {
@@ -24,6 +25,7 @@ enum OMEMOCryptoError: Error {
         case .sessionNotInitialized: "The encryption session is not initialized"
         case .tooManySkippedMessages: "Too many skipped messages"
         case .hmacVerificationFailed: "Message authentication failed"
+        case .wireFormatMismatch: "The message is in another OMEMO version than its session"
         }
     }
 }
@@ -31,8 +33,12 @@ enum OMEMOCryptoError: Error {
 // MARK: - Device ID
 
 /// Typed wrapper for an OMEMO device ID (random integer in 1..2^31-1).
-struct OMEMODeviceID: Hashable {
+package struct OMEMODeviceID: Hashable {
     let value: UInt32
+
+    package init(value: UInt32) {
+        self.value = value
+    }
 
     /// Generates a random device ID in the valid range 1..2^31-1.
     static func random() -> OMEMODeviceID {
@@ -47,7 +53,7 @@ struct OMEMODeviceID: Hashable {
 ///
 /// The Ed25519 private key and X25519 private key share the same 32-byte scalar,
 /// so one can be derived from the other via `rawRepresentation`.
-struct OMEMOIdentityKeyPair {
+package struct OMEMOIdentityKeyPair {
     let signingKey: Curve25519.Signing.PrivateKey
 
     /// Generates a new random identity key pair.
@@ -56,7 +62,7 @@ struct OMEMOIdentityKeyPair {
     }
 
     /// Restores an identity key pair from stored raw bytes.
-    init(rawRepresentation: [UInt8]) throws {
+    package init(rawRepresentation: [UInt8]) throws {
         self.signingKey = try Curve25519.Signing.PrivateKey(rawRepresentation: rawRepresentation)
     }
 
@@ -91,7 +97,7 @@ struct OMEMOIdentityKeyPair {
 // MARK: - Signed Pre-Key
 
 /// A medium-term X25519 key pair signed with the identity key.
-struct OMEMOSignedPreKey {
+package struct OMEMOSignedPreKey {
     let keyID: UInt32
     let keyPair: Curve25519.KeyAgreement.PrivateKey
     let signature: [UInt8]
@@ -104,7 +110,7 @@ struct OMEMOSignedPreKey {
     }
 
     /// Restores a signed pre-key from stored raw bytes.
-    init(keyID: UInt32, rawRepresentation: [UInt8], signature: [UInt8]) throws {
+    package init(keyID: UInt32, rawRepresentation: [UInt8], signature: [UInt8]) throws {
         self.keyID = keyID
         self.keyPair = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: rawRepresentation)
         self.signature = signature
@@ -153,22 +159,25 @@ public struct OMEMOPreKey: Sendable {
 
 // MARK: - Bundle
 
-/// A published OMEMO bundle containing all public key material for a device.
-struct OMEMOBundle {
+/// A published OMEMO bundle containing all public key material for a device. The node it was read from or is published
+/// to names its version, which sets the form of the identity key and the signature. Every key is held without the
+/// `0x05` type byte legacy bundles carry.
+package struct OMEMOBundle {
     let deviceID: OMEMODeviceID
-    /// Ed25519 public key (32 bytes).
-    let identityKey: [UInt8]
-    let signedPreKeyID: UInt32
+    /// Ed25519 public key in OMEMO 2, Curve25519 public key in legacy (32 bytes).
+    package let identityKey: [UInt8]
+    package let signedPreKeyID: UInt32
     /// X25519 public key (32 bytes).
-    let signedPreKey: [UInt8]
-    /// Ed25519 signature over the signed pre-key (64 bytes).
-    let signedPreKeySignature: [UInt8]
+    package let signedPreKey: [UInt8]
+    /// The identity key's signature over the signed pre-key (64 bytes): plain Ed25519 in OMEMO 2, and the libsignal form
+    /// `OMEMOLegacySignature` reads in legacy.
+    package let signedPreKeySignature: [UInt8]
     /// One-time pre-keys: (id, X25519 public key bytes).
-    let preKeys: [PreKeyPublic]
+    package let preKeys: [PreKeyPublic]
 
     /// A single pre-key's public data within a bundle.
-    struct PreKeyPublic {
-        let id: UInt32
-        let publicKey: [UInt8]
+    package struct PreKeyPublic {
+        package let id: UInt32
+        package let publicKey: [UInt8]
     }
 }

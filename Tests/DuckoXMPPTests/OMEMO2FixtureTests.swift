@@ -21,7 +21,7 @@ enum OMEMO2FixtureTests {
         func `a stored fingerprint displays as the reference agreement key in eight groups of eight`(device name: String) throws {
             let identityKey = try OMEMO2Fixtures.device(name).identityKey
 
-            let display = omemoDisplayFingerprint(ofStoredFingerprint: omemoFingerprint(of: identityKey.publicKey))
+            let display = omemoDisplayFingerprint(ofStoredFingerprint: omemoFingerprint(of: identityKey.publicKey, format: .omemo2))
 
             let groups = display.split(separator: " ", omittingEmptySubsequences: false)
             #expect(groups.map(\.count) == Array(repeating: 8, count: 8))
@@ -39,7 +39,8 @@ enum OMEMO2FixtureTests {
             #expect(try OMEMOX3DH.verifySignedPreKey(
                 signedPreKeyPublic: signedPreKey.publicKeyBytes,
                 signature: signedPreKey.signature,
-                identityKey: Array(device.identityKey.publicKey)
+                identityKey: Array(device.identityKey.publicKey),
+                format: .omemo2
             ))
             #expect(preKeys.map(\.publicKeyBytes) == device.preKeys.map { Array($0.publicKey) })
         }
@@ -63,7 +64,8 @@ enum OMEMO2FixtureTests {
                 ),
                 oneTimePreKey: OMEMOPreKey(keyID: preKey.id, rawRepresentation: Array(preKey.privateKey)),
                 peerIdentityKey: Array(keyExchange.ik),
-                peerEphemeralKey: Array(keyExchange.ek)
+                peerEphemeralKey: Array(keyExchange.ek),
+                format: .omemo2
             )
 
             #expect(Data(result.sharedSecret) == event.x3dh?.sharedSecret)

@@ -4,14 +4,30 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct AttachmentView: View {
+    @Environment(AppEnvironment.self) private var environment
     @Environment(RemoteImageConsent.self) private var remoteImageConsent
     let attachment: Attachment
     let isOutgoing: Bool
     /// Whether a received remote image is fetched without the viewer asking for it.
     let loadsIncomingImageOnSight: Bool
+    /// The encrypted file the attachment shares (XEP-0454), which is decrypted here and never handed to a browser.
+    private let encryptedFile: EncryptedFileLink?
     @State private var showQuickLook = false
     @State private var showSheet = false
     @State private var isHovering = false
+    /// Where an encrypted file opened from this card was saved.
+    @State private var savedEncryptedFileURL: URL?
+    @State private var isOpeningEncryptedFile = false
+    @State private var encryptedFileFailure: String?
+
+    /// `isInEncryptedMessage` says whether the message holding the attachment came encrypted. Only such a message can
+    /// share an encrypted file: the same link sent in the clear is inert, since the server could read its key.
+    init(attachment: Attachment, isOutgoing: Bool, loadsIncomingImageOnSight: Bool, isInEncryptedMessage: Bool) {
+        self.attachment = attachment
+        self.isOutgoing = isOutgoing
+        self.loadsIncomingImageOnSight = loadsIncomingImageOnSight
+        self.encryptedFile = isInEncryptedMessage ? EncryptedFileLink(link: attachment.url) : nil
+    }
 
     /// Your own image is a link you chose, so fetching it tells nobody anything new.
     private var showsRemoteImage: Bool {
@@ -29,22 +45,31 @@ struct AttachmentView: View {
             }
         }
         .background {
-            if let localFileURL {
-                QuickLookPreview(fileURL: localFileURL, isPresented: $showQuickLook)
+            if localFileURL != nil || encryptedFile != nil {
+                QuickLookPreview(fileURL: localFileURL ?? savedEncryptedFileURL, isPresented: $showQuickLook)
             }
         }
         .onHover { isHovering = $0 }
         .sheet(isPresented: $showSheet) {
-            ImagePreviewSheet(attachment: attachment)
+            ImagePreviewSheet(attachment: attachment, decryptedImage: decryptedImage)
         }
         .containerAccessibilityIdentifier("attachment-view")
     }
 
     /// A saved file opens the system Quick Look panel. A remote image that is not shown yet is fetched by the first
-    /// tap, and one that is shown opens the in-app sheet.
+    /// tap, and one that is shown opens the in-app sheet. An encrypted image opens the sheet once it is decrypted, and
+    /// a tap on one that failed tries again.
     private func openPreview() {
         if localFileURL != nil {
             showQuickLook = true
+        } else if attachment.isImage, let encryptedFile {
+            if !showsRemoteImage {
+                remoteImageConsent.request(attachment.id)
+            } else if decryptedImage != nil {
+                showSheet = true
+            } else if case .failed = remoteImageConsent.encryptedImage(attachment.id) {
+                Task { await loadEncryptedImage(encryptedFile) }
+            }
         } else if attachment.isImage, attachment.remoteURL != nil, !showsRemoteImage {
             remoteImageConsent.request(attachment.id)
         } else if attachment.isImage {
@@ -66,6 +91,10 @@ struct AttachmentView: View {
                     .aspectRatio(4 / 3, contentMode: .fit)
                     .frame(maxWidth: Self.maxImageSize)
                     .overlay { remoteImage }
+                    .task(id: showsRemoteImage) {
+                        guard showsRemoteImage, let encryptedFile else { return }
+                        await loadEncryptedImage(encryptedFile)
+                    }
             }
         }
         .clipShape(.rect(cornerRadius: 8))
@@ -80,7 +109,9 @@ struct AttachmentView: View {
 
     @ViewBuilder
     private var remoteImage: some View {
-        if let imageURL = attachment.remoteURL {
+        if encryptedFile != nil {
+            encryptedImage
+        } else if let imageURL = attachment.remoteURL {
             // Rendering a peer's URL on sight would fetch it, telling the sender the recipient's address and the
             // moment they read the message, so unless told otherwise the viewer asks first.
             if showsRemoteImage {
@@ -106,6 +137,39 @@ struct AttachmentView: View {
         } else {
             imagePlaceholder(systemName: "photo")
         }
+    }
+
+    /// An encrypted image, shown from the bytes decrypted in memory under the same consent as a remote image. It is
+    /// never written to disk to be shown.
+    @ViewBuilder
+    private var encryptedImage: some View {
+        if showsRemoteImage {
+            switch remoteImageConsent.encryptedImage(attachment.id) {
+            case let .loaded(decrypted):
+                Image(nsImage: decrypted.image)
+                    .resizable()
+                    .scaledToFill()
+                    .accessibilityLabel(attachment.displayFileName)
+            case .failed:
+                imagePlaceholder(systemName: "photo.badge.exclamationmark")
+            case .loading, nil:
+                imagePlaceholder(systemName: "photo")
+                    .overlay { ProgressView() }
+            }
+        } else {
+            imagePlaceholder(systemName: "photo.badge.arrow.down")
+                .accessibilityIdentifier("attachment-load-image")
+        }
+    }
+
+    private var decryptedImage: DecryptedImage? {
+        guard case let .loaded(decrypted) = remoteImageConsent.encryptedImage(attachment.id) else { return nil }
+        return decrypted
+    }
+
+    private func loadEncryptedImage(_ file: EncryptedFileLink) async {
+        let service = environment.fileTransferService
+        await remoteImageConsent.loadEncryptedImage(attachment.id) { try await service.decryptEncryptedFile(file) }
     }
 
     /// A saved file is read from disk: `AsyncImage` fetches through URLSession, which does not load `file://` URLs, so
@@ -165,7 +229,19 @@ struct AttachmentView: View {
             } else {
                 fileSummary
 
-                if let remoteURL = attachment.remoteURL {
+                if let encryptedFile {
+                    Button {
+                        openEncryptedFile(encryptedFile)
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.title3)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isOpeningEncryptedFile)
+                    .help("Open")
+                    .accessibilityLabel("Open")
+                    .accessibilityIdentifier("encrypted-file-open-button")
+                } else if let remoteURL = attachment.remoteURL {
                     Button {
                         NSWorkspace.shared.open(remoteURL)
                     } label: {
@@ -204,6 +280,14 @@ struct AttachmentView: View {
                         .font(.caption)
                         .foregroundStyle(Palette.bubbleSecondaryText(isOutgoing: isOutgoing))
                 }
+
+                // One line in every state, so the card keeps the height its row was measured at.
+                if encryptedFile != nil {
+                    Text(encryptedFileStatus)
+                        .font(.caption)
+                        .foregroundStyle(encryptedFileFailure == nil ? Palette.bubbleSecondaryText(isOutgoing: isOutgoing) : AnyShapeStyle(.orange))
+                        .singleLine()
+                }
             }
 
             Spacer()
@@ -213,6 +297,33 @@ struct AttachmentView: View {
 
     private var localFileURL: URL? {
         attachment.localFileURL
+    }
+
+    private var encryptedFileStatus: String {
+        if let encryptedFileFailure { return encryptedFileFailure }
+        return isOpeningEncryptedFile ? "Opening…" : "Encrypted file"
+    }
+
+    /// Decrypts the file, saves it to the downloads folder and opens it in Quick Look. Nothing is written when it cannot
+    /// be decrypted. Once saved, the card opens that copy again.
+    private func openEncryptedFile(_ file: EncryptedFileLink) {
+        if savedEncryptedFileURL != nil {
+            showQuickLook = true
+            return
+        }
+        isOpeningEncryptedFile = true
+        encryptedFileFailure = nil
+        let service = environment.fileTransferService
+        let name = attachment.displayFileName
+        Task {
+            defer { isOpeningEncryptedFile = false }
+            do {
+                savedEncryptedFileURL = try await service.saveEncryptedFile(file, named: name)
+                showQuickLook = true
+            } catch {
+                encryptedFileFailure = error.localizedDescription
+            }
+        }
     }
 
     private func revealButton(_ url: URL) -> some View {

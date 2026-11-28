@@ -86,6 +86,28 @@ struct ChatServiceArchiveDecryptionTests {
         await harness.accountService.disconnect(accountID: harness.accountID)
     }
 
+    /// Legacy clients encrypt only the body, and leave their fallback text beside the payload.
+    @Test(arguments: [false, true])
+    func `catch-up decrypts a legacy message from the account's archive and the room's`(isRoom: Bool) async throws {
+        let harness = try await EncryptedSendHarness.connect(archiving: true)
+        var sender = try LegacyOMEMOSender(identity: OMEMOIdentityKeyPair(), deviceID: 300, to: harness.ownKeys)
+        var message = XMPPMessage(type: isRoom ? .groupchat : .chat, to: JID.parse("\(testJIDString)/ducko"), id: "l1")
+        message.from = JID.parse(isRoom ? "\(room)/bobby" : "\(contact)/desktop")
+        message.body = "I sent you an OMEMO encrypted message but your client doesn't seem to support that."
+        try message.element.addChild(sender.encrypted("from legacy"))
+        if isRoom {
+            var item = DuckoXMPP.XMLElement(name: "x", namespace: XMPPNamespaces.mucUser)
+            item.addChild(DuckoXMPP.XMLElement(name: "item", attributes: ["jid": "\(contact)/desktop"]))
+            message.element.addChild(item)
+        }
+
+        try await harness.catchUp(account: isRoom ? [] : [("A1", message)], room: isRoom ? [("R1", message)] : [])
+
+        let stored = try await harness.storedMessage(archiveID: isRoom ? "R1" : "A1", in: isRoom ? room : contact)
+        #expect(stored?.body == "from legacy")
+        await harness.accountService.disconnect(accountID: harness.accountID)
+    }
+
     /// The account's archive records no occupant's real JID, and a private message must not be taken for a 1:1 message
     /// from the room's address.
     @Test func `an archived room private message read before the room is joined stays a notice and starts no session with the room`() async throws {
@@ -482,7 +504,7 @@ private struct TestDevice {
 
     /// A chat message to the account, its envelope stamped `time`.
     func message(_ content: [DuckoXMPP.XMLElement], id: String, time: String = archiveStamp) async throws -> XMPPMessage {
-        let encrypted = try await module.encryptMessage(content: content, time: time, to: account, recipientDeviceIDs: [100], ownDeviceIDs: []).encrypted
+        let encrypted = try await module.encryptMessage(content: content, legacyBody: nil, time: time, to: account, recipientDeviceIDs: [100], ownDeviceIDs: []).omemo2
         return addressed(encrypted, type: .chat, id: id)
     }
 
@@ -491,8 +513,8 @@ private struct TestDevice {
     /// to bob with keys bob's device lacks, but this device reads only its own.
     func ownMessage(_ text: String, id: String) async throws -> XMPPMessage {
         let encrypted = try await module.encryptMessage(
-            content: [bodyElement(text)], time: archiveStamp, to: contact, recipientDeviceIDs: [200], ownDeviceIDs: [100]
-        ).encrypted
+            content: [bodyElement(text)], legacyBody: nil, time: archiveStamp, to: contact, recipientDeviceIDs: [200], ownDeviceIDs: [100]
+        ).omemo2
         var message = XMPPMessage(type: .chat, to: JID.parse(contact.description), id: id)
         message.from = JID.parse(jid)
         message.element.addChild(encrypted)
@@ -503,8 +525,8 @@ private struct TestDevice {
     /// it, encrypted for bob's device 200 and the account's device 100, its envelope naming the room as its recipient.
     func ownPrivateMessage(_ text: String, id: String, to nickname: String) async throws -> XMPPMessage {
         let encrypted = try await module.encryptGroupMessage(
-            content: [bodyElement(text)], time: archiveStamp, roomJID: room, recipients: [(contact, [200])], ownDeviceIDs: [100]
-        ).encrypted
+            content: [bodyElement(text)], legacyBody: nil, time: archiveStamp, roomJID: room, recipients: [(contact, [200])], ownDeviceIDs: [100]
+        ).omemo2
         var message = XMPPMessage(type: .chat, to: JID.parse("\(room)/\(nickname)"), id: id)
         message.from = JID.parse(jid)
         message.element.addChild(encrypted)
@@ -514,8 +536,8 @@ private struct TestDevice {
     /// A message to the room, from bob under the nickname `bobby`, encrypted for the account's device 100.
     func roomMessage(_ text: String, id: String) async throws -> XMPPMessage {
         let encrypted = try await module.encryptGroupMessage(
-            content: [bodyElement(text)], time: archiveStamp, roomJID: room, recipients: [(account, [100])], ownDeviceIDs: []
-        ).encrypted
+            content: [bodyElement(text)], legacyBody: nil, time: archiveStamp, roomJID: room, recipients: [(account, [100])], ownDeviceIDs: []
+        ).omemo2
         var message = addressed(encrypted, type: .groupchat, id: id)
         message.from = JID.parse("\(room)/bobby")
         return message
@@ -523,7 +545,7 @@ private struct TestDevice {
 
     /// An empty key exchange to the account's device 100, as a session reset sends it.
     func keyExchange() async throws -> XMPPMessage {
-        try #require(await module.resetSession(jid: account, deviceID: 100) == .rebuilt)
+        try #require(await module.resetSession(jid: account, deviceID: 100, versions: [.omemo2]).outcomes == [.omemo2: .rebuilt])
         return try #require(sent.last)
     }
 
@@ -531,7 +553,7 @@ private struct TestDevice {
     /// ratchet on, so the next message repeats no key exchange.
     func confirmSession() {
         module.state.withLock { state in
-            let key = SessionKey(jid: account, deviceID: 100)
+            let key = SessionKey(jid: account, deviceID: 100, version: .omemo2)
             guard let session = state.sessions[key], let header = session.pendingKeyExchange else { return }
             state.sessions[key] = OMEMOSession(ratchet: session.ratchet, associatedData: session.associatedData, start: .sent(header, isConfirmed: true))
         }

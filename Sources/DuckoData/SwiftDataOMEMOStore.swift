@@ -1,4 +1,5 @@
 import DuckoCore
+import DuckoXMPP
 import Foundation
 import SwiftData
 
@@ -159,14 +160,17 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
         let descriptor = FetchDescriptor<OMEMOSessionRecord>(
             predicate: #Predicate { $0.accountJID == accountJID }
         )
-        return try modelContext.fetch(descriptor).map {
-            OMEMOStoredSession(
-                accountJID: $0.accountJID,
-                peerJID: $0.peerJID,
-                peerDeviceID: UInt32($0.peerDeviceID),
-                sessionData: $0.sessionData,
-                associatedData: $0.associatedData
-            )
+        return try modelContext.fetch(descriptor).compactMap { record in
+            OMEMOWireFormat(rawValue: record.version).map {
+                OMEMOStoredSession(
+                    accountJID: record.accountJID,
+                    peerJID: record.peerJID,
+                    peerDeviceID: UInt32(record.peerDeviceID),
+                    version: $0,
+                    sessionData: record.sessionData,
+                    associatedData: record.associatedData
+                )
+            }
         }
     }
 
@@ -175,9 +179,10 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
             let accountJID = session.accountJID
             let peerJID = session.peerJID
             let peerDeviceID = Int64(session.peerDeviceID)
+            let version = session.version.rawValue
             var descriptor = FetchDescriptor<OMEMOSessionRecord>(
                 predicate: #Predicate {
-                    $0.accountJID == accountJID && $0.peerJID == peerJID && $0.peerDeviceID == peerDeviceID
+                    $0.accountJID == accountJID && $0.peerJID == peerJID && $0.peerDeviceID == peerDeviceID && $0.version == version
                 }
             )
             descriptor.fetchLimit = 1
@@ -192,6 +197,7 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
                     accountJID: session.accountJID,
                     peerJID: session.peerJID,
                     peerDeviceID: peerDeviceID,
+                    version: version,
                     sessionData: session.sessionData,
                     associatedData: session.associatedData
                 )
@@ -255,7 +261,7 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
             for record in existing {
                 if record.fingerprint.isEmpty {
                     record.fingerprint = fingerprint
-                } else if record.fingerprint != fingerprint {
+                } else if !OMEMOFingerprint.matches(record.fingerprint, fingerprint) {
                     differing = record.fingerprint
                 }
             }
@@ -383,16 +389,15 @@ public actor SwiftDataOMEMOStore: OMEMOStore {
 
     // MARK: - Session Deletion
 
-    public func deleteSession(accountJID: String, peerJID: String, peerDeviceID: UInt32) throws {
+    public func deleteSession(accountJID: String, peerJID: String, peerDeviceID: UInt32, version: OMEMOWireFormat?) throws {
         try write {
             let peerDeviceIDInt = Int64(peerDeviceID)
-            var descriptor = FetchDescriptor<OMEMOSessionRecord>(
+            let descriptor = FetchDescriptor<OMEMOSessionRecord>(
                 predicate: #Predicate {
                     $0.accountJID == accountJID && $0.peerJID == peerJID && $0.peerDeviceID == peerDeviceIDInt
                 }
             )
-            descriptor.fetchLimit = 1
-            if let record = try modelContext.fetch(descriptor).first {
+            for record in try modelContext.fetch(descriptor) where version == nil || record.version == version?.rawValue {
                 modelContext.delete(record)
             }
         }

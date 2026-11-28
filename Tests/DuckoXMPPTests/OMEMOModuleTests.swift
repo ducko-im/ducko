@@ -137,15 +137,15 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             )
             let aliceX3DH = try OMEMOX3DH.initiatorKeyAgreement(
                 identityKeyPair: aliceIdentity,
-                peerBundle: peerBundle
+                peerBundle: peerBundle,
+                format: .omemo2
             )
             var aliceSession = try OMEMODoubleRatchetSession(
                 asInitiatorWithSharedSecret: aliceX3DH.sharedSecret,
-                peerSignedPreKey: bobBundle.signedPreKey
+                peerSignedPreKey: bobBundle.signedPreKey,
+                format: .omemo2
             )
-            let contentKey: [UInt8] = (0 ..< 32).map { _ in
-                UInt8.random(in: 0 ... 255)
-            }
+            let contentKey: [UInt8] = (0 ..< 32).map { _ in UInt8.random(in: 0 ... 255) }
             let ratchetMessage = try aliceSession.encrypt(
                 plaintext: contentKey,
                 associatedData: aliceX3DH.associatedData
@@ -156,16 +156,15 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
                 signedPreKey: bobSignedPreKey,
                 oneTimePreKey: bobPreKey,
                 peerIdentityKey: aliceIdentity.publicKeyBytes,
-                peerEphemeralKey: aliceX3DH.ephemeralPublicKey
+                peerEphemeralKey: aliceX3DH.ephemeralPublicKey,
+                format: .omemo2
             )
             var bobSession = OMEMODoubleRatchetSession(
                 asResponderWithSharedSecret: bobX3DH.sharedSecret,
-                ourSignedPreKeyPair: bobSignedPreKey.keyPair
+                ourSignedPreKeyPair: bobSignedPreKey.keyPair,
+                format: .omemo2
             )
-            let decrypted = try bobSession.decrypt(
-                message: ratchetMessage,
-                associatedData: bobX3DH.associatedData
-            )
+            let decrypted = try bobSession.decrypt(.omemo2(ratchetMessage), associatedData: bobX3DH.associatedData)
             #expect(decrypted == contentKey)
         }
     }
@@ -179,7 +178,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             let omemoModule = OMEMOModule(pepModule: pepModule)
             let (client, _) = try await makeConnectedClient(mock: mock, omemoModule: omemoModule, pepModule: pepModule)
 
-            let task = Task { try await omemoModule.fetchDeviceList(for: peerJID) }
+            let task = Task { try await omemoModule.fetchDeviceList(for: peerJID, version: .omemo2) }
 
             await mock.waitForSent(count: 1)
             let iqID = try await #require(extractIQID(from: mock.sentBytes[0]))
@@ -198,7 +197,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             let (client, _) = try await makeConnectedClient(mock: mock, omemoModule: omemoModule, pepModule: pepModule)
 
             // Prime the cache via the cache-miss flow.
-            let primeTask = Task { try await omemoModule.fetchDeviceList(for: peerJID) }
+            let primeTask = Task { try await omemoModule.fetchDeviceList(for: peerJID, version: .omemo2) }
             await mock.waitForSent(count: 1)
             let primeID = try await #require(extractIQID(from: mock.sentBytes[0]))
             await mock.simulateReceive(makeDeviceListResultIQ(iqID: primeID, fromJID: peerJID, devices: [42]))
@@ -207,7 +206,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             let baseline = await mock.sentBytes.count
 
             // Second fetch (no force) should hit cache and NOT send an IQ.
-            let cached = try await omemoModule.fetchDeviceList(for: peerJID)
+            let cached = try await omemoModule.fetchDeviceList(for: peerJID, version: .omemo2)
             #expect(cached == [42])
 
             let after = await mock.sentBytes.count
@@ -224,7 +223,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
 
             // Prime the cache so the upcoming call is a forced refresh, not a
             // cache miss (cache miss without force does NOT emit an event).
-            let primeTask = Task { try await omemoModule.fetchDeviceList(for: peerJID) }
+            let primeTask = Task { try await omemoModule.fetchDeviceList(for: peerJID, version: .omemo2) }
             await mock.waitForSent(count: 1)
             let primeID = try await #require(extractIQID(from: mock.sentBytes[0]))
             await mock.simulateReceive(makeDeviceListResultIQ(iqID: primeID, fromJID: peerJID, devices: [42]))
@@ -237,19 +236,20 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
                 }
             }
 
-            let refreshTask = Task { try await omemoModule.fetchDeviceList(for: peerJID, forceRefresh: true) }
+            let refreshTask = Task { try await omemoModule.fetchDeviceList(for: peerJID, forceRefresh: true, version: .omemo2) }
             await mock.waitForSent(count: 2)
             let refreshID = try await #require(extractIQID(from: mock.sentBytes[1]))
             await mock.simulateReceive(makeDeviceListResultIQ(iqID: refreshID, fromJID: peerJID, devices: [42, 99]))
 
             _ = try await refreshTask.value
             let collected = try await eventsTask.value
-            guard case let .omemoDeviceListReceived(jid, devices) = try #require(collected.last) else {
+            guard case let .omemoDeviceListReceived(jid, devices, version) = try #require(collected.last) else {
                 Issue.record("Expected omemoDeviceListReceived event")
                 return
             }
             #expect(jid == peerJID)
             #expect(devices == [42, 99])
+            #expect(version == .omemo2)
 
             await disconnectFast(client)
         }
@@ -264,7 +264,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             var answered: Set<String> = []
 
             for _ in 0 ..< 2 {
-                let task = Task { try await omemoModule.fetchDeviceList(for: peerJID) }
+                let task = Task { try await omemoModule.fetchDeviceList(for: peerJID, version: .omemo2) }
                 // Matches only a read the earlier attempt did not send, so a cached second fetch times out.
                 let iqID = try await awaitDeviceListRead(on: mock, notIn: answered)
                 answered.insert(iqID)
@@ -283,17 +283,17 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             let omemoModule = OMEMOModule(pepModule: pepModule)
             let (client, _) = try await makeConnectedClient(mock: mock, omemoModule: omemoModule, pepModule: pepModule)
 
-            let primeTask = Task { try await omemoModule.fetchDeviceList(for: peerJID) }
+            let primeTask = Task { try await omemoModule.fetchDeviceList(for: peerJID, version: .omemo2) }
             let primeID = try await awaitDeviceListRead(on: mock, notIn: [])
             await mock.simulateReceive(makeDeviceListResultIQ(iqID: primeID, fromJID: peerJID, devices: [42]))
             #expect(try await primeTask.value == [42])
 
-            let refreshTask = Task { try await omemoModule.fetchDeviceList(for: peerJID, forceRefresh: true) }
+            let refreshTask = Task { try await omemoModule.fetchDeviceList(for: peerJID, forceRefresh: true, version: .omemo2) }
             let refreshID = try await awaitDeviceListRead(on: mock, notIn: [primeID])
             await mock.simulateReceive(makeItemNotFoundIQ(iqID: refreshID, fromJID: peerJID))
             #expect(try await refreshTask.value == [])
 
-            let fetchTask = Task { try await omemoModule.fetchDeviceList(for: peerJID) }
+            let fetchTask = Task { try await omemoModule.fetchDeviceList(for: peerJID, version: .omemo2) }
             let fetchID = try await awaitDeviceListRead(on: mock, notIn: [primeID, refreshID])
             await mock.simulateReceive(makeDeviceListResultIQ(iqID: fetchID, fromJID: peerJID, devices: [43]))
             #expect(try await fetchTask.value == [43])
@@ -330,7 +330,7 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             await mock.simulateReceive(validBundleIQ)
 
             let elements = try await task.value
-            let header = elements.encrypted.child(named: "header")
+            let header = try elements.omemo2.child(named: "header")
             let keys = header?.child(named: "keys")?.children(named: "key") ?? []
             #expect(keys.count == 1)
             #expect(keys.first?.attribute("rid") == "\(dev2)")
@@ -854,23 +854,25 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             )
             await client.register(pepModule)
             await client.register(omemoModule)
+            await answerLegacyRequests(on: mock)
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             await simulateNoTLSConnect(mock)
 
             await mock.waitForSent(count: 5)
             let id5 = try await #require(extractIQID(from: mock.sentBytes[4]))
             await mock.simulateReceive(makeOwnDeviceListResultIQ(iqID: id5, devices: attackerList))
-            await mock.waitForSent(count: 6)
-            let id6 = try await #require(extractIQID(from: mock.sentBytes[5]))
-            await mock.simulateReceive("<iq type=\"result\" id=\"\(id6)\"/>")
             await mock.waitForSent(count: 7)
             let id7 = try await #require(extractIQID(from: mock.sentBytes[6]))
-            let ownDeviceID = try await #require(extractBundleDeviceID(from: mock.sentBytes[6]))
             await mock.simulateReceive("<iq type=\"result\" id=\"\(id7)\"/>")
+            await mock.waitForSent(count: 8)
+            let id8 = try await #require(extractIQID(from: mock.sentBytes[7]))
+            let ownDeviceID = try await #require(extractBundleDeviceID(from: mock.sentBytes[7]))
+            await mock.simulateReceive("<iq type=\"result\" id=\"\(id8)\"/>")
             try await connectTask.value
+            await awaitOwnListSlotIdle(omemoModule)
 
-            // Probe cap fires: zero probe IQs sent. Total stanzas == 7.
-            let total = await mock.sentBytes.count
+            // Probe cap fires: zero probe IQs sent. Seven stanzas besides the legacy ones.
+            let total = await mock.sentBytes.count { !String(decoding: $0, as: UTF8.self).contains(XMPPNamespaces.omemoLegacy) }
             #expect(total == 7)
 
             // Over-cap path does NOT touch the cache (attacker-provided list is untrustworthy; preserving prior
@@ -933,37 +935,39 @@ enum OMEMOModuleTests { // swiftlint:disable:this type_body_length
             )
             await client.register(pepModule)
             await client.register(omemoModule)
+            await answerLegacyRequests(on: mock)
             let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
             await simulateNoTLSConnect(mock)
 
-            // Standard OMEMO connect: device-list retrieve, publish, bundle publish.
+            // Standard OMEMO connect: device-list retrieve, legacy device-list retrieve (answered), publish, bundle publish.
             await mock.waitForSent(count: 5)
             let id5 = try await #require(extractIQID(from: mock.sentBytes[4]))
             await mock.simulateReceive(makeOwnDeviceListResultIQ(iqID: id5, devices: [99]))
-            await mock.waitForSent(count: 6)
-            let id6 = try await #require(extractIQID(from: mock.sentBytes[5]))
-            await mock.simulateReceive("<iq type=\"result\" id=\"\(id6)\"/>")
             await mock.waitForSent(count: 7)
             let id7 = try await #require(extractIQID(from: mock.sentBytes[6]))
             await mock.simulateReceive("<iq type=\"result\" id=\"\(id7)\"/>")
+            await mock.waitForSent(count: 8)
+            let id8 = try await #require(extractIQID(from: mock.sentBytes[7]))
+            await mock.simulateReceive("<iq type=\"result\" id=\"\(id8)\"/>")
 
             // Bundle probe: classify deviceID 99 as stale.
-            await mock.waitForSent(count: 8)
-            let probeID = try await #require(extractIQID(from: mock.sentBytes[7]))
+            await mock.waitForSent(count: 9)
+            let probeID = try await #require(extractIQID(from: mock.sentBytes[8]))
             await mock.simulateReceive(makeItemNotFoundIQ(iqID: probeID, fromJID: pruneTestUserJID))
 
             // Re-publish trimmed device list FAILS with service-unavailable.
-            await mock.waitForSent(count: 9)
-            let republishID = try await #require(extractIQID(from: mock.sentBytes[8]))
+            await mock.waitForSent(count: 10)
+            let republishID = try await #require(extractIQID(from: mock.sentBytes[9]))
             await mock.simulateReceive(makeServiceUnavailableIQ(iqID: republishID, fromJID: pruneTestUserJID))
 
             // Connect must still complete — the rethrow is caught by handleConnect.
             try await connectTask.value
+            await awaitOwnListSlotIdle(omemoModule)
 
             // Critically, no retract IQ must have been sent — the trim was
             // never confirmed at PEP, so retracting orphan bundles would
             // leave the device list and bundles inconsistent.
-            let total = await mock.sentBytes.count
+            let total = await mock.sentBytes.count { !String(decoding: $0, as: UTF8.self).contains(XMPPNamespaces.omemoLegacy) }
             #expect(total == 9)
             let allBytes = await mock.sentBytes
             for bytes in allBytes {
@@ -1487,9 +1491,11 @@ struct OMEMOConnectArtifacts {
 }
 
 /// Drives the standard handshake (4 stanzas) followed by OMEMO's connect-time
-/// PEP IQ flow: own device-list retrieve, device-list publish, bundle publish.
-/// It returns once the connection's first setup attempt has had its outcome, so
-/// `omemoModule.ownIdentityData` is populated. The mock's
+/// PEP IQ flow: own device-list retrieve, legacy device-list retrieve for a new
+/// device, device-list publish, bundle publish. `answerLegacyRequests` answers
+/// the legacy retrieve and the legacy publication after setup. It returns once
+/// the connection's first setup attempt and the publications after it have
+/// ended, so `omemoModule.ownIdentityData` is populated. The mock's
 /// `sentBytes` is cleared so post-handshake tests can index from 0; the two
 /// publish IQ byte buffers (device-list publish, bundle publish) are returned
 /// via `OMEMOConnectArtifacts`. The own-device-list retrieve IQ is consumed
@@ -1506,6 +1512,7 @@ func makeConnectedClient(
     )
     await client.register(pepModule)
     await client.register(omemoModule)
+    await answerLegacyRequests(on: mock)
 
     let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
     await simulateNoTLSConnect(mock)
@@ -1516,25 +1523,26 @@ func makeConnectedClient(
     let id5 = try await #require(extractIQID(from: mock.sentBytes[4]))
     await mock.simulateReceive("<iq type=\"result\" id=\"\(id5)\"/>")
 
-    // Device list publish.
-    await mock.waitForSent(count: 6)
-    let deviceListPublishIQ = await mock.sentBytes[5]
-    let id6 = try #require(extractIQID(from: deviceListPublishIQ))
-    await mock.simulateReceive("<iq type=\"result\" id=\"\(id6)\"/>")
+    // Device list publish, after the legacy device-list retrieve a new device makes.
+    let deviceListPublish = try await awaitOutgoingIQ(on: mock, type: .set, namespace: XMPPNamespaces.pubsub) {
+        $0.contains("node=\"\(XMPPNamespaces.omemoDevices)\"")
+    }
+    await mock.simulateReceive("<iq type=\"result\" id=\"\(deviceListPublish.id)\"/>")
 
     // Own bundle publish.
-    await mock.waitForSent(count: 7)
-    let bundlePublishIQ = await mock.sentBytes[6]
-    let id7 = try #require(extractIQID(from: bundlePublishIQ))
-    await mock.simulateReceive("<iq type=\"result\" id=\"\(id7)\"/>")
+    let bundlePublish = try await awaitOutgoingIQ(on: mock, type: .set, namespace: XMPPNamespaces.pubsub) {
+        $0.contains("node=\"\(XMPPNamespaces.omemoBundles)\"")
+    }
+    await mock.simulateReceive("<iq type=\"result\" id=\"\(bundlePublish.id)\"/>")
 
     try await connectTask.value
     await omemoModule.awaitSetupAttempt()
+    await awaitOwnListSlotIdle(omemoModule)
     await mock.clearSentBytes()
 
     return (client, OMEMOConnectArtifacts(
-        deviceListPublishIQ: deviceListPublishIQ,
-        bundlePublishIQ: bundlePublishIQ
+        deviceListPublishIQ: Array(deviceListPublish.xml.utf8),
+        bundlePublishIQ: Array(bundlePublish.xml.utf8)
     ))
 }
 
@@ -1637,7 +1645,7 @@ func makeKEXMessage(to recipient: TestOMEMOIdentity, plaintext: String, from sen
     // The recipient's own JID on the wire is `user@example.com` (the connect helpers' credentials).
     let recipientJID = try #require(BareJID(localPart: "user", domainPart: "example.com"))
     // That account's list, which the connect cached, has to hold the recipient's device for a key to be sent to it.
-    omemoModule.state.withLock { $0.deviceLists[recipientJID, default: []].append(recipient.data.deviceID) }
+    omemoModule.state.withLock { $0.deviceLists[.omemo2, default: [:]][recipientJID, default: []].append(recipient.data.deviceID) }
     let encryptTask = Task {
         try await omemoModule.encryptMessage(
             plaintext: plaintext, to: recipientJID,
@@ -1656,7 +1664,7 @@ func makeKEXMessage(to recipient: TestOMEMOIdentity, plaintext: String, from sen
     var message = XMLElement(name: "message", attributes: [
         "from": "\(recipientJID)/i", "to": recipientJID.description
     ])
-    message.addChild(elements.encrypted)
+    try message.addChild(elements.omemo2)
     return message
 }
 
@@ -1719,6 +1727,7 @@ private func makeConnectedClientWithDeviceList(
     )
     await client.register(pepModule)
     await client.register(omemoModule)
+    await answerLegacyRequests(on: mock)
 
     let connectTask = Task { try await client.connect(host: "example.com", port: 5222) }
     await simulateNoTLSConnect(mock)
@@ -1728,17 +1737,17 @@ private func makeConnectedClientWithDeviceList(
     let id5 = try await #require(extractIQID(from: mock.sentBytes[4]))
     await mock.simulateReceive(makeOwnDeviceListResultIQ(iqID: id5, devices: otherDeviceIDsOnList))
 
-    // Device-list publish (module appended its own ID).
-    await mock.waitForSent(count: 6)
-    let id6 = try await #require(extractIQID(from: mock.sentBytes[5]))
-    await mock.simulateReceive("<iq type=\"result\" id=\"\(id6)\"/>")
+    // Device-list publish (module appended its own ID), after the answered legacy device-list retrieve.
+    await mock.waitForSent(count: 7)
+    let id7 = try await #require(extractIQID(from: mock.sentBytes[6]))
+    await mock.simulateReceive("<iq type=\"result\" id=\"\(id7)\"/>")
 
     // Bundle publish.
-    await mock.waitForSent(count: 7)
-    let bundlePublishBytes = await mock.sentBytes[6]
-    let id7 = try #require(extractIQID(from: bundlePublishBytes))
+    await mock.waitForSent(count: 8)
+    let bundlePublishBytes = await mock.sentBytes[7]
+    let id8 = try #require(extractIQID(from: bundlePublishBytes))
     let ownDeviceID = try #require(extractBundleDeviceID(from: bundlePublishBytes))
-    await mock.simulateReceive("<iq type=\"result\" id=\"\(id7)\"/>")
+    await mock.simulateReceive("<iq type=\"result\" id=\"\(id8)\"/>")
 
     // pruneStaleBundles fires per-device probes (parallel within chunks of 4).
     let probeCount = otherDeviceIDsOnList.count
@@ -1749,7 +1758,7 @@ private func makeConnectedClientWithDeviceList(
 
     // Retract path: re-publish trimmed device list, then retract each orphan.
     try await respondToRetractFlow(
-        mock: mock, startingSentCount: 7 + probeCount,
+        mock: mock, startingSentCount: firstProbeIndex + probeCount,
         expectedRetracts: expectedRetracts
     )
 
@@ -1767,6 +1776,10 @@ func awaitOwnListSlotIdle(_ module: OMEMOModule) async {
 
 private let pruneTestUserJID = BareJID(localPart: "user", domainPart: "example.com")!
 
+/// Where a new device's first pruning probe falls in the sent stanzas: after the handshake, both own device-list
+/// retrieves, the device-list publish and the bundle publish.
+private let firstProbeIndex = 8
+
 /// Acks the per-device bundle-probe IQs that `pruneStaleBundles` issues with
 /// the response specified by `outcomes` (defaults to `.empty`).
 private func respondToBundleProbes(
@@ -1774,10 +1787,10 @@ private func respondToBundleProbes(
     probeCount: Int, outcomes: [UInt32: BundleProbeOutcome]
 ) async throws {
     guard probeCount > 0 else { return }
-    await mock.waitForSent(count: 7 + probeCount)
+    await mock.waitForSent(count: firstProbeIndex + probeCount)
     let probeBytes = await mock.sentBytes
     for offset in 0 ..< probeCount {
-        let probeIQ = probeBytes[7 + offset]
+        let probeIQ = probeBytes[firstProbeIndex + offset]
         let probeID = try #require(extractIQID(from: probeIQ))
         let probedDeviceID = try #require(extractBundleDeviceID(from: probeIQ))
         let outcome = outcomes[probedDeviceID] ?? .empty

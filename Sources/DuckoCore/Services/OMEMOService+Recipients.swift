@@ -4,7 +4,7 @@ import Logging
 
 private let log = Logger(label: "im.ducko.core.omemo")
 
-/// Who a message is encrypted to: the devices on each recipient's device list, as last fetched or notified, that the
+/// Who a message is encrypted to: the devices on each recipient's device lists, as last fetched or notified, that the
 /// trust store allows (XEP-0384).
 extension OMEMOService {
     /// Resolution from `shouldEncrypt`. Callers fail closed on every case but `.proceed` and `.userDisabled` when the
@@ -49,9 +49,9 @@ extension OMEMOService {
         return .proceed(trustedDeviceIDs: trusted)
     }
 
-    /// The devices on `jid`'s device list as last fetched or notified, fetched when none or an empty one is cached. A
-    /// missing list counts as empty. Each listed device without a trust row gets an undecided one, so it counts under
-    /// trust on first use at once.
+    /// The devices on either of `jid`'s device lists, OMEMO 2 and legacy, as last fetched or notified, each fetched when
+    /// none or an empty one is cached. A missing list counts as empty, and either list failing to read throws. Each
+    /// listed device without a trust row gets an undecided one, so it counts under trust on first use at once.
     func currentDeviceIDs(for jid: BareJID, accountID: UUID) async throws -> Set<UInt32> {
         guard let client = accountService?.connectedClient(for: accountID) else {
             throw OMEMOServiceError.notConnected(accountID)
@@ -59,7 +59,7 @@ extension OMEMOService {
         guard let omemoModule = await client.module(ofType: OMEMOModule.self) else {
             throw OMEMOServiceError.omemoNotAvailable
         }
-        let devices = try await omemoModule.fetchDeviceList(for: jid)
+        let devices = try await omemoModule.fetchListedDevices(of: jid)
         await seedUndecidedTrust(for: jid, devices: devices, accountID: accountID)
         return Set(devices)
     }

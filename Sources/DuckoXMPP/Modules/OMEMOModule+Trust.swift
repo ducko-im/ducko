@@ -7,10 +7,15 @@ extension OMEMOModule {
         state.withLock { $0.trustGuard = trustGuard }
     }
 
-    /// What the guard compares a key exchange with: the key of the session it would replace.
-    static func existingSession(_ session: OMEMOSession?) -> OMEMOTrustGuard.ExistingSession {
+    /// What the guard compares a key exchange or a new session in `sessionKey`'s version with while it holds no key for
+    /// the device: the device's session in that version, else its session in another version, since the device has one
+    /// identity key in every version.
+    static func existingSession(for sessionKey: SessionKey, in sessions: [SessionKey: OMEMOSession]) -> OMEMOTrustGuard.ExistingSession {
+        let session = sessions[sessionKey] ?? OMEMOWireFormat.allCases.lazy.compactMap {
+            sessions[SessionKey(jid: sessionKey.jid, deviceID: sessionKey.deviceID, version: $0)]
+        }.first
         guard let session else { return .none }
-        return session.peerIdentityKey.map { .key($0) } ?? .unreadable
+        return session.peerFingerprint.map { .key($0) } ?? .unreadable
     }
 }
 

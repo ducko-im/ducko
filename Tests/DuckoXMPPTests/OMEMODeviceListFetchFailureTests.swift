@@ -150,10 +150,16 @@ extension OMEMOModuleTests {
             <iq type="error" id="\(id)"><error type="cancel">\
             <item-not-found xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/></error></iq>
             """)
-            let listPublish = await sentStanza(6)
+            let legacyRetrieve = await sentStanza(6)
+            let legacyID = try #require(extractIQID(from: legacyRetrieve))
+            await mock.simulateReceive("""
+            <iq type="error" id="\(legacyID)"><error type="cancel">\
+            <item-not-found xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/></error></iq>
+            """)
+            let listPublish = await sentStanza(7)
             #expect(listPublish.contains("<publish") && listPublish.contains("node=\"\(XMPPNamespaces.omemoDevices)\""))
             try await acknowledge(listPublish)
-            let bundlePublish = await sentStanza(7)
+            let bundlePublish = await sentStanza(8)
             let deviceID = try publishedDeviceID(in: bundlePublish)
             #expect(listPublish.contains("<device id=\"\(deviceID)\""))
             try await acknowledge(bundlePublish)

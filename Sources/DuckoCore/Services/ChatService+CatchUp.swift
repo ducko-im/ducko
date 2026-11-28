@@ -207,7 +207,7 @@ extension ChatService {
         var entries: [UUID: [ArchivedMessage]] = [:]
         var decrypted: [String: EncryptedContent] = [:]
         for entry in page {
-            if entry.forwarded.message.isOMEMOEncrypted, isCurrent(session) {
+            if entry.forwarded.message.carriesOMEMOPayload, isCurrent(session) {
                 decrypted[entry.messageID] = await decryptedAccountArchiveEntry(
                     entry, among: conversations, accountJID: session.accountJID, accountID: session.accountID
                 )
@@ -265,7 +265,7 @@ extension ChatService {
     /// Whether an archived message holds something to show: a body or attachment, an OMEMO payload, or a message
     /// encrypted with another method. An OMEMO message without a payload only manages keys.
     private static func holdsArchivedMessage(_ message: XMPPMessage) -> Bool {
-        if message.isOMEMOEncrypted {
+        if message.carriesOMEMOPayload {
             return !message.carriesOnlyOMEMOKeys
         }
         return message.body != nil || !InboundMessageMetadata(message).attachments.isEmpty || message.isEncrypted

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Exchange encrypted messages with contacts on Conversations and other apps that use the older OMEMO format (XEP-0384)
+- Open encrypted files that contacts share in encrypted chats (XEP-0454)
+- Show which OMEMO versions each of a contact's devices uses in `ducko omemo devices` and the new `/omemo-devices`
+
 ### Fixed
 
 - Fix the first-run import counting its log folders as accounts

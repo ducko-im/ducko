@@ -4,12 +4,12 @@ private let log = Logger(label: "im.ducko.xmpp.omemo")
 
 /// Why a setup attempt could not go on.
 enum OMEMOSetupFailure: Error {
-    /// The account's device list could not be read, so a new device's id could collide with a listed one.
+    /// One of the account's device lists could not be read, so a new device's id could collide with a listed one.
     case ownDeviceListUnreadable
 }
 
 extension OMEMOModule {
-    /// Whether the connection's first setup attempt has had its outcome.
+    /// Whether the connection's first setup attempt, and the work after it when it completed the setup, has ended.
     enum SetupAttemptGate {
         case pending([CheckedContinuation<Void, Never>])
         case settled
@@ -29,12 +29,15 @@ extension OMEMOModule.State {
 /// Setting up this device's encryption on a connection without holding the session up: its identity, its entry on the
 /// account's device list and its bundle (XEP-0384). Attempts that do not finish are retried after
 /// `setupRetryDelays`, and a refusal ends them. Each attempt runs in the own-list slot, so it never overlaps a
-/// re-announce, and the waits between attempts leave the slot free for one.
+/// re-announce, and the waits between attempts leave the slot free for one. The legacy publication follows the attempt
+/// that completes, and its outcome changes nothing about the setup's.
 extension OMEMOModule {
     // MARK: - Public API
 
-    /// Returns once the connection's first setup attempt has had its outcome. Returns at once when the session runs
-    /// none (a resumed session with an identity, or unreadable stored keys), or once the connection has ended.
+    /// Returns once the connection's first setup attempt has had its outcome and, when it completed the setup, the
+    /// stale-bundle pruning and the legacy publication after it have ended, whether they succeeded or not. Returns at
+    /// once when the session runs none (a resumed session with an identity, or unreadable stored keys), or once the
+    /// connection has ended.
     public func awaitSetupAttempt() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let isParked = state.withLock { state -> Bool in
@@ -113,6 +116,8 @@ extension OMEMOModule {
                     continuation.resume(returning: committed.status)
                     if committed.isFirstCompletion {
                         await module.pruneStaleBundlesAfterSetup()
+                        await module.publishLegacyDeviceAfterSetup()
+                        module.settleFirstAttempt()
                     }
                 }
                 return true
@@ -140,8 +145,8 @@ extension OMEMOModule {
             return .incomplete
         }
         do {
-            guard try await ensureOwnDeviceInList(connected.identity.deviceID, listed: connected.ownList) else { return .incomplete }
-            try await republishBundle()
+            guard try await ensureOwnDeviceInList(connected.identity.deviceID, listed: connected.ownList, version: .omemo2) else { return .incomplete }
+            try await publishOMEMO2Bundle()
         } catch {
             return Self.setupStatus(for: error)
         }
@@ -168,7 +173,8 @@ extension OMEMOModule {
     }
 
     /// Commits the outcome of a current attempt: it ends the attempt for the encryptions waiting on it, reports a
-    /// status, and settles the first-attempt gate. A superseded attempt commits nothing.
+    /// status, and settles the first-attempt gate, which the first completion leaves to the work after it. A
+    /// superseded attempt commits nothing.
     private func commitSetupStatus(
         _ status: OMEMOSetupStatus?, generation: UInt64
     ) -> (status: OMEMOSetupStatus?, isFirstCompletion: Bool) {
@@ -196,22 +202,24 @@ extension OMEMOModule {
             logSetupStatus(status)
             committed.context?.emitEvent(.omemoSetupChanged(status))
         }
-        settleFirstAttempt()
+        if !committed.isFirstCompletion {
+            settleFirstAttempt()
+        }
         return (status, committed.isFirstCompletion)
     }
 
     /// Settles the first-attempt gate, and lets re-announces start, since the connection's own publishes of the list
     /// are done. Only the first call does anything.
     func settleFirstAttempt() {
-        let settled = state.withLock { state -> (waiters: [CheckedContinuation<Void, Never>], isReannouncePending: Bool)? in
+        let settled = state.withLock { state -> (waiters: [CheckedContinuation<Void, Never>], pendingReannounces: Set<OMEMOWireFormat>)? in
             guard case let .pending(waiters) = state.firstAttempt else { return nil }
             state.firstAttempt = .settled
-            return (waiters, state.reannouncePending)
+            return (waiters, state.pendingReannounces)
         }
         guard let settled else { return }
         // A notification asked for a re-announce while the connect's own publishes ran.
-        if settled.isReannouncePending {
-            reannounceOwnDevice()
+        for version in settled.pendingReannounces {
+            reannounceOwnDevice(in: version)
         }
         for waiter in settled.waiters {
             waiter.resume()
@@ -250,7 +258,7 @@ extension OMEMOModule {
         let current = state.withLock { state -> (deviceID: UInt32, ownList: [UInt32])? in
             guard let identity = state.ownIdentity else { return nil }
             let deviceID = identity.deviceID.value
-            return (deviceID, state.deviceLists[identity.connectedJID.bareJID] ?? [deviceID])
+            return (deviceID, state.deviceLists[.omemo2]?[identity.connectedJID.bareJID] ?? [deviceID])
         }
         guard let current else { return }
         do {

@@ -84,6 +84,15 @@ public enum XMPPNamespaces {
     public static let omemoDevices = "urn:xmpp:omemo:2:devices"
     public static let omemoBundles = "urn:xmpp:omemo:2:bundles"
 
+    // Legacy OMEMO (XEP-0384 v0.3)
+    public static let omemoLegacy = "eu.siacs.conversations.axolotl"
+    public static let omemoLegacyDeviceList = "eu.siacs.conversations.axolotl.devicelist"
+
+    /// The node holding the legacy bundle of device `deviceID`: each device's bundle has a node of its own.
+    public static func omemoLegacyBundles(deviceID: UInt32) -> String {
+        "\(omemoLegacy).bundles:\(deviceID)"
+    }
+
     /// Explicit Message Encryption (XEP-0380)
     public static let eme = "urn:xmpp:eme:0"
 

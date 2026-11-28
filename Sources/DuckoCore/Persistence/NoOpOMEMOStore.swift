@@ -1,3 +1,4 @@
+import DuckoXMPP
 import Foundation
 
 /// No-op OMEMO store used when no real store is provided (e.g., tests, CLI without persistence).
@@ -48,5 +49,5 @@ struct NoOpOMEMOStore: OMEMOStore {
     func upsertSeenDevices(_: [OMEMOStoredSeenDevice], for _: String) async throws {}
     func replaceSeenDevices(_: [OMEMOStoredSeenDevice], for _: String) async throws {}
     func purgeSeenDevices(for _: String) async throws {}
-    func deleteSession(accountJID _: String, peerJID _: String, peerDeviceID _: UInt32) async throws {}
+    func deleteSession(accountJID _: String, peerJID _: String, peerDeviceID _: UInt32, version _: OMEMOWireFormat?) async throws {}
 }

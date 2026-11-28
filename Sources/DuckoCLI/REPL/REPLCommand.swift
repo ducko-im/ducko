@@ -44,10 +44,12 @@ struct REPLCommand {
         case decline = "/decline"
         case cancel = "/cancel"
         case transfers = "/transfers"
+        case savefile = "/savefile"
         case rooms = "/rooms"
         case avatar = "/avatar"
         case connectionInfo = "/connection-info"
         case encrypt = "/encrypt"
+        case omemoDevices = "/omemo-devices"
         case omemoVerify = "/omemo-verify"
         case omemoReset = "/omemo-reset"
         case omemoSetup = "/omemo-setup"
@@ -98,10 +100,12 @@ struct REPLCommand {
             case .decline: ["  /decline [id]            Decline incoming file transfer"]
             case .cancel: ["  /cancel [sid]            Cancel a direct file transfer"]
             case .transfers: ["  /transfers               List active transfers"]
+            case .savefile: ["  /savefile <jid>          Save the last encrypted file from a chat to Downloads"]
             case .rooms: ["  /rooms [service]         Discover available rooms"]
             case .avatar: ["  /avatar [jid]            View avatar info (own or contact's)"]
             case .connectionInfo: ["  /connection-info         Show TLS connection info"]
             case .encrypt: ["  /encrypt <jid> on|off    Toggle OMEMO encryption for a conversation"]
+            case .omemoDevices: ["  /omemo-devices <jid>     List a contact's or your own OMEMO devices"]
             case .omemoVerify: ["  /omemo-verify <jid> <id> <fingerprint>  Mark a device verified after comparing its fingerprint"]
             case .omemoReset: ["  /omemo-reset <jid> [id]  Reset OMEMO sessions with a contact's or your other devices"]
             case .omemoSetup: ["  /omemo-setup             Retry setting up this device's OMEMO encryption"]
@@ -113,7 +117,7 @@ struct REPLCommand {
 
         fileprivate func accepts(hasArguments: Bool) -> Bool {
             switch self {
-            case .send, .add, .remove, .reply, .retract, .edit, .search, .searchAll, .approve, .deny, .block, .unblock, .directedPresence, .encrypt, .omemoVerify, .omemoReset, .pref: hasArguments
+            case .send, .add, .remove, .reply, .retract, .edit, .search, .searchAll, .approve, .deny, .block, .unblock, .directedPresence, .savefile, .encrypt, .omemoDevices, .omemoVerify, .omemoReset, .pref: hasArguments
             case .roster, .who, .profile, .blocklist, .unregisterAccount, .changePassword, .transfers, .connectionInfo, .omemoSetup, .help, .quit: !hasArguments
             case .status, .history, .checkRegistration, .submitRegistration, .join, .leave, .members, .topic, .nick, .destroy, .voice, .kick, .pm, .affiliations, .config, .moderate, .sendfile, .senddirect, .accept, .decline, .cancel, .rooms, .avatar: true
             }

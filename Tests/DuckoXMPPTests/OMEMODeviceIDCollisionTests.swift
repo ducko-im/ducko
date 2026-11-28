@@ -47,6 +47,7 @@ extension OMEMOModuleTests {
             <items node="\(XMPPNamespaces.omemoDevices)"><item id="current">\
             <devices xmlns="urn:xmpp:omemo:2"><device id="99"/></devices></item></items></pubsub></iq>
             """)
+            try await acknowledge(nextPubSubRequest(.get) { $0.contains(XMPPNamespaces.omemoLegacyDeviceList) })
             let listPublish = try await nextPubSubRequest(.set) { $0.contains("node=\"\(XMPPNamespaces.omemoDevices)\"") }
             try await acknowledge(listPublish)
             try await acknowledge(nextPubSubRequest(.set) { $0.contains(XMPPNamespaces.omemoBundles) })

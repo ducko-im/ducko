@@ -4,8 +4,8 @@ import Testing
 private let peer = BareJID(localPart: "peer", domainPart: "example.com")!
 private let keyA = [UInt8](repeating: 0xAA, count: 32)
 private let keyB = [UInt8](repeating: 0xBB, count: 32)
-private let fingerprintA = omemoFingerprint(of: keyA)
-private let fingerprintB = omemoFingerprint(of: keyB)
+private let fingerprintA = omemoFingerprint(of: keyA, format: .omemo2)
+private let fingerprintB = omemoFingerprint(of: keyB, format: .omemo2)
 
 /// The trust guard's rules: which key exchanges and sessions it admits, and how stored rows and the user's decisions
 /// change what it holds.
@@ -24,20 +24,36 @@ struct OMEMOTrustGuardTests {
         ownDeviceID: UInt32 = 200, usedByThisModule: Bool = false
     ) -> OMEMOTrustGuard.Verdict {
         trustGuard.admitKeyExchange(
-            from: SessionKey(jid: peer, deviceID: deviceID), offeredKey: key, replacing: session,
+            from: OMEMODeviceKey(jid: peer, deviceID: deviceID), offering: omemoFingerprint(of: key, format: .omemo2), standIn: session,
             preKey: OMEMOTrustGuard.PreKeyUse(id: preKeyID, ownDeviceID: ownDeviceID, isUsedByThisModule: usedByThisModule)
         )
     }
 
     private func admitSession(_ key: [UInt8]?) -> OMEMOTrustGuard.Verdict {
-        trustGuard.admitSession(with: SessionKey(jid: peer, deviceID: 1), identityKey: key)
+        trustGuard.admitSession(with: OMEMODeviceKey(jid: peer, deviceID: 1), fingerprint: key.map { omemoFingerprint(of: $0, format: .omemo2) })
     }
 
     // MARK: - Display
 
-    @Test(arguments: ["", "abcd", String(repeating: "zz", count: 32), "01" + String(repeating: "00", count: 31)])
+    private static let formlessFingerprints = [
+        "", "abcd", String(repeating: "zz", count: 32), "01" + String(repeating: "00", count: 31), "06" + String(repeating: "11", count: 32)
+    ]
+
+    @Test(arguments: formlessFingerprints)
     func `A stored fingerprint that is empty or has no Curve25519 form displays unchanged`(stored: String) {
         #expect(omemoDisplayFingerprint(ofStoredFingerprint: stored) == stored)
+    }
+
+    @Test func `A legacy key's stored form displays as its Curve25519 key, as the OMEMO 2 form of the same identity does`() throws {
+        let identity = OMEMOIdentityKeyPair()
+        let curveKey = try identity.agreementPrivateKey().publicKey.rawRepresentation
+        let legacy = omemoFingerprint(of: curveKey, format: .legacy)
+
+        #expect(legacy == "05" + hexString(curveKey))
+        #expect(omemoDisplayFingerprint(ofStoredFingerprint: legacy).filter { $0 != " " } == hexString(curveKey))
+        #expect(omemoDisplayFingerprint(ofStoredFingerprint: legacy) == omemoDisplayFingerprint(
+            ofStoredFingerprint: omemoFingerprint(of: identity.publicKeyBytes, format: .omemo2)
+        ))
     }
 
     // MARK: - Admission
@@ -48,10 +64,10 @@ struct OMEMOTrustGuardTests {
 
     @Test(arguments: [
         (Held.none, OMEMOTrustGuard.ExistingSession.none, OMEMOTrustGuard.Verdict.accepted),
-        (.none, .key(keyA), .accepted),
-        (.none, .key(keyB), .keyMismatch),
+        (.none, .key(fingerprintA), .accepted),
+        (.none, .key(fingerprintB), .keyMismatch),
         (.none, .unreadable, .keyMismatch),
-        (.keyA, .key(keyB), .accepted),
+        (.keyA, .key(fingerprintB), .accepted),
         (.keyA, .unreadable, .accepted),
         (.keyB, .none, .keyMismatch),
         (.refused, .none, .untrusted)
@@ -99,6 +115,91 @@ struct OMEMOTrustGuardTests {
         _ = trustGuard.applyDistrust(peer: peer, deviceID: 1)
         #expect(admitSession(keyA) == .untrusted)
         #expect(trustGuard.heldFingerprint(peer: peer, deviceID: 1) == fingerprintA)
+    }
+
+    @Test func `A key is held only while none is, also for a device marked untrusted, and the key held from then on is returned`() {
+        let device = OMEMODeviceKey(jid: peer, deviceID: 1)
+        _ = trustGuard.applyDistrust(peer: peer, deviceID: 1)
+
+        #expect(trustGuard.holdKeyIfNoneHeld("", for: device).isEmpty)
+        #expect(trustGuard.holdKeyIfNoneHeld(fingerprintA, for: device) == fingerprintA)
+        #expect(trustGuard.holdKeyIfNoneHeld(fingerprintB, for: device) == fingerprintA)
+        #expect(trustGuard.heldFingerprint(peer: peer, deviceID: 1) == fingerprintA)
+    }
+
+    // MARK: - Fingerprint Forms
+
+    /// An identity's key in the stored form of `format`: its Ed25519 key for OMEMO 2, its Curve25519 key for legacy.
+    private static func storedForm(of identity: OMEMOIdentityKeyPair, in format: OMEMOWireFormat) throws -> String {
+        switch format {
+        case .omemo2: omemoFingerprint(of: identity.publicKeyBytes, format: .omemo2)
+        case .legacy: try omemoFingerprint(of: identity.agreementPrivateKey().publicKey.rawRepresentation, format: .legacy)
+        }
+    }
+
+    @Test func `A key's stored forms match each other and themselves, and never another key's`() throws {
+        let identity = OMEMOIdentityKeyPair()
+        let other = OMEMOIdentityKeyPair()
+        let forms = try [OMEMOWireFormat.omemo2, .legacy].map { try Self.storedForm(of: identity, in: $0) }
+        let otherForms = try [OMEMOWireFormat.omemo2, .legacy].map { try Self.storedForm(of: other, in: $0) }
+
+        for form in forms {
+            #expect(forms.allSatisfy { OMEMOFingerprint.matches(form, $0) })
+            #expect(!otherForms.contains { OMEMOFingerprint.matches(form, $0) })
+        }
+    }
+
+    @Test(arguments: formlessFingerprints)
+    func `A fingerprint with no Curve25519 form matches nothing, not even itself`(stored: String) {
+        #expect(!OMEMOFingerprint.matches(stored, stored))
+        #expect(!OMEMOFingerprint.matches(stored, fingerprintA))
+        #expect(!OMEMOFingerprint.matches(fingerprintA, stored))
+    }
+
+    @Test(arguments: [OMEMOWireFormat.omemo2, .legacy])
+    func `A key held in one version's form admits that key in the other's form and refuses another key, keeping the held form`(
+        heldFormat: OMEMOWireFormat
+    ) throws {
+        let identity = OMEMOIdentityKeyPair()
+        let offeredFormat: OMEMOWireFormat = heldFormat == .omemo2 ? .legacy : .omemo2
+        let held = try Self.storedForm(of: identity, in: heldFormat)
+        let same = try Self.storedForm(of: identity, in: offeredFormat)
+        let another = try Self.storedForm(of: OMEMOIdentityKeyPair(), in: offeredFormat)
+        let device = OMEMODeviceKey(jid: peer, deviceID: 1)
+        let unheldDevice = OMEMODeviceKey(jid: peer, deviceID: 2)
+        func admitKeyExchange(from device: OMEMODeviceKey, offering offered: String, standIn session: OMEMOTrustGuard.ExistingSession) -> OMEMOTrustGuard.Verdict {
+            trustGuard.admitKeyExchange(
+                from: device, offering: offered, standIn: session, preKey: OMEMOTrustGuard.PreKeyUse(id: 7, ownDeviceID: 200, isUsedByThisModule: true)
+            )
+        }
+        mergeRow(fingerprint: held, decision: .granted)
+
+        #expect(trustGuard.admitSession(with: device, fingerprint: same) == .accepted)
+        #expect(trustGuard.admitsDecryption(from: device, fingerprint: same))
+        #expect(admitKeyExchange(from: device, offering: same, standIn: .none) == .accepted)
+        #expect(trustGuard.prepareGrant(peer: peer, deviceID: 1, fingerprint: same)?.fingerprint == held)
+        #expect(trustGuard.admitSession(with: device, fingerprint: another) == .keyMismatch)
+        #expect(!trustGuard.admitsDecryption(from: device, fingerprint: another))
+        #expect(admitKeyExchange(from: device, offering: another, standIn: .none) == .keyMismatch)
+        #expect(trustGuard.prepareGrant(peer: peer, deviceID: 1, fingerprint: another) == nil)
+        #expect(trustGuard.heldFingerprint(peer: peer, deviceID: 1) == held)
+        #expect(admitKeyExchange(from: unheldDevice, offering: another, standIn: .key(held)) == .keyMismatch)
+        #expect(admitKeyExchange(from: unheldDevice, offering: same, standIn: .key(held)) == .accepted)
+        let sessionOnlyDevice = OMEMODeviceKey(jid: peer, deviceID: 3)
+        #expect(trustGuard.admitSession(with: sessionOnlyDevice, fingerprint: another, standIn: .key(held)) == .keyMismatch)
+        #expect(trustGuard.admitSession(with: sessionOnlyDevice, fingerprint: same, standIn: .key(held)) == .accepted)
+    }
+
+    @Test(arguments: [OMEMOWireFormat.omemo2, .legacy])
+    func `A granted row naming the refused device's held key in the other version's form lifts the refusal`(heldFormat: OMEMOWireFormat) throws {
+        let identity = OMEMOIdentityKeyPair()
+        let held = try Self.storedForm(of: identity, in: heldFormat)
+        let same = try Self.storedForm(of: identity, in: heldFormat == .omemo2 ? .legacy : .omemo2)
+        mergeRow(fingerprint: held, decision: .untrusted)
+
+        mergeRow(fingerprint: same, decision: .granted)
+
+        #expect(trustGuard.admitSession(with: OMEMODeviceKey(jid: peer, deviceID: 1), fingerprint: held) == .accepted)
     }
 
     // MARK: - Stored Trust
@@ -164,14 +265,14 @@ struct OMEMOTrustGuardTests {
     }
 
     @Test func `Decryption passes with no key held or the held key, also for a refused device, and not with another or none`() {
-        let device = SessionKey(jid: peer, deviceID: 1)
-        #expect(trustGuard.admitsDecryption(from: device, identityKey: keyB))
+        let device = OMEMODeviceKey(jid: peer, deviceID: 1)
+        #expect(trustGuard.admitsDecryption(from: device, fingerprint: fingerprintB))
 
         mergeRow(fingerprint: fingerprintA, decision: .untrusted)
 
-        #expect(trustGuard.admitsDecryption(from: device, identityKey: keyA))
-        #expect(!trustGuard.admitsDecryption(from: device, identityKey: keyB))
-        #expect(!trustGuard.admitsDecryption(from: device, identityKey: nil))
+        #expect(trustGuard.admitsDecryption(from: device, fingerprint: fingerprintA))
+        #expect(!trustGuard.admitsDecryption(from: device, fingerprint: fingerprintB))
+        #expect(!trustGuard.admitsDecryption(from: device, fingerprint: nil))
     }
 
     enum LaterChange: CaseIterable {

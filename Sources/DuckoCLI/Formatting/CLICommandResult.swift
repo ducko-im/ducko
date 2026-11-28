@@ -13,6 +13,7 @@ enum CLICommandResult {
     case transferAccepted(offerID: String, directory: String)
     case transferDeclined(offerID: String)
     case transferCanceled(fileName: String)
+    case encryptedFileSaved(path: String)
     case messageRetracted(id: String)
     case messageEdited(id: String)
     /// A preference read, or set when `changed`.
@@ -50,6 +51,7 @@ enum CLICommandResult {
         case let .transferAccepted(offerID, directory): "Accepted file transfer: \(offerID), saving to \(directory)"
         case let .transferDeclined(offerID): "Declined file transfer: \(offerID)"
         case let .transferCanceled(fileName): "Canceled file transfer: \(fileName)"
+        case let .encryptedFileSaved(path): "Saved encrypted file to \(path)"
         case let .messageRetracted(id): "Retracted message: \(id)"
         case let .messageEdited(id): "Edited message: \(id)"
         case let .preference(name, _, enabled, changed):

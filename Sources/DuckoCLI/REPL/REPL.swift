@@ -63,9 +63,35 @@ private func dispatchREPLCommand(
     case .blocklist: await handleBlockListREPLCommand(context: context)
     case .directedPresence: await handleDirectedPresenceREPLCommand(arguments, context: context)
     case .unregisterAccount: await handleUnregisterAccountREPLCommand(context: context)
-    case .checkRegistration: await handleCheckRegistrationREPLCommand(arguments, context: context)
-    case .submitRegistration: await handleSubmitRegistrationREPLCommand(arguments, context: context)
+    case .checkRegistration, .submitRegistration: await handleRegistrationREPLCommand(arguments, context: context, submitting: kind == .submitRegistration)
     case .changePassword: await handleChangePasswordREPLCommand(context: context)
+    case .join, .leave, .members, .topic, .nick, .destroy, .voice, .kick, .pm, .affiliations, .config, .moderate:
+        return await dispatchRoomREPLCommand(kind, arguments: arguments, context: context, currentRoom: currentRoom)
+    case .sendfile, .senddirect: await handleSendFileREPLCommand(arguments, context: context, currentRoom: currentRoom, directly: kind == .senddirect)
+    case .accept, .decline: await handleOfferREPLCommand(arguments, context: context, declining: kind == .decline)
+    case .cancel: await handleCancelREPLCommand(arguments, context: context)
+    case .transfers: await handleTransfersREPLCommand(context: context)
+    case .savefile: await handleSaveFileREPLCommand(arguments, context: context)
+    case .rooms: await handleRoomsREPLCommand(arguments, context: context)
+    case .avatar: await handleAvatarREPLCommand(arguments, context: context)
+    case .connectionInfo: await handleConnectionInfoREPLCommand(context: context)
+    case .encrypt: await handleEncryptREPLCommand(arguments, context: context)
+    case .omemoDevices: await handleOMEMODevicesREPLCommand(arguments, context: context)
+    case .omemoVerify: await handleOMEMOVerifyREPLCommand(arguments, context: context)
+    case .omemoReset: await handleOMEMOResetREPLCommand(arguments, context: context)
+    case .omemoSetup: await handleOMEMOSetupREPLCommand(context: context)
+    case .pref: await handlePrefREPLCommand(arguments, context: context)
+    case .help: print(context.formatter.formatHelp(REPLCommand.help))
+    case .quit: await quitREPL(context: context, currentRoom: currentRoom)
+    }
+    return .unchanged
+}
+
+/// The room commands, which can act on the current room or change it. `dispatchREPLCommand` handles every other command.
+private func dispatchRoomREPLCommand(
+    _ kind: REPLCommand.Kind, arguments: String, context: REPLContext, currentRoom: String?
+) async -> RoomSelectionChange {
+    switch kind {
     case .join: return await handleJoinREPLCommand(arguments, context: context)
     case .leave: return await handleLeaveREPLCommand(arguments, context: context, currentRoom: currentRoom)
     case .members: await handleMembersREPLCommand(arguments, context: context, currentRoom: currentRoom)
@@ -78,20 +104,7 @@ private func dispatchREPLCommand(
     case .affiliations: await handleAffiliationsREPLCommand(arguments, context: context, currentRoom: currentRoom)
     case .config: await handleConfigREPLCommand(arguments, context: context, currentRoom: currentRoom)
     case .moderate: await handleModerateREPLCommand(arguments, context: context, currentRoom: currentRoom)
-    case .sendfile, .senddirect: await handleSendFileREPLCommand(arguments, context: context, currentRoom: currentRoom, directly: kind == .senddirect)
-    case .accept, .decline: await handleOfferREPLCommand(arguments, context: context, declining: kind == .decline)
-    case .cancel: await handleCancelREPLCommand(arguments, context: context)
-    case .transfers: await handleTransfersREPLCommand(context: context)
-    case .rooms: await handleRoomsREPLCommand(arguments, context: context)
-    case .avatar: await handleAvatarREPLCommand(arguments, context: context)
-    case .connectionInfo: await handleConnectionInfoREPLCommand(context: context)
-    case .encrypt: await handleEncryptREPLCommand(arguments, context: context)
-    case .omemoVerify: await handleOMEMOVerifyREPLCommand(arguments, context: context)
-    case .omemoReset: await handleOMEMOResetREPLCommand(arguments, context: context)
-    case .omemoSetup: await handleOMEMOSetupREPLCommand(context: context)
-    case .pref: await handlePrefREPLCommand(arguments, context: context)
-    case .help: print(context.formatter.formatHelp(REPLCommand.help))
-    case .quit: await quitREPL(context: context, currentRoom: currentRoom)
+    case .send, .roster, .status, .who, .add, .remove, .history, .profile, .reply, .retract, .edit, .search, .searchAll, .approve, .deny, .block, .unblock, .blocklist, .directedPresence, .unregisterAccount, .checkRegistration, .submitRegistration, .changePassword, .sendfile, .senddirect, .accept, .decline, .cancel, .transfers, .savefile, .rooms, .avatar, .connectionInfo, .encrypt, .omemoDevices, .omemoVerify, .omemoReset, .omemoSetup, .pref, .help, .quit: break
     }
     return .unchanged
 }

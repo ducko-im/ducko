@@ -21,7 +21,7 @@ public final class ChatStatesModule: XMPPModule, Sendable {
 
     /// A chat state next to an OMEMO payload is outside the encryption, so only the decrypted copy's counts.
     public func handleMessage(_ message: XMPPMessage) throws {
-        guard !message.isOMEMOEncrypted else { return }
+        guard !message.carriesOMEMOPayload else { return }
         handleChatState(in: message)
     }
 

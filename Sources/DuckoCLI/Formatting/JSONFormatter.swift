@@ -51,9 +51,19 @@ struct JSONFormatter: CLIFormatter {
         if let errorText = message.errorText {
             dict["error"] = errorText
         }
+        return dict.merging(attachmentFields(message)) { field, _ in field }
+    }
+
+    /// The attachments a message's body does not name. An encrypted file's link carries its key, so the file is named
+    /// in its place and marked as one.
+    private func attachmentFields(_ message: ChatMessage) -> [String: String] {
+        var dict: [String: String] = [:]
         let extraAttachments = message.attachments.filter { $0.url != message.body }
         if !extraAttachments.isEmpty {
-            dict["attachments"] = extraAttachments.map(\.url).joined(separator: ",")
+            dict["attachments"] = extraAttachments.map { EncryptedFileLink.isMentioned(in: $0.url) ? $0.displayFileName : $0.url }.joined(separator: ",")
+        }
+        if message.attachments.contains(where: { EncryptedFileLink.isMentioned(in: $0.url) }) {
+            dict["encrypted_file"] = "true"
         }
         return dict
     }
@@ -260,8 +270,8 @@ struct JSONFormatter: CLIFormatter {
              .jingleChecksumReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked:
             nil
-        case let .omemoDeviceListReceived(jid, devices): encode(["type": "omemo_device_list", "jid": jid.description, "devices": devices.map(String.init).joined(separator: ","), "account": account])
-        case let .omemoSessionEstablished(jid, deviceID, identityKey, _): formatOMEMOSession(jid: jid, deviceID: deviceID, identityKey: identityKey, account: account)
+        case let .omemoDeviceListReceived(jid, devices, version): formatOMEMODeviceList(jid: jid, devices: devices, version: version, account: account)
+        case let .omemoSessionEstablished(jid, deviceID, version, identityKey, _): formatOMEMOSession(jid: jid, deviceID: deviceID, version: version, identityKey: identityKey, account: account)
         case let .omemoRecipientsPartial(conversation, dropped): formatOMEMORecipientsPartial(conversation: conversation, dropped: dropped, account: account)
         case let .omemoSetupChanged(status): formatOMEMOSetup(status, account: account)
         case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
@@ -329,12 +339,23 @@ struct JSONFormatter: CLIFormatter {
         return fields
     }
 
-    private func formatOMEMOSession(jid: BareJID, deviceID: UInt32, identityKey: [UInt8], account: String) -> String {
+    private func formatOMEMODeviceList(jid: BareJID, devices: [UInt32], version: OMEMOWireFormat, account: String) -> String {
+        encode([
+            "type": "omemo_device_list",
+            "jid": jid.description,
+            "devices": devices.map(String.init).joined(separator: ","),
+            "version": version.rawValue,
+            "account": account
+        ])
+    }
+
+    private func formatOMEMOSession(jid: BareJID, deviceID: UInt32, version: OMEMOWireFormat, identityKey: [UInt8], account: String) -> String {
         encode([
             "type": "omemo_session_established",
             "jid": jid.description,
             "device_id": "\(deviceID)",
-            "fingerprint": omemoFingerprint(of: identityKey),
+            "version": version.rawValue,
+            "fingerprint": omemoFingerprint(of: identityKey, format: version),
             "account": account
         ])
     }
@@ -478,9 +499,14 @@ struct JSONFormatter: CLIFormatter {
     func formatFileMessage(fileName: String, url: String, fileSize: Int64?) -> String {
         var dict: [String: String] = [
             "type": "file",
-            "file_name": fileName,
-            "url": url
+            "file_name": fileName
         ]
+        // An encrypted file's link carries its key, so it is marked as one instead of printed.
+        if EncryptedFileLink.isMentioned(in: url) {
+            dict["encrypted_file"] = "true"
+        } else {
+            dict["url"] = url
+        }
         if let fileSize {
             dict["file_size"] = formatByteCount(fileSize)
             dict["file_size_bytes"] = "\(fileSize)"
@@ -730,17 +756,7 @@ struct JSONFormatter: CLIFormatter {
     }
 
     func formatOMEMODevice(_ device: OMEMODeviceInfo) -> String {
-        var dict: [String: String] = [
-            "type": "omemo_device",
-            "jid": device.peerJID,
-            "device_id": "\(device.deviceID)",
-            "trust": device.trustLevel.rawValue
-        ]
-        if !device.fingerprint.isEmpty {
-            dict["fingerprint"] = device.fingerprint
-            dict["display_fingerprint"] = OMEMODeviceInfo.formatFingerprint(device.fingerprint)
-        }
-        return encode(dict)
+        encode(OMEMODeviceOutput(device: device))
     }
 
     func formatOMEMOTrustChange(jid: String, deviceID: UInt32, trustLevel: OMEMOTrustLevel) -> String {
@@ -887,8 +903,32 @@ private struct TLSInfoOutput: Encodable {
     }
 }
 
-/// Each device's outcome with the raw and display fingerprints of a changed key, so JSON consumers compare keys without
-/// parsing text.
+/// A device with its versions as a list, OMEMO 2 first, which is empty when no device list is known.
+private struct OMEMODeviceOutput: Encodable {
+    let device: OMEMODeviceInfo
+
+    private enum CodingKeys: String, CodingKey {
+        case type, jid, trust, fingerprint, versions
+        case deviceID = "device_id"
+        case displayFingerprint = "display_fingerprint"
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode("omemo_device", forKey: .type)
+        try container.encode(device.peerJID, forKey: .jid)
+        try container.encode("\(device.deviceID)", forKey: .deviceID)
+        try container.encode(device.trustLevel.rawValue, forKey: .trust)
+        if !device.fingerprint.isEmpty {
+            try container.encode(device.fingerprint, forKey: .fingerprint)
+            try container.encode(OMEMODeviceInfo.formatFingerprint(device.fingerprint), forKey: .displayFingerprint)
+        }
+        try container.encode(orderedOMEMOVersions(device.versions).map(\.rawValue), forKey: .versions)
+    }
+}
+
+/// Each device's outcome with the raw and display fingerprints of a changed or refused key, so JSON consumers compare keys
+/// without parsing text.
 private struct OMEMOSessionResetOutput: Encodable {
     let report: OMEMOSessionResetReport
 
@@ -918,6 +958,11 @@ private struct OMEMOSessionResetOutput: Encodable {
             case let .rebuilt(needsTrusting):
                 try entry.encode("rebuilt", forKey: .outcome)
                 try entry.encode(needsTrusting ? "true" : "false", forKey: .needsTrusting)
+            case let .rebuiltKeyRefused(needsTrusting, newFingerprint):
+                try entry.encode("rebuilt_key_refused", forKey: .outcome)
+                try entry.encode(needsTrusting ? "true" : "false", forKey: .needsTrusting)
+                try entry.encode(newFingerprint, forKey: .newFingerprint)
+                try entry.encode(OMEMODeviceInfo.formatFingerprint(newFingerprint), forKey: .newDisplayFingerprint)
             case .discarded:
                 try entry.encode("discarded", forKey: .outcome)
             case let .keyChanged(previousFingerprint, newFingerprint):

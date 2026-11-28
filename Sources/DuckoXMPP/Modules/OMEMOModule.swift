@@ -7,14 +7,16 @@ private let log = Logger(label: "im.ducko.xmpp.omemo")
 /// Implements XEP-0384 OMEMO Encryption and XEP-0380 Explicit Message Encryption.
 ///
 /// Manages device lists, bundles, session establishment (X3DH), and
-/// per-message encryption/decryption (Double Ratchet + AES-256-CBC).
+/// per-message encryption/decryption (Double Ratchet, with AES-256-CBC
+/// payloads in OMEMO 2 and AES-128-GCM in legacy OMEMO).
 /// Uses PEPModule for all PubSub operations.
 public final class OMEMOModule: XMPPModule, Sendable {
     // MARK: - State
 
     struct State {
         var context: ModuleContext?
-        var deviceLists: [BareJID: [UInt32]] = [:]
+        /// Each version's device lists, since a contact can list different devices on each.
+        var deviceLists: [OMEMOWireFormat: [BareJID: [UInt32]]] = [:]
         var ownIdentity: OwnIdentity?
         var pendingIdentity: OMEMOIdentityData?
         /// Set when the stored keys could not be read, so this connection neither generates a device nor publishes.
@@ -23,15 +25,22 @@ public final class OMEMOModule: XMPPModule, Sendable {
         /// The sessions this connection built, or took up from a key exchange that reached it live or as a carbon.
         var liveSessionKeys: Set<SessionKey> = []
         var usedPreKeyIDs: Set<UInt32> = []
-        /// The key exchanges this connection took up, so a replayed one cannot build a session again.
-        var acceptedKeyExchanges: Set<[UInt8]> = []
-        /// The ratchet keys whose chains this connection sent a heartbeat for.
-        var heartbeatChains: Set<[UInt8]> = []
-        /// The pre-key ids of this module's last successful bundle publish.
+        /// Each version's key exchanges this connection took up, so a replayed one cannot build a session again.
+        var acceptedKeyExchanges: [OMEMOWireFormat: Set<[UInt8]>] = [:]
+        /// Each version's ratchet keys whose chains this connection sent a heartbeat for.
+        var heartbeatChains: [OMEMOWireFormat: Set<[UInt8]>] = [:]
+        /// The pre-key ids of this module's last successful OMEMO 2 bundle publish.
         var publishedPreKeyIDs: Set<UInt32>?
-        /// The signed pre-key id of this module's last successful bundle publish.
+        /// The signed pre-key id of this module's last successful OMEMO 2 bundle publish.
         var publishedSignedPreKeyID: UInt32?
-        /// The latest bundle publish. Each publish waits for the one before it.
+        /// The pre-key ids of this module's last legacy publish whose bundle and device-list entry both succeeded.
+        var publishedLegacyPreKeyIDs: Set<UInt32>?
+        /// The signed pre-key id of that legacy publish.
+        var publishedLegacySignedPreKeyID: UInt32?
+        /// Set while a legacy publication, its bundle out, writes this device onto the account's legacy list, so a
+        /// notification leaving the device off that list meanwhile asks for a re-announce.
+        var isWritingLegacyListEntry = false
+        /// The latest OMEMO 2 bundle publish. Each publish waits for the one before it.
         var bundlePublish: Task<Void, any Error>?
         /// Replaced by the account's guard, which outlives this module, before the module connects.
         var trustGuard = OMEMOTrustGuard()
@@ -45,10 +54,10 @@ public final class OMEMOModule: XMPPModule, Sendable {
         /// re-announce. It empties the slot when it ends, unless a newer task took it.
         var ownListTask: Task<Void, Never>?
         var ownListTaskGeneration: UInt64 = 0
-        /// A notification left this device off the account's list while a re-announce could not start.
-        var reannouncePending = false
-        /// The senders whose list this connection fetched again for a device it left out.
-        var refreshedListSenders: Set<BareJID> = []
+        /// The versions whose list a notification showed without this device while a re-announce could not start.
+        var pendingReannounces: Set<OMEMOWireFormat> = []
+        /// Each version's senders whose list this connection fetched again for a device it left out.
+        var refreshedListSenders: [OMEMOWireFormat: Set<BareJID>] = [:]
         var identityPersister: (any OMEMOIdentityPersisting)?
         var identityPersisterAccountID: String?
         /// Set from the session's establishment until it ends.
@@ -165,7 +174,7 @@ public final class OMEMOModule: XMPPModule, Sendable {
         state.withLock {
             $0.ownIdentity = nil
             $0.identityUnavailable = false
-            $0.reannouncePending = false
+            $0.pendingReannounces.removeAll()
             $0.refreshedListSenders.removeAll()
             $0.deviceLists.removeAll()
             $0.sessions.removeAll()
@@ -175,6 +184,9 @@ public final class OMEMOModule: XMPPModule, Sendable {
             $0.heartbeatChains.removeAll()
             $0.publishedPreKeyIDs = nil
             $0.publishedSignedPreKeyID = nil
+            $0.publishedLegacyPreKeyIDs = nil
+            $0.publishedLegacySignedPreKeyID = nil
+            $0.isWritingLegacyListEntry = false
             $0.seenDeviceClassificationProvider = nil
             $0.seenDeviceClassificationAccountID = nil
             $0.emergencyRetractGuard = nil
@@ -277,20 +289,28 @@ public final class OMEMOModule: XMPPModule, Sendable {
         }
     }
 
-    /// Whether the bundle this connection last published lags behind the keys this device can hand out, as when nothing
-    /// was published yet, pre-keys were used up or added since, or the signed pre-key was replaced. A failed publish
-    /// leaves the last published keys in place.
+    /// Whether the bundle this connection last published in either version lags behind the keys this device can hand
+    /// out, as when nothing was published yet, pre-keys were used up or added since, or the signed pre-key was
+    /// replaced. A failed publish leaves the last published keys in place.
     package var bundleNeedsPublish: Bool {
         state.withLock { state in
             guard let identity = state.ownIdentity else { return false }
-            return state.publishedPreKeyIDs != Self.publishablePreKeyIDs(of: identity, used: state.usedPreKeyIDs)
-                || state.publishedSignedPreKeyID != identity.signedPreKey.keyID
+            let preKeyIDs = Self.publishablePreKeyIDs(of: identity, used: state.usedPreKeyIDs)
+            return state.publishedPreKeyIDs != preKeyIDs || state.publishedSignedPreKeyID != identity.signedPreKey.keyID
+                || state.legacyPublicationLags(signedPreKeyID: identity.signedPreKey.keyID, preKeyIDs: preKeyIDs)
         }
     }
 
-    /// Publishes the bundle as the identity stands when the publish starts. Publishes never overlap: one asked for
-    /// during another starts once it ends. Each runs in a task of its own, so a caller's cancellation fails no publish.
+    /// Publishes the bundle as the identity stands when the publish starts, then the legacy bundle and device-list entry
+    /// when they lag. Bundle publishes never overlap: one asked for during another starts once it ends. Each runs in a
+    /// task of its own, so a caller's cancellation fails no publish.
     package func republishBundle() async throws {
+        try await publishOMEMO2Bundle()
+        try await publishLegacyDeviceInOwnListSlot()
+    }
+
+    /// Publishes the OMEMO 2 bundle once any earlier bundle publish has ended.
+    func publishOMEMO2Bundle() async throws {
         let publish = state.withLock { state in
             let previous = state.bundlePublish
             let publish = Task {
@@ -303,14 +323,14 @@ public final class OMEMOModule: XMPPModule, Sendable {
         try await publish.value
     }
 
-    /// Restores previously persisted sessions into the module's in-memory state. A session that fails to decode counts
-    /// as no session.
+    /// Restores previously persisted sessions into the module's in-memory state. A session that fails to decode, or
+    /// whose record is in another version than its entry names, counts as no session.
     public func restoreSessions(_ entries: [StoredSessionEntry]) {
         let undecodable = state.withLock { state in
             var undecodable = 0
             for entry in entries {
-                if let session = try? OMEMOSession(serialized: entry.sessionData, associatedData: entry.associatedData) {
-                    state.sessions[SessionKey(jid: entry.jid, deviceID: entry.deviceID)] = session
+                if let session = try? OMEMOSession(serialized: entry.sessionData, associatedData: entry.associatedData), session.format == entry.version {
+                    state.sessions[SessionKey(jid: entry.jid, deviceID: entry.deviceID, version: entry.version)] = session
                 } else {
                     undecodable += 1
                 }
@@ -322,15 +342,14 @@ public final class OMEMOModule: XMPPModule, Sendable {
         }
     }
 
-    /// Exports a single session's state for persistent storage.
-    public func exportSession(jid: BareJID, deviceID: UInt32) -> StoredSessionEntry? {
-        state.withLock { state in
-            let key = SessionKey(jid: jid, deviceID: deviceID)
-            guard let session = state.sessions[key] else { return nil }
-            return StoredSessionEntry(
-                jid: jid, deviceID: deviceID,
-                sessionData: session.serialized, associatedData: session.associatedData
-            )
+    /// Exports the state of the session in `version` with a device for persistent storage.
+    public func exportSession(jid: BareJID, deviceID: UInt32, version: OMEMOWireFormat) -> StoredSessionEntry? {
+        state.withLock { Self.storedEntry(SessionKey(jid: jid, deviceID: deviceID, version: version), in: $0.sessions) }
+    }
+
+    static func storedEntry(_ key: SessionKey, in sessions: [SessionKey: OMEMOSession]) -> StoredSessionEntry? {
+        sessions[key].map {
+            StoredSessionEntry(jid: key.jid, deviceID: key.deviceID, version: key.version, sessionData: $0.serialized, associatedData: $0.associatedData)
         }
     }
 
@@ -339,102 +358,10 @@ public final class OMEMOModule: XMPPModule, Sendable {
         state.withLock { state in
             state.sessions.map { key, session in
                 StoredSessionEntry(
-                    jid: key.jid, deviceID: key.deviceID,
+                    jid: key.jid, deviceID: key.deviceID, version: key.version,
                     sessionData: session.serialized, associatedData: session.associatedData
                 )
             }
-        }
-    }
-
-    /// Encrypts a 1:1 message's `content`, the elements it would carry in the clear, sent at `time` (XEP-0082).
-    /// `recipientDeviceIDs`/`ownDeviceIDs` nil means "all known".
-    public func encryptMessage(
-        content: [XMLElement],
-        time: String,
-        to recipientJID: BareJID,
-        recipientDeviceIDs: [UInt32]? = nil,
-        ownDeviceIDs: [UInt32]? = nil
-    ) async throws -> EncryptedMessageElements {
-        let recipientDevices: [UInt32] = if let recipientDeviceIDs {
-            recipientDeviceIDs
-        } else {
-            try await fetchDeviceList(for: recipientJID)
-        }
-        return try await encryptForDevices(
-            content: content, time: time,
-            peerDevices: recipientDevices.map { (jid: recipientJID, deviceID: $0) },
-            ownDeviceIDs: ownDeviceIDs,
-            conversation: recipientJID
-        )
-    }
-
-    /// Encrypts a group message's `content`, sent at `time`. `roomJID` labels emitted `omemoRecipientsPartial` events for
-    /// correlation.
-    public func encryptGroupMessage(
-        content: [XMLElement],
-        time: String,
-        roomJID: BareJID,
-        recipients: [(jid: BareJID, deviceIDs: [UInt32])],
-        ownDeviceIDs: [UInt32]? = nil
-    ) async throws -> EncryptedMessageElements {
-        let peerDevices = recipients.flatMap { r in r.deviceIDs.map { (jid: r.jid, deviceID: $0) } }
-        return try await encryptForDevices(
-            content: content, time: time,
-            peerDevices: peerDevices,
-            ownDeviceIDs: ownDeviceIDs,
-            conversation: roomJID
-        )
-    }
-
-    /// Shared encrypt pipeline. Throws `noUsableRecipientDevices` when every peer bundle was missing, or every peer
-    /// device left its list while keys were wrapped, since an empty PEP list and all-item-not-found would otherwise
-    /// look like a silent drop. `conversation`, the peer or the room, is the envelope's recipient and labels emitted
-    /// `omemoRecipientsPartial` events.
-    private func encryptForDevices(
-        content: [XMLElement], time: String,
-        peerDevices: [(jid: BareJID, deviceID: UInt32)],
-        ownDeviceIDs: [UInt32]?,
-        conversation: BareJID
-    ) async throws -> EncryptedMessageElements {
-        await awaitIdentityIfSettingUp()
-        do {
-            let identity = try requireOwnIdentity()
-            let envelope = SCEEnvelope.build(content: content, time: time, to: conversation, from: identity.connectedJID.bareJID)
-            let payload = try OMEMOPayload(encrypting: envelope, key: randomBytes(OMEMOPayload.keyLength))
-            let peerEncryption = try await encryptKeysInParallel(
-                keyMaterial: payload.keyMaterial, identity: identity, devices: peerDevices
-            )
-            if peerEncryption.results.isEmpty {
-                // Surface the dropped peer devices before throwing so operators
-                // see the same diagnostic in the worst case (every recipient
-                // device unfetchable) as in partial-coverage cases. The throw
-                // would otherwise hide the dropped set entirely.
-                emitDroppedRecipientsEventIfNeeded(
-                    conversation: conversation, dropped: peerEncryption.dropped
-                )
-                throw OMEMOModuleError.noUsableRecipientDevices
-            }
-            let ownEncryption = try await encryptKeyForOwnDevices(
-                keyMaterial: payload.keyMaterial, identity: identity, ownDeviceIDs: ownDeviceIDs
-            )
-            // A device-list notification can remove a device while bundles are fetched, also once its key is wrapped.
-            let deviceLists = state.withLock { $0.deviceLists }
-            let listedPeers = peerEncryption.keepingDevices(listedIn: deviceLists)
-            let listedOwn = ownEncryption.keepingDevices(listedIn: deviceLists)
-            let droppedRecipients = listedPeers.dropped + listedOwn.dropped
-            guard !listedPeers.results.isEmpty else {
-                emitDroppedRecipientsEventIfNeeded(conversation: conversation, dropped: droppedRecipients)
-                throw OMEMOModuleError.noUsableRecipientDevices
-            }
-            let keys = (listedPeers.results + listedOwn.results).map { (jid: $0.sessionKey.jid, key: $0.keyElement) }
-            let elements = buildEncryptedElements(
-                keys: keys, payload: Base64.encode(payload.ciphertext), senderDeviceID: identity.deviceID.value,
-                droppedRecipients: droppedRecipients
-            )
-            emitDroppedRecipientsEventIfNeeded(conversation: conversation, dropped: droppedRecipients)
-            return elements
-        } catch {
-            throw OMEMOModuleError.translatingCryptoFailure(error)
         }
     }
 
@@ -443,7 +370,8 @@ public final class OMEMOModule: XMPPModule, Sendable {
         let sessionKey: SessionKey
     }
 
-    /// Encryption results plus the subset dropped because no bundle could be fetched (surfaced via `omemoRecipientsPartial`).
+    /// Encryption results plus the devices dropped, as for a bundle that could not be fetched (surfaced via
+    /// `omemoRecipientsPartial`).
     struct EncryptionBatch {
         var results: [EncryptionResult]
         var dropped: [DroppedOMEMORecipient]
@@ -454,12 +382,13 @@ public final class OMEMOModule: XMPPModule, Sendable {
     /// handshakes; chunked iteration still completes every device.
     private static let encryptConcurrencyCap = 64
 
-    private func encryptKeysInParallel(
+    /// Wraps `keyMaterial` for each of `devices` through its session in `version`.
+    func encryptKeysInParallel(
         keyMaterial: [UInt8], identity: OwnIdentity,
-        devices: [(jid: BareJID, deviceID: UInt32)]
+        devices: [(jid: BareJID, deviceID: UInt32)], version: OMEMOWireFormat
     ) async throws -> EncryptionBatch {
         assert(
-            Set(devices.map { SessionKey(jid: $0.jid, deviceID: $0.deviceID) }).count == devices.count,
+            Set(devices.map { OMEMODeviceKey(jid: $0.jid, deviceID: $0.deviceID) }).count == devices.count,
             "Duplicate devices would corrupt Double Ratchet sessions"
         )
         // XEP-0384 §5.4: a listed device without a bundle is not an error — skip it (guards against stale PEP entries).
@@ -479,7 +408,7 @@ public final class OMEMOModule: XMPPModule, Sendable {
                         do {
                             let result = try await self.encryptKeyForDevice(
                                 keyMaterial: keyMaterial, jid: device.jid,
-                                deviceID: device.deviceID, identity: identity
+                                deviceID: device.deviceID, identity: identity, version: version
                             )
                             return .encrypted(result)
                         } catch OMEMOModuleError.bundleNotFound {
@@ -509,51 +438,6 @@ public final class OMEMOModule: XMPPModule, Sendable {
         return batch
     }
 
-    private func encryptKeyForOwnDevices(
-        keyMaterial: [UInt8], identity: OwnIdentity,
-        ownDeviceIDs: [UInt32]?
-    ) async throws -> EncryptionBatch {
-        let ownJID = identity.connectedJID.bareJID
-        let ownDevices: [UInt32] = if let ownDeviceIDs {
-            ownDeviceIDs
-        } else {
-            try await fetchDeviceList(for: ownJID)
-        }
-        let filtered = ownDevices.filter { $0 != identity.deviceID.value }
-        return try await encryptKeysInParallel(
-            keyMaterial: keyMaterial, identity: identity,
-            devices: filtered.map { (jid: ownJID, deviceID: $0) }
-        )
-    }
-
-    private func emitDroppedRecipientsEventIfNeeded(
-        conversation: BareJID, dropped: [DroppedOMEMORecipient]
-    ) {
-        guard !dropped.isEmpty else { return }
-        let context = state.withLock { $0.context }
-        context?.emitEvent(.omemoRecipientsPartial(conversation: conversation, droppedDevices: dropped))
-    }
-
-    private func buildEncryptedElements(
-        keys: [(jid: BareJID, key: XMLElement)], payload: String,
-        senderDeviceID: UInt32,
-        droppedRecipients: [DroppedOMEMORecipient]
-    ) -> EncryptedMessageElements {
-        let encrypted = buildEncryptedElement(
-            keys: keys, payload: payload, senderDeviceID: senderDeviceID
-        )
-        let encryption = XMLElement(
-            name: "encryption",
-            namespace: XMPPNamespaces.eme,
-            attributes: ["namespace": XMPPNamespaces.omemo]
-        )
-        return EncryptedMessageElements(
-            encrypted: encrypted,
-            encryption: encryption,
-            droppedRecipients: droppedRecipients
-        )
-    }
-
     // MARK: - Identity Generation
 
     /// The identity a setup attempt works with. `ownList` is the account's device list when the identity was generated
@@ -563,10 +447,10 @@ public final class OMEMOModule: XMPPModule, Sendable {
         let ownList: [UInt32]?
     }
 
-    /// The identity a setup attempt works with. Generates a new device only when none was configured, with an id the
-    /// account's list does not hold (XEP-0384). Returns `nil` when the configured keys could not be read, since
-    /// replacing them would lose the device. Throws `ownDeviceListUnreadable` when the list could not be read, since a
-    /// new id could then collide. A later attempt reads it again.
+    /// The identity a setup attempt works with. Generates a new device only when none was configured, with an id
+    /// neither of the account's lists holds (XEP-0384). Returns `nil` when the configured keys could not be read, since
+    /// replacing them would lose the device. Throws `ownDeviceListUnreadable` when either list could not be read, since
+    /// a new id could then collide. A later attempt reads them again.
     func connectIdentity() async throws -> ConnectIdentity? {
         let (installed, unavailable) = state.withLock { ($0.ownIdentity, $0.identityUnavailable) }
         if unavailable { return nil }
@@ -580,14 +464,16 @@ public final class OMEMOModule: XMPPModule, Sendable {
             return nil
         }
         let ownList: [UInt32]
+        let ownLegacyList: [UInt32]
         do {
-            ownList = try await fetchDeviceListFromPEP(nil) ?? []
+            ownList = try await fetchDeviceListFromPEP(nil, version: .omemo2) ?? []
+            ownLegacyList = try await fetchDeviceListFromPEP(nil, version: .legacy) ?? []
         } catch {
             log.warning("OMEMO own device list could not be read; no device is created yet")
             log.debug("OMEMO own device list could not be read: \(error)")
             throw OMEMOSetupFailure.ownDeviceListUnreadable
         }
-        return try ConnectIdentity(identity: generateOwnIdentity(avoiding: ownList), ownList: ownList)
+        return try ConnectIdentity(identity: generateOwnIdentity(avoiding: ownList + ownLegacyList), ownList: ownList)
     }
 
     /// Returns `nil` when no identity is pending.
@@ -661,7 +547,7 @@ public final class OMEMOModule: XMPPModule, Sendable {
     // MARK: - Bundle Management
 
     /// Pre-keys a contact used stay in the identity for decryption until the connection ends, but leave the bundle.
-    private static func publishablePreKeyIDs(of identity: OwnIdentity, used: Set<UInt32>) -> Set<UInt32> {
+    static func publishablePreKeyIDs(of identity: OwnIdentity, used: Set<UInt32>) -> Set<UInt32> {
         Set(identity.preKeys.map(\.keyID)).subtracting(used)
     }
 
@@ -713,197 +599,55 @@ public final class OMEMOModule: XMPPModule, Sendable {
                 try await pepModule.retrieveItems(node: XMPPNamespaces.omemoBundles, from: nil, itemID: "\(deviceID)").first?.payload
             },
             isValidBundle: { [self] payload, deviceID in parseBundleElement(payload, deviceID: deviceID) != nil },
-            publishDeviceList: { [self] devices in try await publishDeviceList(devices) },
+            publishDeviceList: { [self] devices in try await publishDeviceList(devices, version: .omemo2) },
             retractBundle: { [self] deviceID in
                 try await pepModule.retractItem(node: XMPPNamespaces.omemoBundles, itemID: "\(deviceID)")
             },
             cacheDeviceList: { [self] devices in
                 let connectedJID = state.withLock { $0.context?.connectedJID()?.bareJID }
-                if let connectedJID { state.withLock { $0.deviceLists[connectedJID] = devices } }
+                if let connectedJID { state.withLock { $0.deviceLists[.omemo2, default: [:]][connectedJID] = devices } }
             }
         ))
         return try await maintenance.pruneStaleBundles(ownDeviceID: ownDeviceID, ownDeviceList: ownDeviceList)
     }
 
+    /// The bundle `jid`'s device `deviceID` publishes for `version`: an item of the one OMEMO 2 bundles node, or the
+    /// item of the device's own legacy bundle node.
     func fetchBundle(
-        from jid: BareJID, deviceID: UInt32
+        from jid: BareJID, deviceID: UInt32, version: OMEMOWireFormat
     ) async throws -> OMEMOBundle {
-        let items = try await pepModule.retrieveItems(
-            node: XMPPNamespaces.omemoBundles, from: jid, itemID: "\(deviceID)"
-        )
-        guard let item = items.first,
-              let bundle = parseBundleElement(
-                  item.payload, deviceID: deviceID
-              )
-        else {
-            throw OMEMOModuleError.bundleNotFound
+        let bundle: OMEMOBundle? = switch version {
+        case .omemo2:
+            try await pepModule.retrieveItems(node: XMPPNamespaces.omemoBundles, from: jid, itemID: "\(deviceID)")
+                .first.flatMap { parseBundleElement($0.payload, deviceID: deviceID) }
+        case .legacy:
+            try await pepModule.retrieveItems(node: XMPPNamespaces.omemoLegacyBundles(deviceID: deviceID), from: jid, maxItems: 1)
+                .first.flatMap { parseLegacyBundleElement($0.payload, deviceID: deviceID) }
         }
+        guard let bundle else { throw OMEMOModuleError.bundleNotFound }
         return bundle
-    }
-
-    // MARK: - Message Handling
-
-    private func handleDeviceListNotification(
-        _ message: XMPPMessage
-    ) {
-        let context = state.withLock { $0.context }
-        // A device list is published from its owner's bare JID (XEP-0163), so any other sender publishes nothing.
-        guard let event = message.element.child(
-                  named: "event", namespace: XMPPNamespaces.pubsubEvent
-              ), let itemsEl = event.child(named: "items"),
-              itemsEl.attribute("node") == XMPPNamespaces.omemoDevices,
-              let from = message.bareSender(orOwn: context?.connectedJID()?.bareJID), let item = itemsEl.child(named: "item"),
-              let payload = item.children.compactMap({
-                  if case let .element(el) = $0 { return el }
-                  return nil
-              }).first
-        else { return }
-        let devices = parseDeviceList(payload)
-        let leavesOutThisDevice = state.withLock { state in
-            state.deviceLists[from] = devices
-            guard let identity = state.ownIdentity, from == identity.connectedJID.bareJID else { return false }
-            return !devices.contains(identity.deviceID.value)
-        }
-        context?.emitEvent(
-            .omemoDeviceListReceived(jid: from, devices: devices)
-        )
-        if leavesOutThisDevice {
-            reannounceOwnDevice()
-        }
-    }
-
-    // MARK: - Decryption
-
-    /// `isLive` is false for an archived key exchange, which does not replace a session this connection built or took
-    /// up live, nor counts as live itself.
-    func decryptKexKey(_ data: [UInt8], sessionKey: SessionKey, isLive: Bool) throws -> KeyTransport {
-        let kex = try OMEMOKeyExchange(serialized: data)
-        // A sender repeats its key exchange until it hears back (XEP-0384 §4.3), so the key exchange that started the
-        // session here carries a message for that session. Any other key exchange replaces the session.
-        if state.withLock({ $0.sessions[sessionKey]?.isStarted(by: kex.header) }) == true {
-            do {
-                return try decrypt(kex.message, through: sessionKey)
-            } catch OMEMOCryptoError.hmacVerificationFailed {
-                // A copy of a message read before, whose key is used up. It changes nothing.
-                throw OMEMOModuleError.replayedKeyExchange
-            }
-        }
-        let identity = try requireOwnIdentity()
-        guard let signedPreKey = identity.signedPreKey(withID: kex.signedPreKeyID) else {
-            throw OMEMOModuleError.invalidKeyData
-        }
-        // Checked before anything is assigned, so an existing session stays as it was.
-        guard let preKey = identity.preKeys.first(where: { $0.keyID == kex.preKeyID }) else {
-            throw OMEMOModuleError.unknownPreKey
-        }
-        let x3dhResult = try OMEMOX3DH.responderKeyAgreement(
-            identityKeyPair: identity.identityKeyPair,
-            signedPreKey: signedPreKey,
-            oneTimePreKey: preKey,
-            peerIdentityKey: kex.identityKey,
-            peerEphemeralKey: kex.ephemeralKey
-        )
-        var session = OMEMOSession(
-            ratchet: OMEMODoubleRatchetSession(
-                asResponderWithSharedSecret: x3dhResult.sharedSecret,
-                ourSignedPreKeyPair: signedPreKey.keyPair
-            ),
-            associatedData: x3dhResult.associatedData,
-            start: .received(kex.header)
-        )
-        let keyMaterial = try session.decrypt(kex.message)
-        let context = try installKeyExchangeSession(
-            session,
-            keyExchange: (kex.header, Self.keyExchangeFingerprint(sharedSecret: x3dhResult.sharedSecret, associatedData: x3dhResult.associatedData)),
-            sessionKey: sessionKey, ownDeviceID: identity.deviceID.value, isLive: isLive
-        )
-        context?.emitEvent(.omemoSessionEstablished(
-            jid: sessionKey.jid, deviceID: sessionKey.deviceID,
-            identityKey: kex.identityKey, consumedPreKeyID: preKey.keyID
-        ))
-        // A new session is confirmed with an empty message (XEP-0384).
-        return KeyTransport(keyMaterial: keyMaterial, needsEmptyReply: true)
-    }
-
-    /// Installs a session `keyExchange` built, replacing any earlier one with that device (XEP-0384 §5.6), once the trust
-    /// guard admits it. `keyExchange` is the key exchange's header and the fingerprint of what it derives. A key exchange
-    /// taken up once comes again only as a replay, whichever device or contact it claims. So does one that is not
-    /// `isLive` for a device whose session this connection built or took up live.
-    private func installKeyExchangeSession(
-        _ session: OMEMOSession, keyExchange: (header: OMEMOKeyExchangeHeader, fingerprint: [UInt8]), sessionKey: SessionKey, ownDeviceID: UInt32,
-        isLive: Bool
-    ) throws -> ModuleContext? {
-        let (header, exchangeFingerprint) = keyExchange
-        return try state.withLock { state in
-            guard !state.acceptedKeyExchanges.contains(exchangeFingerprint), isLive || !state.liveSessionKeys.contains(sessionKey) else {
-                throw OMEMOModuleError.replayedKeyExchange
-            }
-            let preKey = OMEMOTrustGuard.PreKeyUse(
-                id: header.preKeyID, ownDeviceID: ownDeviceID, isUsedByThisModule: state.usedPreKeyIDs.contains(header.preKeyID)
-            )
-            try state.trustGuard.admitKeyExchange(
-                from: sessionKey, offeredKey: header.identityKey, replacing: Self.existingSession(state.sessions[sessionKey]), preKey: preKey
-            ).check()
-            state.acceptedKeyExchanges.insert(exchangeFingerprint)
-            state.sessions[sessionKey] = session
-            if isLive { state.liveSessionKeys.insert(sessionKey) }
-            state.usedPreKeyIDs.insert(header.preKeyID)
-            return state.context
-        }
-    }
-
-    /// Identifies a key exchange by what it derives rather than by its bytes, since one X25519 key has several encodings.
-    private static func keyExchangeFingerprint(sharedSecret: [UInt8], associatedData: [UInt8]) -> [UInt8] {
-        Array(SHA256.hash(data: Array("OMEMO key exchange".utf8) + sharedSecret + associatedData))
-    }
-
-    func decryptExistingSessionKey(
-        _ data: [UInt8], sessionKey: SessionKey
-    ) throws -> KeyTransport {
-        try decrypt(OMEMOAuthenticatedMessage(serialized: data), through: sessionKey)
-    }
-
-    /// The session advances only when the message decrypts, under one lock, so a message or key exchange handled
-    /// meanwhile is not undone. A session whose key contradicts the one held for the device, or cannot be read while one
-    /// is held, decrypts nothing. A message numbered `heartbeatThreshold` or higher on the sender's current ratchet key
-    /// asks for a heartbeat, once per key (XEP-0384).
-    private func decrypt(_ ratchetMessage: OMEMOAuthenticatedMessage, through sessionKey: SessionKey) throws -> KeyTransport {
-        let message = ratchetMessage.message
-        return try state.withLock { state in
-            guard var session = state.sessions[sessionKey] else {
-                throw OMEMOModuleError.noSession
-            }
-            guard state.trustGuard.admitsDecryption(from: sessionKey, identityKey: session.peerIdentityKey) else {
-                throw OMEMOModuleError.changedIdentityKey
-            }
-            let keyMaterial = try session.decrypt(ratchetMessage)
-            state.sessions[sessionKey] = session
-            let isHeartbeatDue = message.messageNumber >= Self.heartbeatThreshold && message.dhPublicKey == session.ratchet.dhRecvPublicKey
-                && state.heartbeatChains.insert(message.dhPublicKey).inserted
-            return KeyTransport(keyMaterial: keyMaterial, needsEmptyReply: isHeartbeatDue)
-        }
     }
 
     // MARK: - Encryption
 
     private func encryptKeyForDevice(
         keyMaterial: [UInt8], jid: BareJID,
-        deviceID: UInt32, identity: OwnIdentity
+        deviceID: UInt32, identity: OwnIdentity, version: OMEMOWireFormat
     ) async throws -> EncryptionResult {
-        let sessionKey = SessionKey(jid: jid, deviceID: deviceID)
+        let sessionKey = SessionKey(jid: jid, deviceID: deviceID, version: version)
         let established = try await getOrEstablishSession(
             sessionKey: sessionKey, identity: identity
         )
         // Encrypts with the stored session under one lock, so what a message or key exchange changed in it meanwhile stays.
         let built = try state.withLock { state in
             var session = state.sessions[sessionKey] ?? established
-            try state.trustGuard.admitSession(with: sessionKey, identityKey: session.peerIdentityKey).check()
+            try state.trustGuard.admitSession(with: sessionKey.device, fingerprint: session.peerFingerprint).check()
             let built = try session.encryptKey(keyMaterial)
             state.sessions[sessionKey] = session
             return built
         }
         return EncryptionResult(
-            keyElement: buildKeyElement(deviceID: deviceID, data: built.data, isKex: built.isKex), sessionKey: sessionKey
+            keyElement: keyElement(deviceID: deviceID, data: built.data, isKex: built.isKex, version: version), sessionKey: sessionKey
         )
     }
 
@@ -924,12 +668,15 @@ public final class OMEMOModule: XMPPModule, Sendable {
         sessionKey: SessionKey, identity: OwnIdentity
     ) async throws -> OMEMOSession {
         let bundle = try await fetchBundle(
-            from: sessionKey.jid, deviceID: sessionKey.deviceID
+            from: sessionKey.jid, deviceID: sessionKey.deviceID, version: sessionKey.version
         )
         return try establishSession(sessionKey: sessionKey, identity: identity, bundle: bundle)
     }
 
-    /// Builds a session from the device's `bundle` and installs it, unless a session appeared meanwhile.
+    /// Builds a session in `sessionKey`'s version from the device's `bundle` and installs it, unless a session appeared
+    /// meanwhile. A bundle whose key contradicts the one held for the device or, with none held, the key of the device's
+    /// session in another version is refused. Throws `notSetUp`, installing nothing, once the module lost its identity,
+    /// as a disconnect leaves it.
     func establishSession(
         sessionKey: SessionKey, identity: OwnIdentity, bundle: OMEMOBundle
     ) throws -> OMEMOSession {
@@ -943,20 +690,23 @@ public final class OMEMOModule: XMPPModule, Sendable {
             signedPreKeySignature: bundle.signedPreKeySignature,
             oneTimePreKey: selectedPreKey.publicKey
         )
+        let format = sessionKey.version
         let x3dhResult = try OMEMOX3DH.initiatorKeyAgreement(
             identityKeyPair: identity.identityKeyPair,
-            peerBundle: peerBundle
+            peerBundle: peerBundle,
+            format: format
         )
-        let keyExchange = OMEMOKeyExchangeHeader(
+        let keyExchange = try OMEMOKeyExchangeHeader(
             preKeyID: selectedPreKey.id,
             signedPreKeyID: bundle.signedPreKeyID,
-            identityKey: identity.identityKeyPair.publicKeyBytes,
+            identityKey: OMEMOX3DH.identityKey(of: identity.identityKeyPair, format: format),
             ephemeralKey: x3dhResult.ephemeralPublicKey
         )
         let session = try OMEMOSession(
             ratchet: OMEMODoubleRatchetSession(
                 asInitiatorWithSharedSecret: x3dhResult.sharedSecret,
-                peerSignedPreKey: bundle.signedPreKey
+                peerSignedPreKey: bundle.signedPreKey,
+                format: format
             ),
             associatedData: x3dhResult.associatedData,
             start: .sent(keyExchange, isConfirmed: false)
@@ -964,21 +714,25 @@ public final class OMEMOModule: XMPPModule, Sendable {
         // A key exchange from the device can have started a session while the bundle was fetched. That session wins,
         // since the device already uses it, and the discarded bundle's key is never held.
         let (kept, context) = try state.withLock { state -> (OMEMOSession?, ModuleContext?) in
+            guard state.ownIdentity != nil else { throw OMEMOModuleError.notSetUp }
             if let kept = state.sessions[sessionKey] { return (kept, nil) }
-            try state.trustGuard.admitSession(with: sessionKey, identityKey: bundle.identityKey).check()
+            try state.trustGuard.admitSession(
+                with: sessionKey.device, fingerprint: omemoFingerprint(of: bundle.identityKey, format: session.format),
+                standIn: Self.existingSession(for: sessionKey, in: state.sessions)
+            ).check()
             state.sessions[sessionKey] = session
             state.liveSessionKeys.insert(sessionKey)
             return (nil, state.context)
         }
         if let kept { return kept }
         context?.emitEvent(.omemoSessionEstablished(
-            jid: sessionKey.jid, deviceID: sessionKey.deviceID,
+            jid: sessionKey.jid, deviceID: sessionKey.deviceID, version: session.format,
             identityKey: bundle.identityKey, consumedPreKeyID: nil
         ))
         return session
     }
 
-    private func randomBytes(_ count: Int) -> [UInt8] {
+    func randomBytes(_ count: Int) -> [UInt8] {
         (0 ..< count).map { _ in UInt8.random(in: 0 ... 255) }
     }
 }
@@ -986,21 +740,28 @@ public final class OMEMOModule: XMPPModule, Sendable {
 // MARK: - Public Types
 
 public extension OMEMOModule {
-    /// Elements to attach to an outgoing message for OMEMO encryption.
+    /// Elements to attach to an outgoing message for OMEMO encryption: one `<encrypted>` element for each version some
+    /// recipient device receives the message in, at least one of them.
     struct EncryptedMessageElements: Sendable {
-        /// `<encrypted xmlns='urn:xmpp:omemo:2'>` with header and payload.
-        public let encrypted: XMLElement
-        /// `<encryption xmlns='urn:xmpp:eme:0'>` (XEP-0380).
+        /// `<encrypted xmlns='urn:xmpp:omemo:2'>` with header and payload, for the devices that list OMEMO 2. Nil when
+        /// none of them receives the message.
+        public let omemo2Encrypted: XMLElement?
+        /// `<encrypted xmlns='eu.siacs.conversations.axolotl'>`, whose payload is the body alone, for the devices that
+        /// list only legacy OMEMO. Nil when none of them receives the message.
+        public let legacyEncrypted: XMLElement?
+        /// `<encryption xmlns='urn:xmpp:eme:0'>` (XEP-0380), naming OMEMO 2 when its element is present, else legacy OMEMO.
         public let encryption: XMLElement
         /// Devices skipped because no bundle was fetchable (`item-not-found` / `bundleNotFound`). Non-empty signals partial coverage.
         public let droppedRecipients: [DroppedOMEMORecipient]
 
         public init(
-            encrypted: XMLElement,
+            omemo2Encrypted: XMLElement?,
+            legacyEncrypted: XMLElement?,
             encryption: XMLElement,
             droppedRecipients: [DroppedOMEMORecipient] = []
         ) {
-            self.encrypted = encrypted
+            self.omemo2Encrypted = omemo2Encrypted
+            self.legacyEncrypted = legacyEncrypted
             self.encryption = encryption
             self.droppedRecipients = droppedRecipients
         }
@@ -1068,14 +829,17 @@ public extension OMEMOModule {
     struct StoredSessionEntry: Sendable {
         public let jid: BareJID
         public let deviceID: UInt32
-        /// Serialized `OMEMODoubleRatchetSession` bytes.
+        /// The OMEMO version the session speaks, which its record has to be in.
+        public let version: OMEMOWireFormat
+        /// Serialized `OMEMOSession` bytes.
         public let sessionData: [UInt8]
-        /// X3DH associated data (64 bytes).
+        /// X3DH associated data (64 bytes in OMEMO 2, 66 in legacy).
         public let associatedData: [UInt8]
 
-        public init(jid: BareJID, deviceID: UInt32, sessionData: [UInt8], associatedData: [UInt8]) {
+        public init(jid: BareJID, deviceID: UInt32, version: OMEMOWireFormat, sessionData: [UInt8], associatedData: [UInt8]) {
             self.jid = jid
             self.deviceID = deviceID
+            self.version = version
             self.sessionData = sessionData
             self.associatedData = associatedData
         }
@@ -1177,8 +941,8 @@ package protocol EmergencyRetractGuarding: Sendable {
 }
 
 /// Cleans up trust/session rows for own-deviceIDs that were retracted via
-/// the emergency-retract path. Defense-in-depth alongside
-/// `encryptKeyForOwnDevices`'s PEP-list intersect: leaving orphan rows in
+/// the emergency-retract path. Defense in depth beside encryption, which
+/// wraps keys only for devices still on the account's lists: orphan rows in
 /// the store would let an offline-restored backup target retracted device
 /// IDs whose bundles are still locally cached.
 package protocol OrphanDeviceRecordPurging: Sendable {
@@ -1204,8 +968,8 @@ public enum OMEMOModuleError: Error, Equatable {
     case invalidKeyData
     case invalidHeader
     case invalidPayload
-    /// Every recipient device listed returned `item-not-found` (or equivalent)
-    /// for its bundle. The message was not sent.
+    /// No peer device received a key, as when every listed device's bundle
+    /// was missing. The message was not sent.
     case noUsableRecipientDevices
     case cryptographicFailure(String)
 
@@ -1226,11 +990,6 @@ public enum OMEMOModuleError: Error, Equatable {
 }
 
 // MARK: - Private Types
-
-struct SessionKey: Hashable {
-    let jid: BareJID
-    let deviceID: UInt32
-}
 
 struct OwnIdentity {
     let deviceID: OMEMODeviceID

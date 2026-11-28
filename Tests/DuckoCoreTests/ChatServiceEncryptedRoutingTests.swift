@@ -1,5 +1,6 @@
 import DuckoTestSupport
 import Foundation
+import struct os.OSAllocatedUnfairLock
 import Testing
 @testable import DuckoCore
 @testable import DuckoXMPP
@@ -406,6 +407,123 @@ struct ChatServiceEncryptedRoutingTests {
         #expect(chatService.sendsChatStates(to: .contact(contact), accountID: accountID) == carriesState)
     }
 
+    // MARK: - Legacy OMEMO
+
+    /// A legacy message encrypts only its body, so a correction or retraction target beside it could have been added on
+    /// the way. The message it names stays as it is, and a correction's text shows as a message of its own.
+    @Test(arguments: [false, true])
+    func `a live legacy correction or retraction leaves the encrypted message it names as it is`(isRetraction: Bool) async throws {
+        var reader = try LegacyReader()
+        await transcripts.addMessage(ChatMessage(
+            id: UUID(), conversationID: chat.id, stanzaID: "m1", fromJID: contact.description, body: "from omemo 2", timestamp: Date(),
+            isOutgoing: false, isDelivered: false, isEdited: false, type: "chat", isEncrypted: true
+        ))
+        try await receiveLegacy("from legacy", id: "m2", reader: &reader)
+
+        for original in ["m1", "m2"] {
+            try await receiveLegacy("fixed", id: "fix-\(original)", besidePayload: [amendment(of: original, isRetraction: isRetraction)], reader: &reader)
+        }
+
+        let stored = try await messages(in: chat)
+        #expect(stored.map(\.body) == ["from omemo 2", "from legacy", "fixed", "fixed"])
+        #expect(!stored.contains { $0.isEdited || $0.isRetracted })
+    }
+
+    @Test func `a live legacy reply shows the quote its encrypted body carries and links no earlier message`() async throws {
+        var reader = try LegacyReader()
+        try await receiveLegacy("the question", id: "m1", reader: &reader)
+
+        try await receiveLegacy("> the question\nthe answer", id: "r1", besidePayload: legacyReplyReference(to: "m1"), reader: &reader)
+
+        let answer = try #require(try await messages(in: chat).last)
+        #expect(answer.body == "> the question\nthe answer")
+        #expect(answer.replyToID == nil)
+    }
+
+    /// How a legacy message reaches the account's device other than live: read from the chat's archive at catch-up, or
+    /// forwarded by a carbon of a message the contact sent or another of the account's devices sent.
+    enum LegacyOrigin: CaseIterable {
+        case archive, receivedCarbon, sentCarbon
+    }
+
+    /// Archived and carbon copies carry the same unencrypted targets as live ones, so they change nothing either.
+    @Test(arguments: LegacyOrigin.allCases, [false, true])
+    func `a legacy correction or retraction from the archive or a carbon leaves the encrypted message it names as it is`(
+        origin: LegacyOrigin, isRetraction: Bool
+    ) async throws {
+        var legacy = try await LegacyChat.connect(origin: origin)
+        await legacy.harness.transcripts.addMessage(ChatMessage(
+            id: UUID(), conversationID: legacy.chat.id, stanzaID: "m1", fromJID: contact.description, body: "from omemo 2",
+            timestamp: legacyStamp(0), isOutgoing: origin == .sentCarbon, isDelivered: false, isEdited: false, type: "chat", isEncrypted: true
+        ))
+        try await legacy.receive("from legacy", id: "m2")
+
+        for original in ["m1", "m2"] {
+            try await legacy.receive("fixed", id: "fix-\(original)", besidePayload: [amendment(of: original, isRetraction: isRetraction)])
+        }
+
+        let stored = try await legacy.messages()
+        #expect(stored.map(\.body) == ["from omemo 2", "from legacy", "fixed", "fixed"])
+        #expect(!stored.contains { $0.isEdited || $0.isRetracted })
+        #expect(legacy.amendments.isEmpty)
+        await legacy.harness.accountService.disconnect(accountID: legacy.harness.accountID)
+    }
+
+    /// Whether or not the message names its method (XEP-0380), its fallback body never shows.
+    @Test(arguments: LegacyOrigin.allCases, [false, true])
+    func `a legacy reply from the archive or a carbon shows the quote its encrypted body carries and links no earlier message`(
+        origin: LegacyOrigin, namesMethod: Bool
+    ) async throws {
+        var legacy = try await LegacyChat.connect(origin: origin)
+        try await legacy.receive("the question", id: "m1", namesMethod: namesMethod)
+
+        try await legacy.receive("> the question\nthe answer", id: "r1", besidePayload: legacyReplyReference(to: "m1"), namesMethod: namesMethod)
+
+        let stored = try await legacy.messages()
+        #expect(stored.map(\.body) == ["the question", "> the question\nthe answer"])
+        #expect(stored.last?.replyToID == nil)
+        await legacy.harness.accountService.disconnect(accountID: legacy.harness.accountID)
+    }
+
+    enum LegacyRoomOrigin: CaseIterable {
+        case room, privateChat
+    }
+
+    /// The room's module leaves the message to the OMEMO module, which reads it with the session of the occupant's real
+    /// address.
+    @Test(arguments: LegacyRoomOrigin.allCases)
+    func `a live legacy room or private message shows decrypted, once, in the chat it was sent in`(origin: LegacyRoomOrigin) async throws {
+        var reader = try LegacyReader()
+        try await reader.joinRoom()
+        let stanza = try legacyStanza(
+            "hello", id: "g1", type: origin == .room ? .groupchat : .chat, from: "\(room)/carol", to: testJIDString, sender: &reader.sender
+        )
+
+        try await route(stanza, through: reader)
+
+        let conversation = try #require(try await store.fetchConversations(for: accountID).first { conversation in
+            conversation.jid == room && (origin == .room ? conversation.type == .groupchat : conversation.occupantNickname == "carol")
+        })
+        #expect(try await messages(in: conversation).map(\.body) == ["hello"])
+    }
+
+    /// Files a live legacy message from the contact's desktop carrying `body`, with `besidePayload` next to its payload,
+    /// as the account's device reads it.
+    private func receiveLegacy(
+        _ body: String, id: String, besidePayload: [DuckoXMPP.XMLElement] = [], reader: inout LegacyReader
+    ) async throws {
+        let stanza = try legacyStanza(body, id: id, besidePayload: besidePayload, sender: &reader.sender)
+        try await route(stanza, through: reader)
+    }
+
+    /// Hands `stanza` to the reader's modules and files what the client reports of it, as the app does.
+    private func route(_ stanza: XMPPMessage, through reader: LegacyReader) async throws {
+        for event in try reader.deliver(stanza) {
+            await chatService.handleEvent(event, accountID: accountID)
+            await omemoService.handleEvent(event, accountID: accountID)
+        }
+    }
+
     // MARK: - Rooms
 
     @Test func `an encrypted room message is stored under the occupant's nickname, and one the room hides the sender of as its notice`() async throws {
@@ -578,6 +696,145 @@ struct ChatServiceEncryptedRoutingTests {
 }
 
 // MARK: - Helpers
+
+/// The account's device 100 with the modules that read a message, and a legacy client on the contact's device 300 with
+/// a session to it. In the room, the contact is the occupant carol.
+private struct LegacyReader {
+    let module: OMEMOModule
+    var sender: LegacyOMEMOSender
+    private let chatModule = ChatModule()
+    private let mucModule = MUCModule()
+    private let events = OSAllocatedUnfairLock<[XMPPEvent]>(initialState: [])
+
+    init() throws {
+        let keys = makeIdentityData(deviceID: 100, preKeyIDs: [1])
+        let events = events
+        let context = ModuleContext(
+            sendStanza: { _, onAccepted in onAccepted?() }, sendIQ: { _, _ in nil }, emitEvent: { event in events.withLock { $0.append(event) } },
+            generateID: { "id" }, connectedJID: { FullJID.parse("\(testJIDString)/ducko") }, domain: "example.com"
+        )
+        let pepModule = PEPModule()
+        pepModule.setUp(context)
+        chatModule.setUp(context)
+        mucModule.setUp(context)
+        self.module = OMEMOModule(pepModule: pepModule, mucModule: mucModule)
+        module.setUp(context)
+        module.configureIdentity(keys)
+        module.handleSessionEstablished(resumed: true)
+        self.sender = try LegacyOMEMOSender(identity: OMEMOIdentityKeyPair(), deviceID: 300, to: keys)
+    }
+
+    /// Joins the room as `me`, where carol's presence shows the contact as her real address.
+    func joinRoom() async throws {
+        _ = try await mucModule.joinRoom(room, nickname: "me")
+        let item = DuckoXMPP.XMLElement(name: "item", attributes: ["affiliation": "member", "role": "participant", "jid": "\(contact)/desktop"])
+        var mucUser = DuckoXMPP.XMLElement(name: "x", namespace: XMPPNamespaces.mucUser)
+        mucUser.addChild(item)
+        var presence = DuckoXMPP.XMLElement(name: "presence", attributes: ["from": "\(room)/carol"])
+        presence.addChild(mucUser)
+        try mucModule.handlePresence(XMPPPresence(element: presence))
+    }
+
+    /// What the client reports of `stanza`, which it hands to each of its modules: the stanza itself, then what the
+    /// modules report.
+    func deliver(_ stanza: XMPPMessage) throws -> [XMPPEvent] {
+        events.withLock { $0.removeAll() }
+        for module in [chatModule, mucModule, module] as [any XMPPModule] {
+            try module.handleMessage(stanza)
+        }
+        return [.messageReceived(stanza)] + events.withLock { $0 }
+    }
+}
+
+/// The account connected with its device 100, and a legacy client writing in the chat with the contact as `origin`
+/// brings its messages: the contact's device 300, or the account's own device 300 for a sent carbon.
+@MainActor
+private struct LegacyChat {
+    let harness: EncryptedSendHarness
+    let chat: Conversation
+    let origin: ChatServiceEncryptedRoutingTests.LegacyOrigin
+    var sender: LegacyOMEMOSender
+    /// The amendments the archive reads found.
+    private(set) var amendments: [MessageAmendment] = []
+    private var filed = 0
+
+    static func connect(origin: ChatServiceEncryptedRoutingTests.LegacyOrigin) async throws -> LegacyChat {
+        let harness = try await EncryptedSendHarness.connect(archiving: origin == .archive)
+        let chat = try #require(harness.chatService.openConversations.first { $0.jid == contact && $0.isDirectChat })
+        let sender = try LegacyOMEMOSender(identity: OMEMOIdentityKeyPair(), deviceID: 300, to: harness.ownKeys)
+        return LegacyChat(harness: harness, chat: chat, origin: origin, sender: sender)
+    }
+
+    /// Files a legacy message carrying `body`, with `besidePayload` next to its payload, as `origin` brings it.
+    mutating func receive(_ body: String, id: String, besidePayload: [DuckoXMPP.XMLElement] = [], namesMethod: Bool = false) async throws {
+        filed += 1
+        let isSent = origin == .sentCarbon
+        let stanza = try legacyStanza(
+            body, id: id, from: isSent ? "\(testJIDString)/phone" : "\(contact)/desktop", to: isSent ? contact.description : testJIDString,
+            besidePayload: besidePayload, namesMethod: namesMethod, sender: &sender
+        )
+        let forwarded = ForwardedMessage(message: stanza, timestamp: legacyStamp(filed).formatted(.iso8601))
+        switch origin {
+        case .archive:
+            let archived = ArchivedMessage(messageID: "a-\(id)", serverID: nil, forwarded: forwarded)
+            var read = ArchiveRead(roomSupportsOccupantIDs: nil, isCatchUp: true)
+            read.decrypted[archived.messageID] = await harness.omemoService.decryptArchivedMessage(
+                stanza, sender: nil, isRoomPrivateMessage: false, allowsKeyExchange: true, accountID: harness.accountID
+            )
+            let converted = try await harness.chatService.convertAndDedup(
+                archived: [archived], conversation: chat, read: read, accountJID: #require(BareJID.parse(testJIDString)), accountID: harness.accountID
+            )
+            amendments += converted.amendments
+            await harness.chatService.applyArchivedAmendments(converted.amendments, in: chat, accountID: harness.accountID)
+        case .receivedCarbon:
+            await harness.chatService.handleEvent(.messageCarbonReceived(forwarded), accountID: harness.accountID)
+        case .sentCarbon:
+            await harness.chatService.handleEvent(.messageCarbonSent(forwarded), accountID: harness.accountID)
+        }
+    }
+
+    /// Oldest first.
+    func messages() async throws -> [ChatMessage] {
+        try await harness.transcripts.fetchMessages(for: chat.id, before: nil, limit: 50).reversed()
+    }
+}
+
+/// A legacy message of `type` from `from` to `to`, `sender`'s encryption of `body`, with the fallback body and storage
+/// hint legacy clients send beside the payload, and `besidePayload` there too. It names its method with an
+/// `<encryption>` element when `namesMethod`.
+private func legacyStanza(
+    _ body: String, id: String, type: XMPPMessage.MessageType = .chat, from: String = "\(contact)/desktop", to: String = testJIDString,
+    besidePayload: [DuckoXMPP.XMLElement] = [], namesMethod: Bool = false, sender: inout LegacyOMEMOSender
+) throws -> XMPPMessage {
+    var stanza = XMPPMessage(type: type, to: JID.parse(to), id: id)
+    stanza.from = JID.parse(from)
+    stanza.body = "I sent you an OMEMO encrypted message but your client doesn't seem to support that."
+    try stanza.element.addChild(sender.encrypted(body))
+    stanza.element.addChild(DuckoXMPP.XMLElement(name: "store", namespace: XMPPNamespaces.processingHints))
+    if namesMethod {
+        stanza.element.addChild(DuckoXMPP.XMLElement(
+            name: "encryption", namespace: XMPPNamespaces.eme, attributes: ["namespace": XMPPNamespaces.omemoLegacy, "name": "OMEMO"]
+        ))
+    }
+    for element in besidePayload {
+        stanza.element.addChild(element)
+    }
+    return stanza
+}
+
+/// The reply reference, with its fallback marker over the quote, that a legacy client sends beside the payload of a
+/// reply to `originalID`.
+private func legacyReplyReference(to originalID: String) -> [DuckoXMPP.XMLElement] {
+    let reply = DuckoXMPP.XMLElement(name: "reply", namespace: XMPPNamespaces.messageReply, attributes: ["to": "\(contact)/desktop", "id": originalID])
+    var fallback = DuckoXMPP.XMLElement(name: "fallback", namespace: XMPPNamespaces.fallbackIndication, attributes: ["for": XMPPNamespaces.messageReply])
+    fallback.addChild(DuckoXMPP.XMLElement(name: "body", attributes: ["start": "0", "end": "15"]))
+    return [reply, fallback]
+}
+
+/// `minute` minutes into 2026-03-01 10:00 UTC, which orders the messages a test files.
+private func legacyStamp(_ minute: Int) -> Date {
+    Date(timeIntervalSince1970: 1_772_359_200 + TimeInterval(minute * 60))
+}
 
 /// The events `onDecryptedAmendment` reported.
 private final class EventLog {

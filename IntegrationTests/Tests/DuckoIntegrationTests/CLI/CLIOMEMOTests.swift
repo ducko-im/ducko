@@ -112,7 +112,7 @@ extension DuckoIntegrationTests.CLILayer {
                 let aliceJID = try harness.jid(for: TestCredentials.alice)
                 let bobJID = TestCredentials.bob.jid
                 let chatService = harness.environment.chatService
-                let knownDevices = try await bobOMEMO.fetchDeviceList(for: aliceJID, forceRefresh: true)
+                let knownDevices = try await bobOMEMO.fetchDeviceList(for: aliceJID, forceRefresh: true, version: .omemo2)
 
                 try await CLIProcess.withProcess { aliceCLI in
                     // Signed out before the next sign-in, so its teardown runs here rather than at cleanup.
@@ -121,7 +121,7 @@ extension DuckoIntegrationTests.CLILayer {
                     do {
                         // The fresh profile published a new device for alice. Bob's encryption reaches it once he knows it.
                         try await bob.waitForCondition({
-                            let devices = await (try? bobOMEMO.fetchDeviceList(for: aliceJID, forceRefresh: true)) ?? []
+                            let devices = await (try? bobOMEMO.fetchDeviceList(for: aliceJID, forceRefresh: true, version: .omemo2)) ?? []
                             return !Set(devices).subtracting(knownDevices).isEmpty
                         }, timeout: TestTimeout.omemoSession)
                         let conversation = try await chatService.openConversation(for: aliceJID, accountID: bob.accountID)

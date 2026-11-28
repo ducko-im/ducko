@@ -1,0 +1,37 @@
+{
+  "jid": "alice@example.org",
+  "deviceID": 31415926,
+  "identityKey": {
+    "seed": "tfSg7t6m4Os1J/H3gOPnSowRngfXinVb2/46Ta+bhrY=",
+    "publicKey": "RbRnuqmQraovoUdHXaitnuhthq8flVq+90rkKxDPV4E=",
+    "agreementPublicKey": "mhhvAElqaKBY84WSD8t5io6bLLmAgByn3TzP80ZjOWQ=",
+    "serializedPublicKey": "BZoYbwBJamigWPOFkg/LeYqOmyy5gIAcp908z/NGYzlk",
+    "signBit": 1
+  },
+  "signedPreKey": {
+    "id": 1,
+    "privateKey": "2vUYZY1lOIgRiGpSTPtKF0OwRz1cJO5+MmyyBXJAMTQ=",
+    "publicKey": "xPF5Uv2MKN6A28wRHbBR5rNqpoie1tfsoT/6UQyfSDI=",
+    "signature": "44vp3WZIJo/k9MOe796aRxVCcRDin1VZx7YI3d+8IXPFjWKER/GoiC+ID//oPTSZ4d1EvYNXbQ00KPPeghGBAw==",
+    "publishedSignature": "44vp3WZIJo/k9MOe796aRxVCcRDin1VZx7YI3d+8IXPFjWKER/GoiC+ID//oPTSZ4d1EvYNXbQ00KPPeghGBgw=="
+  },
+  "preKeys": [
+    {
+      "id": 1,
+      "privateKey": "sGgHW1jjYdXPAcHFrAtkdqDxcEOwIFX7Mvfzs60mE/E=",
+      "publicKey": "z47+uiwZ2BsvzOB9rqkjjzPhguR2cFl6tauX2oJowBQ="
+    },
+    {
+      "id": 2,
+      "privateKey": "Pvg9aHMoFYMwTtYAt/weoe6ufPYqsr1xgLohDStcEjQ=",
+      "publicKey": "ENRI6h3EtZNcID9g0Wj2Kl15BDrdeeoMKIFFeWclUCw="
+    },
+    {
+      "id": 3,
+      "privateKey": "6gblE2ku21PUE8dlig4FKLYzof9wQOKoPTPTnavsUJU=",
+      "publicKey": "+qLPnzg955EqLwnnPm4WzxPufSjP4d3l0JQHHe2xTVg="
+    }
+  ],
+  "deviceList": "<list xmlns=\"eu.siacs.conversations.axolotl\"><device id=\"31415926\" /></list>",
+  "bundle": "<bundle xmlns=\"eu.siacs.conversations.axolotl\"><signedPreKeyPublic signedPreKeyId=\"1\">BcTxeVL9jCjegNvMER2wUeazaqaIntbX7KE/+lEMn0gy</signedPreKeyPublic><signedPreKeySignature>44vp3WZIJo/k9MOe796aRxVCcRDin1VZx7YI3d+8IXPFjWKER/GoiC+ID//oPTSZ4d1EvYNXbQ00KPPeghGBgw==</signedPreKeySignature><identityKey>BZoYbwBJamigWPOFkg/LeYqOmyy5gIAcp908z/NGYzlk</identityKey><prekeys><preKeyPublic preKeyId=\"1\">Bc+O/rosGdgbL8zgfa6pI48z4YLkdnBZerWrl9qCaMAU</preKeyPublic><preKeyPublic preKeyId=\"2\">BRDUSOodxLWTXCA/YNFo9ipdeQQ63XnqDCiBRXlnJVAs</preKeyPublic><preKeyPublic preKeyId=\"3\">Bfqiz584PeeRKi8J5z5uFs8T7n0oz+Hd5dCUBx3tsU1Y</preKeyPublic></prekeys></bundle>"
+}

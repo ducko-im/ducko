@@ -20,23 +20,17 @@ func handleUnregisterAccountREPLCommand(context: REPLContext) async {
     }
 }
 
-func handleCheckRegistrationREPLCommand(_ arguments: String, context: REPLContext) async {
-    let jid = arguments.isEmpty ? nil : arguments
-    do {
-        let form = try await context.environment.accountService.retrieveRegistrationForm(
-            accountID: context.accountID, from: jid
-        )
-        print(context.formatter.formatRegistrationForm(form))
-    } catch {
-        print(context.formatter.formatError(error))
-    }
-}
-
-func handleSubmitRegistrationREPLCommand(_ arguments: String, context: REPLContext) async {
+/// Shows the registration form of the server or component `arguments` names, else of the account's server, or with
+/// `submitting` prompts for its fields and submits it.
+func handleRegistrationREPLCommand(_ arguments: String, context: REPLContext, submitting: Bool) async {
     let jid = arguments.isEmpty ? nil : arguments
     do {
         let accountService = await MainActor.run { context.environment.accountService }
         let form = try await accountService.retrieveRegistrationForm(accountID: context.accountID, from: jid)
+        guard submitting else {
+            print(context.formatter.formatRegistrationForm(form))
+            return
+        }
         let registration = SignedInRegistration(form: form, accountService: accountService, accountID: context.accountID, jid: jid)
         try await promptAndSubmitRegistration(
             registration, submissionsMade: 0, intro: "\nEnter registration details (press Enter to keep a value):", formatter: context.formatter

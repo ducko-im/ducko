@@ -3,9 +3,10 @@ import QuickLookUI
 import SwiftUI
 
 /// Shows `fileURL` in the system Quick Look panel — the same panel Finder opens, with its share and "Open with…"
-/// controls — while `isPresented` is true.
+/// controls — while `isPresented` is true. Held in place before there is a file to show, so the panel finds it in the
+/// responder chain the moment one is.
 struct QuickLookPreview: NSViewRepresentable {
-    let fileURL: URL
+    let fileURL: URL?
     @Binding var isPresented: Bool
 
     func makeNSView(context _: Context) -> QuickLookHostView {
@@ -13,7 +14,7 @@ struct QuickLookPreview: NSViewRepresentable {
     }
 
     func updateNSView(_ view: QuickLookHostView, context _: Context) {
-        view.previewItem = fileURL as NSURL
+        view.previewItem = fileURL.map { $0 as NSURL }
         view.onPanelClosed = { isPresented = false }
         if isPresented {
             view.showPanel()

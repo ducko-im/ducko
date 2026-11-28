@@ -237,6 +237,19 @@ func handleEncryptREPLCommand(_ arguments: String, context: REPLContext) async {
     }
 }
 
+func handleOMEMODevicesREPLCommand(_ arguments: String, context: REPLContext) async {
+    for line in await omemoDevicesREPLLines(arguments, context: context) {
+        print(line)
+    }
+}
+
+/// What `/omemo-devices` prints: the lines `omemo devices` prints for the one address it names.
+func omemoDevicesREPLLines(_ arguments: String, context: REPLContext) async -> [String] {
+    let parts = arguments.split(separator: " ")
+    guard parts.count == 1 else { return [context.formatter.formatUsageError("Usage: /omemo-devices <jid>")] }
+    return await omemoDeviceLines(jid: String(parts[0]), accountID: context.accountID, environment: context.environment, formatter: context.formatter)
+}
+
 func handleOMEMOVerifyREPLCommand(_ arguments: String, context: REPLContext) async {
     let parts = arguments.split(separator: " ", maxSplits: 2)
     guard parts.count == 3, let deviceID = UInt32(parts[1]) else {
@@ -296,7 +309,7 @@ func omemoSetupRetryLine(_ outcome: OMEMOSetupRetryOutcome, accountID: UUID, for
 
 /// The conversation `address` names: the private chat with the occupant `room@service/nick`, or the chat or room
 /// with a bare address.
-private func namedConversation(_ address: String, context: REPLContext) async throws -> Conversation {
+func namedConversation(_ address: String, context: REPLContext) async throws -> Conversation {
     guard let jid = JID.parse(address) else { throw CLIError.invalidJID(address) }
     guard let conversation = try await resolveConversation(jid: jid, environment: context.environment, accountID: context.accountID) else {
         throw CLIError.noConversation(address)
@@ -304,7 +317,7 @@ private func namedConversation(_ address: String, context: REPLContext) async th
     return conversation
 }
 
-private func recentMessages(in conversation: Conversation, context: REPLContext) async throws -> [ChatMessage] {
+func recentMessages(in conversation: Conversation, context: REPLContext) async throws -> [ChatMessage] {
     try await context.environment.chatService.fetchMessageHistory(for: conversation.id, before: nil, limit: 10)
 }
 

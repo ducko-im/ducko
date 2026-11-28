@@ -29,7 +29,7 @@ actor MockOMEMOStore: OMEMOStore {
     /// Failure switches: each call named here throws instead of touching the store.
     enum FailingCall: Hashable {
         case loadIdentity, loadPreKeys, loadSignedPreKeys, loadSessions, loadAllTrust, saveIdentity, savePreKeys, saveSignedPreKey, consumePreKey,
-             saveTrust, markTrust,
+             saveSession, saveTrust, markTrust, fillTrustFingerprint,
              // Makes `markTrust` refuse a grant as a store does when a device's rows would disagree.
              markTrustConflict
     }
@@ -48,6 +48,20 @@ actor MockOMEMOStore: OMEMOStore {
         let action = beforeTrustWrite
         beforeTrustWrite = nil
         await action?()
+    }
+
+    /// Runs once, at the next `fillTrustFingerprint` that does not fail, before it writes.
+    private var beforeTrustFill: (@Sendable () async -> Void)?
+
+    func setBeforeTrustFill(_ action: @escaping @Sendable () async -> Void) {
+        beforeTrustFill = action
+    }
+
+    /// Runs once, at the next `saveSession` that does not fail, before it writes.
+    private var beforeSessionSave: (@Sendable () async -> Void)?
+
+    func setBeforeSessionSave(_ action: @escaping @Sendable () async -> Void) {
+        beforeSessionSave = action
     }
 
     /// Runs at every `saveSignedPreKey` that does not fail, before it writes, until replaced. Holds a caller between its
@@ -181,9 +195,13 @@ actor MockOMEMOStore: OMEMOStore {
     }
 
     func saveSession(_ session: OMEMOStoredSession) async throws {
+        try failIfSwitched(.saveSession)
+        let action = beforeSessionSave
+        beforeSessionSave = nil
+        await action?()
         var rows = sessions[session.accountJID] ?? []
         if let index = rows.firstIndex(where: {
-            $0.peerJID == session.peerJID && $0.peerDeviceID == session.peerDeviceID
+            $0.peerJID == session.peerJID && $0.peerDeviceID == session.peerDeviceID && $0.version == session.version
         }) {
             rows[index] = session
         } else {
@@ -215,11 +233,15 @@ actor MockOMEMOStore: OMEMOStore {
     }
 
     func fillTrustFingerprint(accountJID: String, peerJID: String, deviceID: UInt32, fingerprint: String) async throws -> String? {
+        try failIfSwitched(.fillTrustFingerprint)
+        let action = beforeTrustFill
+        beforeTrustFill = nil
+        await action?()
         guard let existing = trustRow(accountJID: accountJID, peerJID: peerJID, deviceID: deviceID) else {
             upsertTrust(OMEMOTrust(accountJID: accountJID, peerJID: peerJID, deviceID: deviceID, fingerprint: fingerprint, trustLevel: .undecided))
             return nil
         }
-        guard existing.fingerprint.isEmpty else { return existing.fingerprint == fingerprint ? nil : existing.fingerprint }
+        guard existing.fingerprint.isEmpty else { return OMEMOFingerprint.matches(existing.fingerprint, fingerprint) ? nil : existing.fingerprint }
         upsertTrust(OMEMOTrust(accountJID: accountJID, peerJID: peerJID, deviceID: deviceID, fingerprint: fingerprint, trustLevel: existing.trustLevel))
         return nil
     }
@@ -286,10 +308,10 @@ actor MockOMEMOStore: OMEMOStore {
 
     // MARK: - Session Deletion
 
-    func deleteSession(accountJID: String, peerJID: String, peerDeviceID: UInt32) async throws {
+    func deleteSession(accountJID: String, peerJID: String, peerDeviceID: UInt32, version: OMEMOWireFormat?) async throws {
         deleteSessionCalls += 1
         guard var rows = sessions[accountJID] else { return }
-        rows.removeAll { $0.peerJID == peerJID && $0.peerDeviceID == peerDeviceID }
+        rows.removeAll { $0.peerJID == peerJID && $0.peerDeviceID == peerDeviceID && (version == nil || $0.version == version) }
         sessions[accountJID] = rows
     }
 

@@ -43,10 +43,8 @@ struct FormatterEventContractTests {
                   ["type": "message_moderated", "original_id": "m1", "moderator": "mod", "room": room.description, "reason": "reason", "account": account]),
             .init(.jingleFileTransferCompleted(sid: "transfer", offerID: "offer", transport: .ibb), "Transfer completed: transfer — IBB", "\u{001B}[32m✅ Transfer completed: transfer — IBB\(reset)",
                   ["type": "jingle_transfer_completed", "sid": "transfer", "offer_id": "offer", "transport": "ibb", "account": account]),
-            .init(.omemoDeviceListReceived(jid: peer, devices: [12, 34]), "OMEMO devices for alice@example.com: 12, 34", "\u{001B}[2mOMEMO devices for alice@example.com: 12, 34\(reset)",
-                  ["type": "omemo_device_list", "jid": peer.description, "devices": "12,34", "account": account]),
-            .init(.omemoSessionEstablished(jid: peer, deviceID: 12, identityKey: [0, 0xAB, 0xFF], consumedPreKeyID: 7), "OMEMO session established with alice@example.com device 12", "\u{001B}[32mOMEMO session established with alice@example.com device 12\(reset)",
-                  ["type": "omemo_session_established", "jid": peer.description, "device_id": "12", "fingerprint": "00abff", "account": account]),
+            .init(.omemoSessionEstablished(jid: peer, deviceID: 12, version: .omemo2, identityKey: [0, 0xAB, 0xFF], consumedPreKeyID: 7), "OMEMO session established with alice@example.com device 12 (OMEMO 2)", "\u{001B}[32mOMEMO session established with alice@example.com device 12 (OMEMO 2)\(reset)",
+                  ["type": "omemo_session_established", "jid": peer.description, "device_id": "12", "version": "omemo2", "fingerprint": "00abff", "account": account]),
             .init(.omemoSetupChanged(.complete), "OMEMO: this device's encryption setup is complete",
                   "\u{001B}[32mOMEMO: this device's encryption setup is complete\(reset)",
                   ["type": "omemo_setup", "status": "complete", "account": account]),
@@ -58,6 +56,23 @@ struct FormatterEventContractTests {
                   ["type": "omemo_setup", "status": "refused", "condition": "forbidden", "account": account])
         ]
         try expectFormats(cases)
+    }
+
+    @Test func `a device list and a session name their OMEMO version in every format`() throws {
+        let account = accountID.uuidString
+        let reset = "\u{001B}[0m"
+        try expectFormats([
+            .init(.omemoDeviceListReceived(jid: peer, devices: [12, 34], version: .omemo2), "OMEMO devices for alice@example.com (OMEMO 2): 12, 34",
+                  "\u{001B}[2mOMEMO devices for alice@example.com (OMEMO 2): 12, 34\(reset)",
+                  ["type": "omemo_device_list", "jid": peer.description, "devices": "12,34", "version": "omemo2", "account": account]),
+            .init(.omemoDeviceListReceived(jid: peer, devices: [56], version: .legacy), "OMEMO devices for alice@example.com (legacy): 56",
+                  "\u{001B}[2mOMEMO devices for alice@example.com (legacy): 56\(reset)",
+                  ["type": "omemo_device_list", "jid": peer.description, "devices": "56", "version": "legacy", "account": account]),
+            .init(.omemoSessionEstablished(jid: peer, deviceID: 56, version: .legacy, identityKey: [0xAB], consumedPreKeyID: nil),
+                  "OMEMO session established with alice@example.com device 56 (legacy)",
+                  "\u{001B}[32mOMEMO session established with alice@example.com device 56 (legacy)\(reset)",
+                  ["type": "omemo_session_established", "jid": peer.description, "device_id": "56", "version": "legacy", "fingerprint": "05ab", "account": account])
+        ])
     }
 
     @Test func `browser sign-in failures carry their own kind`() throws {

@@ -3,23 +3,28 @@ import struct os.OSAllocatedUnfairLock
 import Testing
 @testable import DuckoXMPP
 
-/// Delivers a device-list notification from `sender` (none when nil) and returns the devices announced, keyed by JID.
-private func announcedDeviceLists(sender: String?) throws -> [String: [UInt32]] {
+/// Delivers a device-list notification in `version` from `sender` (none when nil) and returns the devices announced in
+/// that version, keyed by JID.
+private func announcedDeviceLists(sender: String?, version: OMEMOWireFormat = .omemo2) throws -> [String: [UInt32]] {
     let events = OSAllocatedUnfairLock<[XMPPEvent]>(initialState: [])
     let module = OMEMOModule(pepModule: PEPModule())
     module.setUp(makeStubModuleContext(emitEvent: { event in events.withLock { $0.append(event) } }))
     let from = sender.map { " from='\($0)'" } ?? ""
+    let (node, list) = switch version {
+    case .omemo2: (XMPPNamespaces.omemoDevices, "<devices xmlns='urn:xmpp:omemo:2'><device id='7'/></devices>")
+    case .legacy: (XMPPNamespaces.omemoLegacyDeviceList, "<list xmlns='eu.siacs.conversations.axolotl'><device id='7'/></list>")
+    }
 
     try module.handleMessage(XMPPMessage(element: stanza("""
     <message\(from) to='user@example.com/res'>\
     <event xmlns='http://jabber.org/protocol/pubsub#event'>\
-    <items node='urn:xmpp:omemo:2:devices'>\
-    <item id='current'><devices xmlns='urn:xmpp:omemo:2'><device id='7'/></devices></item>\
+    <items node='\(node)'>\
+    <item id='current'>\(list)</item>\
     </items></event></message>
     """)))
 
     var lists: [String: [UInt32]] = [:]
-    for case let .omemoDeviceListReceived(jid, devices) in events.withLock({ $0 }) {
+    for case let .omemoDeviceListReceived(jid, devices, announced) in events.withLock({ $0 }) where announced == version {
         lists[jid.description] = devices
     }
     return lists
@@ -29,6 +34,11 @@ struct OMEMODeviceListNotificationTests {
     @Test
     func `A device list from a bare JID is announced for that JID`() throws {
         #expect(try announcedDeviceLists(sender: "peer@example.com") == ["peer@example.com": [7]])
+    }
+
+    @Test(arguments: OMEMOWireFormat.allCases)
+    func `A device list is announced in the version of its node`(version: OMEMOWireFormat) throws {
+        #expect(try announcedDeviceLists(sender: "peer@example.com", version: version) == ["peer@example.com": [7]])
     }
 
     @Test

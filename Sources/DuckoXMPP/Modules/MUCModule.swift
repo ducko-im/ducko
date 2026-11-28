@@ -353,7 +353,7 @@ public final class MUCModule: XMPPModule, Sendable {
         // change or an amendment. An OMEMO message is classified by OMEMOModule after decryption, and any other one,
         // with or without a body, shows only a notice (XEP-0380).
         if message.isEncrypted {
-            if !message.isOMEMOEncrypted { emitRoomMessage(message, in: roomJID) }
+            if !message.carriesOMEMOPayload { emitRoomMessage(message, in: roomJID) }
             return
         }
 
@@ -459,7 +459,7 @@ public final class MUCModule: XMPPModule, Sendable {
             return state.context
         }
         guard let context else { return false }
-        if !message.carriesAmendment, !message.isOMEMOEncrypted {
+        if !message.carriesAmendment, !message.carriesOMEMOPayload {
             context.emitEvent(.mucPrivateMessageReceived(message, author: roomAuthor(of: message, in: roomJID)))
         }
         return true

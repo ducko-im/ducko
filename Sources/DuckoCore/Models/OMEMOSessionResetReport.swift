@@ -5,6 +5,10 @@ public struct OMEMOSessionResetReport: Sendable, Equatable {
             /// A new session was built and announced to the device. `needsTrusting` is true when the device is not
             /// trusted for encryption, so messages reach it only once the user trusts it.
             case rebuilt(needsTrusting: Bool)
+            /// A new session was built where the device carries its known key, while it also offers another key, which
+            /// was refused and replaced nothing. `needsTrusting` is as for `rebuilt`. `newFingerprint` is the refused key
+            /// in its stored form.
+            case rebuiltKeyRefused(needsTrusting: Bool, newFingerprint: String)
             /// The device is marked untrusted, so its session was only discarded.
             case discarded
             /// The device's key changed, so its session was discarded and the device is untrusted under the new key
@@ -32,6 +36,9 @@ public struct OMEMOSessionResetReport: Sendable, Equatable {
             switch outcome {
             case let .rebuilt(needsTrusting):
                 "Device \(deviceID) has a new session" + (needsTrusting ? " and needs trusting" : "")
+            case let .rebuiltKeyRefused(needsTrusting, newFingerprint):
+                "Device \(deviceID) has a new session" + (needsTrusting ? " and needs trusting" : "")
+                    + ". It also offered a different key (\(OMEMODeviceInfo.formatFingerprint(newFingerprint))), which Ducko refused"
             case .discarded:
                 "Device \(deviceID) is marked untrusted, so its session was discarded"
             case let .keyChanged(previousFingerprint, newFingerprint):
@@ -39,7 +46,7 @@ public struct OMEMOSessionResetReport: Sendable, Equatable {
                     + (previousFingerprint.isEmpty ? "" : " from \(OMEMODeviceInfo.formatFingerprint(previousFingerprint))")
                     + " to \(OMEMODeviceInfo.formatFingerprint(newFingerprint)) and needs trusting"
             case .noBundle:
-                "Device \(deviceID) publishes no keys, so its session was discarded"
+                "Device \(deviceID) publishes no usable keys, so its session was discarded"
             case .notListed:
                 "Device \(deviceID) is not on the device list, so its session was discarded"
             case let .failed(reason):
@@ -47,12 +54,12 @@ public struct OMEMOSessionResetReport: Sendable, Equatable {
             }
         }
 
-        /// Whether the user has to act on the device: trust it, or reset it again.
+        /// Whether the user has to act on the device, trust it or reset it again, or know that a key it offers was refused.
         public var needsAttention: Bool {
             switch outcome {
             case let .rebuilt(needsTrusting): needsTrusting
             case .noBundle, .notListed: false
-            case .discarded, .keyChanged, .failed: true
+            case .rebuiltKeyRefused, .discarded, .keyChanged, .failed: true
             }
         }
     }

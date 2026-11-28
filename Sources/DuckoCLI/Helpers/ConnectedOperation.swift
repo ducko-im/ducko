@@ -83,7 +83,7 @@ func waitForConnected(accountID: UUID, environment: AppEnvironment) async throws
 }
 
 /// Waits for the account to connect, then for its first encryption setup attempt, so a one-shot command runs with
-/// whatever identity that attempt installed and never exits while its new keys are being stored.
+/// whatever identity that attempt installed and never exits while its new keys are being stored or published.
 func waitForSetUp(accountID: UUID, environment: AppEnvironment) async throws {
     try await waitForConnected(accountID: accountID, environment: environment)
     await environment.omemoService.awaitSetupAttempt(accountID: accountID)

@@ -25,6 +25,8 @@ enum CLIError: Error, LocalizedError {
     case noIncomingOffers
     case transferNotFound(String)
     case noDirectTransfers
+    /// A chat whose recent messages hold no file a contact shared in an encrypted message.
+    case noEncryptedFile(String)
     case malformedQuotedArgument(String)
     case omemoDeviceNotFound(deviceID: UInt32, jid: String)
     case omemoFingerprintMismatch(deviceID: UInt32, jid: String)
@@ -84,6 +86,8 @@ enum CLIError: Error, LocalizedError {
             "Transfer not found: \(sid)"
         case .noDirectTransfers:
             "No direct file transfers under way."
+        case let .noEncryptedFile(address):
+            "No encrypted file received from \(address)."
         case let .malformedQuotedArgument(detail):
             "Invalid nickname argument: \(detail). Quote nicknames containing spaces, e.g. \"Alice Smith\"."
         case let .omemoDeviceNotFound(deviceID, jid):

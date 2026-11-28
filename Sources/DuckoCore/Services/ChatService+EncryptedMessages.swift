@@ -222,17 +222,26 @@ extension ChatService {
     }
 
     /// `row`, an encrypted message's row with its ids, filled from `decrypted`, the message its sender encrypted: the
-    /// filtered body, the reply, the attachments and whether its device is trusted. Nil for a message without a body or
-    /// attachment.
+    /// filtered body, the reply, the attachments and whether its device is trusted. A body that shares an encrypted file
+    /// (XEP-0454) becomes the file's attachment and leaves no text, and the key of any other `aesgcm://` link the body
+    /// mentions is hidden. Nil for a message without a body or attachment.
     func decryptedRow(
         _ row: ChatMessage, reading decrypted: XMPPMessage, isFromUntrustedDevice: Bool, in conversation: Conversation, accountID: UUID
     ) async -> ChatMessage? {
         let inner = InboundMessageMetadata(decrypted)
-        guard let body = decrypted.body ?? inner.attachments.first?.url else { return nil }
-        let replyFallbackRange = inner.replyFallbackRange(in: decrypted.body)
+        guard let received = decrypted.body ?? inner.attachments.first?.url else { return nil }
+        let body: String
+        let replyFallbackRange: Range<Int>?
+        var attachments = inner.attachments
+        if let sharedFile = EncryptedFileLink(body: received) {
+            (body, replyFallbackRange) = ("", nil)
+            attachments = [sharedFile.attachment()] + attachments.filter { $0.url != received }
+        } else {
+            (body, replyFallbackRange) = EncryptedFileLink.hidingKeys(in: received, replyFallbackRange: inner.replyFallbackRange(in: decrypted.body))
+        }
         let filtered = await filterBody(
             body, direction: row.isOutgoing ? .outgoing : .incoming, accountID: accountID, fallback: conversation.jid,
-            isUnstyled: decrypted.isUnstyled, isEncrypted: true, attachments: inner.attachments, replyFallbackRange: replyFallbackRange
+            isUnstyled: decrypted.isUnstyled, isEncrypted: true, attachments: attachments, replyFallbackRange: replyFallbackRange
         )
         var message = row
         message.body = filtered.body
@@ -240,7 +249,7 @@ extension ChatService {
         message.replyToID = inner.replyToID
         message.replyToJID = inner.replyToJID
         message.replyFallbackRange = replyFallbackRange
-        message.attachments = inner.attachments
+        message.attachments = attachments
         message.isFromUntrustedDevice = isFromUntrustedDevice
         message.isUndecryptable = false
         message.undecryptableReason = nil
@@ -252,7 +261,7 @@ extension XMPPMessage {
     /// Why an encrypted message without an OMEMO payload is shown only as a notice: it is encrypted with another
     /// method, or it names OMEMO but carries no payload to decrypt. Nil for any other message.
     var unreadableEncryption: UndecryptableReason? {
-        guard isEncrypted, !isOMEMOEncrypted else { return nil }
+        guard isEncrypted, !carriesOMEMOPayload else { return nil }
         return otherEncryptionMethod.map { .otherMethod(name: $0.name) } ?? .decryptionFailed
     }
 }

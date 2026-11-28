@@ -35,7 +35,7 @@ Each subcommand declares these options itself. Some reject them with "Unknown op
 
 ## Subcommands
 
-Unless noted otherwise, each subcommand connects, waits for the first attempt to set up this device's OMEMO encryption, performs its action, and disconnects. The wait keeps a command from running before this device can encrypt, or exiting while its new keys are stored. A `presence` that holds a status does not wait.
+Unless noted otherwise, each subcommand connects, waits for the first attempt to set up this device's OMEMO encryption, performs its action, and disconnects. The wait keeps a command from running before this device can encrypt, or exiting while its new keys are stored or this device is being published for legacy OMEMO. A `presence` that holds a status does not wait.
 
 ### `send [--file <path>] [--method auto|http|jingle] <jid> [body]`
 
@@ -76,6 +76,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/decline [id]` — decline an incoming file offer. Without an id, it takes this account's newest offer.
 - `/cancel [sid]` — cancel a direct file transfer still under way, sent or received, and tell the contact. The sid is the one `/transfers` prints. Without a sid, it takes this account's newest one. Prints `Canceled file transfer: <file>` once it stopped the transfer. When there is none to stop, it prints the error `Transfer not found: <sid>`, or `No direct file transfers under way.` without a sid. A transfer that ended just as it was canceled gets the same error.
 - `/transfers` — list active file transfers with progress. A direct transfer moving bytes also shows its rate and time left once it has run for a second, e.g. `report.pdf (5 MB) [outgoing/jingle] transferring 50% · 250 kB/s · 10 sec left (sid: <sid>)`
+- `/savefile <jid>` — decrypt the file the contact last shared in an encrypted message in that chat, and save it to `~/Downloads`. Output never prints such a file's link, which holds its key, so this is how the CLI opens one. Prints `Saved encrypted file to <path>`, or the error `No encrypted file received from <jid>.` when there is none. A link that arrived in a plaintext message is not opened, nor is one in a retracted message. Only the chat's newest 10,240 messages are searched.
 - `/add <jid> [name]` — add contact to roster
 - `/remove <jid>` — remove contact from roster
 - `/approve <jid>` — approve subscription request
@@ -87,6 +88,7 @@ REPL mode. Connects once, then accepts commands on stdin:
 - `/profile` — view own vCard profile
 - `/connection-info` — show TLS connection info (protocol, cipher, certificate)
 - `/encrypt <jid> on|off` — toggle OMEMO encryption for a conversation. `off` also keeps a contact's encrypted message from switching it back on.
+- `/omemo-devices <jid>` — list the contact's OMEMO devices, or your account's for your own JID, with fingerprint, trust and versions, as `omemo devices` does
 - `/omemo-verify <jid> <device-id> <fingerprint>` — mark a device verified after comparing its fingerprint, as `omemo verify` does
 - `/omemo-reset <jid> [device-id]` — reset the OMEMO sessions with the contact's devices, or with your other devices for your own JID, as `omemo reset` does
 - `/omemo-setup` — try setting up this device's OMEMO encryption again at once, after an attempt left it incomplete or the server refused it. It prints "Retrying OMEMO setup.", and the attempt's outcome follows as an `OMEMO:` line, as every attempt's outcome does. While the account is not connected, while its first attempt is still running, or once setup is complete, it prints an error instead
@@ -452,7 +454,11 @@ ducko omemo fingerprint --output json
 
 ### `omemo devices <jid>`
 
-List a contact's OMEMO devices with trust status. Only devices on the contact's current device list are shown; while that list cannot be read, every stored device is.
+List a contact's OMEMO devices with trust status. Only devices on the contact's current device lists are shown, each once; while either list cannot be read, every stored device is. Each line ends with the versions whose list holds the device, OMEMO 2 first: `OMEMO 2`, `legacy` (`eu.siacs.conversations.axolotl`, which Conversations, Monal and Gajim use) or `OMEMO 2, legacy`. A device on no list read on this connection shows no versions.
+
+```
+  12345  d9f71a68 33945da8 bda259e2 9a179ad2 e5092fe1 4d7372af 800da323 3b16ce4f  [trusted]  OMEMO 2, legacy
+```
 
 ```
 ducko omemo devices alice@example.com
@@ -487,9 +493,9 @@ ducko omemo verify alice@example.com 12345 d9f71a68 33945da8 bda259e2 9a179ad2 e
 
 ### `omemo reset <jid> [--device <id>]`
 
-Reset the OMEMO sessions with every device on the contact's current list, or with one device. With the account's own JID it resets the account's other devices, and naming this device with `--device` is refused. A trusted or undecided device gets a new session and an empty key-exchange message. It is reported as still needing trusting when it is not trusted for encryption, as an undecided device is with trust on first use off. A device marked untrusted only has its session discarded, as do a device that publishes no keys and a `--device` that is not on the current list. A device whose bundle now carries another identity key is marked untrusted under the new key. The command prints each device's outcome, with both fingerprints of a changed key, and leaves a note in the chat with the contact (none for the account's own JID).
+Reset the OMEMO sessions with every device on either of the contact's current device lists, in each version whose list holds it, or with one device. With the account's own JID it resets the account's other devices, and naming this device with `--device` is refused. A trusted or undecided device gets a new session and an empty key-exchange message. It is reported as still needing trusting when it is not trusted for encryption, as an undecided device is with trust on first use off. A device marked untrusted only has its sessions discarded, as do a `--device` on neither list and a device that publishes no usable keys. Keys are unusable when there are none, when their signature does not verify, or when they carry the known key without a pre-key to start a session with. A device whose bundles all carry another identity key is marked untrusted under the new key. When one of its bundles still carries the known key, the device keeps its trust and gets a new session in that version. The other key is then reported as refused. The command prints each device's outcome, with both fingerprints of a changed key, and leaves a note in the chat with the contact (none for the account's own JID).
 
-JSON emits one `omemo_session_reset` record with `jid` and a `devices` list. Each entry has `device_id` (a string) and `outcome`: `rebuilt` (with `needs_trusting`, `"true"` or `"false"`), `discarded`, `key_changed` (raw `previous_fingerprint`/`new_fingerprint`, displayed `previous_display_fingerprint`/`new_display_fingerprint`), `no_bundle`, `not_listed`, or `failed` (with `error`).
+JSON emits one `omemo_session_reset` record with `jid` and a `devices` list. Each entry has `device_id` (a string) and `outcome`: `rebuilt` (with `needs_trusting`, `"true"` or `"false"`), `rebuilt_key_refused` (with `needs_trusting`, and the refused key as raw `new_fingerprint` and displayed `new_display_fingerprint`), `discarded`, `key_changed` (raw `previous_fingerprint`/`new_fingerprint`, displayed `previous_display_fingerprint`/`new_display_fingerprint`), `no_bundle`, `not_listed`, or `failed` (with `error`).
 
 ```
 ducko omemo reset alice@example.com
@@ -565,7 +571,7 @@ Every line on stdout is one JSON record. Prompts go to stderr in every format: r
 {"body":"Hello","direction":"incoming","from":"alice@example.com","timestamp":"2026-02-27T10:00:00Z","type":"message"}
 ```
 
-Optional keys: `"action":"true"` for a `/me` message (an outgoing one in history also carries `"actor"`, the account's address), `"attachments":"..."` (comma-separated attachment URLs, leaving out one whose URL is the whole body), `"delivered":"true"`, `"read":"true"` (with `"delivered"` also set), `"edited":"true"`, `"encrypted":"true"`, `"untrusted_device":"true"` for one decrypted from a device that is not trusted for encryption, `"error":"..."`, and `"undecryptable":"true"` for an encrypted message that could not be decrypted (its `body` is then empty, and `"notice"` says why). An encrypted room message `interactive` prints is a `room_message` record, and one in a room's private chat a `muc_private_message` record, each with `room` and `nickname` in place of `from`. Keys are sorted alphabetically.
+Optional keys: `"action":"true"` for a `/me` message (an outgoing one in history also carries `"actor"`, the account's address), `"attachments":"..."` (comma-separated attachment URLs, leaving out one whose URL is the whole body), `"encrypted_file":"true"` when an attachment is an `aesgcm://` link, `"delivered":"true"`, `"read":"true"` (with `"delivered"` also set), `"edited":"true"`, `"encrypted":"true"`, `"untrusted_device":"true"` for one decrypted from a device that is not trusted for encryption, `"error":"..."`, and `"undecryptable":"true"` for an encrypted message that could not be decrypted (its `body` is then empty, and `"notice"` says why). `attachments` names an `aesgcm://` link by its file name, since the link holds the file's key. An encrypted room message `interactive` prints is a `room_message` record, and one in a room's private chat a `muc_private_message` record, each with `room` and `nickname` in place of `from`. Keys are sorted alphabetically.
 
 A timeline note in history is a record of its own: `{"kind":"encryption_enabled_by_contact","text":"...","timestamp":"...","type":"note"}`. `kind` is also `plaintext_requested` (with `detail` holding the reason when one was given, and in a room `subject` holding the requesting occupant's nickname), `encryption_resumed_by_contact`, `sessions_reset` (with `detail` listing the devices that need attention, if any) or `incoming_file_failed` (with `file_name`, and `detail` holding the reason).
 
@@ -575,13 +581,15 @@ Every key is snake_case. Values Ducko defines are snake_case too, such as `not_s
 
 Empty lists emit one `<kind>_empty` record instead of text: `accounts_empty`, `roster_empty`, `bookmarks_empty`, `block_list_empty`, `rooms_empty`, `room_participants_empty`, `searched_channels_empty`, `messages_empty`, `omemo_identity_empty` or `omemo_devices_empty`. `interactive` adds `online_contacts_empty` (`/who`), `transfers_empty`, `affiliations_empty` (with `affiliation` and `room`), `room_config_empty` (with `room`), `tls_info_empty` (`/connection-info`), `own_avatar_empty`, `avatar_empty` (with `jid`, also from `avatar get`), `recent_message_empty` (with `purpose`: `retract`, `edit` or `reply`) and `moderatable_message_empty`. Account-scoped records carry `"account"`. `omemo_devices_empty` adds `"jid"`, and `room_participants_empty` carries `"room"`.
 
-OMEMO commands emit `omemo_fingerprint` (`fingerprint` and `display_fingerprint`), `omemo_device` (`jid`, `device_id`, `trust`, and `fingerprint` and `display_fingerprint` when known), `omemo_trust` and `omemo_session_reset` records. `fingerprint` is the raw Ed25519 hex Ducko stores, and `display_fingerprint` is the grouped Curve25519 form the text output shows.
+OMEMO commands emit `omemo_fingerprint` (`fingerprint` and `display_fingerprint`), `omemo_device` (`jid`, `device_id`, `trust`, `versions`, and `fingerprint` and `display_fingerprint` when known), `omemo_trust` and `omemo_session_reset` records. `versions` is a list such as `["omemo2","legacy"]`, `omemo2` first, and is empty when no list holding the device was read. `fingerprint` is the raw form Ducko stores: the 64 hex digits of an OMEMO 2 key's Ed25519 form, or for a key first seen through legacy OMEMO the 66 hex digits of its `05`-prefixed Curve25519 form. `display_fingerprint` is the grouped Curve25519 form the text output shows, the same for either.
+
+A connected command prints each device list it fetches again or is notified of, one line per version: `OMEMO devices for <jid> (OMEMO 2): 12, 34`, or `(legacy)`. In JSON it is an `omemo_device_list` record with `jid`, `devices` (comma-separated ids), `version` (`omemo2` or `legacy`) and `account`. `omemo_session_established` carries the session's `version` the same way.
 
 `interactive` and `room join` print an `omemo_setup` record for each setup attempt's outcome, with `account`, `status` (`complete`, `incomplete` or `refused`) and, for `refused`, the server's `condition`. Other commands print none.
 
 A confirmation or single answer is a `command_result` record: an `action`, its fields and the human `message`. For example `{"action":"block","jid":"carol@example.com","message":"Blocked carol@example.com.","type":"command_result"}`. The actions are `block`, `unblock`, `add_bookmark`, `remove_bookmark`, `save_avatar` and `publish_avatar` (with `hash` and `size`, and `save_avatar` adding `path` and `mime_type`), and `register_account`.
 
-`interactive` adds `unregister_account` (with `result`: `cancelled`, or `unregistered` with `history_deleted`), `submit_registration`, `change_password`, `send_file_directly`, `accept_transfer`, `decline_transfer`, `cancel_transfer`, `retract`, `edit`, `get_preference` and `set_preference` (with `key` and `enabled`), `set_encryption`, `retry_omemo_setup` (with `account`), `send_presence`, `approve_subscription`, `deny_subscription`, `leave_room`, `destroy_room`, `current_room`, `grant_voice`, `revoke_voice`, `kick`, `submit_room_config`, `moderate`, `send_private_message`, `own_avatar` and `avatar`. There, `help` prints one `{"text":"...","type":"help"}` record, and `/affiliations` prints an `affiliation_group` record (`affiliation`, `count`) before one `affiliation` record (`jid`, `affiliation`, `nickname`) per entry. `/transfers` prints one `transfer` record per transfer, with `file_name`, `file_size`, `file_size_bytes`, `direction`, `method`, `state` and `account`, and `sid` and `offer_id` once set. `state` is a token such as `transferring`, and `progress`, `bytes_per_second`, `seconds_remaining`, `url`, `reason` or `path` come in fields of their own.
+`interactive` adds `unregister_account` (with `result`: `cancelled`, or `unregistered` with `history_deleted`), `submit_registration`, `change_password`, `send_file_directly`, `accept_transfer`, `decline_transfer`, `cancel_transfer`, `save_encrypted_file` (with `path`), `retract`, `edit`, `get_preference` and `set_preference` (with `key` and `enabled`), `set_encryption`, `retry_omemo_setup` (with `account`), `send_presence`, `approve_subscription`, `deny_subscription`, `leave_room`, `destroy_room`, `current_room`, `grant_voice`, `revoke_voice`, `kick`, `submit_room_config`, `moderate`, `send_private_message`, `own_avatar` and `avatar`. There, `help` prints one `{"text":"...","type":"help"}` record, and `/affiliations` prints an `affiliation_group` record (`affiliation`, `count`) before one `affiliation` record (`jid`, `affiliation`, `nickname`) per entry. `/transfers` prints one `transfer` record per transfer, with `file_name`, `file_size`, `file_size_bytes`, `direction`, `method`, `state` and `account`, and `sid` and `offer_id` once set. `state` is a token such as `transferring`, and `progress`, `bytes_per_second`, `seconds_remaining`, `url`, `reason` or `path` come in fields of their own.
 
 Errors are `error` records with a `message`. In `interactive`, a usage mistake prints one carrying the usage line, and an unknown command one naming it. A mistake in the arguments themselves, caught before the command runs, prints only on stderr. A command that throws an error once it runs prints one on stdout, while stderr gets `Error: …` and the exit status is the same as in the other formats.
 
@@ -690,7 +698,7 @@ The receiver's REPL prints an incoming encrypted message as it arrives, and `/hi
 
 On the test server, a message sent while the receiver is offline reaches it through the archive sync on its next sign-in rather than as a live delivery. The sync decrypts it, so this setup checks archive decryption rather than how a live delivery from offline storage decrypts.
 
-Each throwaway profile adds a device to its account's device list on the shared server. Afterwards, with the user's approval, run `DUCKO_RESET_FIXTURES=1 swift test --package-path IntegrationTests --filter ResetTestServerState` to retract the lists, and clean up both profiles as Throwaway Profiles describes.
+Each throwaway profile adds a device to both of its account's device lists on the shared server, and a legacy bundle node that nothing else removes. Afterwards, with the user's approval, run `DUCKO_RESET_FIXTURES=1 swift test --package-path IntegrationTests --filter ResetTestServerState` to retract the lists and delete the stale bundles, and clean up both profiles as Throwaway Profiles describes.
 
 ## Examples
 

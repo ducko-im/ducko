@@ -1,3 +1,4 @@
+import DuckoTestSupport
 @testable import DuckoXMPP
 
 /// The time the test helpers stamp on the envelopes they encrypt.
@@ -9,7 +10,7 @@ extension OMEMOModule {
         plaintext: String, to recipientJID: BareJID, recipientDeviceIDs: [UInt32]? = nil, ownDeviceIDs: [UInt32]? = nil
     ) async throws -> EncryptedMessageElements {
         try await encryptMessage(
-            content: [bodyElement(plaintext)], time: testEnvelopeTime, to: recipientJID,
+            content: [bodyElement(plaintext)], legacyBody: plaintext, time: testEnvelopeTime, to: recipientJID,
             recipientDeviceIDs: recipientDeviceIDs, ownDeviceIDs: ownDeviceIDs
         )
     }
@@ -18,7 +19,7 @@ extension OMEMOModule {
         plaintext: String, roomJID: BareJID, recipients: [(jid: BareJID, deviceIDs: [UInt32])], ownDeviceIDs: [UInt32]? = nil
     ) async throws -> EncryptedMessageElements {
         try await encryptGroupMessage(
-            content: [bodyElement(plaintext)], time: testEnvelopeTime, roomJID: roomJID, recipients: recipients, ownDeviceIDs: ownDeviceIDs
+            content: [bodyElement(plaintext)], legacyBody: plaintext, time: testEnvelopeTime, roomJID: roomJID, recipients: recipients, ownDeviceIDs: ownDeviceIDs
         )
     }
 }
@@ -53,16 +54,32 @@ func makeInstalledOMEMOModule(
     return module
 }
 
-/// The `<pubsub>` answer to `iq` when it fetches a device list, listing `devices`, and nil for any other request.
-func deviceListItems(_ devices: [UInt32], answering iq: XMLElement) -> XMLElement? {
-    guard iq.child(named: "pubsub")?.child(named: "items")?.attribute("node") == XMPPNamespaces.omemoDevices else { return nil }
+/// The `<pubsub>` answer to `iq` when it fetches a device list in `version`, listing `devices`, and nil for any other
+/// request.
+func deviceListItems(_ devices: [UInt32], answering iq: XMLElement, in version: OMEMOWireFormat = .omemo2) -> XMLElement? {
+    let module = OMEMOModule(pepModule: PEPModule())
+    let (node, list) = switch version {
+    case .omemo2: (XMPPNamespaces.omemoDevices, module.buildDeviceListElement(devices))
+    case .legacy: (XMPPNamespaces.omemoLegacyDeviceList, module.buildLegacyDeviceListElement(devices))
+    }
+    guard iq.child(named: "pubsub")?.child(named: "items")?.attribute("node") == node else { return nil }
     var item = XMLElement(name: "item", attributes: ["id": "current"])
-    item.addChild(OMEMOModule(pepModule: PEPModule()).buildDeviceListElement(devices))
-    var items = XMLElement(name: "items", attributes: ["node": XMPPNamespaces.omemoDevices])
+    item.addChild(list)
+    var items = XMLElement(name: "items", attributes: ["node": node])
     items.addChild(item)
     var pubsub = XMLElement(name: "pubsub", namespace: XMPPNamespaces.pubsub)
     pubsub.addChild(items)
     return pubsub
+}
+
+/// Answers each legacy OMEMO request `mock` sends as a server holding no legacy nodes would: a read with no items, and
+/// a publish with success. A new device reads the legacy list before it takes an id, and publishes for legacy OMEMO once
+/// its setup completes.
+func answerLegacyRequests(on mock: MockTransport) async {
+    await mock.autoReply { stanza in
+        guard stanza.hasPrefix("<iq "), stanza.contains(XMPPNamespaces.omemoLegacy), let id = extractIQID(from: stanza) else { return nil }
+        return "<iq type=\"result\" id=\"\(id)\"/>"
+    }
 }
 
 extension OMEMOTrustGuard {
@@ -80,7 +97,17 @@ extension OMEMOTrustGuard {
 
 /// The fingerprint of a newly generated identity key, which no test identity has.
 func unrelatedFingerprint() -> String {
-    omemoFingerprint(of: OMEMOIdentityKeyPair().publicKeyBytes)
+    omemoFingerprint(of: OMEMOIdentityKeyPair().publicKeyBytes, format: .omemo2)
+}
+
+extension OMEMOModule.OMEMOIdentityData {
+    /// The same keys, with `preKeys` as the one-time pre-keys, as a later connection loads only the unused ones.
+    func withPreKeys(_ preKeys: [PreKeyData]) -> Self {
+        Self(
+            deviceID: deviceID, identityKeyRaw: identityKeyRaw, signedPreKeyID: signedPreKeyID,
+            signedPreKeyRaw: signedPreKeyRaw, signedPreKeySignature: signedPreKeySignature, preKeys: preKeys
+        )
+    }
 }
 
 extension OMEMO2Fixtures.Device {

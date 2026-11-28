@@ -55,17 +55,19 @@ struct MessageAmendment {
         self.timestamp = timestamp
     }
 
-    /// The event a live amendment of `messageType` comes in, for consumers that show those.
+    /// The event a live amendment of `messageType` comes in, for consumers that show those. A correction's text has the
+    /// key of any `aesgcm://` link hidden, as it is stored.
     func event(messageType: XMPPMessage.MessageType) -> XMPPEvent {
         switch change {
         case let .correction(newBody, replyFallbackRange):
-            .messageCorrected(
+            let (newBody, replyFallbackRange) = EncryptedFileLink.hidingKeys(in: newBody, replyFallbackRange: replyFallbackRange)
+            return .messageCorrected(
                 originalID: originalID, newBody: newBody, replyFallbackRange: replyFallbackRange, from: from, messageType: messageType, roomAuthor: roomAuthor
             )
         case .retraction:
-            .messageRetracted(originalID: originalID, from: from, messageType: messageType, roomAuthor: roomAuthor)
+            return .messageRetracted(originalID: originalID, from: from, messageType: messageType, roomAuthor: roomAuthor)
         case .moderation:
-            .messageModerated(originalID: originalID, moderator: from.description, room: from.bareJID, reason: nil)
+            return .messageModerated(originalID: originalID, moderator: from.description, room: from.bareJID, reason: nil)
         }
     }
 }

@@ -1,5 +1,11 @@
 import Testing
 @testable import DuckoCore
+@testable import DuckoXMPP
+
+/// Stored fingerprints of two Ed25519 keys, and the first key's legacy form.
+private let f1 = omemoFingerprint(of: [UInt8](repeating: 0x11, count: 32), format: .omemo2)
+private let f2 = omemoFingerprint(of: [UInt8](repeating: 0x22, count: 32), format: .omemo2)
+private let f1Legacy = omemoFingerprint(of: OMEMOCurveConversion.ed25519ToX25519([UInt8](repeating: 0x11, count: 32)) ?? [], format: .legacy)
 
 enum OMEMOTrustTests {
     struct TrustLevelTests {
@@ -43,12 +49,12 @@ enum OMEMOTrustTests {
         }
 
         @Test(arguments: [
-            ([("", OMEMOTrustLevel.verified), ("f1", .trusted)], "f1", OMEMOTrustLevel.verified),
-            ([("f1", .trusted), ("", .untrusted)], "f1", .untrusted),
-            ([("f1", .verified), ("f2", .trusted)], "", .untrusted),
+            ([("", OMEMOTrustLevel.verified), (f1, .trusted)], f1, OMEMOTrustLevel.verified),
+            ([(f1, .trusted), ("", .untrusted)], f1, .untrusted),
+            ([(f1, .verified), (f2, .trusted)], "", .untrusted),
             ([("", .undecided), ("", .trusted)], "", .trusted),
-            ([("f1", .trusted), ("f2", .trusted), ("f1", .trusted)], "", .untrusted),
-            ([("f1", .undecided), ("", .trusted), ("f1", .verified)], "f1", .verified)
+            ([(f1, .trusted), (f2, .trusted), (f1, .trusted)], "", .untrusted),
+            ([(f1, .undecided), ("", .trusted), (f1, .verified)], f1, .verified)
         ])
         func `Duplicate rows of a device collapse to one, the same in every order`(
             rows: [(String, OMEMOTrustLevel)], fingerprint: String, level: OMEMOTrustLevel
@@ -60,8 +66,16 @@ enum OMEMOTrustTests {
             }
         }
 
+        @Test func `Duplicate rows naming one key in both versions' forms do not conflict`() throws {
+            let collapsed = [Self.row(f1, .trusted), Self.row(f1Legacy, .verified)].collapsingDuplicateDevices()
+
+            let fingerprint = try #require(collapsed.map(\.fingerprint).first)
+            #expect(OMEMOFingerprint.matches(fingerprint, f1))
+            #expect(collapsed.map(\.trustLevel) == [.verified])
+        }
+
         @Test func `Rows of different devices stay apart, in the order each device first appears`() {
-            let rows = [Self.row("f2", .trusted, deviceID: 2), Self.row("f1", .untrusted), Self.row("f2", .verified, deviceID: 2)]
+            let rows = [Self.row(f2, .trusted, deviceID: 2), Self.row(f1, .untrusted), Self.row(f2, .verified, deviceID: 2)]
 
             let collapsed = rows.collapsingDuplicateDevices()
 
@@ -76,7 +90,8 @@ enum OMEMOTrustTests {
                 peerJID: "alice@example.com",
                 deviceID: 42,
                 fingerprint: "abcd1234",
-                trustLevel: .trusted
+                trustLevel: .trusted,
+                versions: [.omemo2, .legacy]
             )
             #expect(info.id == "alice@example.com-42")
         }

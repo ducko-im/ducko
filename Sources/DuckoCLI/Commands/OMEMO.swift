@@ -48,14 +48,8 @@ extension DuckoCLI {
                 let formatter = global.formatter
 
                 try await ConnectedOperation.run(formatter: formatter, account: accountOption.account) { env, selectedAccount in
-                    let devices = await env.omemoService.deviceInfoList(for: jid, accountID: selectedAccount.id)
-                    guard !devices.isEmpty else {
-                        print(formatter.formatEmptyResult(.omemoDevices(jid: jid, accountID: selectedAccount.id)))
-                        return
-                    }
-
-                    for device in devices {
-                        print(formatter.formatOMEMODevice(device))
+                    for line in await omemoDeviceLines(jid: jid, accountID: selectedAccount.id, environment: env, formatter: formatter) {
+                        print(line)
                     }
                 }
             }

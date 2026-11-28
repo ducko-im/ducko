@@ -12,33 +12,40 @@ struct OMEMOSessionPeerKeyTests {
         let senderModule = makeInstalledOMEMOModule(identity: sender.data, context: makeStubModuleContext(sendIQ: { _, _ in bundleItems(for: recipient) }))
         let recipientModule = makeInstalledOMEMOModule(identity: recipient.data, context: makeStubModuleContext())
 
-        let encrypted = try await senderModule.encryptMessage(plaintext: "hi", to: accountJID, recipientDeviceIDs: [200], ownDeviceIDs: []).encrypted
+        let encrypted = try await senderModule.encryptMessage(plaintext: "hi", to: accountJID, recipientDeviceIDs: [200], ownDeviceIDs: []).omemo2
         _ = try recipientModule.decryptIncomingMessage(encrypted, from: .full(senderJID))
 
-        let started = senderModule.state.withLock { $0.sessions[SessionKey(jid: accountJID, deviceID: 200)] }
-        let received = recipientModule.state.withLock { $0.sessions[SessionKey(jid: senderJID.bareJID, deviceID: 100)] }
+        let started = senderModule.state.withLock { $0.sessions[SessionKey(jid: accountJID, deviceID: 200, version: .omemo2)] }
+        let received = recipientModule.state.withLock { $0.sessions[SessionKey(jid: senderJID.bareJID, deviceID: 100, version: .omemo2)] }
         #expect(started?.peerIdentityKey == recipient.identityKeyPair.publicKeyBytes)
         #expect(received?.peerIdentityKey == sender.identityKeyPair.publicKeyBytes)
     }
 
-    enum Corruption: CaseIterable {
-        case wrongLength, otherFirstHalf
+    enum Corruption {
+        case wrongLength, otherFirstHalf, otherTypeByte
     }
 
-    @Test(arguments: Corruption.allCases)
-    func `A started session's key is unreadable when its associated data does not pair this device's key with another`(corruption: Corruption) throws {
+    @Test(arguments: [
+        (OMEMOWireFormat.omemo2, Corruption.wrongLength), (.omemo2, .otherFirstHalf),
+        (.legacy, .wrongLength), (.legacy, .otherFirstHalf), (.legacy, .otherTypeByte)
+    ])
+    func `A started session's key is unreadable when its associated data does not pair this device's key with another`(
+        format: OMEMOWireFormat, corruption: Corruption
+    ) throws {
         let ownKey = OMEMOIdentityKeyPair().publicKeyBytes
         let responderKey = OMEMOIdentityKeyPair().publicKeyBytes
         let header = OMEMOKeyExchangeHeader(preKeyID: 1, signedPreKeyID: 1, identityKey: ownKey, ephemeralKey: Array(repeating: 0xEE, count: 32))
         let associatedData = switch corruption {
-        case .wrongLength: ownKey + responderKey.dropLast()
-        case .otherFirstHalf: OMEMOIdentityKeyPair().publicKeyBytes + responderKey
+        case .wrongLength: format.encodedIdentityKey(ownKey) + format.encodedIdentityKey(responderKey).dropLast()
+        case .otherFirstHalf: format.encodedIdentityKey(OMEMOIdentityKeyPair().publicKeyBytes) + format.encodedIdentityKey(responderKey)
+        case .otherTypeByte: format.encodedIdentityKey(ownKey) + [0x06] + responderKey
         }
 
         let session = try OMEMOSession(
             ratchet: OMEMODoubleRatchetSession(
                 asResponderWithSharedSecret: Array(repeating: 1, count: 32),
-                ourSignedPreKeyPair: OMEMOSignedPreKey(keyID: 1, identityKey: OMEMOIdentityKeyPair()).keyPair
+                ourSignedPreKeyPair: OMEMOSignedPreKey(keyID: 1, identityKey: OMEMOIdentityKeyPair()).keyPair,
+                format: format
             ),
             associatedData: associatedData, start: .sent(header, isConfirmed: false)
         )

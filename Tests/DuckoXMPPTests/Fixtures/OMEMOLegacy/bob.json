@@ -1,0 +1,37 @@
+{
+  "jid": "bob@example.org",
+  "deviceID": 27182818,
+  "identityKey": {
+    "seed": "ojjN7KJml39cQzQYyjob7OIKpIKIbXIVpb5n3KPXScA=",
+    "publicKey": "uxiqI893SA/0uo9YQdkF1N4JwfnSoIEz5mzXqIxf9gw=",
+    "agreementPublicKey": "blj10ijUHZtE/MEZs7AWiNuzfyOf5K5giVQG285ewzU=",
+    "serializedPublicKey": "BW5Y9dIo1B2bRPzBGbOwFojbs38jn+SuYIlUBtvOXsM1",
+    "signBit": 0
+  },
+  "signedPreKey": {
+    "id": 1,
+    "privateKey": "BK3RsSZkFQRBqiPQaIB4k6A/aeAQCfjSw2ZIwtFx+dI=",
+    "publicKey": "TZkth5Wf9+IpQ5LJ7FT7O/IO9cU+7IfVsSRbloXriWQ=",
+    "signature": "Nld+ZMSKI1mkLMbEdDH2d9NIhdjUMcshhRj5kN9t/Y437mt6SdS78m8pnyYNyeJVjTqcO+fI4CJuSKj3o43TBw==",
+    "publishedSignature": "Nld+ZMSKI1mkLMbEdDH2d9NIhdjUMcshhRj5kN9t/Y437mt6SdS78m8pnyYNyeJVjTqcO+fI4CJuSKj3o43TBw=="
+  },
+  "preKeys": [
+    {
+      "id": 1,
+      "privateKey": "9kDoumiD5PPCW305AnSrpgnHMqYtffHNHDrPbatf4FM=",
+      "publicKey": "UvVaiFEdcQtWro5MAQTlriSiO6WT6537B7pV8ZyFTGQ="
+    },
+    {
+      "id": 2,
+      "privateKey": "eR7OV9lIC/LKY5E5vw6N4hl2qN4Qqb3T8GoC14OgL7I=",
+      "publicKey": "Ri24GObwG/OTlH8ONiIk3uzdEf1oV9PcMMr9PUYTYk4="
+    },
+    {
+      "id": 3,
+      "privateKey": "57rcoHMckCaGWQcM3H3JUIi3nK2Pj8lvvdfBOExQ1lA=",
+      "publicKey": "4D3Y3DKGKbMxagmVbRo04Gj0qrjZAsAPSLvnoCZQlTg="
+    }
+  ],
+  "deviceList": "<list xmlns=\"eu.siacs.conversations.axolotl\"><device id=\"27182818\" /></list>",
+  "bundle": "<bundle xmlns=\"eu.siacs.conversations.axolotl\"><signedPreKeyPublic signedPreKeyId=\"1\">BU2ZLYeVn/fiKUOSyexU+zvyDvXFPuyH1bEkW5aF64lk</signedPreKeyPublic><signedPreKeySignature>Nld+ZMSKI1mkLMbEdDH2d9NIhdjUMcshhRj5kN9t/Y437mt6SdS78m8pnyYNyeJVjTqcO+fI4CJuSKj3o43TBw==</signedPreKeySignature><identityKey>BW5Y9dIo1B2bRPzBGbOwFojbs38jn+SuYIlUBtvOXsM1</identityKey><prekeys><preKeyPublic preKeyId=\"1\">BVL1WohRHXELVq6OTAEE5a4kojulk+ud+we6VfGchUxk</preKeyPublic><preKeyPublic preKeyId=\"2\">BUYtuBjm8Bvzk5R/DjYiJN7s3RH9aFfT3DDK/T1GE2JO</preKeyPublic><preKeyPublic preKeyId=\"3\">BeA92NwyhimzMWoJlW0aNOBo9Kq42QLAD0i756AmUJU4</preKeyPublic></prekeys></bundle>"
+}

@@ -106,6 +106,40 @@ enum ChatStatesModuleTests {
 
             await disconnectFast(client)
         }
+
+        /// A legacy OMEMO message encrypts only its body, so a chat state next to it could be anyone's. Only the
+        /// decrypted copy's counts.
+        @Test
+        func `Ignores a chat state next to a legacy OMEMO payload`() async throws {
+            let mock = MockTransport()
+            let client = try await makeConnectedClient(mock: mock)
+
+            let eventsTask = Task {
+                try await collectEvents(from: client) { event in
+                    if case .chatStateChanged = event { return true }
+                    return false
+                }
+            }
+
+            await mock.simulateReceive("""
+            <message from='contact@example.com/res' to='user@example.com/ducko' type='chat'>\
+            <composing xmlns='http://jabber.org/protocol/chatstates'/>\
+            <encrypted xmlns='\(XMPPNamespaces.omemoLegacy)'><header sid='1'><iv>AAAA</iv></header><payload>AAAA</payload></encrypted>\
+            </message>
+            """)
+            await mock.simulateReceive("""
+            <message from='contact@example.com/res' to='user@example.com/ducko' type='chat'>\
+            <paused xmlns='http://jabber.org/protocol/chatstates'/>\
+            </message>
+            """)
+
+            let states = try await eventsTask.value.compactMap { event -> ChatState? in
+                if case let .chatStateChanged(_, state, _) = event { state } else { nil }
+            }
+            #expect(states == [.paused])
+
+            await disconnectFast(client)
+        }
     }
 
     struct SendState {

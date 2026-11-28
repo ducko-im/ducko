@@ -709,9 +709,12 @@ public final class ChatWindowState {
         }
     }()
 
+    /// An encrypted file's link is never fetched, so it has no preview, and the next link in the body gets it.
     private static func extractFirstURL(from body: String) -> String? {
         let range = NSRange(body.startIndex..., in: body)
-        return linkDetector.firstMatch(in: body, range: range)?.url?.absoluteString
+        return linkDetector.matches(in: body, range: range).lazy
+            .compactMap(\.url?.absoluteString)
+            .first { !EncryptedFileLink.isMentioned(in: $0) }
     }
 
     /// Fetches link previews for message URLs not yet in the service's cache.

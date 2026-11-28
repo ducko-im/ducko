@@ -1,6 +1,13 @@
 import DuckoCore
 import Foundation
 
+/// The lines listing the devices of `jid`, one per device, or the empty result when it has none.
+func omemoDeviceLines(jid: String, accountID: UUID, environment: AppEnvironment, formatter: any CLIFormatter) async -> [String] {
+    let devices = await environment.omemoService.deviceInfoList(for: jid, accountID: accountID)
+    guard !devices.isEmpty else { return [formatter.formatEmptyResult(.omemoDevices(jid: jid, accountID: accountID))] }
+    return devices.map(formatter.formatOMEMODevice)
+}
+
 /// The contact's device with `deviceID` as the device list shows it.
 func omemoDevice(jid: String, deviceID: UInt32, accountID: UUID, environment: AppEnvironment) async throws -> OMEMODeviceInfo {
     let devices = await environment.omemoService.deviceInfoList(for: jid, accountID: accountID)

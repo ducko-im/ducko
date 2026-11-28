@@ -15,7 +15,8 @@ struct LinkDetectionFilter: MessageFilter {
             let detector = try NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
             let range = NSRange(body.startIndex..., in: body)
             let matches = detector.matches(in: body, range: range)
-            urls = matches.compactMap(\.url)
+            // An `aesgcm://` link carries its file's key, so it is never linked or previewed (XEP-0454).
+            urls = matches.compactMap(\.url).filter { !EncryptedFileLink.isMentioned(in: $0.absoluteString) }
         } catch {
             return content
         }

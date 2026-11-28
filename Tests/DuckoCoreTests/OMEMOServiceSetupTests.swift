@@ -173,7 +173,7 @@ enum OMEMOServiceSetupTests {
             let harness = try await EncryptedSendHarness.connect(newDevice: true)
             await harness.transport.waitForBlockedSend()
             try await harness.omemoStore.saveSession(OMEMOStoredSession(
-                accountJID: testJIDString, peerJID: peer.description, peerDeviceID: 200, sessionData: Data([1]), associatedData: Data([2])
+                accountJID: testJIDString, peerJID: peer.description, peerDeviceID: 200, version: .omemo2, sessionData: Data([1]), associatedData: Data([2])
             ))
 
             let reset = Task { try await harness.omemoService.resetSessions(peerJID: peer.description, deviceID: nil, accountID: harness.accountID) }

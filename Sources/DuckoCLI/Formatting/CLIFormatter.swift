@@ -192,6 +192,24 @@ func omemoFingerprintText(_ device: OMEMODeviceInfo) -> String {
     device.fingerprint.isEmpty ? "(no fingerprint)" : OMEMODeviceInfo.formatFingerprint(device.fingerprint)
 }
 
+/// The OMEMO versions in `versions`, OMEMO 2 first, in the order every format lists them.
+func orderedOMEMOVersions(_ versions: Set<OMEMOWireFormat>) -> [OMEMOWireFormat] {
+    OMEMOWireFormat.allCases.filter(versions.contains)
+}
+
+/// An OMEMO version as the human-readable formats name it.
+func omemoVersionName(_ version: OMEMOWireFormat) -> String {
+    switch version {
+    case .omemo2: "OMEMO 2"
+    case .legacy: "legacy"
+    }
+}
+
+/// The versions a device speaks, after a separator, or nothing when no device list is known.
+func omemoVersionsSuffix(_ versions: Set<OMEMOWireFormat>) -> String {
+    versions.isEmpty ? "" : "  " + orderedOMEMOVersions(versions).map(omemoVersionName).joined(separator: ", ")
+}
+
 func omemoTrustChangeText(jid: String, deviceID: UInt32, trustLevel: OMEMOTrustLevel) -> String {
     "\(trustLevel.rawValue.capitalized) device \(deviceID) for \(jid)."
 }

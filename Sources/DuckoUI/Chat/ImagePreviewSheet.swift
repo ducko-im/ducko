@@ -5,6 +5,8 @@ import SwiftUI
 struct ImagePreviewSheet: View {
     @Environment(AppEnvironment.self) private var environment
     let attachment: Attachment
+    /// An encrypted image, decrypted in memory, which the sheet shows and saves in place of fetching the attachment.
+    var decryptedImage: DecryptedImage?
     @Environment(\.dismiss) private var dismiss
     @State private var saveError: String?
 
@@ -48,7 +50,13 @@ struct ImagePreviewSheet: View {
 
     @ViewBuilder
     private var imageContent: some View {
-        if let imageURL = attachment.remoteURL {
+        if let decryptedImage {
+            Image(nsImage: decryptedImage.image)
+                .resizable()
+                .scaledToFit()
+                .padding()
+                .accessibilityLabel(attachment.displayFileName)
+        } else if let imageURL = attachment.remoteURL {
             AsyncImage(url: imageURL) { phase in
                 switch phase {
                 case let .success(image):
@@ -72,14 +80,26 @@ struct ImagePreviewSheet: View {
     }
 
     private func saveToDownloads() {
-        guard let imageURL = attachment.remoteURL else { return }
+        let service = environment.fileTransferService
         let fileName = attachment.displayFileName
+        let decryptedBytes = decryptedImage?.bytes
+        let imageURL = attachment.remoteURL
         Task {
             do {
-                _ = try await environment.fileTransferService.saveRemoteImage(from: imageURL, named: fileName)
+                try await Self.save(decryptedBytes: decryptedBytes, orFetching: imageURL, named: fileName, with: service)
             } catch {
                 saveError = error.localizedDescription
             }
+        }
+    }
+
+    /// Saves the image to the downloads folder: the bytes an encrypted image was decrypted to as they are, else the
+    /// remote image fetched again.
+    static func save(decryptedBytes: [UInt8]?, orFetching imageURL: URL?, named fileName: String, with service: FileTransferService) async throws {
+        if let decryptedBytes {
+            _ = try await service.saveDecryptedFile(decryptedBytes, named: fileName)
+        } else if let imageURL {
+            _ = try await service.saveRemoteImage(from: imageURL, named: fileName)
         }
     }
 }

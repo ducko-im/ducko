@@ -465,6 +465,20 @@ struct ChatWindowHistoryTests {
         #expect(fixture.windowState.linkPreview(for: corrected) == nil)
     }
 
+    /// An encrypted file's link is never fetched, so the link after it gets the preview.
+    @Test func `a link to an encrypted file has no preview`() async throws {
+        let fixture = try await ChatWindowFixture.make(loads: false)
+        let encryptedFileLink = "aesgcm://upload.example.com/files/photo.png#"
+        let linked = Self.message(fixture, at: 0, body: "\(encryptedFileLink)… and https://example.com/after")
+        await fixture.transcripts.addMessage(linked)
+        for url in [encryptedFileLink, "https://example.com/after"] {
+            try await fixture.store.upsertLinkPreview(LinkPreview(url: url, title: url, fetchedAt: Date()))
+        }
+        await fixture.windowState.load()
+
+        #expect(fixture.windowState.linkPreview(for: linked)?.url == "https://example.com/after")
+    }
+
     @Test func `a preview fetched while the reader is scrolled up shows once it arrives`() async throws {
         let (fixture, _) = try await Self.loaded(5, linkPreviewFetcher: CountingLinkPreviewFetcher())
         _ = Self.scrolledUpList(fixture)

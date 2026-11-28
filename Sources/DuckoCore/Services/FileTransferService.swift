@@ -117,6 +117,8 @@ public final class FileTransferService {
         case fileReadFailed(String)
         case fileSaveFailed(String)
         case downloadFailed(String)
+        /// An encrypted file whose bytes do not open with the key its link carries.
+        case decryptionFailed
         case offerNotFound
         case noClient
         case noUploadModule
@@ -131,6 +133,7 @@ public final class FileTransferService {
             case let .fileReadFailed(reason): "Could not read the file: \(reason)"
             case let .fileSaveFailed(reason): "Could not save the file: \(reason)"
             case let .downloadFailed(reason): "Could not download the file: \(reason)"
+            case .decryptionFailed: "Could not decrypt the file"
             case .offerNotFound: "The file offer is no longer waiting"
             case .noClient: notConnectedDescription
             case .noUploadModule: "File upload is not available"
@@ -283,8 +286,12 @@ public final class FileTransferService {
     /// removes its own handle on completion via `defer`. A direct send is kept under its transfer's id.
     var pendingTasks: [UUID: Task<Void, Never>] = [:]
 
-    public init(downloadsDirectory: URL = .downloadsDirectory) {
+    /// How an encrypted file's bytes are fetched before they are decrypted.
+    nonisolated let encryptedFileDownload: RemoteFileDownload
+
+    public init(downloadsDirectory: URL = .downloadsDirectory, encryptedFileDownload: @escaping RemoteFileDownload = FileTransferService.fetchEncryptedFile) {
         self.downloadsDirectory = downloadsDirectory
+        self.encryptedFileDownload = encryptedFileDownload
     }
 
     // MARK: - Wiring
@@ -805,6 +812,17 @@ public final class FileTransferService {
     /// an overwrite, and quarantined.
     public func saveRemoteImage(from url: URL, named name: String) async throws -> URL {
         try await Self.downloadRemoteFile(from: url, named: name, into: downloadsDirectory).fileURL
+    }
+
+    /// Decrypts the file `link` shares and saves it the way `saveDecryptedFile` does. Nothing is written when it cannot
+    /// be decrypted.
+    public nonisolated func saveEncryptedFile(_ link: EncryptedFileLink, named name: String) async throws -> URL {
+        try await saveDecryptedFile(decryptEncryptedFile(link), named: name)
+    }
+
+    /// Saves the bytes an encrypted file was decrypted to the way `saveRemoteImage` saves a fetched image.
+    public nonisolated func saveDecryptedFile(_ bytes: [UInt8], named name: String) async throws -> URL {
+        try await Self.saveReceivedFile(bytes, named: name, in: downloadsDirectory)
     }
 
     // MARK: - Private: HTTP Upload

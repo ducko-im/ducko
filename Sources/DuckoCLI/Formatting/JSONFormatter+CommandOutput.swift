@@ -22,6 +22,7 @@ extension JSONFormatter {
         case let .transferAccepted(offerID, directory): ["action": "accept_transfer", "offer_id": offerID, "directory": directory]
         case let .transferDeclined(offerID): ["action": "decline_transfer", "offer_id": offerID]
         case let .transferCanceled(fileName): ["action": "cancel_transfer", "file_name": fileName]
+        case let .encryptedFileSaved(path): ["action": "save_encrypted_file", "path": path]
         case let .messageRetracted(id): ["action": "retract", "original_id": id]
         case let .messageEdited(id): ["action": "edit", "original_id": id]
         case let .preference(_, key, enabled, changed):

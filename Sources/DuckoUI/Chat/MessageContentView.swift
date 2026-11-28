@@ -60,11 +60,17 @@ struct MessageContentView<Header: View, Footer: View>: View {
                 header
 
                 if isImageOnlyMessage {
-                    AttachmentView(attachment: message.attachments[0], isOutgoing: message.isOutgoing, loadsIncomingImageOnSight: loadsIncomingImagesOnSight)
+                    AttachmentView(
+                        attachment: message.attachments[0], isOutgoing: message.isOutgoing, loadsIncomingImageOnSight: loadsIncomingImagesOnSight,
+                        isInEncryptedMessage: message.isEncrypted
+                    )
                 } else {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(message.attachments) { attachment in
-                            AttachmentView(attachment: attachment, isOutgoing: message.isOutgoing, loadsIncomingImageOnSight: loadsIncomingImagesOnSight)
+                            AttachmentView(
+                                attachment: attachment, isOutgoing: message.isOutgoing, loadsIncomingImageOnSight: loadsIncomingImagesOnSight,
+                                isInEncryptedMessage: message.isEncrypted
+                            )
                         }
 
                         if showsBody {

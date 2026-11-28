@@ -1,7 +1,10 @@
 import CryptoKit
 
 /// Double Ratchet session state for OMEMO. Value type — callers serialize mutating encrypt/decrypt.
-struct OMEMODoubleRatchetSession {
+package struct OMEMODoubleRatchetSession {
+    /// The OMEMO version, which picks the key derivations and the wire message. It is not part of the serialized
+    /// state, so a restore supplies it.
+    let format: OMEMOWireFormat
     /// Our current DH ratchet key pair (sending).
     var dhSendKeyPair: Curve25519.KeyAgreement.PrivateKey
     /// Cached public key bytes from `dhSendKeyPair`, recomputed only on ratchet step.
@@ -31,10 +34,12 @@ struct OMEMODoubleRatchetSession {
     // MARK: - Initialization
 
     /// X3DH initiator (Alice). `peerSignedPreKey` becomes initial DHr; `sharedSecret` is the 32-byte X3DH output.
-    init(
+    package init(
         asInitiatorWithSharedSecret sharedSecret: [UInt8],
-        peerSignedPreKey: [UInt8]
+        peerSignedPreKey: [UInt8],
+        format: OMEMOWireFormat
     ) throws {
+        self.format = format
         self.dhSendKeyPair = Curve25519.KeyAgreement.PrivateKey()
         self.dhSendPublicKeyBytes = Array(dhSendKeyPair.publicKey.rawRepresentation)
         self.dhRecvPublicKey = peerSignedPreKey
@@ -43,7 +48,7 @@ struct OMEMODoubleRatchetSession {
         // Perform initial root key ratchet
         let peerPublicKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: peerSignedPreKey)
         let dhOutput = try OMEMOCrypto.dh(privateKey: dhSendKeyPair, publicKey: peerPublicKey)
-        let rk = OMEMOCrypto.kdfRK(rootKey: rootKey, dhOutput: dhOutput)
+        let rk = OMEMOCrypto.kdfRK(rootKey: rootKey, dhOutput: dhOutput, info: format.rootChainInfo)
         self.rootKey = rk.rootKey
         self.sendChainKey = rk.chainKey
     }
@@ -51,8 +56,10 @@ struct OMEMODoubleRatchetSession {
     /// X3DH responder (Bob). `ourSignedPreKeyPair` becomes initial DHs; recv chain stays nil until first inbound message.
     init(
         asResponderWithSharedSecret sharedSecret: [UInt8],
-        ourSignedPreKeyPair: Curve25519.KeyAgreement.PrivateKey
+        ourSignedPreKeyPair: Curve25519.KeyAgreement.PrivateKey,
+        format: OMEMOWireFormat
     ) {
+        self.format = format
         self.dhSendKeyPair = ourSignedPreKeyPair
         self.dhSendPublicKeyBytes = Array(ourSignedPreKeyPair.publicKey.rawRepresentation)
         self.dhRecvPublicKey = nil
@@ -63,24 +70,39 @@ struct OMEMODoubleRatchetSession {
 
     // MARK: - Encryption
 
-    /// Encrypts and advances the sending chain. `associatedData` must match the X3DH AD (64 bytes).
+    /// Encrypts in the session's wire format and advances the sending chain.
+    mutating func encrypt(_ plaintext: [UInt8], associatedData: [UInt8]) throws -> OMEMORatchetMessage {
+        switch format {
+        case .omemo2:
+            return try .omemo2(encrypt(plaintext: plaintext, associatedData: associatedData))
+        case .legacy:
+            let (messageKey, messageNumber) = try advanceSendingChain()
+            return try .legacy(OMEMOMessageCrypto.encrypt(
+                plaintext: plaintext,
+                messageKey: messageKey,
+                associatedData: associatedData
+            ) { ciphertext in
+                OMEMOLegacyMessage.Content(
+                    messageNumber: messageNumber,
+                    previousChainCount: previousSendCount,
+                    dhPublicKey: dhSendPublicKeyBytes,
+                    ciphertext: ciphertext
+                )
+            })
+        }
+    }
+
+    /// Encrypts an OMEMO 2 message and advances the sending chain. Throws `wireFormatMismatch` in a legacy session.
     mutating func encrypt(
         plaintext: [UInt8],
         associatedData: [UInt8]
     ) throws -> OMEMOAuthenticatedMessage {
-        guard let ck = sendChainKey else {
-            throw OMEMOCryptoError.sessionNotInitialized
-        }
-
-        let ckResult = OMEMOCrypto.kdfCK(chainKey: ck)
-        sendChainKey = ckResult.chainKey
-
-        let messageNumber = sendMessageNumber
-        sendMessageNumber += 1
+        guard format == .omemo2 else { throw OMEMOCryptoError.wireFormatMismatch }
+        let (messageKey, messageNumber) = try advanceSendingChain()
 
         return try OMEMOMessageCrypto.encrypt(
             plaintext: plaintext,
-            messageKey: ckResult.messageKey,
+            messageKey: messageKey,
             associatedData: associatedData
         ) { ciphertext in
             OMEMOMessage(
@@ -92,17 +114,31 @@ struct OMEMODoubleRatchetSession {
         }
     }
 
+    /// Advances the sending chain, returning the key and number of the message it sends.
+    private mutating func advanceSendingChain() throws -> (messageKey: [UInt8], messageNumber: UInt32) {
+        guard let ck = sendChainKey else {
+            throw OMEMOCryptoError.sessionNotInitialized
+        }
+
+        let ckResult = OMEMOCrypto.kdfCK(chainKey: ck)
+        sendChainKey = ckResult.chainKey
+
+        let messageNumber = sendMessageNumber
+        sendMessageNumber += 1
+        return (ckResult.messageKey, messageNumber)
+    }
+
     // MARK: - Decryption
 
     /// Decrypts and advances the receiving chain; performs a DH ratchet step when `dhPublicKey` is new. Rolls back on auth failure.
     mutating func decrypt(
-        message authenticatedMessage: OMEMOAuthenticatedMessage,
+        _ message: OMEMORatchetMessage,
         associatedData: [UInt8]
     ) throws -> [UInt8] {
-        let message = authenticatedMessage.message
+        guard message.format == format else { throw OMEMOCryptoError.wireFormatMismatch }
 
         // 1. Try skipped message keys first
-        if let plaintext = try trySkippedMessageKey(authenticatedMessage, associatedData: associatedData) {
+        if let plaintext = try trySkippedMessageKey(message, associatedData: associatedData) {
             return plaintext
         }
 
@@ -112,12 +148,12 @@ struct OMEMODoubleRatchetSession {
 
         // 2. DH ratchet step if we received a new ratchet key
         if message.dhPublicKey != dhRecvPublicKey {
-            try skipMessageKeys(until: message.previousChainCount)
+            try skipMessageKeys(until: previousChainEnd(of: message))
             try dhRatchetStep(peerPublicKey: message.dhPublicKey)
         }
 
         // 3. Skip to the correct message number
-        try skipMessageKeys(until: message.messageNumber)
+        try skipMessageKeys(until: Int(message.messageNumber))
 
         // 4. Advance the receiving chain
         guard let ck = recvChainKey else {
@@ -129,11 +165,7 @@ struct OMEMODoubleRatchetSession {
 
         // 5. Decrypt and verify — rollback on auth failure
         do {
-            return try OMEMOMessageCrypto.decrypt(
-                authenticatedMessage,
-                messageKey: ckResult.messageKey,
-                associatedData: associatedData
-            )
+            return try Self.open(message, messageKey: ckResult.messageKey, associatedData: associatedData)
         } catch {
             self = snapshot
             throw error
@@ -144,13 +176,10 @@ struct OMEMODoubleRatchetSession {
 
     /// Attempts decryption using a previously skipped message key.
     private mutating func trySkippedMessageKey(
-        _ authenticatedMessage: OMEMOAuthenticatedMessage,
+        _ message: OMEMORatchetMessage,
         associatedData: [UInt8]
     ) throws -> [UInt8]? {
-        let keyID = SkippedKeyID(
-            publicKey: authenticatedMessage.message.dhPublicKey,
-            messageNumber: authenticatedMessage.message.messageNumber
-        )
+        let keyID = SkippedKeyID(publicKey: message.dhPublicKey, messageNumber: message.messageNumber)
 
         guard let messageKey = skippedMessageKeys[keyID] else {
             return nil
@@ -158,11 +187,7 @@ struct OMEMODoubleRatchetSession {
 
         // Decrypt BEFORE removing the key — if HMAC verification fails, the key
         // is preserved for retrying with the genuine (non-corrupted) message.
-        let plaintext = try OMEMOMessageCrypto.decrypt(
-            authenticatedMessage,
-            messageKey: messageKey,
-            associatedData: associatedData
-        )
+        let plaintext = try Self.open(message, messageKey: messageKey, associatedData: associatedData)
 
         skippedMessageKeys.removeValue(forKey: keyID)
         skippedKeyOrder.removeAll { $0 == keyID }
@@ -170,18 +195,43 @@ struct OMEMODoubleRatchetSession {
         return plaintext
     }
 
-    /// Advances skipped message keys for out-of-order delivery.
-    private mutating func skipMessageKeys(until target: UInt32) throws {
+    /// Verifies the message's MAC, then decrypts it.
+    private static func open(_ message: OMEMORatchetMessage, messageKey: [UInt8], associatedData: [UInt8]) throws -> [UInt8] {
+        switch message {
+        case let .omemo2(authenticatedMessage):
+            try OMEMOMessageCrypto.decrypt(authenticatedMessage, messageKey: messageKey, associatedData: associatedData)
+        case let .legacy(legacyMessage):
+            try OMEMOMessageCrypto.decrypt(legacyMessage, messageKey: messageKey, associatedData: associatedData)
+        }
+    }
+
+    /// The message number one past the last message on the sender's previous chain, up to which a ratchet step stores
+    /// skipped keys. OMEMO 2 writes that chain's length as `pn`. libsignal, and so Conversations, writes the index of
+    /// the chain's last message, so a legacy session reads one further. For a legacy sender that writes the length, the
+    /// extra key is one no message uses, so it is left out where storing it would pass the skipped-key cap.
+    private func previousChainEnd(of message: OMEMORatchetMessage) -> Int {
+        let count = Int(message.previousChainCount)
+        switch format {
+        case .omemo2:
+            return count
+        case .legacy:
+            let withSpeculativeKey = count + 1
+            return withSpeculativeKey - Int(recvMessageNumber) > Self.maxSkippedMessages ? count : withSpeculativeKey
+        }
+    }
+
+    /// Stores the receiving chain's keys for out-of-order delivery up to, not including, message number `target`.
+    private mutating func skipMessageKeys(until target: Int) throws {
         guard let ck = recvChainKey else { return }
 
-        let toSkip = Int(target) - Int(recvMessageNumber)
+        let toSkip = target - Int(recvMessageNumber)
         guard toSkip >= 0 else { return }
         guard toSkip <= Self.maxSkippedMessages else {
             throw OMEMOCryptoError.tooManySkippedMessages
         }
 
         var chainKey = ck
-        for _ in recvMessageNumber ..< target {
+        for _ in 0 ..< toSkip {
             let result = OMEMOCrypto.kdfCK(chainKey: chainKey)
             let keyID = SkippedKeyID(publicKey: dhRecvPublicKey ?? [], messageNumber: recvMessageNumber)
 
@@ -215,7 +265,7 @@ struct OMEMODoubleRatchetSession {
 
         // Derive receiving chain key
         let dhRecv = try OMEMOCrypto.dh(privateKey: dhSendKeyPair, publicKey: peerKey)
-        let rkRecv = OMEMOCrypto.kdfRK(rootKey: rootKey, dhOutput: dhRecv)
+        let rkRecv = OMEMOCrypto.kdfRK(rootKey: rootKey, dhOutput: dhRecv, info: format.rootChainInfo)
         rootKey = rkRecv.rootKey
         recvChainKey = rkRecv.chainKey
 
@@ -223,7 +273,7 @@ struct OMEMODoubleRatchetSession {
         dhSendKeyPair = Curve25519.KeyAgreement.PrivateKey()
         dhSendPublicKeyBytes = Array(dhSendKeyPair.publicKey.rawRepresentation)
         let dhSend = try OMEMOCrypto.dh(privateKey: dhSendKeyPair, publicKey: peerKey)
-        let rkSend = OMEMOCrypto.kdfRK(rootKey: rootKey, dhOutput: dhSend)
+        let rkSend = OMEMOCrypto.kdfRK(rootKey: rootKey, dhOutput: dhSend, info: format.rootChainInfo)
         rootKey = rkSend.rootKey
         sendChainKey = rkSend.chainKey
     }
@@ -264,8 +314,9 @@ struct OMEMODoubleRatchetSession {
         return writer.bytes
     }
 
-    /// Restores a session from previously serialized bytes, which must hold nothing else.
-    init(serialized bytes: [UInt8]) throws {
+    /// Restores a session in `format` from previously serialized bytes, which must hold nothing else.
+    init(serialized bytes: [UInt8], format: OMEMOWireFormat) throws {
+        self.format = format
         var reader = OMEMORecordReader(bytes)
 
         self.dhSendKeyPair = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: reader.read(OMEMOCrypto.keyLength))
@@ -307,6 +358,41 @@ struct OMEMODoubleRatchetSession {
 }
 
 // MARK: - Supporting Types
+
+/// A Double Ratchet message in its version's wire format, with its MAC.
+package enum OMEMORatchetMessage {
+    case omemo2(OMEMOAuthenticatedMessage)
+    case legacy(OMEMOLegacyMessage)
+
+    var format: OMEMOWireFormat {
+        switch self {
+        case .omemo2: .omemo2
+        case .legacy: .legacy
+        }
+    }
+
+    var messageNumber: UInt32 {
+        switch self {
+        case let .omemo2(authenticatedMessage): authenticatedMessage.message.messageNumber
+        case let .legacy(legacyMessage): legacyMessage.content.messageNumber
+        }
+    }
+
+    var previousChainCount: UInt32 {
+        switch self {
+        case let .omemo2(authenticatedMessage): authenticatedMessage.message.previousChainCount
+        case let .legacy(legacyMessage): legacyMessage.content.previousChainCount
+        }
+    }
+
+    /// The sender's current ratchet public key (32 bytes), in legacy without the `0x05` type byte it travels with.
+    var dhPublicKey: [UInt8] {
+        switch self {
+        case let .omemo2(authenticatedMessage): authenticatedMessage.message.dhPublicKey
+        case let .legacy(legacyMessage): legacyMessage.content.dhPublicKey
+        }
+    }
+}
 
 /// Identifier for a skipped message key: (ratchet public key, message number).
 struct SkippedKeyID: Hashable {

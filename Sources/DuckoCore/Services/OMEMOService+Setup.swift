@@ -73,8 +73,9 @@ public extension OMEMOService {
         return .started
     }
 
-    /// Returns once the account's first setup attempt on its session has had its outcome. Returns at once when the
-    /// session runs none, or without a connected session.
+    /// Returns once the account's first setup attempt on its session has had its outcome, and once the publications
+    /// after an attempt that completed the setup have ended. Returns at once when the session runs none, or without a
+    /// connected session.
     func awaitSetupAttempt(accountID: UUID) async {
         guard let client = accountService?.connectedClient(for: accountID), let module = await client.module(ofType: OMEMOModule.self) else {
             return

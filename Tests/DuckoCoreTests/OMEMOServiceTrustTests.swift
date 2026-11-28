@@ -6,8 +6,8 @@ import Testing
 
 private let peer = BareJID(localPart: "peer", domainPart: "example.com")!
 private let keyA = [UInt8](repeating: 0xAA, count: 32)
-private let fingerprintA = omemoFingerprint(of: keyA)
-private let fingerprintB = omemoFingerprint(of: [UInt8](repeating: 0xBB, count: 32))
+private let fingerprintA = omemoFingerprint(of: keyA, format: .omemo2)
+private let fingerprintB = omemoFingerprint(of: [UInt8](repeating: 0xBB, count: 32), format: .omemo2)
 
 /// One process's service over a store, as the app and the CLI each run one, with an account for the test JID.
 @MainActor
@@ -62,7 +62,7 @@ extension OMEMOServiceTests {
 
         /// What the guard says of a session with the peer's device 1 under key A.
         private var verdict: OMEMOTrustGuard.Verdict {
-            trustGuard.admitSession(with: SessionKey(jid: peer, deviceID: 1), identityKey: keyA)
+            trustGuard.admitSession(with: OMEMODeviceKey(jid: peer, deviceID: 1), fingerprint: fingerprintA)
         }
 
         private func seedTrust(fingerprint: String, level: OMEMOTrustLevel) async throws {
@@ -106,7 +106,7 @@ extension OMEMOServiceTests {
             let identity = makeIdentityData(preKeyIDs: [1, 2, 3])
             await store.seedFromIdentityData(identity, accountJID: testJIDString)
             _ = trustGuard.admitKeyExchange(
-                from: SessionKey(jid: peer, deviceID: 1), offeredKey: keyA, replacing: .none,
+                from: OMEMODeviceKey(jid: peer, deviceID: 1), offering: fingerprintA, standIn: .none,
                 preKey: OMEMOTrustGuard.PreKeyUse(id: 2, ownDeviceID: isThisDevice ? identity.deviceID : 9999, isUsedByThisModule: false)
             )
             await store.setFailing(.consumePreKey)
@@ -320,7 +320,7 @@ extension OMEMOServiceTests {
         @Test func `A device list adds rows for new devices and leaves decided ones as they are`() async throws {
             try await seedTrust(fingerprint: fingerprintA, level: .untrusted)
 
-            await service.handleEvent(.omemoDeviceListReceived(jid: peer, devices: [1, 2]), accountID: accountID)
+            await service.handleEvent(.omemoDeviceListReceived(jid: peer, devices: [1, 2], version: .omemo2), accountID: accountID)
 
             let first = try await storedTrust()
             let second = try await storedTrust(deviceID: 2)
@@ -372,13 +372,13 @@ extension OMEMOServiceTests {
                 ))
             }
 
-            _ = try? await service.encryptMessage(content: [], to: peer, trustedDeviceIDs: [9], accountID: accountID)
+            _ = try? await service.encryptMessage(content: [], legacyBody: nil, to: peer, trustedDeviceIDs: [9], accountID: accountID)
             // A room send resolves each member as a 1:1 send resolves its contact.
             _ = await service.shouldEncrypt(jid: member, accountID: accountID, conversationEncryptionEnabled: true)
 
             let trustGuard = service.trustGuard(forAccountJID: testJIDString)
             for jid in [own, member] {
-                #expect(trustGuard.admitSession(with: SessionKey(jid: jid, deviceID: 1), identityKey: keyA) == .untrusted)
+                #expect(trustGuard.admitSession(with: OMEMODeviceKey(jid: jid, deviceID: 1), fingerprint: fingerprintA) == .untrusted)
             }
             await accounts.disconnect(accountID: accountID)
             _ = await connection.result
@@ -398,10 +398,10 @@ extension OMEMOServiceTests {
 
             let resolved = await harness.service.shouldEncrypt(jid: peer, accountID: harness.accountID, conversationEncryptionEnabled: true)
             let deviceIDs = try #require(resolved.trustedDeviceIDs)
-            let elements = try await harness.service.encryptMessage(content: [], to: peer, trustedDeviceIDs: deviceIDs, accountID: harness.accountID)
+            let elements = try await harness.service.encryptMessage(content: [], legacyBody: nil, to: peer, trustedDeviceIDs: deviceIDs, accountID: harness.accountID)
 
             #expect(deviceIDs == [2])
-            let keys = elements.encrypted.child(named: "header")?.children(named: "keys").first { $0.attribute("jid") == peer.description }
+            let keys = try elements.omemo2.child(named: "header")?.children(named: "keys").first { $0.attribute("jid") == peer.description }
             #expect(keys?.children(named: "key").map { $0.attribute("rid") } == ["2"])
             await harness.disconnect()
         }
@@ -431,7 +431,7 @@ extension OMEMOServiceTests {
             let resolved = await harness.service.shouldEncrypt(jid: peer, accountID: harness.accountID, conversationEncryptionEnabled: true)
 
             #expect(resolved.isDeviceListUnavailable)
-            let verdict = harness.service.trustGuard(forAccountJID: testJIDString).admitSession(with: SessionKey(jid: peer, deviceID: 1), identityKey: keyA)
+            let verdict = harness.service.trustGuard(forAccountJID: testJIDString).admitSession(with: OMEMODeviceKey(jid: peer, deviceID: 1), fingerprint: fingerprintA)
             #expect(verdict == .untrusted)
             await harness.disconnect()
         }
@@ -487,9 +487,9 @@ extension OMEMOServiceTests {
         func `An undecided device of the account's own is encrypted to only under trust on first use`(trustOnFirstUse: Bool) async throws {
             let harness = try await PeerListing.connect(listing: [1], otherOwnDevices: [3], trustOnFirstUse: trustOnFirstUse)
 
-            let elements = try await harness.service.encryptMessage(content: [], to: peer, trustedDeviceIDs: [1], accountID: harness.accountID)
+            let elements = try await harness.service.encryptMessage(content: [], legacyBody: nil, to: peer, trustedDeviceIDs: [1], accountID: harness.accountID)
 
-            let keys = elements.encrypted.child(named: "header")?.children(named: "keys").first { $0.attribute("jid") == testJIDString }
+            let keys = try elements.omemo2.child(named: "header")?.children(named: "keys").first { $0.attribute("jid") == testJIDString }
             let ownRecipients = keys?.children(named: "key").compactMap { $0.attribute("rid") } ?? []
             #expect(ownRecipients == (trustOnFirstUse ? ["3"] : []))
             await harness.disconnect()
@@ -604,5 +604,58 @@ private extension OMEMOService.EncryptionResolution {
 
     var isDeviceListUnavailable: Bool {
         if case .deviceListUnavailable = self { true } else { false }
+    }
+}
+
+private let contact = BareJID(localPart: "bob", domainPart: "example.com")!
+
+extension OMEMOServiceTests {
+    /// A device on both of its owner's lists is one device, with one identity key for both versions.
+    @MainActor
+    struct DevicesInBothVersions {
+        @Test func `A device is shown once, with the versions whose lists hold it`() async throws {
+            let harness = try await EncryptedSendHarness.connect(contactDevices: [200, 202], legacyDeviceLists: [contact: [200, 201]])
+
+            let devices = await harness.omemoService.deviceInfoList(for: contact.description, accountID: harness.accountID)
+
+            #expect(devices.map(\.deviceID).sorted() == [200, 201, 202])
+            let versions = Dictionary(devices.map { ($0.deviceID, $0.versions) }) { first, _ in first }
+            #expect(versions == [200: [.omemo2, .legacy], 201: [.legacy], 202: [.omemo2]])
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
+
+        /// A send reaches a device on both lists through OMEMO 2, so only the OMEMO 2 bundle meets the stored key: one
+        /// carrying another key fails the send, and a legacy bundle carrying another key is never used.
+        @Test(arguments: [OMEMOWireFormat.omemo2, .legacy])
+        func `A send to a device on both lists goes out as OMEMO 2 when its OMEMO 2 bundle carries the stored key, and fails as a changed key when not`(
+            storedVersion: OMEMOWireFormat
+        ) async throws {
+            let harness = try await EncryptedSendHarness.connect(legacyDeviceLists: [contact: [200]])
+            let module = try #require(await harness.accountService.connectedClient(for: harness.accountID)?.module(ofType: OMEMOModule.self))
+            module.configureTrustGuard(harness.omemoService.trustGuard(forAccountJID: testJIDString))
+            let storedKeys = try storedVersion == .omemo2 ? harness.bob : #require(harness.legacyKeys[200])
+            let stored = try omemoFingerprint(
+                of: OMEMOX3DH.identityKey(of: OMEMOIdentityKeyPair(rawRepresentation: storedKeys.identityKeyRaw), format: storedVersion),
+                format: storedVersion
+            )
+            try await harness.omemoStore.saveTrust(OMEMOTrust(
+                accountJID: testJIDString, peerJID: contact.description, deviceID: 200, fingerprint: stored, trustLevel: .trusted
+            ))
+
+            switch storedVersion {
+            case .omemo2:
+                try await harness.chatService.sendMessage(to: contact, body: "secret", accountID: harness.accountID)
+                let sent = try parsed(#require(await harness.transport.waitForSent { $0.hasPrefix("<message") && $0.contains("<encrypted") }))
+                #expect(sent.child(named: "encrypted", namespace: XMPPNamespaces.omemoLegacy) == nil)
+                #expect(try harness.read(sent, asDeviceWith: harness.bob, of: contact)?.body == "secret")
+            case .legacy:
+                await #expect(throws: OMEMOModuleError.changedIdentityKey) {
+                    try await harness.chatService.sendMessage(to: contact, body: "secret", accountID: harness.accountID)
+                }
+                let sent = await harness.transport.sentBytes.map { String(decoding: $0, as: UTF8.self) }
+                #expect(!sent.contains { $0.hasPrefix("<message") })
+            }
+            await harness.accountService.disconnect(accountID: harness.accountID)
+        }
     }
 }

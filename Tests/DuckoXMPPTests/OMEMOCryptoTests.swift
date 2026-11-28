@@ -162,7 +162,7 @@ enum OMEMOCryptoTests {
             let rootKey = [UInt8](repeating: 0xAA, count: 32)
             let dhOutput = [UInt8](repeating: 0xBB, count: 32)
 
-            let result = OMEMOCrypto.kdfRK(rootKey: rootKey, dhOutput: dhOutput)
+            let result = OMEMOCrypto.kdfRK(rootKey: rootKey, dhOutput: dhOutput, info: OMEMOWireFormat.omemo2.rootChainInfo)
 
             #expect(result.rootKey.count == 32)
             #expect(result.chainKey.count == 32)
@@ -328,7 +328,8 @@ enum OMEMOCryptoTests {
             )
 
             let aliceResult = try OMEMOX3DH.initiatorKeyAgreement(
-                identityKeyPair: alice, peerBundle: peerBundle
+                identityKeyPair: alice, peerBundle: peerBundle,
+                format: .omemo2
             )
 
             let bobResult = try OMEMOX3DH.responderKeyAgreement(
@@ -336,7 +337,8 @@ enum OMEMOCryptoTests {
                 signedPreKey: bobSPK,
                 oneTimePreKey: bobOPK,
                 peerIdentityKey: alice.publicKeyBytes,
-                peerEphemeralKey: aliceResult.ephemeralPublicKey
+                peerEphemeralKey: aliceResult.ephemeralPublicKey,
+                format: .omemo2
             )
 
             #expect(aliceResult.sharedSecret == bobResult.sharedSecret)
@@ -358,7 +360,8 @@ enum OMEMOCryptoTests {
             )
 
             let aliceResult = try OMEMOX3DH.initiatorKeyAgreement(
-                identityKeyPair: alice, peerBundle: peerBundle
+                identityKeyPair: alice, peerBundle: peerBundle,
+                format: .omemo2
             )
 
             let bobResult = try OMEMOX3DH.responderKeyAgreement(
@@ -366,7 +369,8 @@ enum OMEMOCryptoTests {
                 signedPreKey: bobSPK,
                 oneTimePreKey: nil,
                 peerIdentityKey: alice.publicKeyBytes,
-                peerEphemeralKey: aliceResult.ephemeralPublicKey
+                peerEphemeralKey: aliceResult.ephemeralPublicKey,
+                format: .omemo2
             )
 
             #expect(aliceResult.sharedSecret == bobResult.sharedSecret)
@@ -389,7 +393,8 @@ enum OMEMOCryptoTests {
 
             #expect(throws: OMEMOCryptoError.self) {
                 try OMEMOX3DH.initiatorKeyAgreement(
-                    identityKeyPair: alice, peerBundle: peerBundle
+                    identityKeyPair: alice, peerBundle: peerBundle,
+                    format: .omemo2
                 )
             }
         }
@@ -401,7 +406,8 @@ enum OMEMOCryptoTests {
             let valid = try OMEMOX3DH.verifySignedPreKey(
                 signedPreKeyPublic: spk.publicKeyBytes,
                 signature: spk.signature,
-                identityKey: identity.publicKeyBytes
+                identityKey: identity.publicKeyBytes,
+                format: .omemo2
             )
             #expect(valid)
 
@@ -411,7 +417,8 @@ enum OMEMOCryptoTests {
             let invalid = try OMEMOX3DH.verifySignedPreKey(
                 signedPreKeyPublic: spk.publicKeyBytes,
                 signature: badSig,
-                identityKey: identity.publicKeyBytes
+                identityKey: identity.publicKeyBytes,
+                format: .omemo2
             )
             #expect(!invalid)
         }
@@ -435,23 +442,27 @@ enum OMEMOCryptoTests {
             )
 
             let aliceX3DH = try OMEMOX3DH.initiatorKeyAgreement(
-                identityKeyPair: alice, peerBundle: peerBundle
+                identityKeyPair: alice, peerBundle: peerBundle,
+                format: .omemo2
             )
             let bobX3DH = try OMEMOX3DH.responderKeyAgreement(
                 identityKeyPair: bob,
                 signedPreKey: bobSPK,
                 oneTimePreKey: bobOPK,
                 peerIdentityKey: alice.publicKeyBytes,
-                peerEphemeralKey: aliceX3DH.ephemeralPublicKey
+                peerEphemeralKey: aliceX3DH.ephemeralPublicKey,
+                format: .omemo2
             )
 
             var aliceSession = try OMEMODoubleRatchetSession(
                 asInitiatorWithSharedSecret: aliceX3DH.sharedSecret,
-                peerSignedPreKey: bobSPK.publicKeyBytes
+                peerSignedPreKey: bobSPK.publicKeyBytes,
+                format: .omemo2
             )
             var bobSession = OMEMODoubleRatchetSession(
                 asResponderWithSharedSecret: bobX3DH.sharedSecret,
-                ourSignedPreKeyPair: bobSPK.keyPair
+                ourSignedPreKeyPair: bobSPK.keyPair,
+                format: .omemo2
             )
 
             return SessionPair(
@@ -472,7 +483,7 @@ enum OMEMOCryptoTests {
             let plaintext = Array("Hello Bob!".utf8)
 
             let encrypted = try pair.aliceSession.encrypt(plaintext: plaintext, associatedData: pair.ad)
-            let decrypted = try pair.bobSession.decrypt(message: encrypted, associatedData: pair.ad)
+            let decrypted = try pair.bobSession.decrypt(.omemo2(encrypted), associatedData: pair.ad)
 
             #expect(decrypted == plaintext)
         }
@@ -486,7 +497,7 @@ enum OMEMOCryptoTests {
                     plaintext: plaintext, associatedData: pair.ad
                 )
                 let decrypted = try pair.bobSession.decrypt(
-                    message: encrypted, associatedData: pair.ad
+                    .omemo2(encrypted), associatedData: pair.ad
                 )
                 #expect(decrypted == plaintext)
             }
@@ -498,19 +509,19 @@ enum OMEMOCryptoTests {
             // Alice → Bob
             let msg1 = Array("Hello Bob".utf8)
             let enc1 = try pair.aliceSession.encrypt(plaintext: msg1, associatedData: pair.ad)
-            let dec1 = try pair.bobSession.decrypt(message: enc1, associatedData: pair.ad)
+            let dec1 = try pair.bobSession.decrypt(.omemo2(enc1), associatedData: pair.ad)
             #expect(dec1 == msg1)
 
             // Bob → Alice
             let msg2 = Array("Hello Alice".utf8)
             let enc2 = try pair.bobSession.encrypt(plaintext: msg2, associatedData: pair.ad)
-            let dec2 = try pair.aliceSession.decrypt(message: enc2, associatedData: pair.ad)
+            let dec2 = try pair.aliceSession.decrypt(.omemo2(enc2), associatedData: pair.ad)
             #expect(dec2 == msg2)
 
             // Alice → Bob again
             let msg3 = Array("How are you?".utf8)
             let enc3 = try pair.aliceSession.encrypt(plaintext: msg3, associatedData: pair.ad)
-            let dec3 = try pair.bobSession.decrypt(message: enc3, associatedData: pair.ad)
+            let dec3 = try pair.bobSession.decrypt(.omemo2(enc3), associatedData: pair.ad)
             #expect(dec3 == msg3)
         }
 
@@ -527,13 +538,13 @@ enum OMEMOCryptoTests {
             let enc2 = try pair.aliceSession.encrypt(plaintext: msg2, associatedData: pair.ad)
 
             // Bob receives them out of order: 2, 0, 1
-            let dec2 = try pair.bobSession.decrypt(message: enc2, associatedData: pair.ad)
+            let dec2 = try pair.bobSession.decrypt(.omemo2(enc2), associatedData: pair.ad)
             #expect(dec2 == msg2)
 
-            let dec0 = try pair.bobSession.decrypt(message: enc0, associatedData: pair.ad)
+            let dec0 = try pair.bobSession.decrypt(.omemo2(enc0), associatedData: pair.ad)
             #expect(dec0 == msg0)
 
-            let dec1 = try pair.bobSession.decrypt(message: enc1, associatedData: pair.ad)
+            let dec1 = try pair.bobSession.decrypt(.omemo2(enc1), associatedData: pair.ad)
             #expect(dec1 == msg1)
         }
 
@@ -547,13 +558,13 @@ enum OMEMOCryptoTests {
             _ = try pair.aliceSession.encrypt(plaintext: msg1, associatedData: pair.ad)
 
             // Bob receives only msg0
-            let dec0 = try pair.bobSession.decrypt(message: enc0, associatedData: pair.ad)
+            let dec0 = try pair.bobSession.decrypt(.omemo2(enc0), associatedData: pair.ad)
             #expect(dec0 == msg0)
 
             // Bob replies (triggers DH ratchet on Alice's side)
             let reply = Array("reply".utf8)
             let encReply = try pair.bobSession.encrypt(plaintext: reply, associatedData: pair.ad)
-            let decReply = try pair.aliceSession.decrypt(message: encReply, associatedData: pair.ad)
+            let decReply = try pair.aliceSession.decrypt(.omemo2(encReply), associatedData: pair.ad)
             #expect(decReply == reply)
         }
 
@@ -572,7 +583,7 @@ enum OMEMOCryptoTests {
 
             // Try to decrypt message 1001 directly (skipping 1001 messages)
             #expect(throws: OMEMOCryptoError.self) {
-                try pair.bobSession.decrypt(message: messages[1001], associatedData: pair.ad)
+                try pair.bobSession.decrypt(.omemo2(messages[1001]), associatedData: pair.ad)
             }
         }
     }
@@ -603,7 +614,8 @@ enum OMEMOCryptoTests {
             let signatureValid = try OMEMOX3DH.verifySignedPreKey(
                 signedPreKeyPublic: spk.publicKeyBytes,
                 signature: spk.signature,
-                identityKey: identity.publicKeyBytes
+                identityKey: identity.publicKeyBytes,
+                format: .omemo2
             )
             #expect(signatureValid)
         }

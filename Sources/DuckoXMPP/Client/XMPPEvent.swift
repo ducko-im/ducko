@@ -72,13 +72,14 @@ public enum XMPPEvent: Sendable {
 
     // OMEMO (XEP-0384)
 
-    case omemoDeviceListReceived(jid: BareJID, devices: [UInt32])
+    /// `version` is the OMEMO version whose device list `devices` is.
+    case omemoDeviceListReceived(jid: BareJID, devices: [UInt32], version: OMEMOWireFormat)
     /// `message` is the stanza as received. A message that carries only key material, or one this device read before,
     /// is not reported. `roomAuthor` is who sent a room's or a room private chat's message, as its outer stanza showed it.
     case omemoEncryptedMessageReceived(message: XMPPMessage, outcome: OMEMOReceiveOutcome, roomAuthor: RoomAuthorIdentity? = nil)
-    /// `consumedPreKeyID` names the one-time pre-key of this device that a contact's key exchange used up, or nil when
-    /// this device started the session.
-    case omemoSessionEstablished(jid: BareJID, deviceID: UInt32, identityKey: [UInt8], consumedPreKeyID: UInt32?)
+    /// `version` is the OMEMO version the session speaks, and the form of `identityKey`. `consumedPreKeyID` names the
+    /// one-time pre-key of this device that a contact's key exchange used up, or nil when this device started the session.
+    case omemoSessionEstablished(jid: BareJID, deviceID: UInt32, version: OMEMOWireFormat, identityKey: [UInt8], consumedPreKeyID: UInt32?)
     case omemoSessionAdvanced(jid: BareJID, deviceID: UInt32)
     /// Per-message diagnostic: an OMEMO send completed with at least one recipient device skipped (missing bundle).
     /// Fires for peer AND own devices. The outgoing stanza ID is omitted because encrypt runs before the stanza is built —

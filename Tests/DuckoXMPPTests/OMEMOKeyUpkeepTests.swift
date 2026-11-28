@@ -130,7 +130,7 @@ extension OMEMOModuleTests {
             )
             let recipientModule = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer { iq in deviceListItems([100], answering: iq) })
             func send(_ plaintext: String) async throws -> XMLElement {
-                try await senderModule.encryptMessage(plaintext: plaintext, to: recipientJID, recipientDeviceIDs: [200], ownDeviceIDs: []).encrypted
+                try await senderModule.encryptMessage(plaintext: plaintext, to: recipientJID, recipientDeviceIDs: [200], ownDeviceIDs: []).omemo2
             }
 
             let unanswered = try await [send("one"), send("two")]
@@ -139,7 +139,7 @@ extension OMEMOModuleTests {
             }
             let reply = try await recipientModule.encryptMessage(
                 plaintext: "back", to: peerJID.bareJID, recipientDeviceIDs: [100], ownDeviceIDs: []
-            ).encrypted
+            ).omemo2
             let replyBody = try senderModule.decryptIncomingMessage(reply, from: .full(#require(FullJID.parse("user@example.com/r")))).body
             let answered = try await send("three")
 
@@ -164,15 +164,16 @@ extension OMEMOModuleTests {
                 identity: makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1]).data, peer: StubPEPPeer { _ in bundleItems(for: recipient) }
             )
             let ratchetOnly = try OMEMODoubleRatchetSession(
-                asInitiatorWithSharedSecret: Array(repeating: 1, count: 32), peerSignedPreKey: recipient.signedPreKey.publicKeyBytes
+                asInitiatorWithSharedSecret: Array(repeating: 1, count: 32), peerSignedPreKey: recipient.signedPreKey.publicKeyBytes,
+                format: .omemo2
             ).serialize()
 
             module.restoreSessions([OMEMOModule.StoredSessionEntry(
-                jid: recipientJID, deviceID: 200, sessionData: ratchetOnly, associatedData: Array(repeating: 0, count: 64)
+                jid: recipientJID, deviceID: 200, version: .omemo2, sessionData: ratchetOnly, associatedData: Array(repeating: 0, count: 64)
             )])
             let encrypted = try await module.encryptMessage(
                 plaintext: "hi", to: recipientJID, recipientDeviceIDs: [200], ownDeviceIDs: []
-            ).encrypted
+            ).omemo2
 
             #expect(isKeyExchange(encrypted))
         }
@@ -243,7 +244,7 @@ extension OMEMOModuleTests {
             let module = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
             module.restoreSessions(restored.map {
                 OMEMOModule.StoredSessionEntry(
-                    jid: $0.jid, deviceID: $0.deviceID, sessionData: $0.sessionData, associatedData: Array($0.associatedData.dropLast())
+                    jid: $0.jid, deviceID: $0.deviceID, version: .omemo2, sessionData: $0.sessionData, associatedData: Array($0.associatedData.dropLast())
                 )
             })
 
@@ -279,7 +280,7 @@ extension OMEMOModuleTests {
             let module = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer(), trustGuard: trustGuard)
             _ = try await module.decryptIncomingMessage(kexEncrypted(from: sender, plaintext: "first"), from: .full(peerJID))
 
-            #expect(trustGuard.heldFingerprint(peer: peerJID.bareJID, deviceID: 100) == omemoFingerprint(of: sender.identityKeyPair.publicKeyBytes))
+            #expect(trustGuard.heldFingerprint(peer: peerJID.bareJID, deviceID: 100) == omemoFingerprint(of: sender.identityKeyPair.publicKeyBytes, format: .omemo2))
             #expect(trustGuard.consumedPreKeyIDs(ownDeviceID: 200) == [7])
             let forged = try await kexEncrypted(from: impostor, plaintext: "forged")
             #expect(throws: OMEMOModuleError.changedIdentityKey) {
@@ -452,7 +453,7 @@ extension OMEMOModuleTests {
             let module = makeInstalledModule(identity: sender.data, peer: peer, trustGuard: trustGuard)
             module.restoreSessions(earlier.allSessionEntries().map { entry in
                 OMEMOModule.StoredSessionEntry(
-                    jid: entry.jid, deviceID: entry.deviceID, sessionData: entry.sessionData,
+                    jid: entry.jid, deviceID: entry.deviceID, version: .omemo2, sessionData: entry.sessionData,
                     associatedData: isReadable ? entry.associatedData : Array(entry.associatedData.dropLast())
                 )
             })
@@ -505,7 +506,7 @@ extension OMEMOModuleTests {
             let module = makeInstalledModule(identity: sender.data, peer: peer)
             module.restoreSessions(restored)
 
-            #expect(try await module.resetSession(jid: recipientJID, deviceID: 200) == .rebuilt)
+            #expect(try await module.resetSession(jid: recipientJID, deviceID: 200, versions: [.omemo2]).outcomes == [.omemo2: .rebuilt])
 
             #expect(module.allSessionEntries().count == 1)
             #expect(module.allSessionEntries().map(\.sessionData) != restored.map(\.sessionData))
@@ -515,16 +516,133 @@ extension OMEMOModuleTests {
             #expect(encrypted.child(named: "payload") == nil)
             let reader = makeInstalledModule(identity: recipient.data, peer: StubPEPPeer())
             let read = try reader.decryptIncomingMessage(encrypted, from: .full(peerJID))
-            #expect(read.envelope == nil)
+            #expect(read.content == nil)
             #expect(reader.allSessionEntries().count == 1)
         }
 
-        @Test func `A reset whose empty message cannot be sent throws instead of reporting a new session`() async throws {
+        @Test func `A reset whose empty message cannot be sent reports the failure beside the installed session instead of a new session`() async throws {
             let recipient = recipient
             let peer = StubPEPPeer(refusesStanzas: true) { _ in bundleItems(for: recipient) }
             let module = makeInstalledModule(identity: sender.data, peer: peer)
 
-            await #expect(throws: XMPPClientError.self) { _ = try await module.resetSession(jid: recipientJID, deviceID: 200) }
+            let reset = try await module.resetSession(jid: recipientJID, deviceID: 200, versions: [.omemo2])
+
+            #expect(reset.failure is XMPPClientError)
+            #expect(reset.outcomes.isEmpty)
+            #expect(reset.replacedVersions == [.omemo2])
+        }
+
+        /// A bundle that copies the held key but whose signature does not verify counts as no bundle, so the other
+        /// version's key is the device's key change. The copy lists no pre-key, so reading it as signed would show
+        /// `noPreKeys` instead.
+        @Test func `A reset counts a bundle with the held key whose signature does not verify as no bundle, so another version's key is a change`() async throws {
+            let recipient = recipient
+            let impostor = try makeTestOMEMOIdentity(deviceID: 200, preKeyIDs: [7])
+            let held = omemoFingerprint(of: recipient.identityKeyPair.publicKeyBytes, format: .omemo2)
+            let trustGuard = OMEMOTrustGuard()
+            trustGuard.mergeRow(peer: recipientJID, deviceID: 200, fingerprint: held, decision: .granted)
+            let forged = OMEMOBundle(
+                deviceID: OMEMODeviceID(value: 200), identityKey: recipient.identityKeyPair.publicKeyBytes, signedPreKeyID: impostor.signedPreKey.keyID,
+                signedPreKey: impostor.signedPreKey.publicKeyBytes, signedPreKeySignature: impostor.signedPreKey.signature, preKeys: []
+            )
+            let impostorsLegacyBundle = try OMEMOPreKeyManager.buildLegacyBundle(
+                deviceID: OMEMODeviceID(value: 200), identityKeyPair: impostor.identityKeyPair, signedPreKey: impostor.signedPreKey, preKeys: impostor.preKeys
+            )
+            let peer = StubPEPPeer { iq in
+                iq.xmlString.contains(XMPPNamespaces.omemoLegacy) ? legacyBundleItems(impostorsLegacyBundle) : bundleItems(forged)
+            }
+            let module = makeInstalledModule(identity: sender.data, peer: peer, trustGuard: trustGuard)
+
+            let reset = try await module.resetSession(jid: recipientJID, deviceID: 200, versions: [.omemo2, .legacy])
+
+            let changed = try omemoFingerprint(of: OMEMOX3DH.identityKey(of: impostor.identityKeyPair, format: .legacy), format: .legacy)
+            #expect(reset.outcomes == [.omemo2: .noBundle, .legacy: .keyChanged(previousFingerprint: held, newFingerprint: changed)])
+            #expect(!reset.carriesKnownKey)
+            #expect(peer.stanzas.isEmpty)
+        }
+
+        /// The held key stays, so another key reaches the device only from a bundle whose signature verifies.
+        @Test func `A reset counts a bundle with another key whose signature does not verify as no bundle, so the held key stays`() async throws {
+            let recipient = recipient
+            let impostor = try makeTestOMEMOIdentity(deviceID: 200, preKeyIDs: [7])
+            let held = omemoFingerprint(of: recipient.identityKeyPair.publicKeyBytes, format: .omemo2)
+            let trustGuard = OMEMOTrustGuard()
+            trustGuard.mergeRow(peer: recipientJID, deviceID: 200, fingerprint: held, decision: .granted)
+            let peer = StubPEPPeer { _ in bundleItems(forgedBundle(of: impostor, signedBy: recipient)) }
+            let module = makeInstalledModule(identity: sender.data, peer: peer, trustGuard: trustGuard)
+
+            let reset = try await module.resetSession(jid: recipientJID, deviceID: 200, versions: [.omemo2])
+
+            #expect(reset.outcomes == [.omemo2: .noBundle])
+            #expect(reset.knownFingerprint == held)
+            #expect(trustGuard.heldFingerprint(peer: recipientJID, deviceID: 200) == held)
+        }
+
+        /// With no key held and no session, the OMEMO 2 bundle carries another key under a signature that does not
+        /// verify, and the legacy one the device's own key.
+        @Test func `A reset with no key known takes it from the first bundle whose signature verifies, and holds it`() async throws {
+            let recipient = recipient
+            let impostor = try makeTestOMEMOIdentity(deviceID: 200, preKeyIDs: [7])
+            let legacyBundle = try OMEMOPreKeyManager.buildLegacyBundle(
+                deviceID: OMEMODeviceID(value: 200), identityKeyPair: recipient.identityKeyPair, signedPreKey: recipient.signedPreKey, preKeys: recipient.preKeys
+            )
+            let trustGuard = OMEMOTrustGuard()
+            let peer = StubPEPPeer { iq in
+                iq.xmlString.contains(XMPPNamespaces.omemoLegacy) ? legacyBundleItems(legacyBundle) : bundleItems(forgedBundle(of: impostor, signedBy: recipient))
+            }
+            let module = makeInstalledModule(identity: sender.data, peer: peer, trustGuard: trustGuard)
+
+            let reset = try await module.resetSession(jid: recipientJID, deviceID: 200, versions: [.omemo2, .legacy])
+
+            let known = try omemoFingerprint(of: OMEMOX3DH.identityKey(of: recipient.identityKeyPair, format: .legacy), format: .legacy)
+            #expect(reset.outcomes == [.omemo2: .noBundle, .legacy: .rebuilt])
+            #expect(reset.knownFingerprint == known)
+            #expect(trustGuard.heldFingerprint(peer: recipientJID, deviceID: 200) == known)
+        }
+
+        /// With no key held and no session, the bundle carries the device's key but lists no pre-key.
+        @Test func `A reset that builds no session still holds the key the device is known by`() async throws {
+            let recipient = recipient
+            let bundle = OMEMOPreKeyManager.buildBundle(
+                deviceID: OMEMODeviceID(value: 200), identityKeyPair: recipient.identityKeyPair, signedPreKey: recipient.signedPreKey, preKeys: []
+            )
+            let trustGuard = OMEMOTrustGuard()
+            let module = makeInstalledModule(identity: sender.data, peer: StubPEPPeer { _ in bundleItems(bundle) }, trustGuard: trustGuard)
+
+            let reset = try await module.resetSession(jid: recipientJID, deviceID: 200, versions: [.omemo2])
+
+            #expect(reset.outcomes == [.omemo2: .noPreKeys])
+            #expect(trustGuard.heldFingerprint(peer: recipientJID, deviceID: 200) == omemoFingerprint(of: recipient.identityKeyPair.publicKeyBytes, format: .omemo2))
+        }
+
+        /// With no key held, the OMEMO 2 session's key cannot be read while the legacy session's can.
+        @Test func `A reset takes the known key from a discarded session whose key can be read`() async throws {
+            let recipient = recipient
+            let legacyBundle = try OMEMOPreKeyManager.buildLegacyBundle(
+                deviceID: OMEMODeviceID(value: 200), identityKeyPair: recipient.identityKeyPair, signedPreKey: recipient.signedPreKey, preKeys: recipient.preKeys
+            )
+            let builder = makeInstalledModule(identity: sender.data, peer: StubPEPPeer { _ in legacyBundleItems(legacyBundle) })
+            let legacyKey = SessionKey(jid: recipientJID, deviceID: 200, version: .legacy)
+            _ = try await builder.establishSession(
+                sessionKey: legacyKey, identity: builder.requireOwnIdentity(), bundle: builder.fetchBundle(from: recipientJID, deviceID: 200, version: .legacy)
+            )
+            let legacySession = try #require(builder.exportSession(jid: recipientJID, deviceID: 200, version: .legacy))
+            let unreadable = try await sessionEntries().map { entry in
+                OMEMOModule.StoredSessionEntry(
+                    jid: entry.jid, deviceID: entry.deviceID, version: .omemo2, sessionData: entry.sessionData, associatedData: Array(entry.associatedData.dropLast())
+                )
+            }
+            let trustGuard = OMEMOTrustGuard()
+            let module = makeInstalledModule(identity: sender.data, peer: StubPEPPeer(), trustGuard: trustGuard)
+            module.restoreSessions(unreadable + [legacySession])
+            try #require(module.allSessionEntries().count == 2)
+
+            let reset = try await module.resetSession(jid: recipientJID, deviceID: 200, versions: [])
+
+            let known = try omemoFingerprint(of: OMEMOX3DH.identityKey(of: recipient.identityKeyPair, format: .legacy), format: .legacy)
+            #expect(reset.knownFingerprint == known)
+            #expect(trustGuard.heldFingerprint(peer: recipientJID, deviceID: 200) == known)
+            #expect(module.allSessionEntries().isEmpty)
         }
 
         @Test(arguments: [true, false])
@@ -536,7 +654,7 @@ extension OMEMOModuleTests {
             let module = makeInstalledModule(identity: sender.data, peer: peer)
             try await module.restoreSessions(sessionEntries())
 
-            #expect(try await module.resetSession(jid: recipientJID, deviceID: 200) == .noBundle)
+            #expect(try await module.resetSession(jid: recipientJID, deviceID: 200, versions: [.omemo2]).outcomes == [.omemo2: .noBundle])
 
             #expect(module.allSessionEntries().isEmpty)
             #expect(peer.stanzas.isEmpty)
@@ -550,7 +668,7 @@ extension OMEMOModuleTests {
             try await module.restoreSessions(sessionEntries())
             _ = trustGuard.applyDistrust(peer: recipientJID, deviceID: 200)
 
-            #expect(try await module.resetSession(jid: recipientJID, deviceID: 200) == .discarded)
+            #expect(try await module.resetSession(jid: recipientJID, deviceID: 200, versions: [.omemo2]).outcomes == [.omemo2: .discarded])
 
             #expect(module.allSessionEntries().isEmpty)
             #expect(peer.stanzas.isEmpty)
@@ -564,9 +682,9 @@ extension OMEMOModuleTests {
             let peer = StubPEPPeer { _ in bundleItems(for: recipient) }
             let module = makeInstalledModule(identity: sender.data, peer: peer, trustGuard: trustGuard)
 
-            let outcome = try await module.resetSession(jid: recipientJID, deviceID: 200)
+            let outcome = try await module.resetSession(jid: recipientJID, deviceID: 200, versions: [.omemo2]).outcomes
 
-            #expect(outcome == .keyChanged(previousFingerprint: held, newIdentityKey: recipient.identityKeyPair.publicKeyBytes))
+            #expect(outcome == [.omemo2: .keyChanged(previousFingerprint: held, newFingerprint: omemoFingerprint(of: recipient.identityKeyPair.publicKeyBytes, format: .omemo2))])
             #expect(module.allSessionEntries().isEmpty)
             #expect(peer.stanzas.isEmpty)
         }
@@ -580,15 +698,15 @@ extension OMEMOModuleTests {
             let module = makeInstalledModule(identity: sender.data, peer: peer)
             module.restoreSessions(restored.map { entry in
                 OMEMOModule.StoredSessionEntry(
-                    jid: entry.jid, deviceID: entry.deviceID, sessionData: entry.sessionData,
+                    jid: entry.jid, deviceID: entry.deviceID, version: .omemo2, sessionData: entry.sessionData,
                     associatedData: isReadable ? entry.associatedData : Array(entry.associatedData.dropLast())
                 )
             })
 
-            let outcome = try await module.resetSession(jid: recipientJID, deviceID: 200)
+            let outcome = try await module.resetSession(jid: recipientJID, deviceID: 200, versions: [.omemo2]).outcomes
 
-            let previous = isReadable ? omemoFingerprint(of: recipient.identityKeyPair.publicKeyBytes) : ""
-            #expect(outcome == .keyChanged(previousFingerprint: previous, newIdentityKey: impostor.identityKeyPair.publicKeyBytes))
+            let previous = isReadable ? omemoFingerprint(of: recipient.identityKeyPair.publicKeyBytes, format: .omemo2) : ""
+            #expect(outcome == [.omemo2: .keyChanged(previousFingerprint: previous, newFingerprint: omemoFingerprint(of: impostor.identityKeyPair.publicKeyBytes, format: .omemo2))])
             #expect(module.allSessionEntries().isEmpty)
             #expect(peer.stanzas.isEmpty)
         }
@@ -838,7 +956,7 @@ private final class StubPEPPeer: Sendable {
     var sessionEstablishedPreKeyIDs: [UInt32?] {
         recorded.withLock { recorded in
             recorded.events.compactMap { event in
-                if case let .omemoSessionEstablished(_, _, _, consumedPreKeyID) = event { consumedPreKeyID } else { nil }
+                if case let .omemoSessionEstablished(_, _, _, _, consumedPreKeyID) = event { consumedPreKeyID } else { nil }
             }
         }
     }
@@ -872,15 +990,40 @@ private func makeInstalledModule(
 
 /// The `<pubsub>` answer to a bundle fetch, carrying `identity`'s bundle.
 func bundleItems(for identity: TestOMEMOIdentity) -> XMLElement {
-    let bundle = OMEMOPreKeyManager.buildBundle(
+    bundleItems(OMEMOPreKeyManager.buildBundle(
         deviceID: OMEMODeviceID(value: identity.data.deviceID),
         identityKeyPair: identity.identityKeyPair,
         signedPreKey: identity.signedPreKey,
         preKeys: identity.preKeys
+    ))
+}
+
+/// A bundle that carries `identity`'s key under `signer`'s signed pre-key and signature, which do not verify for it,
+/// and lists no pre-key.
+private func forgedBundle(of identity: TestOMEMOIdentity, signedBy signer: TestOMEMOIdentity) -> OMEMOBundle {
+    OMEMOBundle(
+        deviceID: OMEMODeviceID(value: identity.data.deviceID), identityKey: identity.identityKeyPair.publicKeyBytes,
+        signedPreKeyID: signer.signedPreKey.keyID, signedPreKey: signer.signedPreKey.publicKeyBytes, signedPreKeySignature: signer.signedPreKey.signature,
+        preKeys: []
     )
-    var item = XMLElement(name: "item", attributes: ["id": "\(identity.data.deviceID)"])
+}
+
+/// The `<pubsub>` answer to a bundle fetch, carrying `bundle`.
+private func bundleItems(_ bundle: OMEMOBundle) -> XMLElement {
+    var item = XMLElement(name: "item", attributes: ["id": "\(bundle.deviceID.value)"])
     item.addChild(OMEMOModule(pepModule: PEPModule()).buildBundleElement(bundle))
-    var items = XMLElement(name: "items", attributes: ["node": XMPPNamespaces.omemoBundles])
+    return pubsubItems(item, node: XMPPNamespaces.omemoBundles)
+}
+
+/// The `<pubsub>` answer to a legacy bundle fetch, carrying `bundle`.
+private func legacyBundleItems(_ bundle: OMEMOBundle) -> XMLElement {
+    var item = XMLElement(name: "item", attributes: ["id": "current"])
+    item.addChild(OMEMOModule(pepModule: PEPModule()).buildLegacyBundleElement(bundle))
+    return pubsubItems(item, node: XMPPNamespaces.omemoLegacyBundles(deviceID: bundle.deviceID.value))
+}
+
+private func pubsubItems(_ item: XMLElement, node: String) -> XMLElement {
+    var items = XMLElement(name: "items", attributes: ["node": node])
     items.addChild(item)
     var pubsub = XMLElement(name: "pubsub", namespace: XMPPNamespaces.pubsub)
     pubsub.addChild(items)
@@ -910,17 +1053,17 @@ private func makeRepeatingKEXMessages(to recipient: TestOMEMOIdentity, plaintext
     let (client, _) = try await makeConnectedClient(mock: mock, omemoModule: sender, pepModule: pepModule)
     let deviceIDs = [recipient.data.deviceID]
     // The sender signs in as the recipient's account, whose list the connect cached, so that list has to hold the device.
-    sender.state.withLock { $0.deviceLists[recipientJID, default: []] += deviceIDs }
+    sender.state.withLock { $0.deviceLists[.omemo2, default: [:]][recipientJID, default: []] += deviceIDs }
     let first = Task {
         try await sender.encryptMessage(plaintext: plaintexts[0], to: recipientJID, recipientDeviceIDs: deviceIDs, ownDeviceIDs: [])
     }
     await mock.waitForSent(count: 1)
     let fetchID = try await #require(extractIQID(from: mock.sentBytes[0]))
     await mock.simulateReceive(makeBundleResultIQ(iqID: fetchID, fromJID: recipientJID, identity: recipient, module: sender))
-    var encrypted = try await [first.value.encrypted]
+    var encrypted = try await [first.value.omemo2]
     for plaintext in plaintexts.dropFirst() {
         try await encrypted.append(
-            sender.encryptMessage(plaintext: plaintext, to: recipientJID, recipientDeviceIDs: deviceIDs, ownDeviceIDs: []).encrypted
+            sender.encryptMessage(plaintext: plaintext, to: recipientJID, recipientDeviceIDs: deviceIDs, ownDeviceIDs: []).omemo2
         )
     }
     await disconnectFast(client)
@@ -975,13 +1118,4 @@ private func publishedPreKeyIDs(in publish: XMLElement) -> [String] {
 /// The signed pre-key id a bundle publish carries.
 private func publishedSignedPreKeyID(in publish: XMLElement) -> String? {
     publish.child(named: "pubsub")?.child(named: "publish")?.child(named: "item")?.child(named: "bundle")?.child(named: "spk")?.attribute("id")
-}
-
-private extension OMEMOModule.OMEMOIdentityData {
-    func withPreKeys(_ preKeys: [PreKeyData]) -> Self {
-        Self(
-            deviceID: deviceID, identityKeyRaw: identityKeyRaw, signedPreKeyID: signedPreKeyID,
-            signedPreKeyRaw: signedPreKeyRaw, signedPreKeySignature: signedPreKeySignature, preKeys: preKeys
-        )
-    }
 }

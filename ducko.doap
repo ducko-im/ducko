@@ -338,7 +338,7 @@
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0384.html"/>
                 <xmpp:status>partial</xmpp:status>
-                <xmpp:note xml:lang="en">Room member lists are fetched before each encrypted message rather than on join, and affiliation changes are not tracked. A request for unencrypted messages from a device that is not trusted is ignored. Trust On First Use is on by default, so messages are encrypted to a contact's new device without asking</xmpp:note>
+                <xmpp:note xml:lang="en">Supports the version 0.3 wire format (eu.siacs.conversations.axolotl) alongside the current one, with one device ID and identity key for both. Each device is sent the newest version whose device list holds it. Room member lists are fetched before each encrypted message rather than on join, and affiliation changes are not tracked. A request for unencrypted messages from a device that is not trusted is ignored. Trust On First Use is on by default, so messages are encrypted to a contact's new device without asking. With version 0.3, a message that cannot be decrypted shows a notice rather than being silently discarded. A version 0.3 message's correction, retraction or reply reference travels outside the encryption, so a received one is shown rather than applied. Room private messages are decrypted but not sent encrypted. A used pre-key's private key is not deleted at once: it stays usable for further key exchanges on the same connection, and a session built from it is used for sending. A session built during archive catch-up is used for sending without first re-keying it with a PreKeySignalMessage</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -394,8 +394,8 @@
         <implements>
             <xmpp:SupportedXep>
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0420.html"/>
-                <xmpp:status>complete</xmpp:status>
-                <xmpp:note xml:lang="en">Message stanzas only, used with OMEMO (XEP-0384)</xmpp:note>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Message stanzas only, used with OMEMO (XEP-0384). A message sent only to devices on the current OMEMO version keeps its metadata inside the envelope. A message also sent to a device on OMEMO version 0.3 carries its correction, retraction, reply reference, receipt and marker requests and chat state outside the envelope, where that version's clients read them</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>
@@ -440,6 +440,14 @@
                 <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0440.html"/>
                 <xmpp:status>complete</xmpp:status>
                 <xmpp:note xml:lang="en">Supports tls-exporter (TLS 1.3 only) and tls-server-end-point, and prefers tls-exporter. tls-unique is not supported. Sign-in is refused when -PLUS is offered but no listed type can be used on the connection. Over SASL1, -PLUS offered without types binds with tls-server-end-point</xmpp:note>
+            </xmpp:SupportedXep>
+        </implements>
+        <implements>
+            <xmpp:SupportedXep>
+                <xmpp:xep rdf:resource="https://xmpp.org/extensions/xep-0454.html"/>
+                <xmpp:version>0.1.0</xmpp:version>
+                <xmpp:status>partial</xmpp:status>
+                <xmpp:note xml:lang="en">Receiving only</xmpp:note>
             </xmpp:SupportedXep>
         </implements>
         <implements>

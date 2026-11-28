@@ -37,6 +37,7 @@ public struct DefaultXMPPClientFactory: XMPPClientFactory {
         pepModule.registerNotifyInterest(XMPPNamespaces.bookmarks2)
         pepModule.registerNotifyInterest(XMPPNamespaces.avatarMetadata)
         pepModule.registerNotifyInterest(XMPPNamespaces.omemoDevices)
+        pepModule.registerNotifyInterest(XMPPNamespaces.omemoLegacyDeviceList)
         builder.withModule(pepModule)
         let omemoModule: OMEMOModule = if let omemoService {
             await omemoService.buildModule(for: account.jid, accountID: account.id, pepModule: pepModule, mucModule: mucModule)

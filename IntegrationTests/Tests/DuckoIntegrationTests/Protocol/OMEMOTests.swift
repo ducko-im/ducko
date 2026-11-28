@@ -30,11 +30,62 @@ extension DuckoIntegrationTests.ProtocolLayer {
                 // own resources, so assert via a fresh PEP items IQ get instead
                 // of waiting for `.pepItemsPublished`. PEP device lists are
                 // append-only — assert containment, not count.
-                let devices = try await aliceOMEMO.fetchDeviceList(for: aliceJID, forceRefresh: true)
+                let devices = try await aliceOMEMO.fetchDeviceList(for: aliceJID, forceRefresh: true, version: .omemo2)
                 #expect(devices.contains(deviceID))
                 let pep = try await harness.module(PEPModule.self, for: "alice")
                 let bundles = try await pep.retrieveItems(node: XMPPNamespaces.omemoBundles, itemID: "\(deviceID)")
                 #expect(bundles.first?.payload.name == "bundle")
+            }
+        }
+
+        @Test(.timeLimit(.minutes(2))) @MainActor func `Legacy OMEMO publication lists Alice's device and reaches Bob`() async throws {
+            try await TestHarness.withHarness { harness in
+                try await harness.setUp(accounts: [
+                    "alice": TestCredentials.alice,
+                    "bob": TestCredentials.bob
+                ], loadOMEMOFixtures: true)
+
+                let alice = try #require(harness.accounts["alice"])
+                let bob = try #require(harness.accounts["bob"])
+                let aliceJID = try harness.jid(for: TestCredentials.alice)
+                let aliceOMEMO = try await harness.module(OMEMOModule.self, for: "alice")
+
+                // The legacy publication follows the setup attempt, and waits for pre-key upkeep when fewer than 20
+                // pre-keys are left.
+                try await harness.awaitOMEMOSetup(for: "alice")
+                let deviceID = try #require(aliceOMEMO.ownIdentityData).deviceID
+                try await alice.waitForCondition({
+                    let devices = await (try? aliceOMEMO.fetchDeviceList(for: aliceJID, forceRefresh: true, version: .legacy)) ?? []
+                    return devices.contains(deviceID)
+                }, timeout: TestTimeout.omemoSession)
+
+                // The legacy bundle carries the OMEMO 2 identity in its Curve25519 form, after libsignal's 0x05 type byte.
+                let pep = try await harness.module(PEPModule.self, for: "alice")
+                let items = try await pep.retrieveItems(node: XMPPNamespaces.omemoLegacyBundles(deviceID: deviceID), itemID: "current")
+                let bundle = try #require(items.first?.payload)
+                #expect(bundle.name == "bundle" && bundle.namespace == XMPPNamespaces.omemoLegacy)
+                let identityKeyText = try #require(bundle.child(named: "identityKey")?.textContent)
+                let identityKey = try #require(Data(base64Encoded: identityKeyText))
+                // A fresh identity reaches the store on a detached task.
+                try await alice.waitForCondition {
+                    await harness.environment.omemoService.ownFingerprint(accountID: alice.accountID) != nil
+                }
+                let fingerprint = try #require(await harness.environment.omemoService.ownFingerprint(accountID: alice.accountID))
+                let curveKeyHex = OMEMODeviceInfo.formatFingerprint(fingerprint).replacing(" ", with: "")
+                #expect(identityKey.map { String(format: "%02x", $0) }.joined() == "05" + curveKeyHex)
+
+                // Bob's caps ask for the legacy list (+notify), so the server sends him its last item when he signs in
+                // again. No waiter runs for him meanwhile, so the router holds the notification for the wait below. An
+                // earlier notification, from before Alice's device joined the list, is passed over.
+                await harness.environment.accountService.disconnect(accountID: bob.accountID)
+                try await harness.environment.accountService.connect(accountID: bob.accountID, password: TestCredentials.bob.password)
+                _ = try await bob.waitForEvent(
+                    matching: { event in
+                        guard case let .omemoDeviceListReceived(jid, devices, .legacy) = event else { return false }
+                        return jid == aliceJID && devices.contains(deviceID)
+                    },
+                    timeout: TestTimeout.omemoSession
+                )
             }
         }
 
@@ -47,7 +98,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
 
                 _ = try await ctx.alice.waitForEvent(
                     matching: { event in
-                        if case let .omemoSessionEstablished(jid, _, _, _) = event, jid == ctx.bobJID { return true }
+                        if case let .omemoSessionEstablished(jid, _, _, _, _) = event, jid == ctx.bobJID { return true }
                         return false
                     },
                     timeout: TestTimeout.omemoSession
@@ -341,7 +392,7 @@ extension DuckoIntegrationTests.ProtocolLayer {
         ) async throws {
             try await harness.awaitOMEMOSetup(for: "alice")
             try await harness.awaitOMEMOSetup(for: peerLabel)
-            _ = try await aliceOMEMO.fetchDeviceList(for: peerJID, forceRefresh: true)
+            _ = try await aliceOMEMO.fetchDeviceList(for: peerJID, forceRefresh: true, version: .omemo2)
             try await awaitPeerDeviceInStore(
                 harness: harness, peerLabel: peerLabel,
                 accountID: aliceID, peerJID: peerJID

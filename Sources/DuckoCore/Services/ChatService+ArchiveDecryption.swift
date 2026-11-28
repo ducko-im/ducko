@@ -25,7 +25,7 @@ extension ChatService {
     ) async -> [String: EncryptedContent] {
         guard let omemoService else { return [:] }
         var decrypted: [String: EncryptedContent] = [:]
-        for entry in page where entry.forwarded.message.isOMEMOEncrypted {
+        for entry in page where entry.forwarded.message.carriesOMEMOPayload {
             guard isCurrent() else { break }
             guard await !isStoredDecrypted(entry, in: conversation) else { continue }
             let message = entry.forwarded.message

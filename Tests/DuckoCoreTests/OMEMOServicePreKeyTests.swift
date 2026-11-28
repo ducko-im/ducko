@@ -11,20 +11,6 @@ private func storedPreKeys(_ ids: some Sequence<UInt32>, isUsed: Bool = false) -
     ids.map { OMEMOStoredPreKey(accountJID: accountJID.description, keyID: $0, keyData: Data(repeating: 0xD4, count: 32), isUsed: isUsed) }
 }
 
-/// A responder session in the stored encoding, or, with `isRatchetOnly`, its ratchet alone as the earlier encoding stored it.
-private func storedSessionData(isRatchetOnly: Bool = false) throws -> [UInt8] {
-    let ratchet = try OMEMODoubleRatchetSession(
-        asResponderWithSharedSecret: Array(repeating: 1, count: 32),
-        ourSignedPreKeyPair: OMEMOSignedPreKey(keyID: 1, identityKey: OMEMOIdentityKeyPair()).keyPair
-    )
-    let keyExchange = OMEMOKeyExchangeHeader(
-        preKeyID: 1, signedPreKeyID: 1, identityKey: Array(repeating: 0xAB, count: 32), ephemeralKey: Array(repeating: 0xEE, count: 32)
-    )
-    return isRatchetOnly
-        ? ratchet.serialize()
-        : OMEMOSession(ratchet: ratchet, associatedData: Array(repeating: 0, count: 64), start: .received(keyExchange)).serialized
-}
-
 /// Records the IQs a module driven without a client sends, answering each with an empty result.
 private final class IQRecorder: Sendable {
     private let sent = OSAllocatedUnfairLock<[DuckoXMPP.XMLElement]>(initialState: [])
@@ -129,8 +115,8 @@ extension OMEMOServiceTests {
         @Test func `Pre-keys the trust guard recorded as used are retired from the module`() async throws {
             await seedStoredIdentity(preKeyIDs: Array(1 ... 30))
             _ = try service.trustGuard(forAccountJID: accountJID.description).admitKeyExchange(
-                from: SessionKey(jid: #require(BareJID(localPart: "peer", domainPart: "example.com")), deviceID: 1), offeredKey: Array(repeating: 0xAB, count: 32),
-                replacing: .none, preKey: OMEMOTrustGuard.PreKeyUse(id: 7, ownDeviceID: makeIdentityData().deviceID, isUsedByThisModule: false)
+                from: OMEMODeviceKey(jid: #require(BareJID(localPart: "peer", domainPart: "example.com")), deviceID: 1), offering: omemoFingerprint(of: Array(repeating: 0xAB, count: 32), format: .omemo2),
+                standIn: .none, preKey: OMEMOTrustGuard.PreKeyUse(id: 7, ownDeviceID: makeIdentityData().deviceID, isUsedByThisModule: false)
             )
             let module = StubPreKeyModule(identity: makeIdentityData(preKeyIDs: Array(1 ... 30)))
 
@@ -308,10 +294,10 @@ extension OMEMOServiceTests {
         }
 
         /// A module built from the store, with its identity installed as an established session installs it.
-        private func buildInstalledModule(recorder: IQRecorder) async -> OMEMOModule {
+        private func buildInstalledModule(recorder: IQRecorder, accountID: UUID = UUID()) async -> OMEMOModule {
             let pepModule = PEPModule()
             pepModule.setUp(recorder.context)
-            let module = await service.buildModule(for: accountJID, accountID: UUID(), pepModule: pepModule)
+            let module = await service.buildModule(for: accountJID, accountID: accountID, pepModule: pepModule)
             module.setUp(recorder.context)
             module.handleSessionEstablished(resumed: true)
             return module
@@ -333,7 +319,7 @@ extension OMEMOServiceTests {
         @Test func `Stored trust rows reach the account's guard`() async throws {
             let peer = try #require(BareJID.parse("peer@example.com"))
             let pinned = Array(repeating: UInt8(0xAB), count: 32)
-            for (deviceID, fingerprint, level) in [(UInt32(1), "", OMEMOTrustLevel.untrusted), (2, omemoFingerprint(of: pinned), .undecided)] {
+            for (deviceID, fingerprint, level) in [(UInt32(1), "", OMEMOTrustLevel.untrusted), (2, omemoFingerprint(of: pinned, format: .omemo2), .undecided)] {
                 try await store.saveTrust(OMEMOTrust(
                     accountJID: accountJID.description, peerJID: peer.description, deviceID: deviceID, fingerprint: fingerprint, trustLevel: level
                 ))
@@ -342,15 +328,15 @@ extension OMEMOServiceTests {
             _ = await buildInstalledModule(recorder: IQRecorder())
 
             let trustGuard = service.trustGuard(forAccountJID: accountJID.description)
-            #expect(trustGuard.admitSession(with: SessionKey(jid: peer, deviceID: 1), identityKey: pinned) == .untrusted)
-            #expect(trustGuard.heldFingerprint(peer: peer, deviceID: 2) == omemoFingerprint(of: pinned))
+            #expect(trustGuard.admitSession(with: OMEMODeviceKey(jid: peer, deviceID: 1), fingerprint: omemoFingerprint(of: pinned, format: .omemo2)) == .untrusted)
+            #expect(trustGuard.heldFingerprint(peer: peer, deviceID: 2) == omemoFingerprint(of: pinned, format: .omemo2))
         }
 
         @Test func `A pre-key a key exchange used in this process is left out of the built module`() async throws {
             await store.seedFromIdentityData(makeIdentityData(preKeyIDs: [1, 2]), accountJID: accountJID.description)
             let peer = try #require(BareJID(localPart: "peer", domainPart: "example.com"))
             _ = service.trustGuard(forAccountJID: accountJID.description).admitKeyExchange(
-                from: SessionKey(jid: peer, deviceID: 1), offeredKey: Array(repeating: 0xAB, count: 32), replacing: .none,
+                from: OMEMODeviceKey(jid: peer, deviceID: 1), offering: omemoFingerprint(of: Array(repeating: 0xAB, count: 32), format: .omemo2), standIn: .none,
                 preKey: OMEMOTrustGuard.PreKeyUse(id: 2, ownDeviceID: makeIdentityData().deviceID, isUsedByThisModule: false)
             )
 
@@ -419,7 +405,7 @@ extension OMEMOServiceTests {
             let rows = try [(UInt32(1), Data([0xFF])), (2, Data(storedSessionData(isRatchetOnly: true))), (3, Data(storedSessionData()))]
             for (deviceID, data) in rows {
                 try await store.saveSession(OMEMOStoredSession(
-                    accountJID: accountJID.description, peerJID: "peer@example.com", peerDeviceID: deviceID,
+                    accountJID: accountJID.description, peerJID: "peer@example.com", peerDeviceID: deviceID, version: .omemo2,
                     sessionData: data, associatedData: Data(repeating: 0, count: 64)
                 ))
             }
@@ -427,10 +413,41 @@ extension OMEMOServiceTests {
             let module = await buildInstalledModule(recorder: IQRecorder())
 
             let peer = try #require(BareJID.parse("peer@example.com"))
-            #expect(module.exportSession(jid: peer, deviceID: 3) != nil)
-            #expect(module.exportSession(jid: peer, deviceID: 2) == nil)
-            #expect(module.exportSession(jid: peer, deviceID: 1) == nil)
+            #expect(module.exportSession(jid: peer, deviceID: 3, version: .omemo2) != nil)
+            #expect(module.exportSession(jid: peer, deviceID: 2, version: .omemo2) == nil)
+            #expect(module.exportSession(jid: peer, deviceID: 1, version: .omemo2) == nil)
             #expect(module.ownIdentityData != nil)
+        }
+
+        @Test func `A device's sessions in both versions are restored side by side, exported by version, and saved back as a row each`() async throws {
+            let accounts = makeAccountService(store: MockPersistenceStore())
+            service.setAccountService(accounts)
+            let accountID = try await accounts.createAccount(jidString: accountJID.description, requireTLS: false)
+            await store.seedFromIdentityData(makeIdentityData(preKeyIDs: [1]), accountJID: accountJID.description)
+            let peer = try #require(BareJID.parse("peer@example.com"))
+            let records = try [OMEMOWireFormat.omemo2, .legacy].map { try (version: $0, data: storedSessionData(format: $0)) }
+            for record in records {
+                try await store.saveSession(OMEMOStoredSession(
+                    accountJID: accountJID.description, peerJID: peer.description, peerDeviceID: 7, version: record.version,
+                    sessionData: Data(record.data), associatedData: Data(storedAssociatedData(format: record.version))
+                ))
+            }
+
+            let module = await buildInstalledModule(recorder: IQRecorder(), accountID: accountID)
+            try await store.deleteSession(accountJID: accountJID.description, peerJID: peer.description, peerDeviceID: 7, version: nil)
+            await service.saveModuleSessions(module: module, accountID: accountID)
+
+            for record in records {
+                let exported = module.exportSession(jid: peer, deviceID: 7, version: record.version)
+                #expect(exported?.sessionData == record.data)
+                #expect(exported?.associatedData == storedAssociatedData(format: record.version))
+            }
+            let entryVersions = module.allSessionEntries().map(\.version)
+            #expect(Set(entryVersions) == [.omemo2, .legacy])
+            let saved = try await store.loadSessions(for: accountJID.description)
+            #expect(Dictionary(uniqueKeysWithValues: saved.map { ($0.version, $0.sessionData) }) == [
+                .omemo2: Data(records[0].data), .legacy: Data(records[1].data)
+            ])
         }
     }
 
@@ -452,7 +469,7 @@ extension OMEMOServiceTests {
             let peer = try #require(BareJID.parse("peer@example.com"))
 
             await service.handleEvent(
-                .omemoSessionEstablished(jid: peer, deviceID: 7, identityKey: Array(repeating: 0xAB, count: 32), consumedPreKeyID: 2),
+                .omemoSessionEstablished(jid: peer, deviceID: 7, version: .omemo2, identityKey: Array(repeating: 0xAB, count: 32), consumedPreKeyID: 2),
                 accountID: accountID
             )
 
@@ -485,7 +502,7 @@ extension OMEMOServiceTests {
             let peer = try #require(BareJID.parse("peer@example.com"))
             let omemoModule = OMEMOModule(pepModule: PEPModule())
             try omemoModule.restoreSessions([OMEMOModule.StoredSessionEntry(
-                jid: peer, deviceID: 7, sessionData: storedSessionData(), associatedData: Array(repeating: 0, count: 64)
+                jid: peer, deviceID: 7, version: .omemo2, sessionData: storedSessionData(), associatedData: Array(repeating: 0, count: 64)
             )])
             let accounts = makeAccountService(
                 store: store, clientFactory: MockXMPPClientFactory(transport: transport, modules: [omemoModule])
@@ -503,7 +520,7 @@ extension OMEMOServiceTests {
             try #require(accounts.connectedClient(for: accountID) == nil)
 
             await service.handleEvent(
-                .omemoSessionEstablished(jid: peer, deviceID: 7, identityKey: Array(repeating: 0xAB, count: 32), consumedPreKeyID: nil),
+                .omemoSessionEstablished(jid: peer, deviceID: 7, version: .omemo2, identityKey: Array(repeating: 0xAB, count: 32), consumedPreKeyID: nil),
                 accountID: accountID
             )
 

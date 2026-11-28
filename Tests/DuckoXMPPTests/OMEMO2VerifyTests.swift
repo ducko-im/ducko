@@ -65,7 +65,7 @@ struct OMEMO2VerifyTests {
 
         for body in ["Hello from Ducko!", "Fish & chips <tonight>?", "Third time's the charm.", nil, "After the reset."] {
             guard let body else {
-                #expect(try await module.resetSession(jid: bobJID, deviceID: bob.deviceID) == .rebuilt)
+                #expect(try await module.resetSession(jid: bobJID, deviceID: bob.deviceID, versions: [.omemo2]).outcomes == [.omemo2: .rebuilt])
                 let encrypted = try #require(sent.withLock { $0.last }?.child(named: "encrypted", namespace: XMPPNamespaces.omemo))
                 #expect(try decryptEnvelope(of: encrypted, as: bob, session: &bobsSession) == nil)
                 messages.append(.init(plaintext: nil, encrypted: encrypted.xmlString))
@@ -73,7 +73,7 @@ struct OMEMO2VerifyTests {
             }
             let encrypted = try await module.encryptMessage(
                 plaintext: body, to: bobJID, recipientDeviceIDs: [bob.deviceID], ownDeviceIDs: []
-            ).encrypted
+            ).omemo2
             let envelope = try #require(decryptEnvelope(of: encrypted, as: bob, session: &bobsSession))
             let parsed = try SCEEnvelope(parsing: Array(envelope.utf8))
             #expect(parsed.content.map(\.xmlString) == ["<body>" + XMLElement.escape(body) + "</body>"])
@@ -131,17 +131,19 @@ struct OMEMO2VerifyTests {
                 signedPreKey: signedPreKey,
                 oneTimePreKey: preKey,
                 peerIdentityKey: keyExchange.identityKey,
-                peerEphemeralKey: keyExchange.ephemeralKey
+                peerEphemeralKey: keyExchange.ephemeralKey,
+                format: .omemo2
             )
             current = OMEMOSession(
                 ratchet: OMEMODoubleRatchetSession(
-                    asResponderWithSharedSecret: agreement.sharedSecret, ourSignedPreKeyPair: signedPreKey.keyPair
+                    asResponderWithSharedSecret: agreement.sharedSecret, ourSignedPreKeyPair: signedPreKey.keyPair,
+                    format: .omemo2
                 ),
                 associatedData: agreement.associatedData,
                 start: .received(keyExchange.header)
             )
         }
-        let keyMaterial = try current.decrypt(keyExchange.message)
+        let keyMaterial = try current.decrypt(.omemo2(keyExchange.message))
         session = current
         guard let payloadText = encrypted.child(named: "payload")?.textContent else { return nil }
         let payload = try #require(Base64.decode(payloadText))

@@ -1389,9 +1389,10 @@ public final class ChatService { // swiftlint:disable:this type_body_length
 
     // MARK: - Private: Group OMEMO
 
-    /// Resolved group-message payload: whether OMEMO applied, the body to put on the wire (none when encrypted), and
-    /// the elements to attach. Built before persist so an encryption failure throws with nothing persisted (mirrors how
-    /// 1:1 resolves `trustedDeviceIDsForSend` first). An encrypted message is marked inside its envelope.
+    /// Resolved group-message payload: whether OMEMO applied, the body to put on the wire (none when encrypted, but a
+    /// fallback when only legacy OMEMO devices receive it), and the elements to attach. Built before persist so an
+    /// encryption failure throws with nothing persisted (mirrors how 1:1 resolves `trustedDeviceIDsForSend` first). An
+    /// encrypted message is marked inside its envelope.
     private struct PreparedGroupMessage {
         let isEncrypted: Bool
         let body: String?
@@ -1423,10 +1424,10 @@ public final class ChatService { // swiftlint:disable:this type_body_length
             throw ChatServiceError.encryptionFailed("no room members with known JIDs")
         }
         let recipients = try await groupRecipients(among: memberJIDs, in: room, omemoService: omemoService, accountID: accountID)
-        let elements = try await omemoService.encryptGroupMessage(
-            content: Self.envelopeContent(body: body, additionalElements, isMarkable: true), roomJID: room, recipients: recipients, accountID: accountID
+        let stanza = try await encryptedGroupStanza(
+            Self.envelopeContent(body: body, additionalElements, isMarkable: true), in: room, for: recipients, omemoService: omemoService, accountID: accountID
         )
-        return PreparedGroupMessage(isEncrypted: true, body: nil, additionalElements: elements.stanzaElements)
+        return PreparedGroupMessage(isEncrypted: true, body: stanza.body, additionalElements: stanza.elements)
     }
 
     /// The trusted devices of each of `memberJIDs` but the account itself, whose own devices are encrypted to

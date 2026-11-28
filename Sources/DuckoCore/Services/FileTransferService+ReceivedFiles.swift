@@ -1,29 +1,94 @@
 import CoreServices
+import CryptoKit
 import DuckoXMPP
 import Foundation
 
 extension FileTransferService {
-    /// Downloads a file a peer linked to and saves it into `directory` the way `saveReceivedFile` does. Only a web
-    /// address is fetched, and only a 200 is kept. An error page or a partial response arrives as a status rather than
-    /// an error, and saved under the file's name it would pass for the file. The server must declare the body's length
-    /// and every byte of it must arrive, since a body cut off where its framing allows an end reads as a finished one.
-    /// The body is streamed to disk and capped at `maxDownloadSize`.
+    /// Fetches a web address into an existing file, refusing a body over `maxSize`, and returns how many bytes it wrote.
+    public typealias RemoteFileDownload = @Sendable (_ url: URL, _ fileURL: URL, _ maxSize: Int64) async throws -> Int64
+
+    /// The largest encrypted file that is opened. It is decrypted in memory in one piece.
+    nonisolated static let maxEncryptedFileSize: Int64 = 100 * 1024 * 1024
+
+    /// The size of the authentication tag an encrypted file ends with (XEP-0454).
+    private nonisolated static let encryptedFileTagLength = 16
+
+    /// Downloads a file a peer linked to and saves it into `directory` the way `saveReceivedFile` does, with
+    /// `fetchRemoteFile`'s checks.
     nonisolated static func downloadRemoteFile(
         from url: URL, named name: String, into directory: URL
     ) async throws -> (fileURL: URL, byteCount: Int64) {
+        let stagingURL = try createStagingFile(named: "ducko-download", attributes: nil)
+        defer { try? FileManager.default.removeItem(at: stagingURL) }
+        let byteCount = try await fetchRemoteFile(from: url, into: stagingURL, maxSize: maxDownloadSize, session: .shared)
+        return try (saveReceivedFile(movingFrom: stagingURL, named: name, in: directory), byteCount)
+    }
+
+    /// Downloads and decrypts the file `link` shares, and returns its bytes. The file is AES-256-GCM encrypted with the
+    /// link's IV and key, and its last 16 bytes are the tag. The encrypted bytes are staged in a file only the user can
+    /// read, which is deleted whatever the outcome. The decrypted file reaches the disk only when the user saves it.
+    public nonisolated func decryptEncryptedFile(_ link: EncryptedFileLink) async throws -> [UInt8] {
+        let stagingURL = try Self.createStagingFile(named: "ducko-encrypted", attributes: [.posixPermissions: 0o600])
+        defer { try? FileManager.default.removeItem(at: stagingURL) }
+        let byteCount = try await encryptedFileDownload(link.downloadURL, stagingURL, min(Self.maxEncryptedFileSize, Self.maxDownloadSize))
+        guard byteCount >= Self.encryptedFileTagLength else { throw FileTransferError.decryptionFailed }
+        let encrypted: Data
+        do {
+            encrypted = try Data(contentsOf: stagingURL)
+        } catch {
+            throw FileTransferError.downloadFailed(error.localizedDescription)
+        }
+        guard encrypted.count == byteCount else {
+            throw FileTransferError.downloadFailed("The download does not match the file size the server gave")
+        }
+        do {
+            let box = try AES.GCM.SealedBox(
+                nonce: AES.GCM.Nonce(data: link.initializationVector),
+                ciphertext: encrypted.dropLast(Self.encryptedFileTagLength),
+                tag: encrypted.suffix(Self.encryptedFileTagLength)
+            )
+            return try Array(AES.GCM.open(box, using: SymmetricKey(data: link.key)))
+        } catch {
+            throw FileTransferError.decryptionFailed
+        }
+    }
+
+    /// An empty file in the user's temporary directory, named after `prefix` and unique, with `attributes`.
+    private nonisolated static func createStagingFile(named prefix: String, attributes: [FileAttributeKey: Any]?) throws -> URL {
+        let stagingURL = FileManager.default.temporaryDirectory.appending(path: "\(prefix)-\(UUID().uuidString)", directoryHint: .notDirectory)
+        guard FileManager.default.createFile(atPath: stagingURL.path, contents: nil, attributes: attributes) else {
+            throw FileTransferError.downloadFailed("The download could not be stored")
+        }
+        return stagingURL
+    }
+
+    /// Downloads an encrypted file as `fetchRemoteFile` does, through a session that keeps no cache, so its bytes are
+    /// not also kept on disk.
+    @Sendable
+    public nonisolated static func fetchEncryptedFile(from url: URL, into fileURL: URL, maxSize: Int64) async throws -> Int64 {
+        try await fetchRemoteFile(from: url, into: fileURL, maxSize: maxSize, session: uncachedSession)
+    }
+
+    private nonisolated static let uncachedSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        return URLSession(configuration: configuration)
+    }()
+
+    /// Downloads a file a peer linked to into `fileURL`, which exists. Only a web address is fetched, and only a 200 is
+    /// kept. An error page or a partial response arrives as a status rather than an error, and saved under the file's
+    /// name it would pass for the file. The server must declare the body's length and every byte of it must arrive,
+    /// since a body cut off where its framing allows an end reads as a finished one. The body is streamed to disk and
+    /// capped at `maxSize`.
+    private nonisolated static func fetchRemoteFile(from url: URL, into fileURL: URL, maxSize: Int64, session: URLSession) async throws -> Int64 {
         guard url.isWebAddress else {
             throw FileTransferError.downloadFailed("The link is not a web address")
         }
-        let stagingURL = FileManager.default.temporaryDirectory
-            .appending(path: "ducko-download-\(UUID().uuidString)", directoryHint: .notDirectory)
-        defer { try? FileManager.default.removeItem(at: stagingURL) }
-
         var request = URLRequest(url: url)
         // The declared length counts the bytes as sent, so a body decoded on arrival could not be checked against it.
         request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-        let byteCount: Int64
         do {
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 bytes.task.cancel()
                 throw FileTransferError.downloadFailed("The file is not available at that link")
@@ -37,26 +102,23 @@ extension FileTransferService {
                 bytes.task.cancel()
                 throw FileTransferError.downloadFailed("The server did not provide a file size")
             }
-            guard expectedLength <= maxDownloadSize else {
+            guard expectedLength <= maxSize else {
                 bytes.task.cancel()
                 throw FileTransferError.downloadFailed("The file is too large")
             }
-            byteCount = try await writeDownload(bytes, expectedLength: expectedLength, to: stagingURL)
+            return try await writeDownload(bytes, expectedLength: expectedLength, to: fileURL)
         } catch let error as FileTransferError {
             throw error
         } catch {
             throw FileTransferError.downloadFailed(error.localizedDescription)
         }
-        return try (saveReceivedFile(movingFrom: stagingURL, named: name, in: directory), byteCount)
     }
 
-    /// Streams a download to `fileURL` in chunks, refusing a body that does not come to exactly `expectedLength` bytes.
+    /// Streams a download to `fileURL`, which exists, in chunks, refusing a body that does not come to exactly
+    /// `expectedLength` bytes.
     private nonisolated static func writeDownload(
         _ bytes: URLSession.AsyncBytes, expectedLength: Int64, to fileURL: URL
     ) async throws -> Int64 {
-        guard FileManager.default.createFile(atPath: fileURL.path, contents: nil) else {
-            throw FileTransferError.downloadFailed("The download could not be stored")
-        }
         let handle = try FileHandle(forWritingTo: fileURL)
         defer { try? handle.close() }
         let chunkSize = 64 * 1024
@@ -84,7 +146,7 @@ extension FileTransferService {
 
     /// Writes a received file into `directory` under `name`, adding a number when that name is taken, and quarantines it
     /// like any other download. The name reaches here from a peer, so it is sanitized before it can become a path.
-    public nonisolated static func saveReceivedFile(_ bytes: [UInt8], named name: String, in directory: URL) async throws -> URL {
+    nonisolated static func saveReceivedFile(_ bytes: [UInt8], named name: String, in directory: URL) async throws -> URL {
         let data = Data(bytes)
         return try placeReceivedFile(named: name, in: directory) { try data.write(to: $0, options: .withoutOverwriting) }
     }

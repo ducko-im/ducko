@@ -4,6 +4,13 @@ import SwiftData
 import Testing
 @testable import DuckoCore
 @testable import DuckoData
+@testable import DuckoXMPP
+
+/// Stored fingerprints of three Ed25519 keys, and the first key's legacy form.
+private let f1 = omemoFingerprint(of: [UInt8](repeating: 0x11, count: 32), format: .omemo2)
+private let f2 = omemoFingerprint(of: [UInt8](repeating: 0x22, count: 32), format: .omemo2)
+private let f3 = omemoFingerprint(of: [UInt8](repeating: 0x33, count: 32), format: .omemo2)
+private let f1Legacy = omemoFingerprint(of: OMEMOCurveConversion.ed25519ToX25519([UInt8](repeating: 0x11, count: 32)) ?? [], format: .legacy)
 
 /// Round-trip tests for the SwiftData persistence side of the new
 /// seen-device classification cache and the orphan trust/session delete
@@ -55,7 +62,7 @@ struct SwiftDataOMEMOStoreTests {
                     try await readOnly.savePreKeys([OMEMOStoredPreKey(accountJID: account, keyID: 2, keyData: Data([2, 2]), isUsed: false)])
                 case .consumePreKey: try await readOnly.consumePreKey(id: 1, accountJID: account)
                 case .session: try await readOnly.saveSession(Self.session(account, data: 2))
-                case .deleteSession: try await readOnly.deleteSession(accountJID: account, peerJID: "bob@example.com", peerDeviceID: 7)
+                case .deleteSession: try await readOnly.deleteSession(accountJID: account, peerJID: "bob@example.com", peerDeviceID: 7, version: nil)
                 case .trust: try await readOnly.saveTrust(Self.trust(account, level: .untrusted))
                 case .insertTrust:
                     try await readOnly.insertTrustIfAbsent(OMEMOTrust(
@@ -79,7 +86,7 @@ struct SwiftDataOMEMOStoreTests {
     private static func session(_ account: String, data: UInt8) -> OMEMOStoredSession {
         // A different length for each version, since a printed `Data` shows only its size.
         OMEMOStoredSession(
-            accountJID: account, peerJID: "bob@example.com", peerDeviceID: 7,
+            accountJID: account, peerJID: "bob@example.com", peerDeviceID: 7, version: .omemo2,
             sessionData: Data(repeating: data, count: Int(data)), associatedData: Data(repeating: data, count: Int(data))
         )
     }
@@ -243,7 +250,7 @@ struct SwiftDataOMEMOStoreTests {
     @Test func `loadAllTrust returns every peer's rows of the account and none of another account`() async throws {
         let store = try makeStore()
         for (account, peer) in [("alice@example.com", "bob@example.com"), ("alice@example.com", "carol@example.com"), ("dave@example.com", "bob@example.com")] {
-            try await store.saveTrust(OMEMOTrust(accountJID: account, peerJID: peer, deviceID: 1, fingerprint: "f1", trustLevel: .trusted))
+            try await store.saveTrust(OMEMOTrust(accountJID: account, peerJID: peer, deviceID: 1, fingerprint: f1, trustLevel: .trusted))
         }
 
         let rows = try await store.loadAllTrust(for: "alice@example.com")
@@ -254,7 +261,7 @@ struct SwiftDataOMEMOStoreTests {
 
     @Test func `insertTrustIfAbsent leaves an existing row as it is and creates a missing one`() async throws {
         let store = try makeStore()
-        try await store.saveTrust(OMEMOTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: "f1", trustLevel: .verified))
+        try await store.saveTrust(OMEMOTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: f1, trustLevel: .verified))
 
         for deviceID: UInt32 in [1, 2] {
             try await store.insertTrustIfAbsent(OMEMOTrust(
@@ -263,7 +270,7 @@ struct SwiftDataOMEMOStoreTests {
         }
 
         let rows = try await store.loadAllDevices(for: "bob@example.com", accountJID: "alice@example.com").sorted { $0.deviceID < $1.deviceID }
-        #expect(rows.map(\.fingerprint) == ["f1", ""])
+        #expect(rows.map(\.fingerprint) == [f1, ""])
         #expect(rows.map(\.trustLevel) == [.verified, .undecided])
     }
 
@@ -272,18 +279,18 @@ struct SwiftDataOMEMOStoreTests {
         level: OMEMOTrustLevel
     ) async throws {
         let store = try makeStore()
-        for (deviceID, fingerprint) in [(UInt32(1), "f1"), (2, "")] {
+        for (deviceID, fingerprint) in [(UInt32(1), f1), (2, "")] {
             try await store.saveTrust(OMEMOTrust(
                 accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: deviceID, fingerprint: fingerprint, trustLevel: .trusted
             ))
         }
 
-        for (deviceID, fallback) in [(UInt32(1), "other"), (2, "f2"), (3, "f3")] {
+        for (deviceID, fallback) in [(UInt32(1), "other"), (2, f2), (3, f3)] {
             try await store.markTrust(level, accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: deviceID, fallbackFingerprint: fallback)
         }
 
         let rows = try await store.loadAllDevices(for: "bob@example.com", accountJID: "alice@example.com").sorted { $0.deviceID < $1.deviceID }
-        #expect(rows.map(\.fingerprint) == ["f1", "f2", "f3"])
+        #expect(rows.map(\.fingerprint) == [f1, f2, f3])
         #expect(rows.map(\.trustLevel) == [level, level, level])
     }
 
@@ -300,11 +307,11 @@ struct SwiftDataOMEMOStoreTests {
     }
 
     @Test(arguments: [
-        ([("", OMEMOTrustLevel.verified), ("f1", .trusted)], "f1", OMEMOTrustLevel.verified),
-        ([("f1", .trusted), ("", .untrusted)], "f1", .untrusted),
-        ([("f1", .verified), ("f2", .trusted)], "", .untrusted),
+        ([("", OMEMOTrustLevel.verified), (f1, .trusted)], f1, OMEMOTrustLevel.verified),
+        ([(f1, .trusted), ("", .untrusted)], f1, .untrusted),
+        ([(f1, .verified), (f2, .trusted)], "", .untrusted),
         ([("", .undecided), ("", .trusted)], "", .trusted),
-        ([("f1", .trusted), ("f2", .trusted), ("f1", .trusted)], "", .untrusted)
+        ([(f1, .trusted), (f2, .trusted), (f1, .trusted)], "", .untrusted)
     ])
     func `Duplicate rows of a device read as one, untrusted when any is or when their fingerprints differ`(
         rows: [(String, OMEMOTrustLevel)], fingerprint: String, level: OMEMOTrustLevel
@@ -323,7 +330,7 @@ struct SwiftDataOMEMOStoreTests {
 
     @Test func `A grant over duplicate rows that disagree is refused, and a distrust still applies`() async throws {
         let store = try makeStore()
-        try Self.insertDuplicates([("f1", .undecided), ("f2", .undecided)], into: store)
+        try Self.insertDuplicates([(f1, .undecided), (f2, .undecided)], into: store)
 
         await #expect(throws: OMEMOStoreError.self) {
             try await store.markTrust(.trusted, accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fallbackFingerprint: "")
@@ -338,15 +345,16 @@ struct SwiftDataOMEMOStoreTests {
     /// The empty row is filled with the fallback, so a fallback other than the stored fingerprint would leave the rows
     /// disagreeing.
     @Test(arguments: [
-        ("", false, ["trusted ", "trusted f1"]),
-        ("f1", false, ["trusted f1", "trusted f1"]),
-        ("f2", true, ["undecided ", "undecided f1"])
+        ("", false, ["trusted ", "trusted \(f1)"]),
+        (f1, false, ["trusted \(f1)", "trusted \(f1)"]),
+        (f2, true, ["undecided ", "undecided \(f1)"]),
+        (f1Legacy, false, ["trusted \(f1Legacy)", "trusted \(f1)"].sorted())
     ])
     func `A grant over duplicate rows fills the empty one, refused when that would make them disagree`(
         fallback: String, isRefused: Bool, rows: [String]
     ) async throws {
         let store = try makeStore()
-        try Self.insertDuplicates([("f1", .undecided), ("", .undecided)], into: store)
+        try Self.insertDuplicates([(f1, .undecided), ("", .undecided)], into: store)
 
         var refused = false
         do {
@@ -361,40 +369,40 @@ struct SwiftDataOMEMOStoreTests {
 
     @Test func `saveTrust changes every duplicate row of the device`() async throws {
         let store = try makeStore()
-        try Self.insertDuplicates([("f1", .untrusted), ("", .untrusted)], into: store)
+        try Self.insertDuplicates([(f1, .untrusted), ("", .untrusted)], into: store)
 
-        try await store.saveTrust(OMEMOTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: "f1", trustLevel: .trusted))
+        try await store.saveTrust(OMEMOTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: f1, trustLevel: .trusted))
 
         let rows = try ModelContext(store.modelContainer).fetch(FetchDescriptor<OMEMOTrustRecord>()).map { "\($0.trustLevel) \($0.fingerprint)" }
-        #expect(rows == ["trusted f1", "trusted f1"])
+        #expect(rows == ["trusted \(f1)", "trusted \(f1)"])
     }
 
     @Test func `A trust write changes every duplicate row of the device`() async throws {
         let store = try makeStore()
-        try Self.insertDuplicates([("f1", .trusted), ("", .verified)], into: store)
+        try Self.insertDuplicates([(f1, .trusted), ("", .verified)], into: store)
 
-        try await store.markTrust(.untrusted, accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fallbackFingerprint: "f1")
+        try await store.markTrust(.untrusted, accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fallbackFingerprint: f1)
         let untrusted = try ModelContext(store.modelContainer).fetch(FetchDescriptor<OMEMOTrustRecord>()).map { "\($0.trustLevel) \($0.fingerprint)" }
         try await store.deleteTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1)
 
-        #expect(untrusted == ["untrusted f1", "untrusted f1"])
+        #expect(untrusted == ["untrusted \(f1)", "untrusted \(f1)"])
         #expect(try ModelContext(store.modelContainer).fetch(FetchDescriptor<OMEMOTrustRecord>()).isEmpty)
     }
 
     @Test func `fillTrustFingerprint fills an empty fingerprint keeping the level, creates a missing row, and reports a differing one`() async throws {
         let store = try makeStore()
         try await store.saveTrust(OMEMOTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: "", trustLevel: .untrusted))
-        try await store.saveTrust(OMEMOTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 3, fingerprint: "f3", trustLevel: .trusted))
+        try await store.saveTrust(OMEMOTrust(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 3, fingerprint: f3, trustLevel: .trusted))
 
-        let filled = try await store.fillTrustFingerprint(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: "f1")
-        let created = try await store.fillTrustFingerprint(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 2, fingerprint: "f2")
+        let filled = try await store.fillTrustFingerprint(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 1, fingerprint: f1)
+        let created = try await store.fillTrustFingerprint(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 2, fingerprint: f2)
         let differing = try await store.fillTrustFingerprint(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 3, fingerprint: "new")
 
         #expect(filled == nil)
         #expect(created == nil)
-        #expect(differing == "f3")
+        #expect(differing == f3)
         let rows = try await store.loadAllDevices(for: "bob@example.com", accountJID: "alice@example.com").sorted { $0.deviceID < $1.deviceID }
-        #expect(rows.map(\.fingerprint) == ["f1", "f2", "f3"])
+        #expect(rows.map(\.fingerprint) == [f1, f2, f3])
         #expect(rows.map(\.trustLevel) == [.untrusted, .undecided, .trusted])
     }
 
@@ -406,11 +414,11 @@ struct SwiftDataOMEMOStoreTests {
 
         try await store.saveTrust(OMEMOTrust(
             accountJID: accountJID, peerJID: peerJID,
-            deviceID: 1, fingerprint: "f1", trustLevel: .trusted
+            deviceID: 1, fingerprint: f1, trustLevel: .trusted
         ))
         try await store.saveTrust(OMEMOTrust(
             accountJID: accountJID, peerJID: peerJID,
-            deviceID: 2, fingerprint: "f2", trustLevel: .trusted
+            deviceID: 2, fingerprint: f2, trustLevel: .trusted
         ))
 
         try await store.deleteTrust(accountJID: accountJID, peerJID: peerJID, deviceID: 1)
@@ -420,6 +428,105 @@ struct SwiftDataOMEMOStoreTests {
         #expect(remaining.first?.deviceID == 2)
     }
 
+    @Test func `A session row written before sessions had versions loads as OMEMO 2, and a save of that version replaces it`() async throws {
+        try await withTemporaryDirectory { dir in
+            do {
+                let container = try ModelContainer(
+                    for: Schema([UnversionedSchema.OMEMOSessionRecord.self]),
+                    configurations: [ModelConfiguration(url: dir.appendingPathComponent("default.store"))]
+                )
+                let context = ModelContext(container)
+                context.insert(UnversionedSchema.OMEMOSessionRecord(
+                    id: UUID(), accountJID: "alice@example.com", peerJID: "bob@example.com", peerDeviceID: 7,
+                    sessionData: Data([1]), associatedData: Data([1])
+                ))
+                try context.save()
+            }
+            let store = try SwiftDataOMEMOStore(modelContainer: ModelContainerFactory.makeContainer(at: dir))
+
+            let loaded = try await store.loadSessions(for: "alice@example.com")
+            try await store.saveSession(Self.session("alice@example.com", data: 2))
+
+            #expect(loaded.map(\.version) == [.omemo2])
+            #expect(try await store.loadSessions(for: "alice@example.com").map { "\($0.version) \(Array($0.sessionData))" } == ["omemo2 [2, 2]"])
+        }
+    }
+
+    @Test func `A session row naming a version this build does not know loads as no session`() async throws {
+        try await withTemporaryDirectory { dir in
+            let container = try ModelContainerFactory.makeContainer(at: dir)
+            let context = ModelContext(container)
+            for (version, data) in [("omemo9", UInt8(1)), ("legacy", 2)] {
+                context.insert(OMEMOSessionRecord(
+                    id: UUID(), accountJID: "alice@example.com", peerJID: "bob@example.com", peerDeviceID: 7, version: version,
+                    sessionData: Data([data]), associatedData: Data([data])
+                ))
+            }
+            try context.save()
+            let store = try SwiftDataOMEMOStore(modelContainer: container)
+
+            let loaded = try await store.loadSessions(for: "alice@example.com")
+
+            #expect(loaded.map { "\($0.version) \(Array($0.sessionData))" } == ["legacy [2]"])
+        }
+    }
+
+    @Test(arguments: [Optional(OMEMOWireFormat.legacy), .omemo2, nil])
+    func `A device keeps a session per version, and a delete removes the version it names or, naming none, every one`(
+        deleted: OMEMOWireFormat?
+    ) async throws {
+        let store = try makeStore()
+        for (version, data) in [(OMEMOWireFormat.omemo2, UInt8(1)), (.legacy, 2), (.omemo2, 3)] {
+            try await store.saveSession(OMEMOStoredSession(
+                accountJID: "alice@example.com", peerJID: "bob@example.com", peerDeviceID: 7, version: version,
+                sessionData: Data([data]), associatedData: Data([data])
+            ))
+        }
+        let saved = try await store.loadSessions(for: "alice@example.com").map { "\($0.version) \(Array($0.sessionData))" }.sorted()
+
+        try await store.deleteSession(accountJID: "alice@example.com", peerJID: "bob@example.com", peerDeviceID: 7, version: deleted)
+
+        #expect(saved == ["legacy [2]", "omemo2 [3]"])
+        let remaining = try await store.loadSessions(for: "alice@example.com").map(\.version.rawValue).sorted()
+        #expect(remaining == ["legacy", "omemo2"].filter { deleted != nil && $0 != deleted?.rawValue })
+    }
+
+    @Test func `A row seeded empty and filled with a legacy key keeps its 66-digit form across a restart and admits either form of that key`() async throws {
+        try await withTemporaryDirectory { dir in
+            let identity = OMEMOIdentityKeyPair()
+            let curveKey = try identity.agreementPrivateKey().publicKey.rawRepresentation
+            let legacy = omemoFingerprint(of: curveKey, format: .legacy)
+            let anotherLegacy = try omemoFingerprint(of: OMEMOIdentityKeyPair().agreementPrivateKey().publicKey.rawRepresentation, format: .legacy)
+            let peer = try #require(BareJID.parse("bob@example.com"))
+            let store = try SwiftDataOMEMOStore(modelContainer: ModelContainerFactory.makeContainer(at: dir))
+            try await store.insertTrustIfAbsent(OMEMOTrust(
+                accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 7, fingerprint: "", trustLevel: .undecided
+            ))
+            let filled = try await store.fillTrustFingerprint(accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 7, fingerprint: legacy)
+
+            let restarted = try SwiftDataOMEMOStore(modelContainer: ModelContainerFactory.makeContainer(at: dir))
+            let row = try #require(try await restarted.loadAllDevices(for: "bob@example.com", accountJID: "alice@example.com").first)
+            let trustGuard = OMEMOTrustGuard()
+            trustGuard.merge(
+                [OMEMOTrustGuard.StoredTrust(peer: peer, deviceID: 7, fingerprint: row.fingerprint, decision: .undecided)], loadedAfter: trustGuard.currentStamp()
+            )
+
+            #expect(filled == nil)
+            #expect(row.fingerprint == legacy && row.fingerprint.count == 66)
+            #expect(OMEMODeviceInfo.formatFingerprint(row.fingerprint).filter { $0 != " " } == hexString(curveKey))
+            let device = OMEMODeviceKey(jid: peer, deviceID: 7)
+            #expect(trustGuard.admitsDecryption(from: device, fingerprint: legacy))
+            #expect(trustGuard.admitsDecryption(from: device, fingerprint: omemoFingerprint(of: identity.publicKeyBytes, format: .omemo2)))
+            #expect(!trustGuard.admitsDecryption(from: device, fingerprint: anotherLegacy))
+            #expect(try await restarted.fillTrustFingerprint(
+                accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 7, fingerprint: omemoFingerprint(of: identity.publicKeyBytes, format: .omemo2)
+            ) == nil)
+            #expect(try await restarted.fillTrustFingerprint(
+                accountJID: "alice@example.com", peerJID: "bob@example.com", deviceID: 7, fingerprint: anotherLegacy
+            ) == legacy)
+        }
+    }
+
     @Test
     func `deleteSession removes only the targeted row`() async throws {
         let store = try makeStore()
@@ -427,18 +534,41 @@ struct SwiftDataOMEMOStoreTests {
         let peerJID = "bob@example.com"
 
         try await store.saveSession(OMEMOStoredSession(
-            accountJID: accountJID, peerJID: peerJID, peerDeviceID: 1,
+            accountJID: accountJID, peerJID: peerJID, peerDeviceID: 1, version: .omemo2,
             sessionData: Data([0x01]), associatedData: Data([0x02])
         ))
         try await store.saveSession(OMEMOStoredSession(
-            accountJID: accountJID, peerJID: peerJID, peerDeviceID: 2,
+            accountJID: accountJID, peerJID: peerJID, peerDeviceID: 2, version: .omemo2,
             sessionData: Data([0x03]), associatedData: Data([0x04])
         ))
 
-        try await store.deleteSession(accountJID: accountJID, peerJID: peerJID, peerDeviceID: 1)
+        try await store.deleteSession(accountJID: accountJID, peerJID: peerJID, peerDeviceID: 1, version: nil)
 
         let remaining = try await store.loadSessions(for: accountJID)
         #expect(remaining.count == 1)
         #expect(remaining.first?.peerDeviceID == 2)
+    }
+}
+
+/// The session record as it stood before a device could hold a session per version.
+private enum UnversionedSchema {
+    @Model
+    final class OMEMOSessionRecord {
+        @Attribute(.unique) var id: UUID
+        var accountJID: String
+        var peerJID: String
+        var peerDeviceID: Int64
+        var sessionData: Data
+        var associatedData: Data
+        var updatedAt: Date = Date()
+
+        init(id: UUID, accountJID: String, peerJID: String, peerDeviceID: Int64, sessionData: Data, associatedData: Data) {
+            self.id = id
+            self.accountJID = accountJID
+            self.peerJID = peerJID
+            self.peerDeviceID = peerDeviceID
+            self.sessionData = sessionData
+            self.associatedData = associatedData
+        }
     }
 }

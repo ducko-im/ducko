@@ -1,3 +1,4 @@
+import DuckoXMPP
 import Foundation
 
 // MARK: - Domain Types
@@ -50,15 +51,26 @@ public struct OMEMOStoredSession: Sendable {
     public let accountJID: String
     public let peerJID: String
     public let peerDeviceID: UInt32
+    /// The version the session speaks. A device can have one session per version.
+    public let version: OMEMOWireFormat
     public let sessionData: Data
     public let associatedData: Data
 
-    public init(accountJID: String, peerJID: String, peerDeviceID: UInt32, sessionData: Data, associatedData: Data) {
+    public init(accountJID: String, peerJID: String, peerDeviceID: UInt32, version: OMEMOWireFormat, sessionData: Data, associatedData: Data) {
         self.accountJID = accountJID
         self.peerJID = peerJID
         self.peerDeviceID = peerDeviceID
+        self.version = version
         self.sessionData = sessionData
         self.associatedData = associatedData
+    }
+
+    /// The account's stored form of a session the module exported.
+    init(accountJID: String, entry: OMEMOModule.StoredSessionEntry) {
+        self.init(
+            accountJID: accountJID, peerJID: entry.jid.description, peerDeviceID: entry.deviceID, version: entry.version,
+            sessionData: Data(entry.sessionData), associatedData: Data(entry.associatedData)
+        )
     }
 }
 
@@ -66,6 +78,7 @@ public struct OMEMOTrust: Sendable {
     public let accountJID: String
     public let peerJID: String
     public let deviceID: UInt32
+    /// The stored form of the device's identity key (`omemoFingerprint(of:format:)`), empty when none is known.
     public let fingerprint: String
     public let trustLevel: OMEMOTrustLevel
 
@@ -132,9 +145,12 @@ public enum OMEMOStoreError: Error {
 }
 
 public extension OMEMOTrust {
-    /// Whether one device's rows name different keys. An empty fingerprint names no key.
+    /// Whether one device's rows name different keys, whatever form each names its key in. An empty fingerprint names
+    /// no key, and one with no Curve25519 form conflicts with any other.
     static func fingerprintsConflict(_ fingerprints: some Sequence<String>) -> Bool {
-        Set(fingerprints.filter { !$0.isEmpty }).count > 1
+        let named = fingerprints.filter { !$0.isEmpty }
+        guard let first = named.first else { return false }
+        return named.dropFirst().contains { !OMEMOFingerprint.matches(first, $0) }
     }
 }
 
@@ -225,7 +241,9 @@ public protocol OMEMOStore: Sendable {
 
     // MARK: - Sessions
 
+    /// A row naming a version this build does not know is left out, as no session.
     func loadSessions(for accountJID: String) async throws -> [OMEMOStoredSession]
+    /// Upserts by `(accountJID, peerJID, peerDeviceID, version)`, so each version of a device keeps a row of its own.
     func saveSession(_ session: OMEMOStoredSession) async throws
 
     // MARK: - Trust
@@ -267,7 +285,6 @@ public protocol OMEMOStore: Sendable {
 
     // MARK: - Session Deletion
 
-    /// Deletes a specific session row. Used by the emergency-retract orphan
-    /// cleanup path; idempotent.
-    func deleteSession(accountJID: String, peerJID: String, peerDeviceID: UInt32) async throws
+    /// Deletes the device's session in `version`, or every one of its sessions when `version` is nil. Idempotent.
+    func deleteSession(accountJID: String, peerJID: String, peerDeviceID: UInt32, version: OMEMOWireFormat?) async throws
 }

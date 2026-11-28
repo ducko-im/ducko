@@ -29,6 +29,17 @@ enum LinkDetectionFilterTests {
         }
     }
 
+    struct SkipsEncryptedFileLinks {
+        @Test
+        func `An aesgcm link is not detected, while a web link beside it is`() async {
+            let filter = LinkDetectionFilter()
+            let key = String(repeating: "ab", count: 44)
+            let content = MessageContent(body: "aesgcm://upload.example.com/a.png#\(key) and https://example.com/page")
+            let result = await filter.filter(content, direction: .incoming, context: testContext)
+            #expect(result.detectedURLs.map(\.absoluteString) == ["https://example.com/page"])
+        }
+    }
+
     struct NoURLs {
         @Test
         func `Returns empty detectedURLs for plain text`() async {

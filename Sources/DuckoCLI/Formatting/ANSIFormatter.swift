@@ -164,8 +164,9 @@ struct ANSIFormatter: CLIFormatter {
         case let .jingleFileTransferCompleted(sid, _, transport): formatJingleTransferCompleted(sid: sid, transport: transport)
         case let .jingleFileTransferFailed(sid, _, reason): formatJingleTransferFailed(sid: sid, reason: reason)
         case let .oobIQOfferReceived(offer): formatOOBOffer(offer: offer)
-        case let .omemoDeviceListReceived(jid, devices): "\(Color.dim)OMEMO devices for \(jid): \(devices.map(String.init).joined(separator: ", "))\(Color.reset)"
-        case let .omemoSessionEstablished(jid, deviceID, _, _): "\(Color.green)OMEMO session established with \(jid) device \(deviceID)\(Color.reset)"
+        case let .omemoDeviceListReceived(jid, devices, version):
+            "\(Color.dim)OMEMO devices for \(jid) (\(omemoVersionName(version))): \(devices.map(String.init).joined(separator: ", "))\(Color.reset)"
+        case let .omemoSessionEstablished(jid, deviceID, version, _, _): "\(Color.green)OMEMO session established with \(jid) device \(deviceID) (\(omemoVersionName(version)))\(Color.reset)"
         case let .omemoRecipientsPartial(conversation, dropped): "\(Color.yellow)⚠ OMEMO: skipped \(dropped.count) device(s) for \(conversation) — bundles missing\(Color.reset)"
         case let .omemoSetupChanged(status): "\(status == .complete ? Color.green : Color.yellow)\(omemoSetupLine(status))\(Color.reset)"
         case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
@@ -401,7 +402,8 @@ struct ANSIFormatter: CLIFormatter {
         if let fileSize {
             line += " (\(formatByteCount(fileSize)))"
         }
-        line += "\n  \(Color.cyan)\(url)\(Color.reset)"
+        // An encrypted file's link carries its key, so the file is named but its link never printed.
+        line += EncryptedFileLink.isMentioned(in: url) ? "\n  \(Color.dim)encrypted file\(Color.reset)" : "\n  \(Color.cyan)\(url)\(Color.reset)"
         return line
     }
 
@@ -563,7 +565,7 @@ struct ANSIFormatter: CLIFormatter {
 
     func formatOMEMODevice(_ device: OMEMODeviceInfo) -> String {
         let color = device.trustLevel.isTrustedForEncryption ? Color.green : Color.yellow
-        return "  \(Color.bold)\(device.deviceID)\(Color.reset)  \(omemoFingerprintText(device))  \(color)[\(device.trustLevel.rawValue)]\(Color.reset)"
+        return "  \(Color.bold)\(device.deviceID)\(Color.reset)  \(omemoFingerprintText(device))  \(color)[\(device.trustLevel.rawValue)]\(Color.reset)\(omemoVersionsSuffix(device.versions))"
     }
 
     func formatOMEMOTrustChange(jid: String, deviceID: UInt32, trustLevel: OMEMOTrustLevel) -> String {

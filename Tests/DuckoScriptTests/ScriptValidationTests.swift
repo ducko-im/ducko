@@ -649,6 +649,7 @@ private let handlerScriptCases: [HandlerScriptCase] = [
     HandlerScriptCase(script: "ducko-new-chat.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-omemo-reset.sh", arguments: ["all"], appleScriptArguments: ["-", "all", ""]),
     HandlerScriptCase(script: "ducko-omemo-reset.sh", arguments: ["device", scriptSpecialArgument], appleScriptArguments: ["-", "device", scriptSpecialArgument]),
+    HandlerScriptCase(script: "ducko-open-encrypted-file.sh", arguments: [], appleScriptArguments: ["-", "encrypted-file-open-button"]),
     HandlerScriptCase(script: "ducko-register.sh", arguments: [scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument], appleScriptArguments: ["-", scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument, scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-register-fields.sh", arguments: ["fill", "nick", scriptSpecialArgument], appleScriptArguments: ["-", "fill", "nick", scriptSpecialArgument]),
     HandlerScriptCase(script: "ducko-remove-contact.sh", arguments: [scriptSpecialArgument], appleScriptArguments: ["-"], invocations: ["pgrep", "osascript", "osascript"], earlierCallArguments: [["-", scriptSpecialArgument]]),

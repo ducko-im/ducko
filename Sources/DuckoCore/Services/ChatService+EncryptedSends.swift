@@ -4,7 +4,8 @@ import Foundation
 /// Sending encrypted messages (XEP-0384). Everything a plaintext message carries goes inside the envelope
 /// (XEP-0420): the body, the reply, correction and retraction references with their fallback markers, attachments, the
 /// receipt request, the marker and the chat state. Only the ids, the encryption and the storage hint stay outside, and
-/// no plaintext body goes along.
+/// no plaintext body goes along. A message legacy OMEMO devices receive also carries all of it but the body and
+/// attachments in the clear, and a fallback body when no device receives OMEMO 2 (`stanzaParts(framing:)`).
 extension ChatService {
     /// The elements an encrypted message carries in its envelope: its body, then `elements`, then the requests it makes.
     static func envelopeContent(
@@ -32,17 +33,24 @@ extension ChatService {
         guard let chatModule = await accountService?.connectedClient(for: accountID)?.module(ofType: ChatModule.self) else {
             throw ChatServiceError.notConnected(accountID)
         }
-        let elements = try await omemoService.encryptMessage(content: content, to: jid, trustedDeviceIDs: trustedDeviceIDs, accountID: accountID)
+        let elements = try await omemoService.encryptMessage(
+            content: content, legacyBody: Self.legacyBody(of: content), to: jid, trustedDeviceIDs: trustedDeviceIDs, accountID: accountID
+        )
+        let stanza = elements.stanzaParts(framing: content)
         try await chatModule.sendMessage(
-            to: recipientJID(for: jid, accountID: accountID), body: nil, id: id, includeChatState: false, additionalElements: elements.stanzaElements
+            to: recipientJID(for: jid, accountID: accountID), body: stanza.body, id: id, includeChatState: false, additionalElements: stanza.elements
         )
     }
-}
 
-extension OMEMOModule.EncryptedMessageElements {
-    /// The elements the stanza carries outside the envelope: the encrypted payload, the method's name (XEP-0380) and a
-    /// store hint, since the message has no body that would tell a server to store it.
-    var stanzaElements: [DuckoXMPP.XMLElement] {
-        [encrypted, encryption, DuckoXMPP.XMLElement(name: "store", namespace: XMPPNamespaces.processingHints)]
+    /// The body and elements of a stanza that sends `content` to `room`, encrypted for `recipients` and the account's
+    /// own devices.
+    func encryptedGroupStanza(
+        _ content: [DuckoXMPP.XMLElement], in room: BareJID, for recipients: [(jid: BareJID, deviceIDs: [UInt32])],
+        omemoService: OMEMOService, accountID: UUID
+    ) async throws -> (body: String?, elements: [DuckoXMPP.XMLElement]) {
+        let elements = try await omemoService.encryptGroupMessage(
+            content: content, legacyBody: Self.legacyBody(of: content), roomJID: room, recipients: recipients, accountID: accountID
+        )
+        return elements.stanzaParts(framing: content)
     }
 }

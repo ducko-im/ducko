@@ -92,6 +92,42 @@ enum ReceiptsModuleTests {
 
             await disconnectFast(client)
         }
+
+        /// A legacy OMEMO message encrypts only its body, so what stands next to it could be anyone's. Only what its
+        /// decrypted copy keeps counts: a receipt request or a marker request.
+        @Test
+        func `Neither answers nor reports what stands next to a legacy OMEMO payload`() async throws {
+            let mock = MockTransport()
+            let client = try await makeConnectedClient(mock: mock)
+            let eventsTask = Task {
+                try await collectEvents(from: client) { event in
+                    if case let .deliveryReceiptReceived(messageID, _) = event { messageID == "next" } else { false }
+                }
+            }
+
+            let receiptReply = await awaitSentResponse(
+                on: mock,
+                afterReceiving: """
+                <message from='contact@example.com/res' to='user@example.com/ducko' type='chat' id='msg-4'>\
+                <body>I sent you an OMEMO encrypted message</body>\
+                <request xmlns='urn:xmpp:receipts'/>\
+                <received xmlns='urn:xmpp:receipts' id='original-msg'/>\
+                <displayed xmlns='urn:xmpp:chat-markers:0' id='original-msg'/>\
+                <encrypted xmlns='\(XMPPNamespaces.omemoLegacy)'><header sid='1'><iv>AAAA</iv></header><payload>AAAA</payload></encrypted>\
+                </message>
+                """,
+                matching: { $0.contains("<received") && $0.contains("id=\"msg-4\"") },
+                timeout: .milliseconds(200)
+            )
+            await mock.simulateReceive("<message from='contact@example.com/res' type='chat'><received xmlns='urn:xmpp:receipts' id='next'/></message>")
+
+            #expect(receiptReply == nil)
+            let events = try await eventsTask.value
+            #expect(!events.contains { if case .chatMarkerReceived = $0 { true } else { false } })
+            #expect(events.count { if case .deliveryReceiptReceived = $0 { true } else { false } } == 1)
+
+            await disconnectFast(client)
+        }
     }
 
     struct ReceiptReceived {

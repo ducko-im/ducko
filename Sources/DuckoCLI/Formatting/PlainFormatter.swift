@@ -149,8 +149,8 @@ struct PlainFormatter: CLIFormatter {
              .jingleChecksumReceived,
              .blockListLoaded, .contactBlocked, .contactUnblocked:
             nil
-        case let .omemoDeviceListReceived(jid, devices): "OMEMO devices for \(jid): \(devices.map(String.init).joined(separator: ", "))"
-        case let .omemoSessionEstablished(jid, deviceID, _, _): "OMEMO session established with \(jid) device \(deviceID)"
+        case let .omemoDeviceListReceived(jid, devices, version): "OMEMO devices for \(jid) (\(omemoVersionName(version))): \(devices.map(String.init).joined(separator: ", "))"
+        case let .omemoSessionEstablished(jid, deviceID, version, _, _): "OMEMO session established with \(jid) device \(deviceID) (\(omemoVersionName(version)))"
         case let .omemoRecipientsPartial(conversation, dropped): "OMEMO: skipped \(dropped.count) device(s) for \(conversation) — bundles missing"
         case let .omemoSetupChanged(status): omemoSetupLine(status)
         case .omemoEncryptedMessageReceived, .omemoSessionAdvanced: nil
@@ -367,7 +367,8 @@ struct PlainFormatter: CLIFormatter {
         if let fileSize {
             line += " (\(formatByteCount(fileSize)))"
         }
-        line += "\n  \(url)"
+        // An encrypted file's link carries its key, so the file is named but its link never printed.
+        line += EncryptedFileLink.isMentioned(in: url) ? "\n  encrypted file" : "\n  \(url)"
         return line
     }
 
@@ -513,7 +514,7 @@ struct PlainFormatter: CLIFormatter {
     }
 
     func formatOMEMODevice(_ device: OMEMODeviceInfo) -> String {
-        "  \(device.deviceID)  \(omemoFingerprintText(device))  [\(device.trustLevel.rawValue)]"
+        "  \(device.deviceID)  \(omemoFingerprintText(device))  [\(device.trustLevel.rawValue)]\(omemoVersionsSuffix(device.versions))"
     }
 
     func formatOMEMOTrustChange(jid: String, deviceID: UInt32, trustLevel: OMEMOTrustLevel) -> String {

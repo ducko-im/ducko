@@ -8,13 +8,13 @@ enum OMEMOCrypto {
 
     /// Root key derivation: advances the root key chain using a DH output.
     ///
-    /// Computes `HKDF-SHA256(salt=rootKey, ikm=dhOutput, info="OMEMO Root Chain", output=64 bytes)`,
-    /// then splits the result into a new root key (32 bytes) and chain key (32 bytes).
-    static func kdfRK(rootKey: [UInt8], dhOutput: [UInt8]) -> KDFRKResult {
+    /// Computes `HKDF-SHA256(salt=rootKey, ikm=dhOutput, info, output=64 bytes)`, with the format's `rootChainInfo` as
+    /// `info`, then splits the result into a new root key (32 bytes) and chain key (32 bytes).
+    static func kdfRK(rootKey: [UInt8], dhOutput: [UInt8], info: [UInt8]) -> KDFRKResult {
         let derived = hkdfSHA256(
             inputKeyMaterial: dhOutput,
             salt: rootKey,
-            info: Array("OMEMO Root Chain".utf8),
+            info: info,
             outputByteCount: 64
         )
         return KDFRKResult(

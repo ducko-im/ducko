@@ -32,12 +32,15 @@ extension ChatService {
     /// Applies a correction from `sender`, made at `timestamp`, in `conversation`, and returns the id of the message it
     /// corrected. A correction names the message by its own id, in rooms too (XEP-0308). The corrected body is stored
     /// with its own reply quote, `replyFallbackRange`, which can differ from the original's or be gone. An encrypted
-    /// message takes only a correction that `isDecrypted`, so text the server could read never shows as encrypted.
+    /// message takes only a correction that `isDecrypted`, so text the server could read never shows as encrypted. A
+    /// correction never becomes a shared file, so the key of an `aesgcm://` link it mentions is hidden before it is
+    /// stored.
     @discardableResult
     func applyCorrection(
         originalID: String, newBody: String, replyFallbackRange: Range<Int>? = nil, by sender: AmendmentSender, in conversation: Conversation,
         accountID: UUID, timestamp: Date = Date(), isDecrypted: Bool = false
     ) async -> UUID? {
+        let (newBody, replyFallbackRange) = EncryptedFileLink.hidingKeys(in: newBody, replyFallbackRange: replyFallbackRange)
         let candidates = await (try? transcripts.findMessages(stanzaID: originalID, conversationID: conversation.id)) ?? []
         guard let original = await amendmentTarget(among: candidates, by: sender, in: conversation, isRetraction: false, accountID: accountID) else {
             return nil

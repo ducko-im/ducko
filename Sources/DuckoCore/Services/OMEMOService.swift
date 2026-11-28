@@ -116,20 +116,23 @@ public final class OMEMOService {
             guard let identityData = try await loadStoredIdentity(accountJID: jidString) else { return module }
             let sessions = try await omemoStore.loadSessions(for: jidString)
             module.configureIdentity(identityData)
-            module.restoreSessions(sessions.map {
-                OMEMOModule.StoredSessionEntry(
-                    jid: BareJID.parse($0.peerJID) ?? accountJID,
-                    deviceID: $0.peerDeviceID,
-                    sessionData: Array($0.sessionData),
-                    associatedData: Array($0.associatedData)
-                )
-            })
+            module.restoreSessions(storedSessionEntries(sessions, accountJID: accountJID))
         } catch {
             module.markIdentityUnavailable()
             log.warning("OMEMO keys could not be loaded; encryption stays off until the next connect")
             log.debug("OMEMO keys could not be loaded: \(error)")
         }
         return module
+    }
+
+    /// The stored sessions as the module restores them, each in the version its row names.
+    private func storedSessionEntries(_ sessions: [OMEMOStoredSession], accountJID: BareJID) -> [OMEMOModule.StoredSessionEntry] {
+        sessions.map { session in
+            OMEMOModule.StoredSessionEntry(
+                jid: BareJID.parse(session.peerJID) ?? accountJID, deviceID: session.peerDeviceID, version: session.version,
+                sessionData: Array(session.sessionData), associatedData: Array(session.associatedData)
+            )
+        }
     }
 
     /// The stored identity with its unused pre-keys and its signed pre-keys, the newest as current, or nil for a new
@@ -174,13 +177,13 @@ public final class OMEMOService {
 
     func handleEvent(_ event: XMPPEvent, accountID: UUID) async {
         switch event {
-        case let .omemoDeviceListReceived(jid, devices):
+        case let .omemoDeviceListReceived(jid, devices, _):
             await seedUndecidedTrust(for: jid, devices: devices, accountID: accountID)
         case let .omemoEncryptedMessageReceived(message, outcome, roomAuthor):
             await handleEncryptedMessageReceived(message, outcome: outcome, roomAuthor: roomAuthor, accountID: accountID)
-        case let .omemoSessionEstablished(jid, deviceID, identityKey, consumedPreKeyID):
+        case let .omemoSessionEstablished(jid, deviceID, version, identityKey, consumedPreKeyID):
             await handleSessionEstablished(
-                jid: jid, deviceID: deviceID,
+                jid: jid, deviceID: deviceID, version: version,
                 identityKey: identityKey, accountID: accountID
             )
             await schedulePreKeyMaintenance(accountID: accountID, consumedPreKeyID: consumedPreKeyID)
@@ -221,9 +224,11 @@ public final class OMEMOService {
 
     // MARK: - Encryption
 
-    /// Encrypts a 1:1 message's `content`, the elements its envelope carries.
+    /// Encrypts a 1:1 message's `content`, the elements its envelope carries, and `legacyBody`, its body, for the devices
+    /// that receive it as legacy OMEMO.
     func encryptMessage(
         content: [DuckoXMPP.XMLElement],
+        legacyBody: String?,
         to jid: BareJID,
         trustedDeviceIDs: [UInt32],
         accountID: UUID
@@ -240,7 +245,7 @@ public final class OMEMOService {
 
         let ownDeviceIDs = await trustedOwnDeviceIDs(accountID: accountID)
         let elements = try await omemoModule.encryptMessage(
-            content: content, time: Date().formatted(.iso8601), to: jid,
+            content: content, legacyBody: legacyBody, time: Date().formatted(.iso8601), to: jid,
             recipientDeviceIDs: trustedDeviceIDs, ownDeviceIDs: ownDeviceIDs
         )
 
@@ -303,9 +308,9 @@ public final class OMEMOService {
         await ownDeviceInfo(accountID: accountID)?.fingerprint
     }
 
-    /// The peer's stored devices with their trust, for display: those on its device list as last fetched or notified,
-    /// as sends use, or every stored one when the list cannot be read, as without a connection. For the account's own
-    /// JID this device is included when it has a row.
+    /// The peer's stored devices with their trust, for display, each once whichever of its lists hold it: those on its
+    /// device lists as last fetched or notified, as sends use, or every stored one when the lists cannot be read, as
+    /// without a connection. For the account's own JID this device is included when it has a row.
     public func deviceInfoList(for peerJID: String, accountID: UUID) async -> [OMEMODeviceInfo] {
         guard let accountJID = accountJIDString(for: accountID), let peer = BareJID.parse(peerJID) else { return [] }
         let devices: [OMEMOTrust]
@@ -315,10 +320,11 @@ public final class OMEMOService {
             log.debug("OMEMO device list of \(peer) could not be read; showing every stored device: \(error)")
             devices = await loadAllDevicesMergingTrust(for: peer.description, accountJID: accountJID)
         }
+        let versions = await listedVersions(of: peer, accountID: accountID)
         return devices.map {
             OMEMODeviceInfo(
                 peerJID: $0.peerJID, deviceID: $0.deviceID,
-                fingerprint: $0.fingerprint, trustLevel: $0.trustLevel
+                fingerprint: $0.fingerprint, trustLevel: $0.trustLevel, versions: versions[$0.deviceID] ?? []
             )
         }
     }
@@ -328,19 +334,30 @@ public final class OMEMOService {
         guard let accountJID = accountJIDString(for: accountID), let identity = try? await omemoStore.loadIdentity(for: accountJID), let privateKey = try? Curve25519.Signing.PrivateKey(rawRepresentation: identity.identityKeyData) else {
             return nil
         }
-        let fingerprint = omemoFingerprint(of: privateKey.publicKey.rawRepresentation)
+        let fingerprint = omemoFingerprint(of: privateKey.publicKey.rawRepresentation, format: .omemo2)
+        var versions: Set<OMEMOWireFormat> = []
+        if let ownJID = BareJID.parse(accountJID) {
+            versions = await listedVersions(of: ownJID, accountID: accountID)[identity.deviceID] ?? []
+        }
         return OMEMODeviceInfo(
             peerJID: accountJID, deviceID: identity.deviceID,
-            fingerprint: fingerprint, trustLevel: .verified
+            fingerprint: fingerprint, trustLevel: .verified, versions: versions
         )
+    }
+
+    /// The versions whose list of `jid`, as the connected module last fetched or was notified of it, holds each device.
+    /// None without a connection.
+    private func listedVersions(of jid: BareJID, accountID: UUID) async -> [UInt32: Set<OMEMOWireFormat>] {
+        await accountService?.connectedClient(for: accountID)?.module(ofType: OMEMOModule.self)?.listedVersions(of: jid) ?? [:]
     }
 
     // MARK: - Group Chat Encryption
 
-    /// Encrypts a room message's `content` for `recipients`, each a member and their devices that `shouldEncrypt`
-    /// resolved, and for the account's other trusted devices.
+    /// Encrypts a room message's `content` and `legacyBody` for `recipients`, each a member and their devices that
+    /// `shouldEncrypt` resolved, and for the account's other trusted devices.
     func encryptGroupMessage(
         content: [DuckoXMPP.XMLElement],
+        legacyBody: String?,
         roomJID: BareJID,
         recipients: [(jid: BareJID, deviceIDs: [UInt32])],
         accountID: UUID
@@ -354,7 +371,7 @@ public final class OMEMOService {
 
         let ownDeviceIDs = await trustedOwnDeviceIDs(accountID: accountID)
         let elements = try await omemoModule.encryptGroupMessage(
-            content: content, time: Date().formatted(.iso8601), roomJID: roomJID,
+            content: content, legacyBody: legacyBody, time: Date().formatted(.iso8601), roomJID: roomJID,
             recipients: recipients, ownDeviceIDs: ownDeviceIDs
         )
         await saveModuleSessions(module: omemoModule, accountID: accountID)
@@ -376,23 +393,17 @@ public final class OMEMOService {
     }
 
     private func handleSessionEstablished(
-        jid: BareJID, deviceID: UInt32,
+        jid: BareJID, deviceID: UInt32, version: OMEMOWireFormat,
         identityKey: [UInt8], accountID: UUID
     ) async {
         guard let client = accountService?.client(for: accountID),
-              let omemoModule = await client.module(ofType: OMEMOModule.self), let entry = omemoModule.exportSession(jid: jid, deviceID: deviceID), let accountJID = accountJIDString(for: accountID) else { return }
+              let omemoModule = await client.module(ofType: OMEMOModule.self), let entry = omemoModule.exportSession(jid: jid, deviceID: deviceID, version: version), let accountJID = accountJIDString(for: accountID) else { return }
 
-        let session = OMEMOStoredSession(
-            accountJID: accountJID, peerJID: jid.description,
-            peerDeviceID: deviceID,
-            sessionData: Data(entry.sessionData),
-            associatedData: Data(entry.associatedData)
-        )
-        try? await omemoStore.saveSession(session)
+        await saveSession(entry, accountJID: accountJID)
 
         // Another process over the same store can have pinned another key for the device.
         let stored = try? await omemoStore.fillTrustFingerprint(
-            accountJID: accountJID, peerJID: jid.description, deviceID: deviceID, fingerprint: omemoFingerprint(of: identityKey)
+            accountJID: accountJID, peerJID: jid.description, deviceID: deviceID, fingerprint: omemoFingerprint(of: identityKey, format: version)
         )
         if stored != nil {
             log.warning("Identity key changed for device \(deviceID)")
@@ -548,15 +559,19 @@ public final class OMEMOService {
 
     func saveModuleSessions(module: OMEMOModule, accountID: UUID) async {
         guard let accountJID = accountJIDString(for: accountID) else { return }
-        let entries = module.allSessionEntries()
-        for entry in entries {
-            let session = OMEMOStoredSession(
-                accountJID: accountJID, peerJID: entry.jid.description,
-                peerDeviceID: entry.deviceID,
-                sessionData: Data(entry.sessionData),
-                associatedData: Data(entry.associatedData)
-            )
-            try? await omemoStore.saveSession(session)
+        for entry in module.allSessionEntries() {
+            await saveSession(entry, accountJID: accountJID)
+        }
+    }
+
+    /// Saves a session the module holds without failing the caller, since the module keeps it and saves it again
+    /// whenever its sessions are saved next.
+    func saveSession(_ entry: OMEMOModule.StoredSessionEntry, accountJID: String) async {
+        do {
+            try await omemoStore.saveSession(OMEMOStoredSession(accountJID: accountJID, entry: entry))
+        } catch {
+            log.warning("An OMEMO session could not be saved")
+            log.debug("The OMEMO session with \(entry.jid) device \(entry.deviceID) could not be saved: \(error)")
         }
     }
 
@@ -759,7 +774,7 @@ extension OMEMOService: OrphanDeviceRecordPurging {
                 accountJID: accountJID, peerJID: accountJID, deviceID: deviceID
             )
             try await omemoStore.deleteSession(
-                accountJID: accountJID, peerJID: accountJID, peerDeviceID: deviceID
+                accountJID: accountJID, peerJID: accountJID, peerDeviceID: deviceID, version: nil
             )
         }
     }

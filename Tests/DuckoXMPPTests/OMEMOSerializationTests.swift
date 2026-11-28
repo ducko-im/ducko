@@ -13,11 +13,12 @@ enum OMEMOSerializationTests {
 
             let session = try OMEMODoubleRatchetSession(
                 asInitiatorWithSharedSecret: sharedSecret,
-                peerSignedPreKey: peerPublicBytes
+                peerSignedPreKey: peerPublicBytes,
+                format: .omemo2
             )
 
             let serialized = session.serialize()
-            let restored = try OMEMODoubleRatchetSession(serialized: serialized)
+            let restored = try OMEMODoubleRatchetSession(serialized: serialized, format: .omemo2)
 
             #expect(Array(restored.dhSendKeyPair.rawRepresentation) == Array(session.dhSendKeyPair.rawRepresentation))
             #expect(restored.dhSendPublicKeyBytes == session.dhSendPublicKeyBytes)
@@ -36,7 +37,8 @@ enum OMEMOSerializationTests {
 
             let session = try OMEMODoubleRatchetSession(
                 asInitiatorWithSharedSecret: sharedSecret,
-                peerSignedPreKey: Array(peerKey.publicKey.rawRepresentation)
+                peerSignedPreKey: Array(peerKey.publicKey.rawRepresentation),
+                format: .omemo2
             )
 
             let derived = Array(session.dhSendKeyPair.publicKey.rawRepresentation)
@@ -49,11 +51,12 @@ enum OMEMOSerializationTests {
 
             let session = OMEMODoubleRatchetSession(
                 asResponderWithSharedSecret: sharedSecret,
-                ourSignedPreKeyPair: ourKeyPair
+                ourSignedPreKeyPair: ourKeyPair,
+                format: .omemo2
             )
 
             let serialized = session.serialize()
-            let restored = try OMEMODoubleRatchetSession(serialized: serialized)
+            let restored = try OMEMODoubleRatchetSession(serialized: serialized, format: .omemo2)
 
             #expect(Array(restored.dhSendKeyPair.rawRepresentation) == Array(session.dhSendKeyPair.rawRepresentation))
             #expect(restored.dhSendPublicKeyBytes == session.dhSendPublicKeyBytes)
@@ -71,7 +74,8 @@ enum OMEMOSerializationTests {
 
             var session = try OMEMODoubleRatchetSession(
                 asInitiatorWithSharedSecret: sharedSecret,
-                peerSignedPreKey: peerPublicBytes
+                peerSignedPreKey: peerPublicBytes,
+                format: .omemo2
             )
 
             // Encrypt a few messages to advance the ratchet
@@ -79,7 +83,7 @@ enum OMEMOSerializationTests {
             _ = try session.encrypt(plaintext: Array("World".utf8), associatedData: ad)
 
             let serialized = session.serialize()
-            let restored = try OMEMODoubleRatchetSession(serialized: serialized)
+            let restored = try OMEMODoubleRatchetSession(serialized: serialized, format: .omemo2)
 
             #expect(restored.sendMessageNumber == 2)
             #expect(restored.sendChainKey == session.sendChainKey)
@@ -99,13 +103,15 @@ enum OMEMOSerializationTests {
             // Alice initiates
             var alice = try OMEMODoubleRatchetSession(
                 asInitiatorWithSharedSecret: sharedSecret,
-                peerSignedPreKey: Array(bobKeyPair.publicKey.rawRepresentation)
+                peerSignedPreKey: Array(bobKeyPair.publicKey.rawRepresentation),
+                format: .omemo2
             )
 
             // Bob responds
             var bob = OMEMODoubleRatchetSession(
                 asResponderWithSharedSecret: sharedSecret,
-                ourSignedPreKeyPair: bobKeyPair
+                ourSignedPreKeyPair: bobKeyPair,
+                format: .omemo2
             )
 
             // Alice sends 3 messages
@@ -114,9 +120,9 @@ enum OMEMOSerializationTests {
             let msg2 = try alice.encrypt(plaintext: Array("msg2".utf8), associatedData: ad)
 
             // Bob receives msg2 first (skipping msg1)
-            _ = try bob.decrypt(message: msg2, associatedData: ad)
+            _ = try bob.decrypt(.omemo2(msg2), associatedData: ad)
             // Bob receives msg0 (using skipped key from before ratchet)
-            _ = try bob.decrypt(message: msg0, associatedData: ad)
+            _ = try bob.decrypt(.omemo2(msg0), associatedData: ad)
 
             // Bob should have msg1's key stored as skipped
             let skippedCount = bob.skippedMessageKeys.count
@@ -124,7 +130,7 @@ enum OMEMOSerializationTests {
 
             // Serialize and restore
             let serialized = bob.serialize()
-            let restored = try OMEMODoubleRatchetSession(serialized: serialized)
+            let restored = try OMEMODoubleRatchetSession(serialized: serialized, format: .omemo2)
 
             #expect(restored.skippedMessageKeys.count == skippedCount)
             #expect(restored.skippedKeyOrder.count == skippedCount)
@@ -141,10 +147,11 @@ enum OMEMOSerializationTests {
             let keyExchange = OMEMOKeyExchangeHeader(
                 preKeyID: 7, signedPreKeyID: 1, identityKey: Array(repeating: 0xAB, count: 32), ephemeralKey: Array(repeating: 0xEE, count: 32)
             )
-            var bob = OMEMODoubleRatchetSession(asResponderWithSharedSecret: Array(repeating: 1, count: 32), ourSignedPreKeyPair: bobKeyPair)
+            var bob = OMEMODoubleRatchetSession(asResponderWithSharedSecret: Array(repeating: 1, count: 32), ourSignedPreKeyPair: bobKeyPair, format: .omemo2)
             let started = try OMEMOSession(
                 ratchet: OMEMODoubleRatchetSession(
-                    asInitiatorWithSharedSecret: Array(repeating: 1, count: 32), peerSignedPreKey: Array(bobKeyPair.publicKey.rawRepresentation)
+                    asInitiatorWithSharedSecret: Array(repeating: 1, count: 32), peerSignedPreKey: Array(bobKeyPair.publicKey.rawRepresentation),
+                    format: .omemo2
                 ),
                 associatedData: associatedData,
                 start: .sent(keyExchange, isConfirmed: false)
@@ -152,8 +159,8 @@ enum OMEMOSerializationTests {
 
             var alice = try OMEMOSession(serialized: started.serialized, associatedData: associatedData)
             let first = try alice.encryptKey([1])
-            _ = try bob.decrypt(message: OMEMOKeyExchange(serialized: first.data).message, associatedData: associatedData)
-            _ = try alice.decrypt(bob.encrypt(plaintext: [2], associatedData: associatedData))
+            _ = try bob.decrypt(.omemo2(OMEMOKeyExchange(serialized: first.data).message), associatedData: associatedData)
+            _ = try alice.decrypt(.omemo2(bob.encrypt(plaintext: [2], associatedData: associatedData)))
             var confirmed = try OMEMOSession(serialized: alice.serialized, associatedData: associatedData)
 
             #expect(first.isKex)

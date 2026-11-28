@@ -20,6 +20,30 @@ func makeIdentityData(
     )
 }
 
+/// A responder session in `format`, in the stored encoding, or, with `isRatchetOnly`, its ratchet alone as the earlier
+/// encoding stored it.
+func storedSessionData(format: OMEMOWireFormat = .omemo2, isRatchetOnly: Bool = false) throws -> [UInt8] {
+    let ratchet = try OMEMODoubleRatchetSession(
+        asResponderWithSharedSecret: Array(repeating: 1, count: 32),
+        ourSignedPreKeyPair: OMEMOSignedPreKey(keyID: 1, identityKey: OMEMOIdentityKeyPair()).keyPair,
+        format: format
+    )
+    let keyExchange = OMEMOKeyExchangeHeader(
+        preKeyID: 1, signedPreKeyID: 1, identityKey: Array(repeating: 0xAB, count: 32), ephemeralKey: Array(repeating: 0xEE, count: 32)
+    )
+    return isRatchetOnly
+        ? ratchet.serialize()
+        : OMEMOSession(ratchet: ratchet, associatedData: storedAssociatedData(format: format), start: .received(keyExchange)).serialized
+}
+
+/// Associated data as long as a session in `format` stores: two identity keys in that version's encoding.
+func storedAssociatedData(format: OMEMOWireFormat = .omemo2) -> [UInt8] {
+    switch format {
+    case .omemo2: Array(repeating: 0, count: 64)
+    case .legacy: Array(repeating: 0, count: 66)
+    }
+}
+
 /// Plays the module for pre-key upkeep: reports `identity` and `consumed`, records added and
 /// retired pre-keys, takes installed signed pre-keys into its identity, and publishes with the outcome `publishFails`
 /// decides. The bundle needs publishing at first and again once keys are added or newly retired or the current signed

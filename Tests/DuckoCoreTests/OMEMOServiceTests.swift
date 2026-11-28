@@ -501,11 +501,11 @@ enum OMEMOServiceTests {
             let deviceID: UInt32 = 42
 
             let original = OMEMOStoredSession(
-                accountJID: accountJID, peerJID: peerJID, peerDeviceID: deviceID,
+                accountJID: accountJID, peerJID: peerJID, peerDeviceID: deviceID, version: .omemo2,
                 sessionData: Data([0xAA]), associatedData: Data([0xBB])
             )
             let replacement = OMEMOStoredSession(
-                accountJID: accountJID, peerJID: peerJID, peerDeviceID: deviceID,
+                accountJID: accountJID, peerJID: peerJID, peerDeviceID: deviceID, version: .omemo2,
                 sessionData: Data([0xCC]), associatedData: Data([0xDD])
             )
             try await store.saveSession(original)

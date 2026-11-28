@@ -32,12 +32,12 @@ struct OMEMOKeyWrapListTests {
             try await module.encryptMessage(plaintext: "hi", to: bob, recipientDeviceIDs: [200, 201], ownDeviceIDs: [])
         }
         await heldFetch.wait()
-        try await eventually { module.exportSession(jid: bob, deviceID: 200) != nil }
+        try await eventually { module.exportSession(jid: bob, deviceID: 200, version: .omemo2) != nil }
         try notifyBobsList([200, 201].filter { $0 != removed }, to: module)
         await releaseFetch.signal()
         let elements = try await encryption.value
 
-        let keys = elements.encrypted.child(named: "header")?.child(named: "keys")?.children(named: "key") ?? []
+        let keys = try elements.omemo2.child(named: "header")?.child(named: "keys")?.children(named: "key") ?? []
         #expect(keys.map { $0.attribute("rid") } == ["\(removed == 200 ? 201 : 200)"])
         #expect(elements.droppedRecipients == [DroppedOMEMORecipient(jid: bob, deviceID: removed)])
     }
@@ -71,12 +71,12 @@ struct OMEMOKeyWrapListTests {
             )
         }
         await heldFetch.wait()
-        try await eventually { module.exportSession(jid: bob, deviceID: 200) != nil }
-        #expect(try await module.fetchDeviceList(for: bob, forceRefresh: true) == [])
+        try await eventually { module.exportSession(jid: bob, deviceID: 200, version: .omemo2) != nil }
+        #expect(try await module.fetchDeviceList(for: bob, forceRefresh: true, version: .omemo2) == [])
         await releaseFetch.signal()
         let elements = try await encryption.value
 
-        let keys = elements.encrypted.child(named: "header")?.child(named: "keys")?.children(named: "key") ?? []
+        let keys = try elements.omemo2.child(named: "header")?.child(named: "keys")?.children(named: "key") ?? []
         #expect(keys.map { $0.attribute("rid") } == ["300"])
         #expect(elements.droppedRecipients.sorted { $0.deviceID < $1.deviceID } == [200, 201].map {
             DroppedOMEMORecipient(jid: bob, deviceID: $0)

@@ -11,7 +11,7 @@ extension OMEMO2FixtureTests {
             try #require(!steps.isEmpty)
 
             for step in steps {
-                let result = OMEMOCrypto.kdfRK(rootKey: Array(step.rootKey), dhOutput: Array(step.dhOutput))
+                let result = OMEMOCrypto.kdfRK(rootKey: Array(step.rootKey), dhOutput: Array(step.dhOutput), info: OMEMOWireFormat.omemo2.rootChainInfo)
 
                 #expect(result.rootKey == Array(step.nextRootKey))
                 #expect(result.chainKey == Array(step.chainKey))
@@ -153,7 +153,7 @@ extension OMEMO2FixtureTests {
 
         private func storedSession(in module: OMEMOModule, with peer: OMEMO2Fixtures.Device) throws -> OMEMOSession? {
             let jid = try #require(BareJID.parse(peer.jid))
-            return try module.exportSession(jid: jid, deviceID: peer.deviceID).map {
+            return try module.exportSession(jid: jid, deviceID: peer.deviceID, version: .omemo2).map {
                 try OMEMOSession(serialized: $0.sessionData, associatedData: $0.associatedData)
             }
         }
@@ -163,7 +163,7 @@ extension OMEMO2FixtureTests {
         ) throws {
             let replaced = OMEMOSession(ratchet: ratchet, associatedData: session.associatedData, start: session.start)
             try module.restoreSessions([OMEMOModule.StoredSessionEntry(
-                jid: #require(BareJID.parse(peer.jid)), deviceID: peer.deviceID,
+                jid: #require(BareJID.parse(peer.jid)), deviceID: peer.deviceID, version: .omemo2,
                 sessionData: replaced.serialized, associatedData: replaced.associatedData
             )])
         }
@@ -191,7 +191,8 @@ extension OMEMODoubleRatchetSession {
     init(reference: OMEMO2Fixtures.Ratchet) throws {
         try self.init(
             asResponderWithSharedSecret: Array(reference.rootKey),
-            ourSignedPreKeyPair: Curve25519.KeyAgreement.PrivateKey(rawRepresentation: reference.ownPrivateKey)
+            ourSignedPreKeyPair: Curve25519.KeyAgreement.PrivateKey(rawRepresentation: reference.ownPrivateKey),
+            format: .omemo2
         )
         dhRecvPublicKey = reference.otherPublicKey.map(Array.init)
         sendChainKey = reference.sendingChain.map { Array($0.key) }

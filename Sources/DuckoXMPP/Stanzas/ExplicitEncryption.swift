@@ -11,7 +11,7 @@ public struct EncryptionMethod: Sendable, Equatable {
         "urn:xmpp:otr:0": "OTR",
         "jabber:x:encrypted": "Legacy OpenPGP",
         "urn:xmpp:openpgp:0": "OpenPGP for XMPP",
-        "eu.siacs.conversations.axolotl": "OMEMO",
+        XMPPNamespaces.omemoLegacy: "OMEMO",
         "urn:xmpp:omemo:1": "OMEMO 1",
         XMPPNamespaces.omemo: "OMEMO 2"
     ]
@@ -21,8 +21,9 @@ public struct EncryptionMethod: Sendable, Equatable {
         self.name = Self.knownNames[namespace] ?? name ?? namespace
     }
 
+    /// Whether the method is OMEMO 2 or legacy OMEMO, the versions this client reads.
     public var isOMEMO: Bool {
-        namespace == XMPPNamespaces.omemo
+        namespace == XMPPNamespaces.omemo || namespace == XMPPNamespaces.omemoLegacy
     }
 }
 
@@ -34,26 +35,41 @@ public extension XMPPMessage {
         return EncryptionMethod(namespace: namespace, name: encryption.attribute("name"))
     }
 
-    /// Whether the message is encrypted: it names an encryption method or carries an OMEMO payload.
+    /// Whether the message is encrypted: it names an encryption method or carries an OMEMO `<encrypted>` element.
     var isEncrypted: Bool {
-        element.child(named: "encryption", namespace: XMPPNamespaces.eme) != nil || isOMEMOEncrypted
+        element.child(named: "encryption", namespace: XMPPNamespaces.eme) != nil || carriesOMEMOPayload
     }
 
-    /// Whether the message carries an OMEMO payload, whether or not it names the method.
-    var isOMEMOEncrypted: Bool {
+    /// Whether the message carries an OMEMO 2 `<encrypted>` element, with or without a payload, whether or not it names
+    /// the method.
+    var isOMEMO2Encrypted: Bool {
         element.child(named: "encrypted", namespace: XMPPNamespaces.omemo) != nil
     }
 
-    /// Whether the message is an OMEMO message without a payload, which only carries key material: a key exchange's
-    /// answer, a heartbeat or an empty reply.
-    var carriesOnlyOMEMOKeys: Bool {
-        element.child(named: "encrypted", namespace: XMPPNamespaces.omemo).map { $0.child(named: "payload") == nil } ?? false
+    /// Whether the message carries a legacy OMEMO `<encrypted>` element, with or without a payload, whether or not it
+    /// names the method.
+    var isLegacyOMEMOEncrypted: Bool {
+        element.child(named: "encrypted", namespace: XMPPNamespaces.omemoLegacy) != nil
     }
 
-    /// The method a message encrypted with something other than OMEMO 2 names. Its body is at most the sender's
-    /// fallback text, never the message.
+    /// Whether the message carries an OMEMO `<encrypted>` element of either version, with or without a payload.
+    var carriesOMEMOPayload: Bool {
+        isOMEMO2Encrypted || isLegacyOMEMOEncrypted
+    }
+
+    /// Whether the message is an OMEMO message without a payload, which only carries key material: a key exchange's
+    /// answer, a heartbeat or an empty reply. The elements of a stanza carrying both versions come from one send, so
+    /// they carry a payload together or not at all.
+    var carriesOnlyOMEMOKeys: Bool {
+        [XMPPNamespaces.omemo, XMPPNamespaces.omemoLegacy].contains { namespace in
+            element.child(named: "encrypted", namespace: namespace).map { $0.child(named: "payload") == nil } ?? false
+        }
+    }
+
+    /// The method a message encrypted with something other than OMEMO names. Its body is at most the sender's fallback
+    /// text, never the message.
     var otherEncryptionMethod: EncryptionMethod? {
-        guard !isOMEMOEncrypted, let method = encryptionMethod, !method.isOMEMO else { return nil }
+        guard !carriesOMEMOPayload, let method = encryptionMethod, !method.isOMEMO else { return nil }
         return method
     }
 }

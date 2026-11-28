@@ -140,3 +140,47 @@ func handleTransfersREPLCommand(context: REPLContext) async {
         print(context.formatter.formatTransfer(transfer))
     }
 }
+
+func handleSaveFileREPLCommand(_ address: String, context: REPLContext) async {
+    await print(saveFileREPLLine(address, context: context))
+}
+
+/// What `/savefile` prints once it has decrypted the file a contact last shared in an encrypted message in the chat with
+/// `address` and saved it to Downloads. As in the chat window, a link that arrived in a plaintext message is not opened,
+/// and neither is one in a retracted message.
+func saveFileREPLLine(_ address: String, context: REPLContext) async -> String {
+    do {
+        let conversation = try await namedConversation(address, context: context)
+        guard let shared = try await lastSharedEncryptedFile(in: conversation, context: context) else {
+            return context.formatter.formatError(CLIError.noEncryptedFile(address))
+        }
+        let service = await context.environment.fileTransferService
+        let savedURL = try await service.saveEncryptedFile(shared.file, named: shared.name)
+        return context.formatter.formatCommandResult(.encryptedFileSaved(path: savedURL.path))
+    } catch {
+        return context.formatter.formatError(error)
+    }
+}
+
+/// How many of the chat's newest messages are searched at most for a shared file.
+private let maxSavedFileSearchCount = 10240
+
+/// The file a contact last shared in an encrypted message in `conversation`, with the name it is saved under. The newest
+/// messages are read first, twice as many each round, until one shares a file or the chat has no more. Each round
+/// reads from the newest message, so messages that share a second are never skipped at a page's edge.
+private func lastSharedEncryptedFile(
+    in conversation: Conversation, context: REPLContext
+) async throws -> (file: EncryptedFileLink, name: String)? {
+    var limit = 10
+    while true {
+        let messages = try await context.environment.chatService.fetchMessageHistory(for: conversation.id, before: nil, limit: limit)
+        let shared = messages.lazy.filter { !$0.isOutgoing && $0.isEncrypted && !$0.isRetracted }.reversed().compactMap { message in
+            message.attachments.lazy.reversed().compactMap { attachment in
+                EncryptedFileLink(link: attachment.url).map { (file: $0, name: attachment.displayFileName) }
+            }.first
+        }.first
+        if let shared { return shared }
+        guard messages.count == limit, limit < maxSavedFileSearchCount else { return nil }
+        limit = min(2 * limit, maxSavedFileSearchCount)
+    }
+}

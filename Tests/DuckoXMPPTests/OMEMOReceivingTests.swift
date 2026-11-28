@@ -1,5 +1,4 @@
 import DuckoTestSupport
-import struct os.OSAllocatedUnfairLock
 import Testing
 @testable import DuckoXMPP
 
@@ -29,7 +28,7 @@ struct OMEMOReceivingTests {
                       ("alice@example.org/phone", "carol@example.org/desktop", false)])
     func `the reference's envelope passes only in a stanza between the parties it names`(from: String, to: String, passes: Bool) throws {
         let fixture = try #require(try OMEMO2Fixtures.conversation().messages.first)
-        let recorder = try Recorder(account: #require(FullJID.parse("bob@example.org/desktop")))
+        let recorder = try OMEMOMessageRecorder(account: #require(FullJID.parse("bob@example.org/desktop")))
         let bob = try recorder.installedModule(identity: OMEMO2Fixtures.device("bob").identityData)
         var message = try XMLElement(name: "message", attributes: ["from": from, "to": to, "type": "chat", "id": "m0"])
         try message.addChild(stanza(fixture.encrypted))
@@ -73,8 +72,8 @@ struct OMEMOReceivingTests {
         let room = try #require(BareJID.parse("room@conference.example.com"))
         try await parties.bobJoins(room, aliceRevealed: revealsJIDs)
         let encrypted = try await parties.alice.encryptGroupMessage(
-            content: [bodyElement("hello room")], time: testEnvelopeTime, roomJID: room, recipients: [(parties.bobJID, [200])], ownDeviceIDs: []
-        ).encrypted
+            content: [bodyElement("hello room")], legacyBody: nil, time: testEnvelopeTime, roomJID: room, recipients: [(parties.bobJID, [200])], ownDeviceIDs: []
+        ).omemo2
         var message = XMLElement(name: "message", attributes: ["from": "\(room)/alice", "to": "bob@example.com/laptop", "type": "groupchat", "id": "g1"])
         message.addChild(encrypted)
 
@@ -98,8 +97,8 @@ struct OMEMOReceivingTests {
         parties.mucModule.state.withLock { $0.knownRoomInfo[room] = .init(identities: [], features: [XMPPNamespaces.occupantID]) }
         let forged = XMLElement(name: "occupant-id", namespace: XMPPNamespaces.occupantID, attributes: ["id": "forged-id"])
         let encrypted = try await parties.alice.encryptGroupMessage(
-            content: [bodyElement("hello room"), forged], time: testEnvelopeTime, roomJID: room, recipients: [(parties.bobJID, [200])], ownDeviceIDs: []
-        ).encrypted
+            content: [bodyElement("hello room"), forged], legacyBody: nil, time: testEnvelopeTime, roomJID: room, recipients: [(parties.bobJID, [200])], ownDeviceIDs: []
+        ).omemo2
         var message = XMLElement(name: "message", attributes: ["from": "\(room)/alice", "to": "bob@example.com/laptop", "type": "groupchat", "id": "g1"])
         message.addChild(encrypted)
         message.addChild(XMLElement(name: "occupant-id", namespace: XMPPNamespaces.occupantID, attributes: ["id": "alice-id"]))
@@ -166,8 +165,8 @@ struct OMEMOReceivingTests {
             )))
         }
         let encrypted = try await parties.alice.encryptGroupMessage(
-            content: [bodyElement("hello room")], time: testEnvelopeTime, roomJID: room, recipients: [(parties.bobJID, [200])], ownDeviceIDs: []
-        ).encrypted
+            content: [bodyElement("hello room")], legacyBody: nil, time: testEnvelopeTime, roomJID: room, recipients: [(parties.bobJID, [200])], ownDeviceIDs: []
+        ).omemo2
         var message = XMLElement(name: "message", attributes: ["from": "\(room)/alice", "to": "bob@example.com/laptop", "type": "groupchat", "id": "g1"])
         message.addChild(encrypted)
 
@@ -259,7 +258,7 @@ struct OMEMOReceivingTests {
         let reached = AsyncSemaphore()
         let release = AsyncSemaphore()
         let aliceIdentity = parties.aliceIdentity
-        let recorder = try Recorder(account: #require(FullJID.parse("bob@example.com/laptop"))) { iq in
+        let recorder = try OMEMOMessageRecorder(account: #require(FullJID.parse("bob@example.com/laptop"))) { iq in
             guard iq.child(named: "pubsub")?.child(named: "items")?.attribute("node") == XMPPNamespaces.omemoDevices else {
                 return bundleItems(for: aliceIdentity)
             }
@@ -270,8 +269,8 @@ struct OMEMOReceivingTests {
         let bob = recorder.installedModule(identity: parties.bobIdentity.data)
         var first = XMLElement(name: "message", attributes: ["from": "bob@example.com/laptop", "to": "alice@example.com/phone", "type": "chat", "id": "b1"])
         try await first.addChild(bob.encryptMessage(
-            content: [bodyElement("one")], time: testEnvelopeTime, to: parties.aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: []
-        ).encrypted)
+            content: [bodyElement("one")], legacyBody: nil, time: testEnvelopeTime, to: parties.aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: []
+        ).omemo2)
         try parties.alice.handleMessage(XMPPMessage(element: first))
         let aliceRecorder = parties.aliceRecorder
         try await eventually { !aliceRecorder.sentMessages.isEmpty }
@@ -280,15 +279,15 @@ struct OMEMOReceivingTests {
 
         let aliceJID = parties.aliceJID
         let waiting = Task {
-            try await bob.encryptMessage(content: [bodyElement("two")], time: testEnvelopeTime, to: aliceJID, recipientDeviceIDs: [100])
+            try await bob.encryptMessage(content: [bodyElement("two")], legacyBody: nil, time: testEnvelopeTime, to: aliceJID, recipientDeviceIDs: [100])
         }
         await reached.wait()
         try bob.handleMessage(XMPPMessage(element: reply))
         await release.signal()
         _ = try await waiting.value
         let third = try await bob.encryptMessage(
-            content: [bodyElement("three")], time: testEnvelopeTime, to: parties.aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: []
-        ).encrypted
+            content: [bodyElement("three")], legacyBody: nil, time: testEnvelopeTime, to: parties.aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: []
+        ).omemo2
 
         #expect(!isKeyExchange(third))
     }
@@ -299,7 +298,7 @@ struct OMEMOReceivingTests {
         let reached = AsyncSemaphore()
         let release = AsyncSemaphore()
         let aliceIdentity = parties.aliceIdentity
-        let recorder = try Recorder(account: #require(FullJID.parse("bob@example.com/laptop"))) { _ in
+        let recorder = try OMEMOMessageRecorder(account: #require(FullJID.parse("bob@example.com/laptop"))) { _ in
             await reached.signal()
             await release.wait()
             return bundleItems(for: aliceIdentity)
@@ -307,12 +306,12 @@ struct OMEMOReceivingTests {
         let bob = recorder.installedModule(identity: parties.bobIdentity.data)
         let aliceJID = parties.aliceJID
         let sending = Task {
-            try await bob.encryptMessage(content: [bodyElement("hi")], time: testEnvelopeTime, to: aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: [])
+            try await bob.encryptMessage(content: [bodyElement("hi")], legacyBody: nil, time: testEnvelopeTime, to: aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: [])
         }
         await reached.wait()
         try await bob.handleMessage(parties.aliceSends([bodyElement("one")], id: "m1"))
         await release.signal()
-        let encrypted = try await sending.value.encrypted
+        let encrypted = try await sending.value.omemo2
 
         #expect(!isKeyExchange(encrypted))
         #expect(recorder.events.count { if case .omemoSessionEstablished = $0 { true } else { false } } == 1)
@@ -328,7 +327,7 @@ struct OMEMOReceivingTests {
         let reached = AsyncSemaphore()
         let release = AsyncSemaphore()
         let otherIdentity = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
-        let recipient = try Recorder(account: #require(FullJID.parse("bob@example.com/laptop"))) { _ in
+        let recipient = try OMEMOMessageRecorder(account: #require(FullJID.parse("bob@example.com/laptop"))) { _ in
             await reached.signal()
             await release.wait()
             return bundleItems(for: otherIdentity)
@@ -338,7 +337,7 @@ struct OMEMOReceivingTests {
         bob.configureTrustGuard(trustGuard)
         let aliceJID = parties.aliceJID
         let sending = Task {
-            try await bob.encryptMessage(content: [bodyElement("hi")], time: testEnvelopeTime, to: aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: [])
+            try await bob.encryptMessage(content: [bodyElement("hi")], legacyBody: nil, time: testEnvelopeTime, to: aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: [])
         }
         await reached.wait()
         try await bob.handleMessage(parties.aliceSends([bodyElement("one")], id: "m1"))
@@ -346,7 +345,7 @@ struct OMEMOReceivingTests {
 
         _ = try await sending.value
 
-        #expect(trustGuard.heldFingerprint(peer: aliceJID, deviceID: 100) == omemoFingerprint(of: parties.aliceIdentity.identityKeyPair.publicKeyBytes))
+        #expect(trustGuard.heldFingerprint(peer: aliceJID, deviceID: 100) == omemoFingerprint(of: parties.aliceIdentity.identityKeyPair.publicKeyBytes, format: .omemo2))
     }
 
     /// The refused key exchange builds no session, so no empty message confirms one.
@@ -397,7 +396,7 @@ struct OMEMOReceivingTests {
         reply.attributes["from"] = "bob@example.com/laptop"
         try parties.alice.handleMessage(XMPPMessage(element: reply))
         let trustGuard = OMEMOTrustGuard()
-        let aliceFingerprint = omemoFingerprint(of: parties.aliceIdentity.identityKeyPair.publicKeyBytes)
+        let aliceFingerprint = omemoFingerprint(of: parties.aliceIdentity.identityKeyPair.publicKeyBytes, format: .omemo2)
         trustGuard.mergeRow(
             peer: parties.aliceJID, deviceID: 100, fingerprint: contradicts ? unrelatedFingerprint() : aliceFingerprint,
             decision: contradicts ? .undecided : .untrusted
@@ -454,11 +453,11 @@ struct OMEMOReceivingTests {
     /// it, or made-up device ids, cost one fetch, not one per message or per device.
     @Test func `messages from devices their sender's list leaves out fetch that list once`() async throws {
         let bobIdentity = parties.bobIdentity
-        let tabletRecorder = try Recorder(account: #require(FullJID.parse("alice@example.com/tablet"))) { _ in bundleItems(for: bobIdentity) }
+        let tabletRecorder = try OMEMOMessageRecorder(account: #require(FullJID.parse("alice@example.com/tablet"))) { _ in bundleItems(for: bobIdentity) }
         let tablet = try tabletRecorder.installedModule(identity: makeTestOMEMOIdentity(deviceID: 101, preKeyIDs: [1]).data)
         let encrypted = try await tablet.encryptMessage(
-            content: [bodyElement("m3")], time: testEnvelopeTime, to: parties.bobJID, recipientDeviceIDs: [200], ownDeviceIDs: []
-        ).encrypted
+            content: [bodyElement("m3")], legacyBody: nil, time: testEnvelopeTime, to: parties.bobJID, recipientDeviceIDs: [200], ownDeviceIDs: []
+        ).omemo2
         var fromTablet = XMLElement(name: "message", attributes: ["from": "alice@example.com/tablet", "to": "bob@example.com/laptop", "type": "chat", "id": "m3"])
         fromTablet.addChild(encrypted)
 
@@ -481,7 +480,7 @@ struct OMEMOReceivingTests {
         reply.attributes["from"] = "bob@example.com/laptop"
         try parties.alice.handleMessage(XMPPMessage(element: reply))
         let confirmed = try await parties.aliceSends([bodyElement("two")], id: "m2")
-        let recorder = try Recorder(account: #require(FullJID.parse("bob@example.com/laptop")))
+        let recorder = try OMEMOMessageRecorder(account: #require(FullJID.parse("bob@example.com/laptop")))
         let freshBob = recorder.installedModule(identity: parties.bobIdentity.data)
 
         try freshBob.handleMessage(confirmed)
@@ -506,8 +505,8 @@ struct OMEMOReceivingTests {
     /// The bounce carries the keys this device wrote for others, so it would read as one not encrypted for it.
     @Test func `an error bounce of a message this device sent is neither shown nor reported`() async throws {
         let encrypted = try await parties.bob.encryptMessage(
-            content: [bodyElement("hi")], time: testEnvelopeTime, to: parties.aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: []
-        ).encrypted
+            content: [bodyElement("hi")], legacyBody: nil, time: testEnvelopeTime, to: parties.aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: []
+        ).omemo2
         var bounce = XMLElement(name: "message", attributes: ["from": "alice@example.com", "to": "bob@example.com/laptop", "type": "error", "id": "m1"])
         bounce.addChild(encrypted)
         bounce.addChild(XMLElement(name: "error", attributes: ["type": "cancel"]))
@@ -522,12 +521,12 @@ struct OMEMOReceivingTests {
 
     /// A carbon's message is read for the caller to file, so none of it reaches the modules acting on live messages.
     @Test func `a message another of the account's devices sent reads from its carbon`() async throws {
-        let bob2Recorder = try Recorder(account: #require(FullJID.parse("bob@example.com/phone"))) { _ in bundleItems(for: parties.aliceIdentity) }
+        let bob2Recorder = try OMEMOMessageRecorder(account: #require(FullJID.parse("bob@example.com/phone"))) { _ in bundleItems(for: parties.aliceIdentity) }
         bob2Recorder.answerBundle(of: parties.bobIdentity, for: 200)
         let bob2 = try bob2Recorder.installedModule(identity: makeTestOMEMOIdentity(deviceID: 300, preKeyIDs: [1]).data)
         let encrypted = try await bob2.encryptMessage(
-            content: [bodyElement("sent elsewhere")], time: testEnvelopeTime, to: parties.aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: [200]
-        ).encrypted
+            content: [bodyElement("sent elsewhere")], legacyBody: nil, time: testEnvelopeTime, to: parties.aliceJID, recipientDeviceIDs: [100], ownDeviceIDs: [200]
+        ).omemo2
         var message = XMLElement(name: "message", attributes: ["from": "bob@example.com/phone", "to": "alice@example.com", "type": "chat", "id": "c1"])
         message.addChild(encrypted)
 
@@ -555,12 +554,6 @@ struct OMEMOReceivingTests {
 
 // MARK: - Helpers
 
-private extension OMEMOReceiveOutcome {
-    var reason: OMEMOUndecryptableReason? {
-        if case let .undecryptable(reason) = self { reason } else { nil }
-    }
-}
-
 /// An envelope with `body` as its content, padding, and `affixes` written out.
 private func envelope(body: String, affixes: String) -> String {
     "<envelope xmlns='\(XMPPNamespaces.sce)'><content><body xmlns='\(XMPPNamespaces.client)'>\(body)</body></content><rpad>xyz</rpad>\(affixes)</envelope>"
@@ -572,103 +565,6 @@ private func removePayload(from message: inout XMPPMessage) throws {
     message.element.children = [.element(encrypted)]
 }
 
-/// Plays the server for a module driven without a client: answers bundle fetches, and records what the module sends,
-/// reports and hands to the modules acting on decrypted messages.
-private final class Recorder: Sendable {
-    private struct Recorded {
-        var events: [XMPPEvent] = []
-        var sent: [XMLElement] = []
-        var iqs: [XMLElement] = []
-        var dispatched: [XMPPMessage] = []
-        var forwardTo: [any XMPPModule] = []
-        var bundles: [String: XMLElement] = [:]
-    }
-
-    let account: FullJID
-    private let recorded = OSAllocatedUnfairLock(initialState: Recorded())
-    private let answer: @Sendable (XMLElement) async -> XMLElement?
-
-    init(account: FullJID, answer: @escaping @Sendable (XMLElement) async -> XMLElement? = { _ in nil }) {
-        self.account = account
-        self.answer = answer
-    }
-
-    var context: ModuleContext {
-        makeStubModuleContext(
-            sendStanza: { [recorded] stanza, onAccepted in
-                onAccepted?()
-                recorded.withLock { $0.sent.append(stanza.element) }
-            },
-            sendIQ: { [recorded, answer] iq, _ in
-                recorded.withLock { $0.iqs.append(iq.element) }
-                let item = iq.element.child(named: "pubsub")?.child(named: "items")?.child(named: "item")?.attribute("id")
-                if let bundle = recorded.withLock({ recorded in item.flatMap { recorded.bundles.removeValue(forKey: $0) } }) {
-                    return bundle
-                }
-                return await answer(iq.element)
-            },
-            emitEvent: { [recorded] event in recorded.withLock { $0.events.append(event) } },
-            connectedJID: account,
-            dispatchDecryptedMessage: { [recorded] message in
-                let modules = recorded.withLock { recorded in
-                    recorded.dispatched.append(message)
-                    return recorded.forwardTo
-                }
-                for module in modules {
-                    module.handleDecryptedMessage(message)
-                }
-            }
-        )
-    }
-
-    /// Answers the next fetch of the bundle `deviceID` with `identity`'s bundle.
-    func answerBundle(of identity: TestOMEMOIdentity, for deviceID: UInt32) {
-        recorded.withLock { $0.bundles["\(deviceID)"] = bundleItems(for: identity) }
-    }
-
-    func forwardDecryptedMessages(to modules: [any XMPPModule]) {
-        recorded.withLock { $0.forwardTo = modules }
-    }
-
-    var events: [XMPPEvent] {
-        recorded.withLock { $0.events }
-    }
-
-    var sentMessages: [XMLElement] {
-        recorded.withLock { $0.sent.filter { $0.name == "message" } }
-    }
-
-    var dispatched: [XMPPMessage] {
-        recorded.withLock { $0.dispatched }
-    }
-
-    /// Whose device lists the module fetched, in order.
-    var deviceListFetches: [String] {
-        recorded.withLock { recorded in
-            recorded.iqs.filter { $0.child(named: "pubsub")?.child(named: "items")?.attribute("node") == XMPPNamespaces.omemoDevices }
-                .map { $0.attribute("to") ?? "" }
-        }
-    }
-
-    /// How often the module reported a session moved on: once for each empty message it sends, as it encrypts it,
-    /// and once for each it receives.
-    var sessionAdvances: Int {
-        events.count { if case .omemoSessionAdvanced = $0 { true } else { false } }
-    }
-
-    var outcomes: [OMEMOReceiveOutcome] {
-        events.compactMap { if case let .omemoEncryptedMessageReceived(_, outcome, _) = $0 { outcome } else { nil } }
-    }
-
-    var decryptedEvents: [OMEMODecryptedMessage] {
-        outcomes.compactMap { if case let .decrypted(decrypted) = $0 { decrypted } else { nil } }
-    }
-
-    func installedModule(identity: OMEMOModule.OMEMOIdentityData, mucModule: MUCModule? = nil) -> OMEMOModule {
-        makeInstalledOMEMOModule(identity: identity, context: context, mucModule: mucModule)
-    }
-}
-
 /// Alice (device 100) writes to bob (device 200), the account whose module is under test.
 private struct Parties {
     let aliceJID = BareJID(localPart: "alice", domainPart: "example.com")!
@@ -676,18 +572,18 @@ private struct Parties {
     let aliceIdentity: TestOMEMOIdentity
     let bobIdentity: TestOMEMOIdentity
     let alice: OMEMOModule
-    let aliceRecorder: Recorder
+    let aliceRecorder: OMEMOMessageRecorder
     let bob: OMEMOModule
-    let bobRecorder: Recorder
+    let bobRecorder: OMEMOMessageRecorder
     let mucModule: MUCModule
 
     static func make() async throws -> Parties {
         let aliceIdentity = try makeTestOMEMOIdentity(deviceID: 100, preKeyIDs: [1])
         let bobIdentity = try makeTestOMEMOIdentity(deviceID: 200, preKeyIDs: [7])
-        let aliceRecorder = try Recorder(account: #require(FullJID.parse("alice@example.com/phone"))) { iq in
+        let aliceRecorder = try OMEMOMessageRecorder(account: #require(FullJID.parse("alice@example.com/phone"))) { iq in
             deviceListItems([200], answering: iq) ?? bundleItems(for: bobIdentity)
         }
-        let bobRecorder = try Recorder(account: #require(FullJID.parse("bob@example.com/laptop"))) { _ in bundleItems(for: aliceIdentity) }
+        let bobRecorder = try OMEMOMessageRecorder(account: #require(FullJID.parse("bob@example.com/laptop"))) { _ in bundleItems(for: aliceIdentity) }
         let mucModule = MUCModule()
         mucModule.setUp(bobRecorder.context)
         return Parties(
@@ -701,8 +597,8 @@ private struct Parties {
     /// A chat message from alice's phone to bob's laptop, encrypted for `deviceIDs` of bob's.
     func aliceSends(_ content: [XMLElement], id: String, deviceIDs: [UInt32] = [200]) async throws -> XMPPMessage {
         let encrypted = try await alice.encryptMessage(
-            content: content, time: testEnvelopeTime, to: bobJID, recipientDeviceIDs: deviceIDs, ownDeviceIDs: []
-        ).encrypted
+            content: content, legacyBody: nil, time: testEnvelopeTime, to: bobJID, recipientDeviceIDs: deviceIDs, ownDeviceIDs: []
+        ).omemo2
         var message = XMLElement(name: "message", attributes: ["from": "alice@example.com/phone", "to": "bob@example.com/laptop", "type": "chat", "id": id])
         message.addChild(encrypted)
         return XMPPMessage(element: message)
@@ -715,7 +611,7 @@ private struct Parties {
     ) async throws -> XMPPMessage {
         _ = try await aliceSends([], id: "setup")
         let payload = try OMEMOPayload(encrypting: Array(envelope.utf8), key: Array(repeating: 1, count: OMEMOPayload.keyLength))
-        let sessionKey = SessionKey(jid: bobJID, deviceID: 200)
+        let sessionKey = SessionKey(jid: bobJID, deviceID: 200, version: .omemo2)
         let key = try alice.state.withLock { state in
             guard var session = state.sessions[sessionKey] else { throw OMEMOModuleError.noSession }
             let key = try session.encryptKey(payload.keyMaterial)

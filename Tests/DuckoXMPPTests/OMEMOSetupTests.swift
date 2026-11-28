@@ -31,7 +31,7 @@ final class SetupStatusRecorder: Sendable {
 
 /// An OMEMO module talking through a stub context whose IQs `answer` replies to: by default with an empty device list
 /// and an empty result for everything else.
-private final class SetupHarness: Sendable {
+final class SetupHarness: Sendable {
     typealias Answer = @Sendable (XMLElement) async throws -> XMLElement?
 
     let module: OMEMOModule
@@ -40,7 +40,11 @@ private final class SetupHarness: Sendable {
     private let answer: OSAllocatedUnfairLock<Answer>
     private let draws = OSAllocatedUnfairLock<Int>(initialState: 0)
 
-    init(identity: OMEMOModule.OMEMOIdentityData? = nil, delays: [Duration] = [], answer: @escaping Answer = SetupHarness.emptyServer) {
+    /// `drawDeviceID` draws each id a new device tries.
+    init(
+        identity: OMEMOModule.OMEMOIdentityData? = nil, delays: [Duration] = [], answer: @escaping Answer = SetupHarness.emptyServer,
+        drawDeviceID: @escaping @Sendable () -> OMEMODeviceID = OMEMODeviceID.random
+    ) {
         let sentIQs = sentIQs
         let events = events
         let answer = OSAllocatedUnfairLock<Answer>(initialState: answer)
@@ -61,7 +65,7 @@ private final class SetupHarness: Sendable {
         let draws = draws
         self.module = OMEMOModule(pepModule: pepModule, setupRetryDelays: delays) {
             draws.withLock { $0 += 1 }
-            return OMEMODeviceID.random()
+            return drawDeviceID()
         }
         module.setUp(context)
         if let identity {
@@ -171,6 +175,8 @@ extension OMEMOModuleTests {
             await simulateNoTLSConnect(mock)
             let read = try await awaitOutgoingIQ(on: mock, type: .get, namespace: XMPPNamespaces.pubsub) { $0.contains(XMPPNamespaces.omemoDevices) }
             await mock.simulateReceive("<iq type=\"result\" id=\"\(read.id)\"/>")
+            let legacyRead = try await awaitOutgoingIQ(on: mock, type: .get, namespace: XMPPNamespaces.pubsub) { $0.contains(XMPPNamespaces.omemoLegacyDeviceList) }
+            await mock.simulateReceive("<iq type=\"result\" id=\"\(legacyRead.id)\"/>")
             _ = try await awaitOutgoingIQ(on: mock, type: .set, namespace: XMPPNamespaces.pubsub) { $0.contains(XMPPNamespaces.omemoDevices) }
             try await connectTask.value
 
@@ -299,6 +305,7 @@ extension OMEMOModuleTests {
             let harness = SetupHarness()
             try await harness.connect()
             try await eventually { harness.statuses == [.complete] }
+            try await eventually { harness.module.state.withLock { $0.ownListTask == nil } }
             let sentCount = harness.sent.count
 
             #expect(!harness.module.retrySetup())
@@ -385,7 +392,7 @@ extension OMEMOModuleTests {
                 try await harness.module.encryptMessage(plaintext: "secret", to: recipientJID, recipientDeviceIDs: [5], ownDeviceIDs: [])
             }
             try await eventually { harness.identityWaiters == 1 }
-            #expect(harness.sent.count == 1)
+            #expect(harness.sent.count == 2)
             await release.signal()
 
             await #expect(throws: OMEMOModuleError.notSetUp) { try await send.value }
@@ -442,7 +449,7 @@ extension OMEMOModuleTests {
             let send = Task {
                 try await harness.module.encryptMessage(plaintext: "secret", to: recipientJID, recipientDeviceIDs: [5], ownDeviceIDs: [])
             }
-            let reset = Task { try await harness.module.resetSession(jid: recipientJID, deviceID: 5) }
+            let reset = Task { try await harness.module.resetSession(jid: recipientJID, deviceID: 5, versions: [.omemo2]) }
             try await eventually { harness.identityWaiters == 2 }
             #expect(harness.sent.count == 2)
             await release.signal()
@@ -450,7 +457,7 @@ extension OMEMOModuleTests {
             if retrySucceeds {
                 // Past the identity, the recipient's bundle is asked for, and the stub server has none.
                 await #expect(throws: OMEMOModuleError.noUsableRecipientDevices) { try await send.value }
-                #expect(try await reset.value == .noBundle)
+                #expect(try await reset.value.outcomes == [.omemo2: .noBundle])
             } else {
                 await #expect(throws: OMEMOModuleError.notSetUp) { try await send.value }
                 await #expect(throws: OMEMOModuleError.notSetUp) { try await reset.value }

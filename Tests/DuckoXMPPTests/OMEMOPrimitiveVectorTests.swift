@@ -196,8 +196,8 @@ enum OMEMOPrimitiveVectorTests {
             let ownSignature = try identity.sign(bytes(message))
 
             #expect(identity.publicKeyBytes == bytes(publicKey))
-            #expect(try OMEMOX3DH.verifySignedPreKey(signedPreKeyPublic: bytes(message), signature: bytes(signature), identityKey: bytes(publicKey)))
-            #expect(try OMEMOX3DH.verifySignedPreKey(signedPreKeyPublic: bytes(message), signature: ownSignature, identityKey: bytes(publicKey)))
+            #expect(try OMEMOX3DH.verifySignedPreKey(signedPreKeyPublic: bytes(message), signature: bytes(signature), identityKey: bytes(publicKey), format: .omemo2))
+            #expect(try OMEMOX3DH.verifySignedPreKey(signedPreKeyPublic: bytes(message), signature: ownSignature, identityKey: bytes(publicKey), format: .omemo2))
         }
     }
 }

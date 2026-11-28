@@ -34,6 +34,7 @@ public final class AppEnvironment {
         omemoStore: (any OMEMOStore)? = nil,
         linkPreviewFetcher: any LinkPreviewFetcher = NoOpLinkPreviewFetcher(),
         downloadsDirectory: URL = .downloadsDirectory,
+        encryptedFileDownload: @escaping FileTransferService.RemoteFileDownload = FileTransferService.fetchEncryptedFile,
         clientFactory: any XMPPClientFactory = DefaultXMPPClientFactory(),
         networkPath: NetworkPathSource? = nil,
         browserAuthorizer: any BrowserAuthorizer = NoOpBrowserAuthorizer(),
@@ -54,7 +55,7 @@ public final class AppEnvironment {
         bookmarksService.autoJoinEnabled = true
         let avatarService = AvatarService(store: store)
         let profileService = ProfileService()
-        let fileTransferService = FileTransferService(downloadsDirectory: downloadsDirectory)
+        let fileTransferService = FileTransferService(downloadsDirectory: downloadsDirectory, encryptedFileDownload: encryptedFileDownload)
         let linkPreviewService = LinkPreviewService(fetcher: linkPreviewFetcher, store: store)
         let omemoService = OMEMOService(omemoStore: omemoStore ?? NoOpOMEMOStore())
 
