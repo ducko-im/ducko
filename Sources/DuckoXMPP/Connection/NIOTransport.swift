@@ -1,6 +1,9 @@
+import Logging
 import NIOCore
 import NIOPosix
 import NIOSSL
+
+private let log = Logger(label: "im.ducko.xmpp.transport")
 
 /// Channel ownership is actor-isolated; pipeline state stays on its event loop.
 actor NIOTransport: XMPPTransport {
@@ -74,8 +77,19 @@ actor NIOTransport: XMPPTransport {
             if Task.isCancelled || error is CancellationError { throw CancellationError() }
             if case ChannelError.connectTimeout = error { throw XMPPClientError.timeout }
             if let error = error as? XMPPClientError { throw error }
-            throw XMPPClientError.connectionFailed("The server could not be reached")
+            log.debug("Connecting to \(host):\(port) failed: \(error)")
+            throw XMPPClientError.connectionFailed(Self.connectFailureReason(error))
         }
+    }
+
+    private static func connectFailureReason(_ error: any Error) -> String {
+        let failure = error as? NIOConnectionError
+        if let failure, failure.connectionErrors.isEmpty, let lookupError = failure.dnsAError ?? failure.dnsAAAAError {
+            let code = (lookupError as? SocketAddressError.UnknownHost)?.errorCode ?? 0
+            return addressLookupFailureText(Int32(code))
+        }
+        let errnoCodes = failure?.connectionErrors.compactMap { ($0.error as? IOError)?.errnoCode } ?? []
+        return connectFailureText(errnoCodes: errnoCodes)
     }
 
     func stopReceiving() async {
@@ -155,6 +169,7 @@ actor NIOTransport: XMPPTransport {
                 throw XMPPClientError.tlsNegotiationFailed("The server did not complete the TLS handshake in time")
             }
             if let error = error as? XMPPClientError { throw error }
+            log.debug("The TLS handshake with \(serverName) failed: \(error)")
             throw XMPPClientError.tlsNegotiationFailed("The secure connection could not be established")
         }
     }

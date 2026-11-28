@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Open encrypted files that contacts share in encrypted chats (XEP-0454)
 - Show which OMEMO versions each of a contact's devices uses in `ducko omemo devices` and the new `/omemo-devices`
 
+### Changed
+
+- Say why a connection failed, such as an address that can't be found or a refused connection ([#6](https://github.com/ducko-im/ducko/issues/6))
+
 ### Fixed
 
 - Fix the first-run import counting its log folders as accounts

@@ -96,38 +96,62 @@ enum TransportContractTests {
             #expect(posixErrorText(ECONNREFUSED) == "Connection refused")
         }
 
-        @Test
-        func `addressInfoErrorText renders resolver errors as readable text`() {
-            #expect(addressInfoErrorText(EAI_NONAME) == "nodename nor servname provided, or not known")
+        @Test(arguments: [
+            (EAI_NONAME, "The address could not be found"),
+            (EAI_NODATA, "The address could not be found"),
+            (EAI_AGAIN, "The address lookup failed temporarily"),
+            (EAI_FAIL, "The address lookup failed")
+        ])
+        func `addressLookupFailureText renders resolver errors as readable text`(code: Int32, expected: String) {
+            #expect(addressLookupFailureText(code) == expected)
         }
 
-        @Test
-        func `addressInfoErrorText reports errno for system resolver errors`() {
-            let text = { () -> String in
-                errno = ECONNREFUSED
-                return addressInfoErrorText(EAI_SYSTEM)
-            }()
-            #expect(text == "Connection refused")
+        @Test(arguments: [
+            ([ENETUNREACH, ECONNREFUSED], "The connection was refused"),
+            ([ECONNREFUSED, ENETUNREACH], "The connection was refused"),
+            ([EHOSTUNREACH, ENETUNREACH], "The destination could not be reached"),
+            ([ENETUNREACH], "The network could not be reached"),
+            ([EPERM], "Permission to connect was denied"),
+            ([EMFILE], "The connection could not be opened"),
+            ([], "The connection could not be opened")
+        ])
+        func `connectFailureText reports the most concrete cause across addresses`(codes: [Int32], expected: String) {
+            #expect(connectFailureText(errnoCodes: codes) == expected)
         }
     }
 
     struct ConnectFailure {
         @Test
-        func `Connecting to a closed port reports a readable reason`() async throws {
-            try await withTransport(handshakeTimeout: .seconds(30)) { transport in
-                let (fd, port) = try bindLoopbackSocket()
-                close(fd)
+        func `Connecting to a closed port reports that the connection was refused`() async throws {
+            let (fd, port) = try bindLoopbackSocket()
+            close(fd)
 
+            let reason = try await connectFailureReason(host: "127.0.0.1", port: port)
+
+            #expect(reason == "The connection was refused")
+        }
+
+        @Test
+        func `Connecting to a host name that does not resolve reports that the address could not be found`() async throws {
+            let reason = try await connectFailureReason(host: "unresolvable.invalid.", port: 5222)
+
+            #expect(reason == "The address could not be found")
+        }
+
+        /// The reason a connect fails with, or `nil` after recording an issue when it fails any other way.
+        private func connectFailureReason(host: String, port: UInt16) async throws -> String? {
+            var reason: String?
+            try await withTransport(handshakeTimeout: .seconds(30), connectTimeout: .seconds(5)) { transport in
                 let error = await #expect(throws: XMPPClientError.self) {
-                    try await transport.connect(host: "127.0.0.1", port: port)
+                    try await transport.connect(host: host, port: port)
                 }
-
-                guard case let .connectionFailed(reason) = error else {
+                guard case let .connectionFailed(failure) = error else {
                     Issue.record("Expected connectionFailed, got \(String(describing: error))")
                     return
                 }
-                #expect(reason == "The server could not be reached")
+                reason = failure
             }
+            return reason
         }
     }
 
@@ -582,10 +606,11 @@ private func withNonReadingPeer(
 
 private func withTransport(
     handshakeTimeout: Duration,
+    connectTimeout: TimeAmount = .seconds(30),
     operation: (any XMPPTransport) async throws -> Void
 ) async throws {
     try await withNIOTestGroup { group in
-        let transport = NIOTransport(handshakeTimeout: handshakeTimeout, group: group)
+        let transport = NIOTransport(connectTimeout: connectTimeout, handshakeTimeout: handshakeTimeout, group: group)
         let outcome: Result<Void, any Error>
         do {
             try await operation(transport)

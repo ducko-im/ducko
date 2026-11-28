@@ -275,7 +275,7 @@ enum SOCKS5ConnectionTests {
                 Issue.record("Expected the connect to time out, got \(String(describing: outcome))")
                 return
             }
-            #expect(reason == posixErrorText(ETIMEDOUT))
+            #expect(reason == "The connection attempt timed out")
         }
     }
 

@@ -14,16 +14,16 @@ func connectTCPSocket(host: String, port: UInt16, deadline: ContinuousClock.Inst
     var result: UnsafeMutablePointer<addrinfo>?
     let err = getaddrinfo(host, String(port), &hints, &result)
     guard err == 0, let addrList = result else {
-        throw TCPConnectError(reason: addressInfoErrorText(err))
+        throw TCPConnectError(reason: addressLookupFailureText(err))
     }
     defer { freeaddrinfo(addrList) }
 
-    var lastError: Int32 = 0
+    var attemptErrors: [Int32] = []
     var addr: UnsafeMutablePointer<addrinfo>? = addrList
     while let ai = addr {
         let socketFD = socket(ai.pointee.ai_family, ai.pointee.ai_socktype, ai.pointee.ai_protocol)
         guard socketFD >= 0 else {
-            lastError = errno
+            attemptErrors.append(errno)
             addr = ai.pointee.ai_next
             continue
         }
@@ -33,11 +33,11 @@ func connectTCPSocket(host: String, port: UInt16, deadline: ContinuousClock.Inst
         if connectError == 0 {
             return socketFD
         }
-        lastError = connectError
+        attemptErrors.append(connectError)
         close(socketFD)
         addr = ai.pointee.ai_next
     }
-    throw TCPConnectError(reason: posixErrorText(lastError))
+    throw TCPConnectError(reason: connectFailureText(errnoCodes: attemptErrors))
 }
 
 /// Connects `socketFD` to `address`, waiting no later than `deadline` when one is set. Returns 0 or the failure's errno.
