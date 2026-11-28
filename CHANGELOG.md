@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-28
+
 ### Added
 
 - Exchange encrypted messages with contacts on Conversations and other apps that use the older OMEMO format (XEP-0384)
@@ -603,7 +605,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Initial release.
 
-[Unreleased]: https://github.com/ducko-im/ducko/compare/0.15.0...HEAD
+[Unreleased]: https://github.com/ducko-im/ducko/compare/0.16.0...HEAD
+[0.16.0]: https://github.com/ducko-im/ducko/compare/0.15.0...0.16.0
 [0.15.0]: https://github.com/ducko-im/ducko/compare/0.14.1...0.15.0
 [0.14.1]: https://github.com/ducko-im/ducko/compare/0.14.0...0.14.1
 [0.14.0]: https://github.com/ducko-im/ducko/compare/0.13.0...0.14.0
